@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PROFIN Logo Render</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;900&display=swap" rel="stylesheet">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: white;
+        }
+        .logo-container {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            padding: 50px;
+            background: white;
+        }
+        .icon {
+            width: 120px;
+            height: 120px;
+        }
+        .text-container {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+        .main-text {
+            font-family: 'Inter', sans-serif;
+            font-weight: 900;
+            font-size: 84px;
+            line-height: 0.9;
+            color: black;
+            text-transform: uppercase;
+            letter-spacing: -2px;
+        }
+        .sub-text {
+            font-family: 'Inter', sans-serif;
+            font-weight: 400;
+            font-size: 32px;
+            color: black;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="logo-container" id="logo">
+        <svg class="icon" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+            <!-- Geometric Orange Chevron -->
+            <path d="M 10 10 L 90 50 L 10 40 Z" fill="#FF9F43" />
+            <path d="M 10 40 L 90 50 L 10 60 Z" fill="#FF8C00" />
+            <path d="M 10 60 L 90 50 L 10 90 Z" fill="#E67E22" />
+            <path d="M 10 40 L 40 50 L 10 60 Z" fill="#FFB347" />
+        </svg>
+        <div class="text-container">
+            <div class="main-text">PROFIN</div>
+            <div class="sub-text">LAB SCALE CO.,LTD</div>
+        </div>
+    </div>
+</body>
+</html>

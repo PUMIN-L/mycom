@@ -17,14 +17,14 @@ export const translations = {
       zh: "测试设备与实验室解决方案专家",
     },
     title: {
-      th: "โซลูชันการทดสอบครบวงจร\nสำหรับทุกอุตสาหกรรม",
-      en: "Complete Testing Solutions\nfor Every Industry",
-      zh: "适用于各行业的\n全方位测试解决方案",
+      th: "โซลูชันการทดสอบครบวงจร",
+      en: "Complete Testing Solutions",
+      zh: "适用于各行业的",
     },
     subtitle: {
-      th: "จำหน่าย ซ่อมบำรุง และสอบเทียบเครื่องมือทดสอบคุณภาพ พร้อมบริการออกแบบและสร้างห้องปฏิบัติการมาตรฐานสากล",
-      en: "Sales, maintenance, and calibration of quality testing instruments, with design and construction services for international-standard laboratories.",
-      zh: "销售、维修和校准优质测试仪器，提供国际标准实验室的设计与建设服务。",
+      th: "จำหน่าย ซ่อมบำรุง และสอบเทียบเครื่องมือทดสอบคุณภาพ\nพร้อมบริการออกแบบและสร้างห้องปฏิบัติการมาตรฐานสากล",
+      en: "Sales, maintenance, and calibration of quality testing instruments\nwith design and construction services for international-standard laboratories.",
+      zh: "销售、维修和校准优质测试仪器\n提供国际标准实验室的设计与建设服务。",
     },
     cta: {
       th: "ติดต่อเรา",
@@ -256,9 +256,9 @@ export const translations = {
     quickLinks: { th: "ลิงก์ด่วน", en: "Quick Links", zh: "快速链接" },
     contactInfo: { th: "ข้อมูลติดต่อ", en: "Contact Info", zh: "联系信息" },
     copyright: {
-      th: "© 2026 I Don't Know Tech. สงวนลิขสิทธิ์.",
-      en: "© 2026 I Don't Know Tech. All rights reserved.",
-      zh: "© 2026 I Don't Know Tech. 版权所有。",
+      th: "© 2026 Profin Lab Scale. สงวนลิขสิทธิ์.",
+      en: "© 2026 Profin Lab Scale. All rights reserved.",
+      zh: "© 2026 Profin Lab Scale. 版权所有。",
     },
   },
 } as const;

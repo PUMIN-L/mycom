@@ -8,50 +8,53 @@ export default function Products() {
   const t = useT();
 
   return (
-    <section id="products" className="py-24 md:py-32 relative">
-      <div className="absolute inset-0 bg-gradient-to-b from-transparent via-[var(--bg-secondary)]/50 to-transparent" />
-
+    <section id="products" className="py-32 md:py-48 bg-[var(--bg-secondary)] relative">
       <div className="section-wrapper relative z-10">
         {/* Section Header */}
-        <div className="text-center mb-16">
-          <span className="inline-block px-4 py-1.5 rounded-full text-xs font-medium border border-[var(--border-color-hover)] text-[var(--accent-light)] bg-[var(--accent)]/10 mb-4">
+        <div className="text-center mb-24">
+          <span className="inline-block text-[10px] font-bold uppercase tracking-[0.4em] text-[var(--accent)] mb-4">
             {t(translations.products.sectionTag)}
           </span>
-          <h2 className="text-3xl md:text-5xl font-bold text-white mb-4">
+          <h2 className="text-4xl md:text-6xl font-serif text-[var(--brand-navy)] mb-6">
             {t(translations.products.title)}
           </h2>
-          <p className="text-[var(--text-secondary)] max-w-2xl mx-auto text-base md:text-lg">
+          <div className="w-20 h-[1px] bg-[var(--accent)] mx-auto mb-8" />
+          <p className="text-[var(--text-secondary)] max-w-2xl mx-auto text-lg md:text-xl font-light">
             {t(translations.products.subtitle)}
           </p>
         </div>
 
         {/* Product Grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-10">
           {translations.products.items.map((item, i) => (
             <div
               key={i}
-              className="glass rounded-2xl overflow-hidden card-hover group"
+              className="bg-white overflow-hidden premium-card group"
             >
-              {/* Image */}
-              <div className="relative h-52 overflow-hidden bg-[var(--bg-secondary)]">
+              {/* Image Container */}
+              <div className="relative h-72 overflow-hidden bg-gray-100">
                 <Image
                   src={item.image}
                   alt={item.title.en}
                   fill
-                  className="object-cover transition-transform duration-500 group-hover:scale-110"
+                  className="object-cover transition-transform duration-700 group-hover:scale-105"
                   sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
                 />
-                <div className="absolute inset-0 bg-gradient-to-t from-[var(--bg-card)] via-transparent to-transparent opacity-60" />
+                <div className="absolute inset-0 bg-black/0 transition-colors group-hover:bg-black/10" />
               </div>
 
               {/* Content */}
-              <div className="p-6">
-                <h3 className="text-lg font-bold text-white mb-2 group-hover:text-[var(--accent-light)] transition-colors">
+              <div className="p-10">
+                <h3 className="text-2xl font-serif text-[var(--brand-navy)] mb-4 group-hover:text-[var(--accent)] transition-colors">
                   {t(item.title)}
                 </h3>
-                <p className="text-sm text-[var(--text-secondary)] leading-relaxed">
+                <p className="text-[var(--text-muted)] leading-relaxed font-light text-base mb-6">
                   {t(item.desc)}
                 </p>
+                <div className="flex items-center gap-3 text-[10px] font-bold uppercase tracking-widest text-[var(--accent)]">
+                  View Collection
+                  <div className="w-8 h-[1px] bg-[var(--accent)] transition-all group-hover:w-12" />
+                </div>
               </div>
             </div>
           ))}

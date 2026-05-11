@@ -26,40 +26,47 @@ export default function Services() {
   const t = useT();
 
   return (
-    <section id="services" className="py-24 md:py-32 relative">
-      {/* Subtle background gradient */}
-      <div className="absolute inset-0 bg-gradient-to-b from-transparent via-[var(--accent)]/[0.02] to-transparent" />
+    <section id="services" className="py-32 md:py-48 bg-white relative overflow-hidden">
+      {/* Background Decorative Element */}
+      <div className="absolute top-0 right-0 w-1/3 h-full bg-[var(--bg-secondary)] -skew-x-12 translate-x-1/2" />
 
       <div className="section-wrapper relative z-10">
         {/* Section Header */}
-        <div className="text-center mb-16">
-          <span className="inline-block px-4 py-1.5 rounded-full text-xs font-medium border border-[var(--border-color-hover)] text-[var(--accent-light)] bg-[var(--accent)]/10 mb-4">
+        <div className="mb-20 max-w-3xl">
+          <span className="inline-block text-[10px] font-bold uppercase tracking-[0.4em] text-[var(--accent)] mb-4">
             {t(translations.services.sectionTag)}
           </span>
-          <h2 className="text-3xl md:text-5xl font-bold text-white mb-4">
+          <h2 className="text-4xl md:text-6xl font-serif text-[var(--brand-navy)] mb-8 leading-tight">
             {t(translations.services.title)}
           </h2>
-          <p className="text-[var(--text-secondary)] max-w-2xl mx-auto text-base md:text-lg">
+          <div className="w-20 h-[1px] bg-[var(--accent)] mb-8" />
+          <p className="text-[var(--text-secondary)] text-lg md:text-xl font-light leading-relaxed">
             {t(translations.services.subtitle)}
           </p>
         </div>
 
         {/* Service Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-12">
           {translations.services.items.map((item, i) => (
             <div
               key={i}
-              className="glass rounded-2xl p-8 card-hover group"
+              className="premium-card p-10 flex flex-col items-start group"
             >
-              <div className="w-14 h-14 rounded-xl flex items-center justify-center mb-6 text-[var(--accent-light)] bg-[var(--accent)]/10 group-hover:bg-[var(--accent)]/20 transition-colors">
+              <div className="w-16 h-16 flex items-center justify-center mb-8 text-[var(--accent)] border border-[var(--accent)]/20 transition-all group-hover:bg-[var(--brand-navy)] group-hover:text-white group-hover:border-[var(--brand-navy)]">
                 {serviceIcons[item.icon as keyof typeof serviceIcons]}
               </div>
-              <h3 className="text-xl font-bold text-white mb-3">
+              <h3 className="text-2xl font-serif text-[var(--brand-navy)] mb-4 group-hover:text-[var(--accent)] transition-colors">
                 {t(item.title)}
               </h3>
-              <p className="text-[var(--text-secondary)] leading-relaxed text-sm">
+              <p className="text-[var(--text-muted)] leading-relaxed font-light mb-8">
                 {t(item.desc)}
               </p>
+              <div className="mt-auto flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-[var(--accent)] group-hover:gap-4 transition-all">
+                Learn More
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" />
+                </svg>
+              </div>
             </div>
           ))}
         </div>
