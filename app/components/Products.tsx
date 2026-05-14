@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useT } from "../i18n/LanguageContext";
 import { translations } from "../i18n/translations";
 import Image from "next/image";
@@ -14,7 +14,7 @@ export default function Products() {
   );
 
   return (
-    <section id="products" className="py-32 md:py-48 bg-[var(--bg-secondary)] relative">
+    <section id="products" className="py-24 md:py-32 lg:py-10  bg-[var(--bg-secondary)] relative">
       {/* Decorative background element */}
       <div className="absolute top-0 right-0 w-1/3 h-1/3 bg-[var(--accent)] opacity-[0.03] rounded-full blur-[120px] -translate-y-1/2 translate-x-1/2" />
 
@@ -38,21 +38,13 @@ export default function Products() {
                   <button
                     key={idx}
                     onClick={() => {
+                      const element = document.getElementById("product-content");
+                      if (element) {
+                        element.scrollIntoView({ behavior: "auto", block: "start" });
+                      }
                       setSelectedCategory(idx);
-                      setTimeout(() => {
-                        const element = document.getElementById("product-content");
-                        if (element) {
-                          const rect = element.getBoundingClientRect();
-                          if (Math.abs(rect.top - 128) > 10) {
-                            window.scrollTo({
-                              top: window.scrollY + rect.top - 128,
-                              behavior: "smooth"
-                            });
-                          }
-                        }
-                      }, 0);
                     }}
-                    className={`group text-left transition-all duration-300 w-fit ${idx === selectedCategory
+                    className={`group text-left transition-all duration-300 w-fit cursor-pointer ${idx === selectedCategory
                       ? "text-[var(--text-primary)]"
                       : "text-gray-400 hover:text-[var(--text-primary)]"
                       }`}
@@ -71,12 +63,12 @@ export default function Products() {
           </div>
 
           {/* Product Grid */}
-          <div className="lg:w-3/4 min-h-[1200px]">
+          <div className="lg:w-3/4 min-h-[650px]">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-x-10 gap-y-16">
               {filteredItems.map((item, i) => (
                 <div
                   key={`${selectedCategory}-${i}`}
-                  className="group flex flex-col premium-card rounded-2xl p-4 animate-fade-in-up"
+                  className="group flex flex-col premium-card rounded-2xl p-4"
                   style={{ animationDelay: `${i * 100}ms` }}
                 >
                   <div className="relative aspect-[4/5] overflow-hidden rounded-xl mb-8 bg-gray-50">
@@ -91,13 +83,13 @@ export default function Products() {
                   </div>
 
                   <div className="flex flex-col px-4 pb-4">
-                    <h3 className="text-2xl md:text-2xl font-serif text-[var(--brand-navy)] mb-4 transition-colors group-hover:text-[var(--accent)]">
+                    <h3 className="text-2xl md:text-2xl font-serif text-[var(--text-primary)] mb-4 transition-colors group-hover:text-[var(--accent)]">
                       {t(item.title)}
                     </h3>
-                    <p className="text-gray-400 leading-relaxed font-light text-sm line-clamp-3 mb-8 h-12">
+                    <p className="text-gray-400 leading-relaxed font-light text-base line-clamp-3 mb-8 h-12">
                       {t(item.desc)}
                     </p>
-                    <div className="flex items-center gap-4 text-[10px] font-bold uppercase tracking-[0.2em] text-[var(--accent)] group/btn">
+                    <div className="flex items-center gap-4 text-xs font-bold uppercase tracking-[0.2em] text-[var(--accent)] group/btn">
                       <span className="border-b border-transparent group-hover/btn:border-[var(--accent)] transition-all duration-300">
                         View Product
                       </span>

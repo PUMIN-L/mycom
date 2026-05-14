@@ -3,8 +3,10 @@ export type Language = "th" | "en" | "zh";
 export const translations = {
   // Navbar
   nav: {
+    home: { th: "หน้าแรก", en: "Home", zh: "首页" },
     services: { th: "บริการ", en: "Services", zh: "服务" },
     products: { th: "สินค้า", en: "Products", zh: "产品" },
+    about: { th: "เกี่ยวกับเรา", en: "About Us", zh: "关于我们" },
     clients: { th: "ลูกค้าของเรา", en: "Our Clients", zh: "我们的客户" },
     contact: { th: "ติดต่อเรา", en: "Contact", zh: "联系我们" },
   },
@@ -171,26 +173,26 @@ export const translations = {
           zh: "测量薄膜和包装材料的摩擦系数。",
         },
       },
-      {
-        categoryId: 2,
-        image: "/images/film-tester.png",
-        title: { th: "เครื่องทดสอบฟิล์ม", en: "Film Property Tester", zh: "薄膜性能测试仪" },
-        desc: {
-          th: "ทดสอบคุณสมบัติการดึงและฉีกขาดของพลาสติกฟิล์ม",
-          en: "Test tensile and tear properties of plastic films.",
-          zh: "测试塑料薄膜的拉伸和撕裂性能。",
-        },
-      },
-      {
-        categoryId: 2,
-        image: "/images/compression-tester.png",
-        title: { th: "เครื่องทดสอบแรงกด", en: "Compression Tester", zh: "压力试验机" },
-        desc: {
-          th: "ทดสอบแรงกด ความแข็งแรง และความทนทานของวัสดุ",
-          en: "Test compression strength and durability of materials.",
-          zh: "测试材料的抗压强度和耐久性。",
-        },
-      },
+      // {
+      //   categoryId: 2,
+      //   image: "/images/film-tester.png",
+      //   title: { th: "เครื่องทดสอบฟิล์ม", en: "Film Property Tester", zh: "薄膜性能测试仪" },
+      //   desc: {
+      //     th: "ทดสอบคุณสมบัติการดึงและฉีกขาดของพลาสติกฟิล์ม",
+      //     en: "Test tensile and tear properties of plastic films.",
+      //     zh: "测试塑料薄膜的拉伸和撕裂性能。",
+      //   },
+      // },
+      // {
+      //   categoryId: 2,
+      //   image: "/images/compression-tester.png",
+      //   title: { th: "เครื่องทดสอบแรงกด", en: "Compression Tester", zh: "压力试验机" },
+      //   desc: {
+      //     th: "ทดสอบแรงกด ความแข็งแรง และความทนทานของวัสดุ",
+      //     en: "Test compression strength and durability of materials.",
+      //     zh: "测试材料的抗压强度和耐久性。",
+      //   },
+      // },
       {
         categoryId: 2,
         image: "/images/viscometer.png",
@@ -384,6 +386,32 @@ export const translations = {
     lineLabel: { th: "LINE", en: "LINE", zh: "LINE" },
   },
 
+  // About Page
+  aboutPage: {
+    tag: { th: "เกี่ยวกับ Profin Lab Scale", en: "About Profin Lab Scale", zh: "关于 Profin Lab Scale" },
+    title: { th: "ขับเคลื่อนคุณภาพด้วยความแม่นยำ", en: "Empowering Quality through Precision", zh: "通过精准助力质量提升" },
+    description: {
+      th: "ด้วยความเชี่ยวชาญกว่าทศวรรษ เรานำเสนอโซลูชันการทดสอบระดับโลกที่ช่วยให้อุตสาหกรรมบรรลุมาตรฐานคุณภาพและความน่าเชื่อถือสูงสุด",
+      en: "With over a decade of expertise, we provide world-class testing solutions that help industries achieve the highest standards of quality and reliability.",
+      zh: "凭借十多年的专业知识，我们提供世界一流的测试解决方案，帮助各行各业实现最高标准的质量和可靠性。",
+    },
+    visionTitle: { th: "วิสัยทัศน์ของเรา", en: "Our Vision", zh: "我们的愿景" },
+    visionDesc: {
+      th: "มุ่งสู่การเป็นผู้นำด้านโซลูชันห้องปฏิบัติการนวัตกรรมในเอเชียตะวันออกเฉียงใต้ เป็นที่ยอมรับในด้านความแม่นยำ ความซื่อสัตย์ และความสำเร็จของลูกค้า เราเชื่อว่าการทดสอบที่แม่นยำคือรากฐานของทุกผลิตภัณฑ์ที่ยอดเยี่ยม",
+      en: "To be the leading provider of innovative laboratory solutions in Southeast Asia, recognized for our commitment to precision, integrity, and customer success. We believe that accurate testing is the foundation of every great product.",
+      zh: "成为东南亚领先的创新实验室解决方案提供商，因我们对精准、诚信和客户成功的承诺而受到认可。我们相信，准确的测试是每一件优秀产品的基础。",
+    },
+    expYears: { th: "ปีแห่งประสบการณ์", en: "Years Experience", zh: "多年经验" },
+    projectsDone: { th: "โครงการที่เสร็จสิ้น", en: "Projects Completed", zh: "完成项目" },
+    valuesTitle: { th: "ค่านิยมของเรา", en: "Our Values", zh: "我们的价值观" },
+    value1Title: { th: "คุณภาพที่ไม่มีข้อโต้แย้ง", en: "Uncompromising Quality", zh: "不妥协的品质" },
+    value1Desc: { th: "เราเลือกเฉพาะแบรนด์ที่เป็นไปตามมาตรฐานสากลที่เข้มงวดที่สุดเท่านั้น", en: "We only represent brands that meet the most rigorous international standards.", zh: "我们仅代理符合最严格国际标准的品牌。" },
+    value2Title: { th: "การให้คำปรึกษาโดยผู้เชี่ยวชาญ", en: "Expert Consultation", zh: "专家咨询" },
+    value2Desc: { th: "วิศวกรของเราไม่ใช่แค่พนักงานขาย แต่เป็นผู้เชี่ยวชาญที่เข้าใจความต้องการทางเทคนิคของคุณ", en: "Our engineers aren't just salespeople; they are experts who understand your technical needs.", zh: "我们的工程师不仅仅是销售人员；他们是了解您技术需求的专家。" },
+    value3Title: { th: "การสนับสนุนตลอดอายุการใช้งาน", en: "Lifelong Support", zh: "终身支持" },
+    value3Desc: { th: "เรายืนหยัดเคียงข้างเครื่องมือของเราด้วยบริการซ่อมบำรุงและสอบเทียบที่ครบวงจร", en: "We stand by our equipment with comprehensive maintenance and calibration services.", zh: "我们通过全面的维护 and 校准服务，为我们的设备提供支持。" },
+  },
+
   // Footer
   footer: {
     description: {
@@ -394,9 +422,9 @@ export const translations = {
     quickLinks: { th: "ลิงก์ด่วน", en: "Quick Links", zh: "快速链接" },
     contactInfo: { th: "ข้อมูลติดต่อ", en: "Contact Info", zh: "联系信息" },
     copyright: {
-      th: "© 2026 Profin Lab Scale. สงวนลิขสิทธิ์.",
-      en: "© 2026 Profin Lab Scale. All rights reserved.",
-      zh: "© 2026 Profin Lab Scale. 版权所有。",
+      th: "© 2026 Profin Lab Scale",
+      en: "© 2026 Profin Lab Scale",
+      zh: "© 2026 Profin Lab Scale",
     },
   },
 } as const;

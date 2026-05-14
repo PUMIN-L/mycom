@@ -12,6 +12,7 @@
   --accent-light: #a68d6a;
   --accent-dark: #6e5b3f;
   --brand-navy: #170d3e;
+  --footer-bg: #2d2e38;
   --accent-gradient: linear-gradient(135deg, #87704d, #a68d6a);
   --accent-gradient-hover: linear-gradient(135deg, #a68d6a, #87704d);
   --border-color: #e5e5e5;
@@ -33,6 +34,7 @@
   --color-muted: var(--text-muted);
   --color-border: var(--border-color);
   --color-navy: var(--brand-navy);
+  --color-footer: var(--footer-bg);
   --font-sans: var(--font-sans);
   --font-serif: var(--font-serif);
   --font-thai: var(--font-thai);
@@ -49,8 +51,8 @@ body {
 }
 
 h1, h2, h3, h4, h5, h6 {
-  font-family: var(--font-serif), serif;
-  letter-spacing: -0.02em;
+  font-family: var(--font-serif), var(--font-thai), serif;
+  letter-spacing: -0.01em;
 }
 
 /* Animations */

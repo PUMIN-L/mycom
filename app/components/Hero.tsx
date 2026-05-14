@@ -1,12 +1,10 @@
 "use client";
-
 import { useT } from "../i18n/LanguageContext";
 import { translations } from "../i18n/translations";
 import Image from "next/image";
 
 export default function Hero() {
   const t = useT();
-
   return (
     <section
       id="hero"

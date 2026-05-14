@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Cormorant_Garamond, Inter, IBM_Plex_Sans_Thai } from "next/font/google";
 import { LanguageProvider } from "./i18n/LanguageContext";
+import { NavProvider } from "./context/NavContext";
 import "./globals.css";
 
 const cormorant = Cormorant_Garamond({
@@ -36,10 +37,12 @@ export default function RootLayout({
   return (
     <html
       lang="th"
-      className={`${cormorant.variable} ${inter.variable} ${ibmPlexThai.variable} h-full antialiased`}
+      className={`${cormorant.variable} ${inter.variable} ${ibmPlexThai.variable} antialiased`}
     >
-      <body className="min-h-full flex flex-col font-sans">
-        <LanguageProvider>{children}</LanguageProvider>
+      <body className="min-h-screen flex flex-col font-sans">
+        <LanguageProvider>
+          <NavProvider>{children}</NavProvider>
+        </LanguageProvider>
       </body>
     </html>
   );
