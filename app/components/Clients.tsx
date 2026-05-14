@@ -26,10 +26,10 @@ export default function Clients() {
       <div className="section-wrapper relative z-10">
         {/* Section Header */}
         <div className="text-center mb-24">
-          <span className="inline-block text-[10px] font-bold uppercase tracking-[0.4em] text-[var(--accent)] mb-4">
+          {/* <span className="inline-block text-[10px] font-bold uppercase tracking-[0.4em] text-[var(--accent)] mb-4">
             {t(translations.clients.sectionTag)}
-          </span>
-          <h2 className="text-4xl md:text-6xl font-serif text-[var(--brand-navy)] mb-6">
+          </span> */}
+          <h2 className="text-4xl md:text-6xl font-serif text-[var(--accent)] mb-6">
             {t(translations.clients.title)}
           </h2>
           <div className="w-20 h-[1px] bg-[var(--accent)] mx-auto mb-8" />

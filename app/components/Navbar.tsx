@@ -39,23 +39,24 @@ export default function Navbar() {
         : "bg-transparent border-transparent"
         }`}
     >
-      <div className="section-wrapper flex items-center justify-between h-20 md:h-24">
+      <div className="px-6 md:px-10 flex items-center justify-between h-20 md:h-24">
         {/* Logo */}
         <a href="#" className="flex items-center  group">
-          <div className="relative w-8 h-10 transition-transform group-hover:scale-110">
+          <div className="relative w-8 h-18 transition-transform group-hover:scale-110">
             <Image
-              src="/images/profin-logo-2.png"
+              src="/images/profin-logo-3.png"
               alt="Profin Logo"
               fill
+              sizes="40px"
               className="object-contain"
             />
           </div>
           <div className="flex flex-col">
-            <span className={`text-lg font-serif font-bold tracking-tight transition-colors ${scrolled ? "text-black" : "text-white group-hover:text-[var(--accent)]"}`}>
+            <span className={`text-lg font-sans font-bold tracking-tight transition-colors ${scrolled ? "text-black" : "text-white group-hover:text-[var(--accent)]"}`}>
               PROFIN LAB SCALE
             </span>
-            <span className={`text-[10px] uppercase tracking-[0.15em] transition-colors ${scrolled ? "text-gray-400" : "text-white/60"}`}>
-              Premium Lab Solutions
+            <span className={`text-[10px] tracking-[-0.015em] ml-[1px] mt-[-2px] uppercase transition-colors ${scrolled ? "text-gray-500" : "text-white/60"}`}>
+              Premium Testing Equipments
             </span>
           </div>
         </a>
@@ -79,7 +80,7 @@ export default function Navbar() {
             <button
               onMouseEnter={() => setLangDropdown(true)}
               onClick={() => setLangDropdown(!langDropdown)}
-              className={`flex items-center gap-2 px-4 py-2 text-[10px] font-bold uppercase tracking-widest transition-all
+              className={`flex items-center gap-2 px-4 py-2 text-[15px] font-bold uppercase tracking-widest transition-all
                 ${scrolled
                   ? "text-gray-800 border-gray-200 hover:border-[var(--accent)]"
                   : "text-white border-white/20 hover:border-white"}`}
@@ -92,13 +93,13 @@ export default function Navbar() {
             {langDropdown && (
               <div
                 onMouseLeave={() => setLangDropdown(false)}
-                className="absolute right-0 mt-0 w-32 bg-white shadow-2xl border border-gray-100 animate-fade-in"
+                className="absolute right-0 mt-0 w-32 bg-white shadow-2xl border border-gray-100 animate-fade-in rounded"
               >
                 {(["th", "en", "zh"] as Language[]).map((l) => (
                   <button
                     key={l}
                     onClick={() => { setLang(l); setLangDropdown(false); }}
-                    className={`w-full px-5 py-3 text-left text-[10px] font-bold uppercase tracking-widest hover:bg-gray-50 transition-colors ${lang === l ? "text-[var(--accent)]" : "text-gray-600"
+                    className={`w-full px-5 py-3 text-left text-[15px] font-bold uppercase tracking-widest hover:bg-gray-200 cursor-pointer transition-colors ${lang === l ? "text-[var(--accent)]" : "text-gray-600"
                       }`}
                   >
                     {langLabels[l]}

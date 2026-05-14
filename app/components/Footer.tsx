@@ -27,8 +27,11 @@ export default function Footer() {
                 <span className="text-xl font-serif font-bold tracking-tight">
                   I Don&apos;t Know Tech
                 </span>
-                <span className="text-[10px] uppercase tracking-[0.3em] text-[var(--accent)]">
+                {/* <span className="text-[10px] uppercase tracking-[0.3em] text-[var(--accent)]">
                   Premium Lab Solutions
+                </span> */}
+                <span className="text-[10px] uppercase tracking-[0.3em] text-[var(--accent)]">
+                  Premium Trsting Equipments
                 </span>
               </div>
             </div>

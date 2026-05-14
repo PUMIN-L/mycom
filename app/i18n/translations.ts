@@ -9,7 +9,7 @@ export const translations = {
     contact: { th: "ติดต่อเรา", en: "Contact", zh: "联系我们" },
   },
 
-  // Hero
+  // Hero Section
   hero: {
     tagline: {
       th: "ผู้เชี่ยวชาญด้านเครื่องมือทดสอบและสร้างห้องปฏิบัติการ",
@@ -67,16 +67,16 @@ export const translations = {
         desc: {
           th: "บริการซ่อมบำรุง ดูแลรักษา และสอบเทียบเครื่องมือทดสอบทุกประเภท โดยทีมวิศวกรผู้เชี่ยวชาญ",
           en: "Maintenance, repair, and calibration for all types of testing equipment by expert engineers.",
-          zh: "由专业工程师团队提供各类测试设备的维修、保养和校准服务。",
+          zh: "由专业工程师团队提供各类测试设备的维修、保养 and 校准服务。",
         },
       },
       {
         icon: "lab",
         title: { th: "ออกแบบและสร้างห้องแลป", en: "Lab Design & Construction", zh: "实验室设计与建设" },
         desc: {
-          th: "ออกแบบและสร้างห้องปฏิบัติการตามมาตรฐานสากล ครบวงจรตั้งแต่การออกแบบจนถึงติดตั้ง",
-          en: "Design and build laboratories to international standards, from concept to installation.",
-          zh: "按照国际标准设计和建设实验室，从概念设计到安装一条龙服务。",
+          th: "ออกแบบและก่อสร้างห้องปฏิบัติการมาตรฐานสากล",
+          en: "Design and build international-standard laboratories.",
+          zh: "设计和建设国际标准实验室。",
         },
       },
     ],
@@ -84,64 +84,85 @@ export const translations = {
 
   // Products
   products: {
-    sectionTag: { th: "สินค้าของเรา", en: "Our Products", zh: "我们的产品" },
-    title: {
-      th: "เครื่องมือทดสอบคุณภาพ",
-      en: "Quality Testing Equipment",
-      zh: "优质测试设备",
-    },
-    subtitle: {
-      th: "เราจำหน่ายเครื่องมือทดสอบหลากหลายประเภท ครอบคลุมทุกอุตสาหกรรม",
-      en: "We offer a wide range of testing equipment for every industry.",
-      zh: "我们提供各种测试设备，覆盖所有行业需求。",
-    },
+    title: { th: "สินค้าของเรา", en: "Our Products", zh: "我们的产品" },
+    subtitle: { th: "เครื่องมือทดสอบคุณภาพสูง", en: "High-Quality Testing Equipment", zh: "高品质测试设备" },
+    categories: [
+      { th: "เครื่องมือวัดขนาด", en: "Measuring Tools", zh: "测量工具" },
+      { th: "ตู้อบความร้อน", en: "Heating Ovens", zh: "加热箱" },
+      { th: "เครื่องทดสอบวัสดุ", en: "Material Testers", zh: "材料测试仪" },
+      { th: "เครื่องวัดสี", en: "Color Meters", zh: "色差仪" },
+      { th: "เครื่องชั่งดิจิตอล", en: "Digital Balances", zh: "数显台秤" },
+      { th: "เครื่องชั่งความละเอียดสูง", en: "Precision Balances", zh: "精密天平" },
+      { th: "เครื่องมือทดสอบอื่นๆ", en: "Other Testers", zh: "其他测试仪" },
+    ],
     items: [
+      // Category 0: Small Tools
       {
-        image: "/images/tensile-tester.png",
-        title: { th: "เครื่องทดสอบแรงดึง", en: "Tensile Testing Machine", zh: "拉力试验机" },
+        categoryId: 0,
+        image: "/images/digital-caliper.png",
+        title: { th: "เวอร์เนียร์ดิจิตอล", en: "Digital Caliper", zh: "数显卡尺" },
         desc: {
-          th: "ทดสอบแรงดึง แรงฉีก และการยืดของวัสดุ",
-          en: "Test tensile strength, tear, and elongation of materials.",
-          zh: "测试材料的拉力、撕裂力和伸长率。",
+          th: "เครื่องมือวัดขนาดภายนอก ภายใน และความลึกแบบดิจิตอลความแม่นยำสูง",
+          en: "High-precision digital tool for measuring internal, external, and depth dimensions.",
+          zh: "高精度数显工具，用于测量内外径及深度尺寸。",
         },
       },
       {
-        image: "/images/hardness-tester.png",
-        title: { th: "เครื่องวัดความแข็ง", en: "Hardness Tester", zh: "硬度计" },
+        categoryId: 0,
+        image: "/images/micrometer.png",
+        title: { th: "ไมโครมิเตอร์", en: "Micrometer", zh: "千分尺" },
         desc: {
-          th: "วัดค่าความแข็งของโลหะ พลาสติก และยาง",
-          en: "Measure hardness of metals, plastics, and rubber.",
-          zh: "测量金属、塑料和橡胶的硬度值。",
+          th: "เครื่องมือวัดขนาดที่มีความละเอียดสูงพิเศษ สำหรับงานวิศวกรรมที่ต้องการความแม่นยำ",
+          en: "Ultra-high resolution measuring tool for precision engineering tasks.",
+          zh: "超高分辨率测量工具，适用于精密工程任务。",
         },
       },
       {
-        image: "/images/compression-tester.png",
-        title: { th: "เครื่องทดสอบแรงกด", en: "Compression Tester", zh: "压力试验机" },
+        categoryId: 0,
+        image: "/images/dial-gauge.png",
+        title: { th: "ไดอัลเกจ", en: "Dial Gauge", zh: "百分表" },
         desc: {
-          th: "ทดสอบแรงกด ความแข็งแรง และความทนทานของวัสดุ",
-          en: "Test compression strength and durability of materials.",
-          zh: "测试材料的抗压强度和耐久性。",
+          th: "เครื่องมือวัดความคลาดเคลื่อนของตำแหน่งและระนาบ",
+          en: "Instrument for measuring position and flatness deviations.",
+          zh: "用于测量位置和平面度偏差的仪器。",
+        },
+      },
+
+      // Category 1: Hot Air Oven
+      {
+        categoryId: 1,
+        image: "/images/industrial-oven.png",
+        title: { th: "ตู้อบลมร้อนอุตสาหกรรม", en: "Industrial Hot Air Oven", zh: "工业热风烘箱" },
+        desc: {
+          th: "ตู้อบความร้อนสูงสำหรับการแปรรูปและทดสอบวัสดุในอุตสาหกรรม",
+          en: "High-temperature oven for material processing and industrial testing.",
+          zh: "用于材料处理和工业测试的高温烘箱。",
         },
       },
       {
-        image: "/images/viscometer.png",
-        title: { th: "เครื่องวัดความหนืด", en: "Viscometer", zh: "粘度计" },
+        categoryId: 1,
+        image: "/images/hot-air-oven.png",
+        title: { th: "ตู้อบแห้งในห้องปฏิบัติการ", en: "Laboratory Drying Oven", zh: "实验室干燥箱" },
         desc: {
-          th: "วัดค่าความหนืดของของเหลว สี หมึก กาว และอื่นๆ",
-          en: "Measure viscosity of liquids, paints, inks, and adhesives.",
-          zh: "测量液体、油漆、油墨和粘合剂的粘度。",
+          th: "ตู้อบสำหรับงานวิเคราะห์และอบแห้งเครื่องแก้วในห้องแล็บ",
+          en: "Oven for analytical tasks and drying glassware in laboratories.",
+          zh: "用于实验室分析任务和玻璃器皿干燥的烘箱。",
         },
       },
       {
-        image: "/images/colorimeter.png",
-        title: { th: "เครื่องวัดสี", en: "Colorimeter", zh: "色差仪" },
+        categoryId: 1,
+        image: "/images/industrial-oven.png",
+        title: { th: "ตู้อบสุญญากาศ", en: "Vacuum Drying Oven", zh: "真空干燥箱" },
         desc: {
-          th: "วัดค่าสีและความแตกต่างของสี ตามมาตรฐาน CIE",
-          en: "Measure color values and differences per CIE standards.",
-          zh: "按照CIE标准测量颜色值和色差。",
+          th: "ตู้อบความร้อนในสภาวะสุญญากาศ ป้องกันการเกิดปฏิกิริยาออกซิเดชัน",
+          en: "Heat treatment in vacuum conditions to prevent oxidation.",
+          zh: "真空条件下的热处理，防止氧化。",
         },
       },
+
+      // Category 2: Film & Plastic Tester
       {
+        categoryId: 2,
         image: "/images/cof-tester.png",
         title: { th: "เครื่องวัดค่า COF", en: "COF Tester", zh: "摩擦系数测试仪" },
         desc: {
@@ -151,34 +172,151 @@ export const translations = {
         },
       },
       {
-        image: "/images/leak-tester.png",
-        title: { th: "เครื่อง Leak Test", en: "Leak Tester", zh: "泄漏测试仪" },
-        desc: {
-          th: "ทดสอบการรั่วซึมของบรรจุภัณฑ์ด้วยระบบสุญญากาศ",
-          en: "Test package seal integrity with vacuum systems.",
-          zh: "利用真空系统测试包装的密封完整性。",
-        },
-      },
-      {
+        categoryId: 2,
         image: "/images/film-tester.png",
-        title: {
-          th: "เครื่องทดสอบฟิล์ม/แพ็คเกจจิ้ง",
-          en: "Film & Packaging Tester",
-          zh: "薄膜/包装测试仪",
-        },
+        title: { th: "เครื่องทดสอบฟิล์ม", en: "Film Property Tester", zh: "薄膜性能测试仪" },
         desc: {
-          th: "ทดสอบคุณสมบัติของพลาสติกฟิล์มและบรรจุภัณฑ์",
-          en: "Test properties of plastic films and packaging materials.",
-          zh: "测试塑料薄膜和包装材料的性能。",
+          th: "ทดสอบคุณสมบัติการดึงและฉีกขาดของพลาสติกฟิล์ม",
+          en: "Test tensile and tear properties of plastic films.",
+          zh: "测试塑料薄膜的拉伸和撕裂性能。",
         },
       },
       {
-        image: "/images/lab-construction.png",
-        title: { th: "งานสร้างห้องแลป", en: "Lab Construction", zh: "实验室建设" },
+        categoryId: 2,
+        image: "/images/compression-tester.png",
+        title: { th: "เครื่องทดสอบแรงกด", en: "Compression Tester", zh: "压力试验机" },
         desc: {
-          th: "ออกแบบและก่อสร้างห้องปฏิบัติการมาตรฐานสากล",
-          en: "Design and build international-standard laboratories.",
-          zh: "设计和建设国际标准实验室。",
+          th: "ทดสอบแรงกด ความแข็งแรง และความทนทานของวัสดุ",
+          en: "Test compression strength and durability of materials.",
+          zh: "测试材料的抗压强度和耐久性。",
+        },
+      },
+      {
+        categoryId: 2,
+        image: "/images/viscometer.png",
+        title: { th: "เครื่องวัดความหนืด", en: "Viscometer", zh: "粘度计" },
+        desc: {
+          th: "วัดค่าความหนืดของของเหลว สี หมึก กาว และอื่นๆ",
+          en: "Measure viscosity of liquids, paints, inks, and adhesives.",
+          zh: "测量液体、油漆、油墨和粘合剂的粘度。",
+        },
+      },
+      {
+        categoryId: 2,
+        image: "/images/film-tester.png",
+        title: { th: "เครื่องวัดความหนาฟิล์ม", en: "Film Thickness Gauge", zh: "薄膜测厚仪" },
+        desc: {
+          th: "วัดความหนาของแผ่นฟิล์มและพลาสติกแบบละเอียด",
+          en: "Precise measurement of film and plastic sheet thickness.",
+          zh: "精确测量薄膜和塑料片的厚度。",
+        },
+      },
+
+      // Category 3: Color Meter/Colorimeter
+      {
+        categoryId: 3,
+        image: "/images/colorimeter.png",
+        title: { th: "เครื่องวัดสี", en: "Portable Colorimeter", zh: "便携式色差仪" },
+        desc: {
+          th: "เครื่องวัดสีแบบพกพา แม่นยำสูง สำหรับงานควบคุมคุณภาพ",
+          en: "High-precision portable color meter for quality control.",
+          zh: "高精度便携式色差仪，用于质量控制。",
+        },
+      },
+      {
+        categoryId: 3,
+        image: "/images/colorimeter.png",
+        title: { th: "สเปกโตรโฟโตมิเตอร์", en: "Spectrophotometer", zh: "分光光度计" },
+        desc: {
+          th: "วิเคราะห์ค่าสีเชิงลึกและวัดค่าการสะท้อนแสง",
+          en: "In-depth color analysis and light reflectance measurement.",
+          zh: "深入的颜色分析和光反射率测量。",
+        },
+      },
+      {
+        categoryId: 3,
+        image: "/images/colorimeter.png",
+        title: { th: "เครื่องวัดความเงา", en: "Gloss Meter", zh: "光泽度计" },
+        desc: {
+          th: "วัดค่าความเงาของพื้นผิววัสดุหลายมุมมอง",
+          en: "Measure surface gloss of materials from multiple angles.",
+          zh: "从多个角度测量材料的表面光泽度。",
+        },
+      },
+
+      // Category 4: Bench Scale / Table Scale
+      {
+        categoryId: 4,
+        image: "/images/bench-scale.png",
+        title: { th: "เครื่องชั่งตั้งโต๊ะดิจิตอล", en: "Digital Bench Scale", zh: "数显台秤" },
+        desc: {
+          th: "เครื่องชั่งตั้งโต๊ะความแม่นยำสูงสำหรับงานทั่วไป",
+          en: "High-precision bench scale for general purposes.",
+          zh: "用于通用目的的高精度台秤。",
+        },
+      },
+      {
+        categoryId: 4,
+        image: "/images/bench-scale.png",
+        title: { th: "เครื่องชั่งนับจำนวน", en: "Counting Scale", zh: "计数秤" },
+        desc: {
+          th: "ฟังก์ชันนับจำนวนชิ้นงานความแม่นยำสูง",
+          en: "High-precision piece counting function.",
+          zh: "高精度的零件计数功能。",
+        },
+      },
+      {
+        categoryId: 4,
+        image: "/images/bench-scale.png",
+        title: { th: "เครื่องชั่งกันน้ำ", en: "Waterproof Table Scale", zh: "防水桌秤" },
+        desc: {
+          th: "ทนทานต่อความชื้นและน้ำ เหมาะสำหรับอุตสาหกรรมอาหาร",
+          en: "Moisture and water resistant, ideal for food industry.",
+          zh: "防潮防水，是食品行业的理想选择。",
+        },
+      },
+
+      // Category 5: Precision Balance
+      {
+        categoryId: 5,
+        image: "/images/analytical-balance.png",
+        title: { th: "เครื่องชั่งวิเคราะห์", en: "Analytical Balance", zh: "分析天平" },
+        desc: {
+          th: "ความละเอียดสูงพิเศษ 4-5 ตำแหน่ง สำหรับงานแล็บ",
+          en: "Ultra-high resolution (4-5 digits) for laboratory work.",
+          zh: "超高分辨率（4-5位），用于实验室工作。",
+        },
+      },
+      {
+        categoryId: 5,
+        image: "/images/precision-balance.png",
+        title: { th: "เครื่องชั่งความแม่นยำสูง", en: "Precision Balance", zh: "精密天平" },
+        desc: {
+          th: "ชั่งน้ำหนักได้รวดเร็วและแม่นยำ พร้อมระบบกันลม",
+          en: "Fast and accurate weighing with windshield system.",
+          zh: "配备防风罩系统的快速准确称重。",
+        },
+      },
+
+      // Category 6: Other Testers
+      {
+        categoryId: 6,
+        image: "/images/hardness-tester.png",
+        title: { th: "เครื่องวัดความแข็ง", en: "Durometer", zh: "邵氏硬度计" },
+        desc: {
+          th: "วัดความแข็งของโลหะ พลาสติก และยาง",
+          en: "Measure hardness of metals, plastics, and rubber.",
+          zh: "测量金属、塑料和橡胶的硬度值。",
+        },
+      },
+      {
+        categoryId: 6,
+        image: "/images/leak-tester.png",
+        title: { th: "เครื่องทดสอบการรั่วซึม", en: "Leak Tester", zh: "泄漏测试仪" },
+        desc: {
+          th: "ตรวจสอบความสมบูรณ์ของบรรจุภัณฑ์",
+          en: "Check the integrity of packaging.",
+          zh: "检查包装的完整性。",
         },
       },
     ],
