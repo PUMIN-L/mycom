@@ -7,42 +7,44 @@ export default function Footer() {
   const t = useT();
 
   const quickLinks = [
+    { href: "/", label: t(translations.nav.home) },
     { href: "#services", label: t(translations.nav.services) },
     { href: "#products", label: t(translations.nav.products) },
+    { href: "/about", label: t(translations.nav.about) },
     { href: "#clients", label: t(translations.nav.clients) },
     { href: "#contact", label: t(translations.nav.contact) },
   ];
 
   return (
-    <footer className="bg-[var(--brand-navy)] text-white pt-24 pb-12">
+    <footer className="bg-[#2d2e38] text-white pt-24 pb-12">
       <div className="section-wrapper">
         <div className="grid grid-cols-1 md:grid-cols-4 gap-16 mb-20">
           {/* Brand Column */}
           <div className="md:col-span-1">
-            <div className="flex items-center gap-3 mb-8">
-              <div className="w-12 h-12 flex items-center justify-center bg-[var(--accent)] text-white font-serif italic font-bold text-2xl">
-                IDK
+            <a href="/about" className="flex items-center gap-3 mb-8 group cursor-pointer">
+              <div className="w-12 h-12 flex items-center justify-center bg-[var(--accent)] text-white font-serif italic font-bold text-2xl transition-transform group-hover:scale-110">
+                PF
               </div>
               <div className="flex flex-col">
-                <span className="text-xl font-serif font-bold tracking-tight">
-                  I Don&apos;t Know Tech
+                <span className="text-xl font-serif font-bold tracking-tight group-hover:text-[var(--accent)] transition-colors">
+                  PROFIN LAB SCALE
                 </span>
                 {/* <span className="text-[10px] uppercase tracking-[0.3em] text-[var(--accent)]">
                   Premium Lab Solutions
                 </span> */}
-                <span className="text-[10px] uppercase tracking-[0.3em] text-[var(--accent)]">
-                  Premium Trsting Equipments
+                <span className="text-xs uppercase  text-[var(--accent)] font-medium">
+                  Premium Testing Equipments
                 </span>
               </div>
-            </div>
-            <p className="text-white/60 text-sm leading-relaxed font-light">
+            </a>
+            <p className="text-white/60 text-base leading-relaxed font-light">
               {t(translations.footer.description)}
             </p>
           </div>
 
           {/* Navigation Column */}
           <div>
-            <h4 className="text-[10px] font-bold uppercase tracking-[0.4em] text-[var(--accent)] mb-8">
+            <h4 className="text-xl font-bold uppercase tracking-[0.4em] text-[var(--accent)] mb-8">
               {t(translations.footer.quickLinks)}
             </h4>
             <ul className="space-y-4">
@@ -50,7 +52,7 @@ export default function Footer() {
                 <li key={link.href}>
                   <a
                     href={link.href}
-                    className="text-white/70 hover:text-white transition-all text-sm font-light flex items-center group"
+                    className="text-white/70 hover:text-white transition-all text-base font-light flex items-center group"
                   >
                     <span className="w-0 h-[1px] bg-[var(--accent)] transition-all group-hover:w-4 group-hover:mr-3" />
                     {link.label}
@@ -62,10 +64,10 @@ export default function Footer() {
 
           {/* Contact Column */}
           <div>
-            <h4 className="text-[10px] font-bold uppercase tracking-[0.4em] text-[var(--accent)] mb-8">
+            <h4 className="text-xl font-bold uppercase tracking-[0.4em] text-[var(--accent)] mb-8">
               {t(translations.footer.contactInfo)}
             </h4>
-            <div className="space-y-6 text-white/70 text-sm font-light">
+            <div className="space-y-6 text-white/70 text-base font-light">
               <p className="leading-relaxed">{t(translations.contact.address)}</p>
               <div className="space-y-2">
                 <p className="flex items-center gap-3">
@@ -83,7 +85,7 @@ export default function Footer() {
 
           {/* Social/CTA Column */}
           <div>
-            <h4 className="text-[10px] font-bold uppercase tracking-[0.4em] text-[var(--accent)] mb-8">
+            <h4 className="text-xl font-bold uppercase tracking-[0.4em] text-[var(--accent)] mb-8">
               Connect
             </h4>
             <div className="flex gap-4">
@@ -91,7 +93,7 @@ export default function Footer() {
                 href="https://line.me/ti/p/~puminkmutnb"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="w-12 h-12 border border-white/20 flex items-center justify-center hover:bg-white hover:text-[var(--brand-navy)] transition-all"
+                className="w-12 h-12 border border-white/20 flex items-center justify-center hover:bg-white hover:text-footer transition-all"
                 aria-label="LINE"
               >
                 <svg viewBox="0 0 24 24" className="w-6 h-6 fill-current">
@@ -100,7 +102,7 @@ export default function Footer() {
               </a>
               <a
                 href="mailto:ampumin@gmail.com"
-                className="w-12 h-12 border border-white/20 flex items-center justify-center hover:bg-white hover:text-[var(--brand-navy)] transition-all"
+                className="w-12 h-12 border border-white/20 flex items-center justify-center hover:bg-white hover:text-footer transition-all"
                 aria-label="Email"
               >
                 <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -113,13 +115,13 @@ export default function Footer() {
 
         {/* Bottom Bar */}
         <div className="pt-8 border-t border-white/10 flex flex-col md:row items-center justify-between gap-4">
-          <p className="text-[10px] text-white/40 uppercase tracking-widest">
+          <p className="text-xl text-white/40 uppercase tracking-widest">
             {t(translations.footer.copyright)}
           </p>
-          <div className="flex gap-8">
-            <a href="#" className="text-[10px] text-white/40 uppercase tracking-widest hover:text-white transition-colors">Privacy Policy</a>
-            <a href="#" className="text-[10px] text-white/40 uppercase tracking-widest hover:text-white transition-colors">Terms of Service</a>
-          </div>
+          {/* <div className="flex gap-8">
+            <a href="#" className="text-xs text-white/40 uppercase tracking-widest hover:text-white transition-colors">Privacy Policy</a>
+            <a href="#" className="text-xs text-white/40 uppercase tracking-widest hover:text-white transition-colors">Terms of Service</a>
+          </div> */}
         </div>
       </div>
     </footer>
