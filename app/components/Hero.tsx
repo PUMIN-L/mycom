@@ -8,7 +8,7 @@ export default function Hero() {
   return (
     <section
       id="hero"
-      className="relative min-h-screen flex items-center justify-start overflow-hidden bg-white "
+      className="relative min-h-screen flex items-end md:items-center justify-start overflow-hidden bg-white pb-12 md:pb-0"
     >
       {/* Background with Overlay */}
       <div className="absolute inset-0 z-0">
@@ -25,8 +25,8 @@ export default function Hero() {
       </div>
 
       {/* Content */}
-      <div className="relative z-10 mt-40 px-6 md:px-10">
-        <div className=" border-white/20 pt-40 pb-6 md:pt-80 md:pb-10 px-0">
+      <div className="relative z-10 w-full px-6 md:px-10">
+        <div className="border-white/20 pt-0 pb-6 md:pt-80 md:pb-10 px-0">
           {/* Tagline */}
           {/* <div className="animate-fade-in-up opacity-0 delay-100">
             <span className="inline-block px-6 py-2 rounded-full text-xs md:text-sm font-semibold tracking-widest uppercase border border-white/30 text-white bg-white/10 backdrop-blur-md mb-8">
@@ -53,7 +53,7 @@ export default function Hero() {
           </p>
 
           {/* CTA */}
-          <div className="flex flex-col sm:flex-row items-center justify-start gap-6 animate-fade-in-up opacity-0 delay-400">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-start gap-4 sm:gap-6 animate-fade-in-up opacity-0 delay-400">
             {/* <a
             href="/contact"
             className="group relative px-10 py-4 overflow-hidden bg-white text-[var(--accent)] font-bold transition-all hover:text-white"

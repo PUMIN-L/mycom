@@ -133,22 +133,22 @@ export default function Navbar() {
                 className="absolute right-0 mt-0 w-32 bg-white shadow-2xl border border-gray-100 animate-fade-in rounded"
               >
                 {(["th", "en", "zh"] as Language[]).map((l) => (
-                    <button
-                      key={l}
-                      onClick={() => { setLang(l); setLangDropdown(false); }}
-                      className={`w-full px-5 py-3 text-left text-[15px] font-bold uppercase tracking-widest hover:bg-gray-200 cursor-pointer transition-colors flex items-center gap-2 ${lang === l ? "text-[var(--accent)]" : "text-gray-600"
-                        }`}
-                    >
-                      <div className="relative w-5 h-3.5">
-                        <Image
-                          src={flags[l]}
-                          alt={l}
-                          fill
-                          className="object-contain"
-                        />
-                      </div>
-                      {langLabels[l]}
-                    </button>
+                  <button
+                    key={l}
+                    onClick={() => { setLang(l); setLangDropdown(false); }}
+                    className={`w-full px-5 py-3 text-left text-[15px] font-bold uppercase tracking-widest hover:bg-gray-200 cursor-pointer transition-colors flex items-center gap-2 ${lang === l ? "text-[var(--accent)]" : "text-gray-600"
+                      }`}
+                  >
+                    <div className="relative w-5 h-3.5">
+                      <Image
+                        src={flags[l]}
+                        alt={l}
+                        fill
+                        className="object-contain"
+                      />
+                    </div>
+                    {langLabels[l]}
+                  </button>
                 ))}
               </div>
             )}
@@ -160,12 +160,13 @@ export default function Navbar() {
       {mobileOpen && (
         <div className="md:hidden bg-white border-t border-gray-100 animate-fade-in h-screen">
           <div className="section-wrapper py-10 flex flex-col gap-8">
-            {navLinks.map((link) => (
+            {navLinks.map((link, index) => (
               <a
                 key={link.href}
                 href={link.href}
                 onClick={() => setMobileOpen(false)}
-                className="text-2xl font-serif text-navy hover:text-[var(--accent)] transition-colors"
+                className={`text-2xl font-serif text-navy hover:text-[var(--accent)] transition-colors ${index === 0 ? "mt-[20px]" : ""
+                  }`}
               >
                 {link.label}
               </a>
@@ -174,24 +175,24 @@ export default function Navbar() {
               <span className="text-[10px] uppercase tracking-widest text-gray-400">Select Language</span>
               <div className="flex gap-4">
                 {(["th", "en", "zh"] as Language[]).map((l) => (
-                    <button
-                      key={l}
-                      onClick={() => { setLang(l); setMobileOpen(false); }}
-                      className={`px-4 py-2 text-[10px] font-bold uppercase tracking-widest border transition-all flex items-center gap-2 ${lang === l
-                        ? "bg-[var(--accent)] text-white border-[var(--accent)]"
-                        : "text-gray-600 border-gray-200"
-                        }`}
-                    >
-                      <div className="relative w-4 h-3">
-                        <Image
-                          src={flags[l]}
-                          alt={l}
-                          fill
-                          className="object-contain"
-                        />
-                      </div>
-                      {langLabels[l]}
-                    </button>
+                  <button
+                    key={l}
+                    onClick={() => { setLang(l); setMobileOpen(false); }}
+                    className={`px-4 py-2 text-[10px] font-bold uppercase tracking-widest border transition-all flex items-center gap-2 ${lang === l
+                      ? "bg-[var(--accent)] text-white border-[var(--accent)]"
+                      : "text-gray-600 border-gray-200"
+                      }`}
+                  >
+                    <div className="relative w-4 h-3">
+                      <Image
+                        src={flags[l]}
+                        alt={l}
+                        fill
+                        className="object-contain"
+                      />
+                    </div>
+                    {langLabels[l]}
+                  </button>
                 ))}
               </div>
             </div>

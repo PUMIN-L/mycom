@@ -31,28 +31,30 @@ export default function Products() {
 
         <div id="product-content" className="flex flex-col lg:flex-row gap-16 lg:gap-24 scroll-mt-32">
           {/* Sidebar Navigation */}
-          <div className="lg:w-1/4">
-            <div className="sticky top-32 self-start">
-              <div className="flex flex-col gap-6">
+          <div className="lg:w-1/4 w-full">
+            <div className="lg:sticky lg:top-32 self-start mb-12 lg:mb-0">
+              <div className="grid grid-rows-2 grid-flow-col lg:flex lg:flex-col gap-x-4 gap-y-2 lg:gap-8 overflow-x-auto no-scrollbar -mx-4 px-4 lg:mx-0 lg:px-0">
                 {translations.products.categories.map((category, idx) => (
                   <button
                     key={idx}
                     onClick={() => {
-                      const element = document.getElementById("product-content");
-                      if (element) {
-                        element.scrollIntoView({ behavior: "auto", block: "start" });
+                      if (window.innerWidth >= 1024) {
+                        const element = document.getElementById("product-content");
+                        if (element) {
+                          element.scrollIntoView({ behavior: "auto", block: "start" });
+                        }
                       }
                       setSelectedCategory(idx);
                     }}
-                    className={`group text-left transition-all duration-300 w-fit cursor-pointer ${idx === selectedCategory
-                      ? "text-[var(--text-primary)]"
+                    className={`group text-left transition-all duration-300 flex-shrink-0 cursor-pointer ${idx === selectedCategory
+                      ? "text-[var(--accent)]"
                       : "text-gray-400 hover:text-[var(--text-primary)]"
                       }`}
                   >
-                    <span className="relative py-1 font-serif text-xl md:text-2xl tracking-wide inline-block">
+                    <span className="relative py-2 font-serif text-lg md:text-2xl tracking-wide inline-block whitespace-nowrap">
                       {t(category)}
                       <div
-                        className={`absolute bottom-0 left-0 h-[1.5px] bg-[var(--text-primary)] transition-all duration-500 ${idx === selectedCategory ? "w-full" : "w-0 group-hover:w-full opacity-30"
+                        className={`absolute bottom-0 left-0 h-[2px] bg-[var(--accent)] transition-all duration-500 ${idx === selectedCategory ? "w-full" : "w-0 group-hover:w-full opacity-30"
                           }`}
                       />
                     </span>
@@ -68,10 +70,10 @@ export default function Products() {
               {filteredItems.map((item, i) => (
                 <div
                   key={`${selectedCategory}-${i}`}
-                  className="group flex flex-col premium-card rounded-2xl p-4"
+                  className="group flex flex-col premium-card overflow-hidden"
                   style={{ animationDelay: `${i * 100}ms` }}
                 >
-                  <div className="relative aspect-[4/5] overflow-hidden rounded-xl mb-8 bg-gray-50">
+                  <div className="relative aspect-[4/5] overflow-hidden bg-gray-50">
                     <Image
                       src={item.image}
                       alt={t(item.title)}
@@ -82,8 +84,8 @@ export default function Products() {
                     <div className="absolute inset-0 bg-black/0 group-hover:bg-black/5 transition-colors duration-500" />
                   </div>
 
-                  <div className="flex flex-col px-4 pb-4">
-                    <h3 className="text-2xl md:text-2xl font-serif text-[var(--text-primary)] mb-4 transition-colors group-hover:text-[var(--accent)]">
+                  <div className="flex flex-col p-6 md:p-8">
+                    <h3 className="text-xl md:text-2xl font-serif text-[var(--text-primary)] mb-4 transition-colors group-hover:text-[var(--accent)]">
                       {t(item.title)}
                     </h3>
                     <p className="text-gray-400 leading-relaxed font-light text-base line-clamp-3 mb-8 h-12">
