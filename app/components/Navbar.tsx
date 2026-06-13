@@ -38,8 +38,9 @@ export default function Navbar() {
     { href: "/", label: t(translations.nav.home) },
     { href: "/#services", label: t(translations.nav.services) },
     { href: "/#products", label: t(translations.nav.products) },
+    { href: "/catalog", label: t(translations.nav.catalog) },
     { href: "/about", label: t(translations.nav.about) },
-    { href: "/#clients", label: t(translations.nav.clients) },
+    // { href: "/#clients", label: t(translations.nav.clients) },
     { href: "/contact", label: t(translations.nav.contact) },
   ];
 
@@ -53,7 +54,7 @@ export default function Navbar() {
     >
       <div className="w-full px-4 md:px-16 flex items-center justify-between h-20 md:h-24">
         {/* Logo */}
-        <a href="/about" className="flex items-center group relative z-10">
+        <a href="/" className="flex items-center group relative z-10">
           <div className="relative w-8 h-18 transition-transform group-hover:scale-110">
             <Image
               src="/images/profin-logo-3.png"

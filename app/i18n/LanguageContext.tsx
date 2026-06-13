@@ -23,8 +23,16 @@ function detectBrowserLanguage(): Language {
 }
 
 export function LanguageProvider({ children }: { children: ReactNode }) {
+  // Start at "th" so the server-rendered HTML matches the first client render
+  // (no hydration mismatch). After mount we sync to the saved/detected language.
+  //
+  // We intentionally DO NOT gate rendering on a `mounted` flag. The previous
+  // `visibility:hidden` wrapper hid the entire page until hydration finished,
+  // which delayed Largest Contentful Paint badly on mobile (LCP ~4.1s). The
+  // hero image and layout are language-agnostic, so the only visible effect of
+  // syncing after mount is a brief text swap for non-Thai returning visitors —
+  // a far better trade-off than blocking first paint for everyone.
   const [lang, setLang] = useState<Language>("th");
-  const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
     const saved = localStorage.getItem("idkt-lang") as Language | null;
@@ -33,17 +41,12 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
     } else {
       setLang(detectBrowserLanguage());
     }
-    setMounted(true);
   }, []);
 
   const handleSetLang = (newLang: Language) => {
     setLang(newLang);
     localStorage.setItem("idkt-lang", newLang);
   };
-
-  if (!mounted) {
-    return <div style={{ visibility: "hidden" }}>{children}</div>;
-  }
 
   return (
     <LanguageContext.Provider value={{ lang, setLang: handleSetLang }}>
@@ -58,5 +61,10 @@ export function useLanguage() {
 
 export function useT() {
   const { lang } = useLanguage();
-  return (obj: Record<Language, string>) => obj[lang];
+  return (obj: Record<Language, string> | undefined) => {
+    if (!obj) return "";
+    if (lang === "zh") return obj.zh || obj.en || obj.th;
+    if (lang === "en") return obj.en || obj.th;
+    return obj.th || obj.en || obj.zh;
+  };
 }

@@ -8,7 +8,7 @@ export default function Hero() {
   return (
     <section
       id="hero"
-      className="relative min-h-screen flex items-end md:items-center justify-start overflow-hidden bg-white pb-12 md:pb-0"
+      className="relative min-h-screen max-h-screen flex items-end justify-start overflow-hidden bg-white pb-12 md:pb-16 "
     >
       {/* Background with Overlay */}
       <div className="absolute inset-0 z-0">
@@ -25,8 +25,8 @@ export default function Hero() {
       </div>
 
       {/* Content */}
-      <div className="relative z-10 w-full px-6 md:px-10">
-        <div className="border-white/20 pt-0 pb-6 md:pt-80 md:pb-10 px-0">
+      <div className="relative z-10 w-full px-6 md:px-10 ">
+        <div className="border-white/20 pt-0 pb-6 md:pb-10 px-0 ">
           {/* Tagline */}
           {/* <div className="animate-fade-in-up opacity-0 delay-100">
             <span className="inline-block px-6 py-2 rounded-full text-xs md:text-sm font-semibold tracking-widest uppercase border border-white/30 text-white bg-white/10 backdrop-blur-md mb-8">

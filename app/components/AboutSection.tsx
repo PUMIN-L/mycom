@@ -44,6 +44,7 @@ export default function AboutSection() {
             <p className="text-gray-600 leading-relaxed font-normal">
               {t(translations.aboutPage.visionDesc)}
             </p>
+            {/* 
             <div className="pt-8 grid grid-cols-2 gap-8">
               <div>
                 <span className="text-3xl md:text-4xl font-bold text-[var(--accent)] block mb-2">10+</span>
@@ -58,6 +59,7 @@ export default function AboutSection() {
                 </span>
               </div>
             </div>
+            */}
           </div>
 
           <div className="space-y-8 animate-fade-in delay-500">
@@ -68,9 +70,9 @@ export default function AboutSection() {
               <li className="flex gap-4">
                 <div className="w-8 h-8 rounded-full bg-[var(--accent)]/10 flex items-center justify-center flex-shrink-0 text-[var(--accent)] font-bold">1</div>
                 <div>
-                  <h4 className="font-bold text-[var(--brand-navy)] mb-1 uppercase tracking-wider text-sm">
+                  <h3 className="font-bold text-[var(--brand-navy)] mb-1 uppercase tracking-wider text-sm">
                     {t(translations.aboutPage.value1Title)}
-                  </h4>
+                  </h3>
                   <p className="text-gray-500 text-sm">
                     {t(translations.aboutPage.value1Desc)}
                   </p>
@@ -79,9 +81,9 @@ export default function AboutSection() {
               <li className="flex gap-4">
                 <div className="w-8 h-8 rounded-full bg-[var(--accent)]/10 flex items-center justify-center flex-shrink-0 text-[var(--accent)] font-bold">2</div>
                 <div>
-                  <h4 className="font-bold text-[var(--brand-navy)] mb-1 uppercase tracking-wider text-sm">
+                  <h3 className="font-bold text-[var(--brand-navy)] mb-1 uppercase tracking-wider text-sm">
                     {t(translations.aboutPage.value2Title)}
-                  </h4>
+                  </h3>
                   <p className="text-gray-500 text-sm">
                     {t(translations.aboutPage.value2Desc)}
                   </p>
@@ -90,9 +92,9 @@ export default function AboutSection() {
               <li className="flex gap-4">
                 <div className="w-8 h-8 rounded-full bg-[var(--accent)]/10 flex items-center justify-center flex-shrink-0 text-[var(--accent)] font-bold">3</div>
                 <div>
-                  <h4 className="font-bold text-[var(--brand-navy)] mb-1 uppercase tracking-wider text-sm">
+                  <h3 className="font-bold text-[var(--brand-navy)] mb-1 uppercase tracking-wider text-sm">
                     {t(translations.aboutPage.value3Title)}
-                  </h4>
+                  </h3>
                   <p className="text-gray-500 text-sm">
                     {t(translations.aboutPage.value3Desc)}
                   </p>
