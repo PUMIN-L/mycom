@@ -297,11 +297,19 @@ export default function ShowcaseClient({
   // ── Save (PUT) ─────────────────────────────────────────────────────────────
   async function saveBlocks(blocks: ContentBlock[]) {
     if (!content) return;
-    await fetch(`/api/contents/${content.id}`, {
+    const res = await fetch(`/api/contents/${content.id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ title: editTitle, blocks }),
     });
+    if (res.ok) {
+      // Image/gallery/block operations auto-persist immediately. Keep the
+      // `content` baseline in sync with what was just saved so that Cancel
+      // (which resets editTitle/editBlocks from `content`) can't make the UI
+      // "revert" a change that already lives in the DB — otherwise the view and
+      // the database diverge.
+      setContent((prev) => ({ ...prev, title: editTitle, blocks }));
+    }
   }
 
   async function handleSaveEdit() {

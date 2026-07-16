@@ -1,4 +1,4 @@
-import { query } from "./db";
+import { query, withTransaction } from "./db";
 import { RowDataPacket, ResultSetHeader } from "mysql2";
 import type { ProductCategory, ProductData } from "./types";
 import { sanitizeRichText } from "./sanitizeHtml";
@@ -18,25 +18,35 @@ export async function getAllCategories(): Promise<ProductCategory[]> {
 export async function addCategory(
   category: Omit<ProductCategory, "id" | "sortOrder">
 ): Promise<ProductCategory> {
-  // Generate new ID (max id + 1)
-  const [maxRows] = await query<RowDataPacket[]>(
-    "SELECT MAX(id) as maxId FROM product_categories"
-  );
-  const nextId = (maxRows[0].maxId ?? 0) + 1;
-  const sortOrder = nextId; // Just use ID as default sort order
-
-  await query(
-    "INSERT INTO product_categories (id, name_th, name_en, name_zh, sortOrder) VALUES (?, ?, ?, ?, ?)",
-    [nextId, category.name_th, category.name_en, category.name_zh, sortOrder]
-  );
-
-  return {
-    id: nextId,
-    name_th: category.name_th,
-    name_en: category.name_en,
-    name_zh: category.name_zh,
-    sortOrder,
-  };
+  // Allocate id = MAX(id)+1 and insert it. Under concurrency two callers can
+  // compute the same next id; the loser hits a duplicate-key error and simply
+  // retries with a freshly-read max, instead of failing the request (or
+  // silently overwriting a sibling category).
+  const MAX_ATTEMPTS = 5;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const [maxRows] = await query<RowDataPacket[]>(
+      "SELECT MAX(id) as maxId FROM product_categories"
+    );
+    const nextId = (maxRows[0].maxId ?? 0) + 1;
+    try {
+      await query(
+        "INSERT INTO product_categories (id, name_th, name_en, name_zh, sortOrder) VALUES (?, ?, ?, ?, ?)",
+        [nextId, category.name_th, category.name_en, category.name_zh, nextId]
+      );
+      return {
+        id: nextId,
+        name_th: category.name_th,
+        name_en: category.name_en,
+        name_zh: category.name_zh,
+        sortOrder: nextId,
+      };
+    } catch (error) {
+      const isDup = (error as { code?: string })?.code === "ER_DUP_ENTRY";
+      if (isDup && attempt < MAX_ATTEMPTS) continue;
+      throw error;
+    }
+  }
+  throw new Error("Failed to allocate a category id after multiple attempts");
 }
 
 export async function deleteCategory(id: number): Promise<boolean> {
@@ -59,16 +69,18 @@ export async function updateCategory(
 }
 
 export async function reorderCategories(categoryIds: number[]): Promise<boolean> {
-  // Update each category's sortOrder to match its index in the array
-  // A transaction would be ideal, but for simplicity we'll do it sequentially or with Promise.all
+  // Apply the new sortOrder for every category atomically. A partial failure
+  // (e.g. a transient error mid-way) must not leave the ordering half-applied,
+  // so run all the UPDATEs inside one transaction that rolls back on error.
   try {
-    const promises = categoryIds.map((id, index) => {
-      return query(
-        "UPDATE product_categories SET sortOrder = ? WHERE id = ?",
-        [index, id]
-      );
+    await withTransaction(async (conn) => {
+      for (let index = 0; index < categoryIds.length; index++) {
+        await conn.query(
+          "UPDATE product_categories SET sortOrder = ? WHERE id = ?",
+          [index, categoryIds[index]]
+        );
+      }
     });
-    await Promise.all(promises);
     return true;
   } catch (error) {
     console.error("Failed to reorder categories:", error);
@@ -159,33 +171,32 @@ export async function updateProduct(
   const existing = await getProduct(id);
   if (!existing) return undefined;
 
-  const merged: ProductData = {
-    ...existing,
-    ...updates,
-    id, // id cannot change
-    // Re-sanitize descriptions on every write (they may have changed).
-    desc_th: sanitizeRichText(updates.desc_th ?? existing.desc_th),
-    desc_en: sanitizeRichText(updates.desc_en ?? existing.desc_en),
-    desc_zh: sanitizeRichText(updates.desc_zh ?? existing.desc_zh),
+  // Build a partial UPDATE that only touches the columns actually supplied, so
+  // two concurrent edits to different fields don't clobber each other via a
+  // read-modify-write of the whole row. Descriptions are re-sanitized on write.
+  const sets: string[] = [];
+  const values: unknown[] = [];
+  const set = (col: string, val: unknown) => {
+    sets.push(`${col} = ?`);
+    values.push(val);
   };
 
-  const isPublished = merged.isPublished !== false;
+  if (updates.categoryId !== undefined) set("categoryId", updates.categoryId);
+  if (updates.image !== undefined) set("image", updates.image);
+  if (updates.title_th !== undefined) set("title_th", updates.title_th);
+  if (updates.title_en !== undefined) set("title_en", updates.title_en);
+  if (updates.title_zh !== undefined) set("title_zh", updates.title_zh);
+  if (updates.desc_th !== undefined) set("desc_th", sanitizeRichText(updates.desc_th));
+  if (updates.desc_en !== undefined) set("desc_en", sanitizeRichText(updates.desc_en));
+  if (updates.desc_zh !== undefined) set("desc_zh", sanitizeRichText(updates.desc_zh));
+  if (updates.isPublished !== undefined) set("isPublished", updates.isPublished !== false);
 
-  await query(
-    "UPDATE products SET categoryId = ?, image = ?, title_th = ?, title_en = ?, title_zh = ?, desc_th = ?, desc_en = ?, desc_zh = ?, isPublished = ? WHERE id = ?",
-    [
-      merged.categoryId,
-      merged.image,
-      merged.title_th,
-      merged.title_en,
-      merged.title_zh,
-      merged.desc_th,
-      merged.desc_en,
-      merged.desc_zh,
-      isPublished,
-      id,
-    ]
-  );
+  if (sets.length > 0) {
+    await query(
+      `UPDATE products SET ${sets.join(", ")} WHERE id = ?`,
+      [...values, id]
+    );
+  }
 
-  return merged;
+  return getProduct(id);
 }

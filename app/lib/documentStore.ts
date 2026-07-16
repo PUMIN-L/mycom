@@ -54,18 +54,26 @@ export async function updateDocument(
   const doc = await getDocument(id);
   if (!doc) throw new Error("Document not found");
 
-  const newDoc = { ...doc, ...updates };
-  await query(
-    "UPDATE documents SET title = ?, description = ?, pdfUrl = ?, coverUrl = ?, sortOrder = ? WHERE id = ?",
-    [
-      newDoc.title,
-      newDoc.description,
-      newDoc.pdfUrl,
-      newDoc.coverUrl,
-      newDoc.sortOrder,
-      id,
-    ]
-  );
+  // Only SET the columns actually supplied, so concurrent edits to different
+  // fields don't clobber each other via a full-row read-modify-write.
+  const sets: string[] = [];
+  const values: unknown[] = [];
+  const set = (col: string, val: unknown) => {
+    sets.push(`${col} = ?`);
+    values.push(val);
+  };
+  if (updates.title !== undefined) set("title", updates.title);
+  if (updates.description !== undefined) set("description", updates.description);
+  if (updates.pdfUrl !== undefined) set("pdfUrl", updates.pdfUrl);
+  if (updates.coverUrl !== undefined) set("coverUrl", updates.coverUrl);
+  if (updates.sortOrder !== undefined) set("sortOrder", updates.sortOrder);
+
+  if (sets.length > 0) {
+    await query(
+      `UPDATE documents SET ${sets.join(", ")} WHERE id = ?`,
+      [...values, id]
+    );
+  }
 }
 
 export async function deleteDocument(id: string): Promise<void> {

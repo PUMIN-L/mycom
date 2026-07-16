@@ -8,7 +8,7 @@ type DbPool = ReturnType<typeof mysql.createPool>;
 // pool instead of leaking a new one (and re-running the seed) on every reload.
 const globalForDb = globalThis as unknown as {
   _pool?: DbPool;
-  _dbInitialized?: boolean;
+  _initPromise?: Promise<void>;
 };
 
 function createPool(): DbPool {
@@ -35,10 +35,9 @@ function createPool(): DbPool {
 
 const pool: DbPool = globalForDb._pool ?? (globalForDb._pool = createPool());
 
-export async function getDbConnection(): Promise<DbPool> {
-  if (!globalForDb._dbInitialized) {
-    const connection = await pool.getConnection();
-    try {
+async function initializeDb(): Promise<void> {
+  const connection = await pool.getConnection();
+  try {
       await connection.query(`
         CREATE TABLE IF NOT EXISTS contents (
           id VARCHAR(255) PRIMARY KEY,
@@ -190,15 +189,51 @@ export async function getDbConnection(): Promise<DbPool> {
         );
       }
 
-      globalForDb._dbInitialized = true;
     } catch (error) {
       console.error("Failed to initialize database table:", error);
       throw error;
     } finally {
       connection.release();
     }
+}
+
+// Memoize initialization as a single shared promise so concurrent cold-start
+// callers await ONE init run instead of each racing the full CREATE/seed block.
+export async function getDbConnection(): Promise<DbPool> {
+  if (!globalForDb._initPromise) {
+    globalForDb._initPromise = initializeDb().catch((error) => {
+      // Clear on failure so a later call can retry initialization.
+      globalForDb._initPromise = undefined;
+      throw error;
+    });
   }
+  await globalForDb._initPromise;
   return pool;
+}
+
+// Run statements inside a single transaction on one pooled connection, for
+// multi-statement operations that must be atomic (id allocation, reordering).
+// A thrown error rolls the whole thing back instead of leaving partial writes.
+export async function withTransaction<T>(
+  fn: (conn: mysql.PoolConnection) => Promise<T>
+): Promise<T> {
+  const p = await getDbConnection();
+  const conn = await p.getConnection();
+  try {
+    await conn.beginTransaction();
+    const result = await fn(conn);
+    await conn.commit();
+    return result;
+  } catch (error) {
+    try {
+      await conn.rollback();
+    } catch {
+      /* ignore rollback failure */
+    }
+    throw error;
+  } finally {
+    conn.release();
+  }
 }
 
 // ── Query helper with transient-error retry ──────────────────────────────────
@@ -226,18 +261,31 @@ function isTransientDbError(error: unknown): boolean {
   return code !== undefined && TRANSIENT_DB_ERROR_CODES.has(code);
 }
 
+function isDuplicateKeyError(error: unknown): boolean {
+  return (error as { code?: string } | null | undefined)?.code === "ER_DUP_ENTRY";
+}
+
 export async function query<T extends QueryResult>(
   sql: string,
   params?: unknown[]
 ): Promise<[T, FieldPacket[]]> {
   const db = await getDbConnection();
   const MAX_ATTEMPTS = 3;
+  const isInsert = /^\s*insert/i.test(sql);
   let lastError: unknown;
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
       return await db.query<T>(sql, params);
     } catch (error) {
+      // A duplicate-key error on a RETRY of an INSERT almost always means the
+      // previous attempt actually committed but its ack was lost to a transient
+      // error. Treat it as success rather than surfacing a spurious failure —
+      // safe here because every INSERT uses an explicit primary key and no
+      // caller reads insertId.
+      if (attempt > 1 && isInsert && isDuplicateKeyError(error)) {
+        return [{ affectedRows: 0, insertId: 0, warningStatus: 0 } as unknown as T, []];
+      }
       lastError = error;
       if (!isTransientDbError(error) || attempt === MAX_ATTEMPTS) throw error;
       console.warn(

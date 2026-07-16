@@ -107,10 +107,25 @@ export async function updateContent(
       ? updatedContent.productId ?? null
       : existing.productId ?? null;
 
-  await query(
-    "UPDATE contents SET title = ?, blocks = ?, createdAt = ?, productId = ? WHERE id = ?",
-    [title, JSON.stringify(blocks), createdAt, productId, id]
-  );
+  // Only SET the columns actually supplied, so concurrent edits to different
+  // fields don't clobber each other via a full-row write.
+  const sets: string[] = [];
+  const values: unknown[] = [];
+  const set = (col: string, val: unknown) => {
+    sets.push(`${col} = ?`);
+    values.push(val);
+  };
+  if (updatedContent.title !== undefined) set("title", title);
+  if (updatedContent.blocks !== undefined) set("blocks", JSON.stringify(blocks));
+  if (updatedContent.createdAt !== undefined) set("createdAt", createdAt);
+  if ("productId" in updatedContent) set("productId", productId);
+
+  if (sets.length > 0) {
+    await query(
+      `UPDATE contents SET ${sets.join(", ")} WHERE id = ?`,
+      [...values, id]
+    );
+  }
 
   return { id, title, blocks, createdAt, productId };
 }
