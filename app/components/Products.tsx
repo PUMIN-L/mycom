@@ -70,6 +70,9 @@ export default function Products({ dataPromise }: ProductsProps) {
   const [pendingPublishToggle, setPendingPublishToggle] = useState<string | null>(null);
   const [publishConfirmText, setPublishConfirmText] = useState("");
   const [togglingPublish, setTogglingPublish] = useState(false);
+  // Id of the product whose publish status is currently being changed, so we
+  // can show a spinner on that product's eye icon while the request is in flight.
+  const [publishTogglingId, setPublishTogglingId] = useState<string | null>(null);
 
   const [loadingId, setLoadingId] = useState<string | null>(null);
 
@@ -240,6 +243,7 @@ export default function Products({ dataPromise }: ProductsProps) {
 
   const executePublishToggle = async (id: string, newStatus: boolean) => {
     setTogglingPublish(true);
+    setPublishTogglingId(id);
     try {
       const p = products.find(prod => prod.id === id);
       if (!p) return;
@@ -258,6 +262,7 @@ export default function Products({ dataPromise }: ProductsProps) {
       showToast("ไม่สามารถเปลี่ยนสถานะได้", "error");
     } finally {
       setTogglingPublish(false);
+      setPublishTogglingId(null);
       setPendingPublishToggle(null);
     }
   };
@@ -642,13 +647,20 @@ export default function Products({ dataPromise }: ProductsProps) {
                             onClick={(e) => {
                               e.preventDefault();
                               e.stopPropagation();
+                              if (publishTogglingId === item.id) return;
                               handleTogglePublish(item.id, item.isPublished !== false);
                             }}
-                            className={`p-2 rounded-full shadow-lg transition-all ${item.isPublished !== false ? "bg-white/90 text-green-500 hover:bg-green-500 hover:text-white" : "bg-gray-100 text-gray-400 hover:bg-gray-500 hover:text-white"}`}
+                            disabled={publishTogglingId === item.id}
+                            className={`p-2 rounded-full shadow-lg transition-all disabled:cursor-wait ${item.isPublished !== false ? "bg-white/90 text-green-500 hover:bg-green-500 hover:text-white" : "bg-gray-100 text-gray-400 hover:bg-gray-500 hover:text-white"}`}
                             aria-label={item.isPublished !== false ? "ซ่อนสินค้า" : "เผยแพร่สินค้า"}
                             title={item.isPublished !== false ? "ซ่อนสินค้า" : "เผยแพร่สินค้า"}
                           >
-                            {item.isPublished !== false ? (
+                            {publishTogglingId === item.id ? (
+                              <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
+                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                              </svg>
+                            ) : item.isPublished !== false ? (
                               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
