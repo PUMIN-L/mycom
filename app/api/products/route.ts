@@ -2,11 +2,18 @@ import { NextRequest, NextResponse } from "next/server";
 import { revalidateTag } from "next/cache";
 import { getAllProducts, addProduct, ProductData } from "../../lib/productStore";
 import { requireAuth, withRoute } from "../../lib/apiHelpers";
+import { getSession } from "../../lib/session";
 
-// GET — list all products (public)
+// GET — list products. Public callers get only published products; an
+// authenticated admin gets the full list (so hidden/draft items are never
+// exposed to anonymous clients, but admins can still manage them).
 export const GET = withRoute("Failed to fetch products", async () => {
   const products = await getAllProducts();
-  return NextResponse.json(products);
+  const session = await getSession();
+  const visible = session
+    ? products
+    : products.filter((p) => p.isPublished !== false);
+  return NextResponse.json(visible);
 });
 
 // POST — create new product (login required)

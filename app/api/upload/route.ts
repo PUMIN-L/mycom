@@ -16,6 +16,18 @@ export const POST = withRoute(
       return NextResponse.json({ error: "No file uploaded" }, { status: 400 });
     }
 
+    // Reject oversized uploads BEFORE buffering the whole file into memory,
+    // so a large body can't exhaust the server heap.
+    const MAX_PDF_BYTES = 25 * 1024 * 1024; // 25 MB
+    const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // 10 MB
+    const maxBytes = isDocument ? MAX_PDF_BYTES : MAX_IMAGE_BYTES;
+    if (file.size > maxBytes) {
+      return NextResponse.json(
+        { error: `File too large. Maximum ${Math.round(maxBytes / (1024 * 1024))}MB.` },
+        { status: 413 }
+      );
+    }
+
     const buffer = Buffer.from(await file.arrayBuffer());
     
     if (isDocument) {

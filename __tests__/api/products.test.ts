@@ -26,6 +26,12 @@ vi.mock('next/cache', () => ({
 }));
 import { revalidateTag } from 'next/cache';
 
+// Mock session (GET now checks for an admin session to decide whether to
+// include unpublished products). Default: anonymous (published-only path).
+vi.mock('@/app/lib/session', () => ({
+  getSession: vi.fn().mockResolvedValue(null),
+}));
+
 describe('Products API Route', () => {
   beforeEach(() => {
     vi.clearAllMocks();

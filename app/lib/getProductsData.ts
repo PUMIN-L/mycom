@@ -18,7 +18,11 @@ const fetchProductsData = async (): Promise<ProductsData> => {
       getAllCategories(),
       getAllProducts(),
     ]);
-    return { categories, products };
+    // This result is cached and served to the PUBLIC (home grid SSR, JSON-LD,
+    // sitemap). Unpublished products must never leak here — the admin UI
+    // re-fetches the full list from the authenticated /api/products instead.
+    const publicProducts = products.filter((p) => p.isPublished !== false);
+    return { categories, products: publicProducts };
   } catch (error) {
     console.error("Error fetching products data:", error);
     return { categories: [], products: [] };

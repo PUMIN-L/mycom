@@ -295,6 +295,28 @@ export default function Products({ dataPromise }: ProductsProps) {
     return matchesCategory && matchesSearch;
   });
 
+  // When an admin is logged in, the SSR/ISR payload only contains published
+  // products (unpublished ones are filtered server-side so they never leak to
+  // anonymous visitors). Re-fetch the full list from the authenticated API so
+  // admins can still see and manage hidden/draft products.
+  useEffect(() => {
+    if (!isLoggedIn) return;
+    let ignore = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/products");
+        if (!res.ok) return;
+        const all: ProductData[] = await res.json();
+        if (!ignore) setProducts(all);
+      } catch {
+        /* keep the SSR data if the refetch fails */
+      }
+    })();
+    return () => {
+      ignore = true;
+    };
+  }, [isLoggedIn]);
+
   useEffect(() => {
     if (searchCategory && filteredCategories.length === 1) {
       const catId = filteredCategories[0].id;

@@ -8,6 +8,7 @@ import {
 } from "../../../lib/cloudinaryHelper";
 import { requireAuth, withRoute, ApiError } from "../../../lib/apiHelpers";
 import { getAllContents, deleteContent } from "../../../lib/contentStore";
+import { getSession } from "../../../lib/session";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -19,6 +20,14 @@ export const GET = withRoute(
     const product = await getProduct(id);
     if (!product) {
       return NextResponse.json({ error: "Product not found" }, { status: 404 });
+    }
+    // Hide unpublished products from anonymous callers (report 404, not 403,
+    // so their existence isn't disclosed).
+    if (product.isPublished === false) {
+      const session = await getSession();
+      if (!session) {
+        return NextResponse.json({ error: "Product not found" }, { status: 404 });
+      }
     }
     return NextResponse.json(product);
   }
