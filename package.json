@@ -14,6 +14,7 @@
     "@types/bcryptjs": "^2.4.6",
     "bcryptjs": "^3.0.3",
     "cloudinary": "^2.10.0",
+    "isomorphic-dompurify": "^3.18.0",
     "jose": "^6.2.3",
     "mysql2": "^3.22.3",
     "next": "^16.2.7",

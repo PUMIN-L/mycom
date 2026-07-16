@@ -1,6 +1,7 @@
 import { query } from "./db";
 import { RowDataPacket, ResultSetHeader } from "mysql2";
 import type { ProductCategory, ProductData } from "./types";
+import { sanitizeRichText } from "./sanitizeHtml";
 
 // Re-exported so existing callers can keep importing these from "./productStore".
 export type { ProductCategory, ProductData } from "./types";
@@ -95,6 +96,11 @@ function rowToProduct(row: RowDataPacket): ProductData {
 
 export async function addProduct(product: ProductData): Promise<ProductData> {
   const isPublished = product.isPublished !== false;
+  // Sanitize rich-text descriptions on write so stored HTML is always safe to
+  // render with dangerouslySetInnerHTML on public pages.
+  const desc_th = sanitizeRichText(product.desc_th);
+  const desc_en = sanitizeRichText(product.desc_en);
+  const desc_zh = sanitizeRichText(product.desc_zh);
   await query(
     "INSERT INTO products (id, categoryId, image, title_th, title_en, title_zh, desc_th, desc_en, desc_zh, createdAt, isPublished) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     [
@@ -104,14 +110,14 @@ export async function addProduct(product: ProductData): Promise<ProductData> {
       product.title_th,
       product.title_en,
       product.title_zh,
-      product.desc_th,
-      product.desc_en,
-      product.desc_zh,
+      desc_th,
+      desc_en,
+      desc_zh,
       product.createdAt,
       isPublished,
     ]
   );
-  return { ...product, isPublished };
+  return { ...product, desc_th, desc_en, desc_zh, isPublished };
 }
 
 export async function getProduct(id: string): Promise<ProductData | undefined> {
@@ -157,6 +163,10 @@ export async function updateProduct(
     ...existing,
     ...updates,
     id, // id cannot change
+    // Re-sanitize descriptions on every write (they may have changed).
+    desc_th: sanitizeRichText(updates.desc_th ?? existing.desc_th),
+    desc_en: sanitizeRichText(updates.desc_en ?? existing.desc_en),
+    desc_zh: sanitizeRichText(updates.desc_zh ?? existing.desc_zh),
   };
 
   const isPublished = merged.isPublished !== false;

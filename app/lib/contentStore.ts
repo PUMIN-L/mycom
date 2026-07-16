@@ -1,9 +1,18 @@
 import { query } from "./db";
 import { RowDataPacket, ResultSetHeader } from "mysql2";
 import type { ContentBlock, ContentData } from "./types";
+import { sanitizeRichText } from "./sanitizeHtml";
 
 // Re-exported so existing callers can keep importing these from "./contentStore".
 export type { ContentBlock, ContentData } from "./types";
+
+// Sanitize the rich-text HTML on every block before it is stored, so content
+// rendered later with dangerouslySetInnerHTML on public pages is always safe.
+function sanitizeBlocks(blocks: ContentBlock[]): ContentBlock[] {
+  return blocks.map((b) =>
+    b.content !== undefined ? { ...b, content: sanitizeRichText(b.content) } : b
+  );
+}
 
 // `blocks` is stored as a JSON column. mysql2 may hand it back already parsed
 // (object) or as a raw string depending on driver/column config, so handle both.
@@ -22,17 +31,18 @@ function rowToContent(row: RowDataPacket): ContentData {
 }
 
 export async function addContent(content: ContentData): Promise<ContentData> {
+  const blocks = sanitizeBlocks(content.blocks);
   await query(
     "INSERT INTO contents (id, title, blocks, createdAt, productId) VALUES (?, ?, ?, ?, ?)",
     [
       content.id,
       content.title,
-      JSON.stringify(content.blocks),
+      JSON.stringify(blocks),
       content.createdAt,
       content.productId ?? null,
     ]
   );
-  return content;
+  return { ...content, blocks };
 }
 
 export async function getContent(id: string): Promise<ContentData | undefined> {
@@ -87,7 +97,9 @@ export async function updateContent(
   }
 
   const title = updatedContent.title !== undefined ? updatedContent.title : existing.title;
-  const blocks = updatedContent.blocks !== undefined ? updatedContent.blocks : existing.blocks;
+  const blocks = sanitizeBlocks(
+    updatedContent.blocks !== undefined ? updatedContent.blocks : existing.blocks
+  );
   const createdAt = updatedContent.createdAt !== undefined ? updatedContent.createdAt : existing.createdAt;
   // Allow explicit null to unlink, undefined = keep existing
   const productId =
