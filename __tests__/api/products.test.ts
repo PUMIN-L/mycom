@@ -3,84 +3,94 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import { GET, POST } from '@/app/api/products/route';
 
-// Mock API Helpers
-vi.mock('@/app/lib/apiHelpers', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/app/lib/apiHelpers')>();
-  return {
-    ...actual,
-    requireAuth: vi.fn(),
-  };
-});
-import { requireAuth } from '@/app/lib/apiHelpers';
-
-// Mock Product Store
+// Product store
 vi.mock('@/app/lib/productStore', () => ({
   getAllProducts: vi.fn(),
   addProduct: vi.fn(),
 }));
 import { getAllProducts, addProduct } from '@/app/lib/productStore';
 
-// Mock next/cache
-vi.mock('next/cache', () => ({
-  revalidateTag: vi.fn(),
-}));
+vi.mock('next/cache', () => ({ revalidateTag: vi.fn() }));
 import { revalidateTag } from 'next/cache';
 
-// Mock session (GET now checks for an admin session to decide whether to
-// include unpublished products). Default: anonymous (published-only path).
-vi.mock('@/app/lib/session', () => ({
-  getSession: vi.fn().mockResolvedValue(null),
-}));
+// Drive auth through the REAL requireAuth/withRoute by controlling getSession
+// (null = anonymous, object = logged-in admin) instead of stubbing requireAuth.
+// This exercises the true 401 contract and the published-only filtering.
+vi.mock('@/app/lib/session', () => ({ getSession: vi.fn() }));
+import { getSession } from '@/app/lib/session';
+
+const adminSession = { userId: '1', username: 'admin', expiresAt: new Date() } as any;
 
 describe('Products API Route', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(getSession).mockResolvedValue(null); // default: anonymous
   });
 
   describe('GET /api/products', () => {
-    it('returns a list of products', async () => {
-      const mockProducts = [{ id: '1', title_en: 'Test Product' }];
-      vi.mocked(getAllProducts).mockResolvedValue(mockProducts as any);
+    const products = [
+      { id: '1', title_en: 'Visible', isPublished: true },
+      { id: '2', title_en: 'Hidden', isPublished: false },
+    ];
 
+    it('returns only published products to anonymous callers', async () => {
+      vi.mocked(getAllProducts).mockResolvedValue(products as any);
       const res = await GET();
       expect(res.status).toBe(200);
-      
-      const body = await res.json();
-      expect(body).toEqual(mockProducts);
+      expect(await res.json()).toEqual([products[0]]);
+    });
+
+    it('returns all products (incl. unpublished) to a logged-in admin', async () => {
+      vi.mocked(getSession).mockResolvedValue(adminSession);
+      vi.mocked(getAllProducts).mockResolvedValue(products as any);
+      const res = await GET();
+      expect(await res.json()).toEqual(products);
     });
   });
 
   describe('POST /api/products', () => {
-    const mockRequest = (body: any) => {
-      return new NextRequest('http://localhost', {
-        method: 'POST',
-        body: JSON.stringify(body),
-      });
+    const mockRequest = (body: any) =>
+      new NextRequest('http://localhost', { method: 'POST', body: JSON.stringify(body) });
+
+    const validProduct = {
+      id: 'p-1',
+      categoryId: 0,
+      image: 'https://res.cloudinary.com/x/image/upload/v1/a.png',
+      title_th: 'ชื่อ',
+      title_en: 'Name',
+      title_zh: '名',
+      desc_th: '',
+      desc_en: '',
+      desc_zh: '',
     };
 
-    it('requires authentication', async () => {
-      vi.mocked(requireAuth).mockRejectedValue(new Error('Unauthorized'));
-      const req = mockRequest({ title_en: 'New Product' });
+    it('rejects anonymous callers with 401 (real requireAuth path)', async () => {
+      vi.mocked(getSession).mockResolvedValue(null);
+      const res = await POST(mockRequest(validProduct));
+      expect(res.status).toBe(401);
+      expect((await res.json()).error).toBe('Unauthorized');
+      expect(addProduct).not.toHaveBeenCalled();
+    });
 
-      const res = await POST(req);
-      expect(res.status).toBe(500); // Because we threw a generic Error in the mock
-      expect(requireAuth).toHaveBeenCalled();
+    it('rejects an authenticated request missing required fields with 400', async () => {
+      vi.mocked(getSession).mockResolvedValue(adminSession);
+      const res = await POST(mockRequest({ title_en: 'Only English' }));
+      expect(res.status).toBe(400);
+      expect(addProduct).not.toHaveBeenCalled();
     });
 
     it('creates a product, revalidates cache, and returns 201', async () => {
-      vi.mocked(requireAuth).mockResolvedValue({} as any);
-      const newProductData = { title_en: 'New Product' };
-      const createdProduct = { id: '2', ...newProductData };
-      
-      vi.mocked(addProduct).mockResolvedValue(createdProduct as any);
-      const req = mockRequest(newProductData);
+      vi.mocked(getSession).mockResolvedValue(adminSession);
+      const created = { ...validProduct, createdAt: '2026-01-01', isPublished: true };
+      vi.mocked(addProduct).mockResolvedValue(created as any);
 
-      const res = await POST(req);
+      const res = await POST(mockRequest(validProduct));
       expect(res.status).toBe(201);
-      
-      const body = await res.json();
-      expect(body).toEqual(createdProduct);
+      expect(await res.json()).toEqual(created);
       expect(revalidateTag).toHaveBeenCalledWith('products', { expire: 0 });
+      // createdAt must be assigned server-side, not taken from the client.
+      const passed = vi.mocked(addProduct).mock.calls[0][0];
+      expect(typeof passed.createdAt).toBe('string');
     });
   });
 });

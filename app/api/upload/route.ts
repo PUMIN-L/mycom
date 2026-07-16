@@ -46,8 +46,17 @@ export const POST = withRoute(
       return NextResponse.json({ url: rawUrl, coverUrl: imageUrl.replace(/\.pdf$/i, ".jpg") });
     }
 
-    // Default behavior for normal images
-    const url = await uploadImage(buffer);
+    // Default behavior for normal images — validate the type and pin the
+    // Cloudinary resource_type to "image" (never "auto"), so scriptable/unknown
+    // asset types can't be introduced and later served from the CDN origin.
+    const ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
+    if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
+      return NextResponse.json(
+        { error: "Unsupported image type. Allowed: JPEG, PNG, WebP, GIF." },
+        { status: 400 }
+      );
+    }
+    const url = await uploadImage(buffer, "samples/mycom", "image");
     return NextResponse.json({ url });
   }
 );

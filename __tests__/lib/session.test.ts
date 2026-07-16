@@ -45,9 +45,9 @@ describe('session', () => {
   });
 
   describe('createSession', () => {
-    it('sets a session cookie with the encrypted token', async () => {
+    it('sets a session cookie with the full security-critical flag set', async () => {
       await createSession('2', 'editor');
-      
+
       expect(cookies).toHaveBeenCalled();
       expect(mockCookies.set).toHaveBeenCalledWith(
         'session',
@@ -56,8 +56,27 @@ describe('session', () => {
           httpOnly: true,
           path: '/',
           sameSite: 'lax',
+          // In the (non-production) test env, secure is false.
+          secure: false,
+          // ~3-day expiry.
+          expires: expect.any(Date),
         })
       );
+    });
+
+    it('marks the cookie Secure in production', async () => {
+      const prev = process.env.NODE_ENV;
+      (process.env as Record<string, string | undefined>).NODE_ENV = 'production';
+      try {
+        await createSession('2', 'editor');
+        expect(mockCookies.set).toHaveBeenCalledWith(
+          'session',
+          expect.any(String),
+          expect.objectContaining({ secure: true })
+        );
+      } finally {
+        (process.env as Record<string, string | undefined>).NODE_ENV = prev;
+      }
     });
   });
 

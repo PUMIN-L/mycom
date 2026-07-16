@@ -3,19 +3,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ApiError, jsonError, requireAuth, withRoute } from '@/app/lib/apiHelpers';
 import * as sessionModule from '@/app/lib/session';
 
-// Mock NextResponse
-vi.mock('next/server', () => {
-  return {
-    NextResponse: {
-      json: vi.fn((body, init) => {
-        return {
-          status: init?.status || 200,
-          json: async () => body,
-        };
-      }),
-    },
-  };
-});
+// NOTE: next/server is intentionally NOT mocked — these tests assert against
+// the REAL NextResponse (status, JSON body, content-type header) so the actual
+// HTTP semantics are exercised, not a hand-rolled stub.
 
 describe('apiHelpers', () => {
   beforeEach(() => {
@@ -32,18 +22,17 @@ describe('apiHelpers', () => {
   });
 
   describe('jsonError', () => {
-    it('returns a standard error response', async () => {
+    it('returns a real JSON error response', async () => {
       const res = jsonError('Something went wrong', 400);
       expect(res.status).toBe(400);
-      const body = await (res as any).json();
-      expect(body).toEqual({ error: 'Something went wrong' });
+      expect(res.headers.get('content-type')).toContain('application/json');
+      expect(await res.json()).toEqual({ error: 'Something went wrong' });
     });
 
     it('includes details if provided', async () => {
       const res = jsonError('Error', 500, 'Detailed info');
       expect(res.status).toBe(500);
-      const body = await (res as any).json();
-      expect(body).toEqual({ error: 'Error', details: 'Detailed info' });
+      expect(await res.json()).toEqual({ error: 'Error', details: 'Detailed info' });
     });
   });
 
@@ -69,7 +58,7 @@ describe('apiHelpers', () => {
       const mockResponse = { status: 200, ok: true } as any;
       const handler = vi.fn().mockResolvedValue(mockResponse);
       const wrapped = withRoute(fallbackMessage, handler);
-      
+
       const res = await wrapped({} as any);
       expect(res).toBe(mockResponse);
       expect(handler).toHaveBeenCalled();
@@ -79,11 +68,10 @@ describe('apiHelpers', () => {
       const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
       const handler = vi.fn().mockRejectedValue(new ApiError(403, 'Forbidden action'));
       const wrapped = withRoute(fallbackMessage, handler);
-      
-      const res = await wrapped({} as any) as any;
+
+      const res = (await wrapped({} as any)) as Response;
       expect(res.status).toBe(403);
-      const body = await res.json();
-      expect(body).toEqual({ error: 'Forbidden action' });
+      expect(await res.json()).toEqual({ error: 'Forbidden action' });
       expect(consoleSpy).not.toHaveBeenCalled();
     });
 
@@ -91,23 +79,48 @@ describe('apiHelpers', () => {
       const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
       const handler = vi.fn().mockRejectedValue(new Error('DB crash'));
       const wrapped = withRoute(fallbackMessage, handler);
-      
-      const res = await wrapped({} as any) as any;
+
+      const res = (await wrapped({} as any)) as Response;
       expect(res.status).toBe(500);
-      const body = await res.json();
-      expect(body).toEqual({ error: fallbackMessage, details: 'DB crash' });
+      expect(await res.json()).toEqual({ error: fallbackMessage, details: 'DB crash' });
       expect(consoleSpy).toHaveBeenCalledWith(`${fallbackMessage}:`, expect.any(Error));
     });
 
     it('catches non-Error throws and returns 500', async () => {
-      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      vi.spyOn(console, 'error').mockImplementation(() => {});
       const handler = vi.fn().mockRejectedValue('String throw');
       const wrapped = withRoute(fallbackMessage, handler);
-      
-      const res = await wrapped({} as any) as any;
+
+      const res = (await wrapped({} as any)) as Response;
       expect(res.status).toBe(500);
-      const body = await res.json();
-      expect(body).toEqual({ error: fallbackMessage, details: 'String throw' });
+      expect(await res.json()).toEqual({ error: fallbackMessage, details: 'String throw' });
+    });
+
+    it('refuses a cross-origin state-changing request with 403', async () => {
+      const handler = vi.fn();
+      const wrapped = withRoute(fallbackMessage, handler);
+      const req = {
+        method: 'POST',
+        headers: new Headers({ origin: 'https://evil.example', host: 'localhost:3000' }),
+      };
+
+      const res = (await wrapped(req as any)) as Response;
+      expect(res.status).toBe(403);
+      expect(handler).not.toHaveBeenCalled();
+    });
+
+    it('allows a same-origin state-changing request', async () => {
+      const mockResponse = { status: 201 } as any;
+      const handler = vi.fn().mockResolvedValue(mockResponse);
+      const wrapped = withRoute(fallbackMessage, handler);
+      const req = {
+        method: 'POST',
+        headers: new Headers({ origin: 'https://localhost:3000', host: 'localhost:3000' }),
+      };
+
+      const res = await wrapped(req as any);
+      expect(res).toBe(mockResponse);
+      expect(handler).toHaveBeenCalled();
     });
   });
 });

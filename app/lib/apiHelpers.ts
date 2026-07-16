@@ -57,11 +57,41 @@ export async function requireAuth(): Promise<SessionPayload> {
  * The wrapped function keeps the handler's original `(request, context)`
  * signature, so dynamic-route `params` typing is preserved.
  */
+const MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+
+/**
+ * Defense-in-depth CSRF check (on top of the SameSite=lax session cookie):
+ * reject a state-changing request whose Origin host doesn't match the request
+ * host. Requests without an Origin header (server-to-server tooling, curl) are
+ * allowed through — browsers always send Origin on cross-site non-GET requests.
+ */
+function crossOriginRejected(args: unknown[]): Response | null {
+  const req = args[0] as { method?: string; headers?: Headers } | undefined;
+  if (!req || typeof req.method !== "string" || !MUTATING_METHODS.has(req.method)) {
+    return null;
+  }
+  const origin = req.headers?.get("origin");
+  if (!origin) return null;
+  let originHost: string | null = null;
+  try {
+    originHost = new URL(origin).host;
+  } catch {
+    return jsonError("Invalid Origin header", 403);
+  }
+  const host = req.headers?.get("host");
+  if (host && originHost && originHost !== host) {
+    return jsonError("Cross-origin request refused", 403);
+  }
+  return null;
+}
+
 export function withRoute<Args extends unknown[]>(
   fallbackMessage: string,
   handler: (...args: Args) => Promise<Response>
 ): (...args: Args) => Promise<Response> {
   return async (...args: Args): Promise<Response> => {
+    const csrf = crossOriginRejected(args);
+    if (csrf) return csrf;
     try {
       return await handler(...args);
     } catch (error) {

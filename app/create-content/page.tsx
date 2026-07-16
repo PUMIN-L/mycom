@@ -91,7 +91,7 @@ function CreateContentInner() {
   }, []);
   const addTextBlock = () => {
     const newBlock: ContentBlock = {
-      id: Date.now().toString(),
+      id: crypto.randomUUID(),
       type: "text",
       content: "Edit this text",
       fontSize: "16",
@@ -115,7 +115,7 @@ function CreateContentInner() {
 
   const addTextImageBlock = () => {
     const newBlock: ContentBlock = {
-      id: Date.now().toString(),
+      id: crypto.randomUUID(),
       type: "text-image",
       content: "Edit this text",
       imageUrl: "",
@@ -131,7 +131,7 @@ function CreateContentInner() {
 
   const addGalleryBlock = () => {
     const newBlock: ContentBlock = {
-      id: Date.now().toString(),
+      id: crypto.randomUUID(),
       type: "gallery",
       imageUrls: [],
       selectedImageIndex: 0,
@@ -160,7 +160,7 @@ function CreateContentInner() {
 
       const data = await response.json();
       const newBlock: ContentBlock = {
-        id: Date.now().toString(),
+        id: crypto.randomUUID(),
         type: "image",
         imageUrl: data.url,
       };
@@ -295,7 +295,7 @@ function CreateContentInner() {
     }
 
     const contentData = {
-      id: Date.now().toString(),
+      id: crypto.randomUUID(),
       title,
       blocks,
       createdAt: new Date().toISOString(),

@@ -16,6 +16,12 @@ import { RowDataPacket } from "mysql2";
 const FAILURE_LIMIT = 5;
 const BLOCK_MS = 15 * 60 * 1000; // 15 minutes
 const MAX_TRACKED = 10_000;
+
+// A fixed, valid bcrypt hash used only to spend the same ~work when the
+// username doesn't exist, so response timing doesn't reveal whether an account
+// exists (user-enumeration side channel). It matches no real password.
+const DUMMY_PASSWORD_HASH =
+  "$2b$12$k6Pr6AL.tywtgyDcnIA8pOK1FX5OK0QXvp14WbDsprFvAwmqj6bBu";
 const rateLimitMap = new Map<string, { count: number; expiresAt: number }>();
 
 function prune(now: number) {
@@ -66,7 +72,14 @@ export const POST = withRoute(
     );
 
     const user = rows[0];
-    if (!user || !(await bcrypt.compare(password, user.passwordHash))) {
+    // Always run a bcrypt comparison (against a dummy hash when the user is not
+    // found) so the response time is the same for existing and non-existing
+    // usernames.
+    const passwordMatches = await bcrypt.compare(
+      password,
+      user?.passwordHash ?? DUMMY_PASSWORD_HASH
+    );
+    if (!user || !passwordMatches) {
       // Record the failed attempt against this username.
       const current = rateLimitMap.get(key);
       rateLimitMap.set(key, {

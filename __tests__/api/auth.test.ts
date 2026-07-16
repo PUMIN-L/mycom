@@ -36,12 +36,9 @@ describe('Auth API Routes', () => {
   describe('GET /api/auth/me', () => {
     it('returns null user if no session', async () => {
       vi.mocked(getSession).mockResolvedValue(null);
-      
       const res = await getMe();
-      const body = await res.json();
-      
       expect(res.status).toBe(200);
-      expect(body).toEqual({ user: null });
+      expect(await res.json()).toEqual({ user: null });
     });
 
     it('returns user data if session exists', async () => {
@@ -50,96 +47,113 @@ describe('Auth API Routes', () => {
         username: 'testadmin',
         expiresAt: new Date()
       });
-      
       const res = await getMe();
-      const body = await res.json();
-      
       expect(res.status).toBe(200);
-      expect(body).toEqual({ user: { username: 'testadmin', userId: '1' } });
+      expect(await res.json()).toEqual({ user: { username: 'testadmin', userId: '1' } });
     });
   });
 
   describe('POST /api/auth/logout', () => {
     it('deletes session and returns success', async () => {
       const res = await logout();
-      const body = await res.json();
-      
       expect(res.status).toBe(200);
-      expect(body).toEqual({ success: true });
+      expect(await res.json()).toEqual({ success: true });
       expect(deleteSession).toHaveBeenCalledTimes(1);
     });
   });
 
   describe('POST /api/auth/login', () => {
-    const mockRequest = (body: any, ip: string = '127.0.0.1') => {
-      return new NextRequest('http://localhost', {
+    // Each test uses a UNIQUE username so the module-level rate-limit map (keyed
+    // on username) can't leak state between tests regardless of run order.
+    const mockRequest = (body: any) =>
+      new NextRequest('http://localhost', {
         method: 'POST',
-        headers: {
-          'x-forwarded-for': ip
-        },
         body: JSON.stringify(body)
       });
-    };
 
     it('returns 400 if missing username or password', async () => {
-      const req = mockRequest({ username: 'admin' });
-      const res = await login(req);
-      
+      const res = await login(mockRequest({ username: 'missing-pw-user' }));
       expect(res.status).toBe(400);
-      const body = await res.json();
-      expect(body.error).toBe('กรุณากรอก username และ password');
+      expect((await res.json()).error).toBe('กรุณากรอก username และ password');
     });
 
     it('returns 401 on invalid username', async () => {
       vi.mocked(query).mockResolvedValue([[]] as any);
-      const req = mockRequest({ username: 'wrong', password: 'pwd' });
-      
-      const res = await login(req);
+      (bcrypt.compare as any).mockResolvedValue(false);
+      const res = await login(mockRequest({ username: 'no-such-user', password: 'pwd' }));
       expect(res.status).toBe(401);
-      const body = await res.json();
-      expect(body.error).toBe('username หรือ password ไม่ถูกต้อง');
+      expect((await res.json()).error).toBe('username หรือ password ไม่ถูกต้อง');
     });
 
     it('returns 401 on invalid password', async () => {
-      vi.mocked(query).mockResolvedValue([[{ id: '1', username: 'admin', passwordHash: 'hash' }]] as any);
+      vi.mocked(query).mockResolvedValue([[{ id: '1', username: 'pw-user', passwordHash: 'hash' }]] as any);
       (bcrypt.compare as any).mockResolvedValue(false);
-      
-      const req = mockRequest({ username: 'admin', password: 'wrongpwd' });
-      const res = await login(req);
-      
+      const res = await login(mockRequest({ username: 'pw-user', password: 'wrongpwd' }));
       expect(res.status).toBe(401);
     });
 
     it('returns 200 and creates session on success', async () => {
-      vi.mocked(query).mockResolvedValue([[{ id: '1', username: 'admin', passwordHash: 'hash' }]] as any);
+      vi.mocked(query).mockResolvedValue([[{ id: '1', username: 'ok-user', passwordHash: 'hash' }]] as any);
       (bcrypt.compare as any).mockResolvedValue(true);
-      
-      const req = mockRequest({ username: 'admin', password: 'correctpwd' });
-      const res = await login(req);
-      
+      const res = await login(mockRequest({ username: 'ok-user', password: 'correctpwd' }));
       expect(res.status).toBe(200);
       const body = await res.json();
       expect(body.success).toBe(true);
-      expect(body.username).toBe('admin');
-      
-      expect(createSession).toHaveBeenCalledWith('1', 'admin');
+      expect(createSession).toHaveBeenCalledWith('1', 'ok-user');
     });
 
-    it('enforces rate limiting after 5 failed attempts', async () => {
+    it('enforces rate limiting after 5 failed attempts (per username, ignoring spoofable IP)', async () => {
       vi.mocked(query).mockResolvedValue([[]] as any);
-      
-      // 5 failed attempts
+      (bcrypt.compare as any).mockResolvedValue(false);
+
       for (let i = 0; i < 5; i++) {
-        const req = mockRequest({ username: 'admin', password: 'bad' }, 'bad-ip');
-        await login(req);
+        await login(mockRequest({ username: 'brute-target', password: 'bad' }));
       }
-      
-      // 6th attempt should return 429
-      const req6 = mockRequest({ username: 'admin', password: 'bad' }, 'bad-ip');
-      const res = await login(req6);
+      const res = await login(mockRequest({ username: 'brute-target', password: 'bad' }));
       expect(res.status).toBe(429);
-      const body = await res.json();
-      expect(body.error).toContain('เข้าสู่ระบบผิดพลาดหลายครั้งเกินไป');
+      expect((await res.json()).error).toContain('เข้าสู่ระบบผิดพลาดหลายครั้งเกินไป');
+    });
+
+    it('clears the block after the 15-minute window expires', async () => {
+      // Fake only Date (not timers) so request/promise I/O keeps working.
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+      try {
+        vi.mocked(query).mockResolvedValue([[]] as any);
+        (bcrypt.compare as any).mockResolvedValue(false);
+
+        for (let i = 0; i < 5; i++) {
+          await login(mockRequest({ username: 'expire-user', password: 'bad' }));
+        }
+        expect((await login(mockRequest({ username: 'expire-user', password: 'bad' }))).status).toBe(429);
+
+        // Advance past the 15-minute block window.
+        vi.setSystemTime(new Date('2026-01-01T00:16:00Z'));
+        expect((await login(mockRequest({ username: 'expire-user', password: 'bad' }))).status).toBe(401);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('resets the failure counter after a successful login', async () => {
+      // 4 failures (not yet blocked)
+      vi.mocked(query).mockResolvedValue([[]] as any);
+      (bcrypt.compare as any).mockResolvedValue(false);
+      for (let i = 0; i < 4; i++) {
+        await login(mockRequest({ username: 'reset-user', password: 'bad' }));
+      }
+      // A successful login clears the counter.
+      vi.mocked(query).mockResolvedValue([[{ id: '9', username: 'reset-user', passwordHash: 'hash' }]] as any);
+      (bcrypt.compare as any).mockResolvedValue(true);
+      expect((await login(mockRequest({ username: 'reset-user', password: 'ok' }))).status).toBe(200);
+
+      // Counter is reset: the next 4 failures are 401 (not immediately 429).
+      vi.mocked(query).mockResolvedValue([[]] as any);
+      (bcrypt.compare as any).mockResolvedValue(false);
+      for (let i = 0; i < 4; i++) {
+        const res = await login(mockRequest({ username: 'reset-user', password: 'bad' }));
+        expect(res.status).toBe(401);
+      }
     });
   });
 });

@@ -396,7 +396,7 @@ export default function ShowcaseClient({
   // ── Add new text block ────────────────────────────────────────────────────
   function addTextBlock() {
     const newBlock: ContentBlock = {
-      id: Date.now().toString(),
+      id: crypto.randomUUID(),
       type: "text",
       content: "",
       fontSize: "16",
@@ -411,7 +411,7 @@ export default function ShowcaseClient({
   // ── Add new text-image block ───────────────────────────────────────────────
   function addTextImageBlock() {
     const newBlock: ContentBlock = {
-      id: Date.now().toString(),
+      id: crypto.randomUUID(),
       type: "text-image",
       content: "Edit this text",
       imageUrl: "",
@@ -438,7 +438,7 @@ export default function ShowcaseClient({
       }
       const { url } = await uploadRes.json();
       const newBlock: ContentBlock = {
-        id: Date.now().toString(),
+        id: crypto.randomUUID(),
         type: "image",
         imageUrl: url,
       };
@@ -500,7 +500,7 @@ export default function ShowcaseClient({
 
   function addGalleryBlock() {
     const newBlock: ContentBlock = {
-      id: Date.now().toString(),
+      id: crypto.randomUUID(),
       type: "gallery",
       imageUrls: [],
       selectedImageIndex: 0,

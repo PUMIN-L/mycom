@@ -328,6 +328,16 @@ export default function Products({ dataPromise }: ProductsProps) {
   }, [searchCategory, filteredCategories.length, selectedCategory, filteredCategories]);
 
   const totalPages = Math.ceil(filteredItems.length / ITEMS_PER_PAGE);
+
+  // Clamp the current page when the result set shrinks (e.g. after deleting a
+  // product on the last page), so the grid never ends up blank with no
+  // pagination controls to escape.
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(Math.max(1, totalPages));
+    }
+  }, [totalPages, currentPage]);
+
   const paginatedItems = filteredItems.slice(
     (currentPage - 1) * ITEMS_PER_PAGE,
     currentPage * ITEMS_PER_PAGE

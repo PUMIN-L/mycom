@@ -130,7 +130,7 @@ export default function CreateProduct() {
 
       // 2. Create the product
       const productData = {
-        id: Date.now().toString(),
+        id: crypto.randomUUID(),
         categoryId: finalCategoryId,
         image: imageUrl,
         title_th: titleTh || titleEn,

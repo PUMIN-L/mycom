@@ -35,39 +35,57 @@ export function uploadImage(
   });
 }
 
+/** Infer the Cloudinary resource_type from a delivery URL. */
+function detectResourceType(url: string): "image" | "raw" | "video" {
+  if (url.includes("/raw/upload/")) return "raw";
+  if (url.includes("/video/upload/")) return "video";
+  return "image";
+}
+
 /**
  * Extract the Cloudinary public_id from a secure URL.
  * e.g. https://res.cloudinary.com/demo/image/upload/v1234567/samples/mycom/abc.jpg
  *      → samples/mycom/abc
+ * Handles optional transformation segments and a query string, and (for raw
+ * assets like PDFs, whose public_id includes the extension) can keep it.
  */
-export function extractPublicId(imageUrl: string): string | null {
+export function extractPublicId(imageUrl: string, keepExtension = false): string | null {
   try {
-    const uploadIndex = imageUrl.indexOf("/upload/");
+    const noQuery = imageUrl.split("?")[0];
+    const uploadIndex = noQuery.indexOf("/upload/");
     if (uploadIndex === -1) return null;
-    // everything after /upload/
-    let path = imageUrl.slice(uploadIndex + "/upload/".length);
-    // strip optional version segment e.g. "v1234567/"
-    path = path.replace(/^v\d+\//, "");
-    // strip file extension
-    const dotIndex = path.lastIndexOf(".");
-    if (dotIndex !== -1) {
-      path = path.slice(0, dotIndex);
+    const afterUpload = noQuery.slice(uploadIndex + "/upload/".length);
+    // Drop any transformation segment(s) and the version, keeping only the
+    // path after "v<digits>/" (or the whole remainder if there is no version).
+    const segments = afterUpload.split("/");
+    const versionIdx = segments.findIndex((s) => /^v\d+$/.test(s));
+    let path = (versionIdx !== -1 ? segments.slice(versionIdx + 1) : segments).join("/");
+    if (!keepExtension) {
+      const dotIndex = path.lastIndexOf(".");
+      if (dotIndex !== -1) path = path.slice(0, dotIndex);
     }
-    return path;
+    return path || null;
   } catch {
     return null;
   }
 }
 
 /**
- * Delete a single image from Cloudinary by its URL.
- * Returns true if deleted, false otherwise.
+ * Delete a single asset from Cloudinary by its URL.
+ * Returns true if deleted (or already gone), false otherwise.
  */
 export async function deleteCloudinaryImage(imageUrl: string): Promise<boolean> {
-  const publicId = extractPublicId(imageUrl);
+  const resourceType = detectResourceType(imageUrl);
+  // Raw assets (e.g. PDFs) store the extension as part of the public_id, so it
+  // must be preserved; images store the public_id without an extension. The
+  // destroy call must also target the correct resource_type, otherwise the
+  // asset is never actually removed.
+  const publicId = extractPublicId(imageUrl, resourceType === "raw");
   if (!publicId) return false;
   try {
-    const result = await cloudinary.uploader.destroy(publicId);
+    const result = await cloudinary.uploader.destroy(publicId, {
+      resource_type: resourceType,
+    });
     return result.result === "ok" || result.result === "not found";
   } catch (err) {
     console.error("Cloudinary delete error:", err);
