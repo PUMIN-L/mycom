@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useT } from "../i18n/LanguageContext";
 import { translations } from "../i18n/translations";
+import { LINE_ID, LINE_URL, CONTACT_EMAIL } from "../lib/contact";
 
 export default function Contact() {
   const t = useT();
@@ -20,7 +21,7 @@ export default function Contact() {
 
     // Simulate sending (since we don't have a backend)
     // In production, use mailto: or an API
-    const mailtoLink = `mailto:ampumin@gmail.com?subject=${encodeURIComponent(
+    const mailtoLink = `mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent(
       formState.subject
     )}&body=${encodeURIComponent(
       `Name: ${formState.name}\nEmail: ${formState.email}\n\n${formState.message}`
@@ -82,8 +83,8 @@ export default function Contact() {
                 <h4 className="text-sm font-bold uppercase tracking-widest text-[var(--accent)]">
                   {t(translations.contact.emailLabel)}
                 </h4>
-                <a href="mailto:ampumin@gmail.com" className="text-lg text-[var(--text-secondary)] hover:text-[var(--accent)] transition-colors font-normal">
-                  ampumin@gmail.com
+                <a href={`mailto:${CONTACT_EMAIL}`} className="text-lg text-[var(--text-secondary)] hover:text-[var(--accent)] transition-colors font-normal">
+                  {CONTACT_EMAIL}
                 </a>
               </div>
 
@@ -92,8 +93,8 @@ export default function Contact() {
                 <h4 className="text-sm font-bold uppercase tracking-widest text-[var(--accent)]">
                   {t(translations.contact.lineLabel)}
                 </h4>
-                <a href="https://line.me/ti/p/~puminkmutnb" target="_blank" rel="noopener noreferrer" className="text-lg text-[var(--text-secondary)] hover:text-[var(--accent)] transition-colors font-normal">
-                  @puminkmutnb
+                <a href={LINE_URL} target="_blank" rel="noopener noreferrer" className="text-lg text-[var(--text-secondary)] hover:text-[var(--accent)] transition-colors font-normal">
+                  {LINE_ID}
                 </a>
               </div>
             </div>

@@ -50,6 +50,14 @@ body {
   font-family: var(--font-sans), system-ui, -apple-system, sans-serif;
 }
 
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: default !important;
+}
+
 h1, h2, h3, h4, h5, h6 {
   font-family: var(--font-serif), var(--font-thai), serif;
   letter-spacing: -0.01em;
@@ -88,6 +96,17 @@ h1, h2, h3, h4, h5, h6 {
   50% { transform: translateY(-5px); }
 }
 
+/* Dialog + toast (used by shared ConfirmDialog / Toast components) */
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.95); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
 @keyframes marquee {
   0% { transform: translateX(0); }
   100% { transform: translateX(-50%); }
@@ -111,6 +130,14 @@ h1, h2, h3, h4, h5, h6 {
 
 .animate-marquee {
   animation: marquee 40s linear infinite;
+}
+
+.animate-fadeIn {
+  animation: scaleIn 0.2s ease-out;
+}
+
+.animate-slideUp {
+  animation: slideUp 0.3s ease-out;
 }
 
 /* Delay classes */

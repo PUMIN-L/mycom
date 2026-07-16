@@ -39,3 +39,8 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local debug / scratch scripts — operator tooling, not for the repo
+/test-*.js
+/scratch/
+/dummy.pdf

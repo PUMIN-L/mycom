@@ -1,18 +1,23 @@
 "use client";
 
+import Link from "next/link";
 import { useT } from "../i18n/LanguageContext";
 import { translations } from "../i18n/translations";
+import { useAuth } from "../context/AuthContext";
 
 export default function Footer() {
   const t = useT();
+  const { isLoggedIn, user, logout } = useAuth();
 
   const quickLinks = [
     { href: "/", label: t(translations.nav.home) },
     { href: "#services", label: t(translations.nav.services) },
     { href: "#products", label: t(translations.nav.products) },
+    { href: "/catalog", label: t(translations.nav.catalog) },
     { href: "/about", label: t(translations.nav.about) },
-    { href: "#clients", label: t(translations.nav.clients) },
+    // { href: "#clients", label: t(translations.nav.clients) },
     { href: "#contact", label: t(translations.nav.contact) },
+    { href: "/showcase", label: "Content" },
   ];
 
   return (
@@ -21,7 +26,7 @@ export default function Footer() {
         <div className="grid grid-cols-1 md:grid-cols-4 gap-16 mb-20">
           {/* Brand Column */}
           <div className="md:col-span-1">
-            <a href="/about" className="flex items-center gap-3 mb-8 group cursor-pointer">
+            <a href="/" className="flex items-center gap-3 mb-8 group cursor-pointer">
               <div className="w-12 h-12 flex items-center justify-center bg-[var(--accent)] text-white font-serif italic font-bold text-2xl transition-transform group-hover:scale-110">
                 PF
               </div>
@@ -44,9 +49,9 @@ export default function Footer() {
 
           {/* Navigation Column */}
           <div>
-            <h4 className="text-xl font-bold uppercase tracking-[0.4em] text-[var(--accent)] mb-8">
+            <h3 className="text-xl font-bold uppercase tracking-[0.4em] text-[var(--accent)] mb-8">
               {t(translations.footer.quickLinks)}
-            </h4>
+            </h3>
             <ul className="space-y-4">
               {quickLinks.map((link) => (
                 <li key={link.href}>
@@ -64,9 +69,9 @@ export default function Footer() {
 
           {/* Contact Column */}
           <div>
-            <h4 className="text-xl font-bold uppercase tracking-[0.4em] text-[var(--accent)] mb-8">
+            <h3 className="text-xl font-bold uppercase tracking-[0.4em] text-[var(--accent)] mb-8">
               {t(translations.footer.contactInfo)}
-            </h4>
+            </h3>
             <div className="space-y-6 text-white/70 text-base font-light">
               <p className="leading-relaxed">{t(translations.contact.address)}</p>
               <div className="space-y-2">
@@ -85,9 +90,9 @@ export default function Footer() {
 
           {/* Social/CTA Column */}
           <div>
-            <h4 className="text-xl font-bold uppercase tracking-[0.4em] text-[var(--accent)] mb-8">
+            <h3 className="text-xl font-bold uppercase tracking-[0.4em] text-[var(--accent)] mb-8">
               Connect
-            </h4>
+            </h3>
             <div className="flex gap-4">
               <a
                 href="https://line.me/ti/p/~puminkmutnb"
@@ -114,14 +119,34 @@ export default function Footer() {
         </div>
 
         {/* Bottom Bar */}
-        <div className="pt-8 border-t border-white/10 flex flex-col md:row items-center justify-between gap-4">
+        <div className="pt-8 border-t border-white/10 flex flex-col md:flex-row items-center justify-between gap-4">
           <p className="text-xl text-white/40 uppercase tracking-widest">
             {t(translations.footer.copyright)}
           </p>
-          {/* <div className="flex gap-8">
-            <a href="#" className="text-xs text-white/40 uppercase tracking-widest hover:text-white transition-colors">Privacy Policy</a>
-            <a href="#" className="text-xs text-white/40 uppercase tracking-widest hover:text-white transition-colors">Terms of Service</a>
-          </div> */}
+
+          {/* Admin Login / Logout */}
+          {/* 
+          {isLoggedIn ? (
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-white/40 uppercase tracking-widest">
+                {user?.username}
+              </span>
+              <button
+                onClick={logout}
+                className="px-4 py-2 text-xs font-bold uppercase tracking-widest border border-white/20 text-white/50 hover:border-red-400 hover:text-red-400 transition rounded"
+              >
+                Logout
+              </button>
+            </div>
+          ) : (
+            <Link
+              href="/login"
+              className="px-4 py-2 text-xs font-bold uppercase tracking-widest border border-white/20 text-white/50 hover:border-[var(--accent)] hover:text-[var(--accent)] transition rounded"
+            >
+              Admin Login
+            </Link>
+          )}
+          */}
         </div>
       </div>
     </footer>

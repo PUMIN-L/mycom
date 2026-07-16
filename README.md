@@ -16,21 +16,27 @@ bun dev
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Environment Variables
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Make sure to set up your `.env.local` file with the following Cloudinary credentials:
 
-## Learn More
+```env
+CLOUDINARY_CLOUD_NAME=your_cloud_name
+CLOUDINARY_API_KEY=your_api_key
+CLOUDINARY_API_SECRET=your_api_secret
+```
 
-To learn more about Next.js, take a look at the following resources:
+## ⚠️ Important: Cloudinary PDF Configuration
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+By default, Cloudinary restricts the delivery of PDF and ZIP files (Strict Delivery) for security reasons. If your application uploads and displays PDF files (e.g., using `react-pdf`), you will encounter a `401 Unauthorized` (`deny or ACL failure`) error when trying to load them.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+To fix this and allow PDFs to be viewed:
 
-## Deploy on Vercel
+1. Log in to your Cloudinary Dashboard.
+2. Go to **Settings** (Gear icon ⚙️).
+3. Navigate to the **Security** tab.
+4. Scroll down to the **Restricted media types** section.
+5. **Uncheck** the box for **"Delivery of PDF and ZIP files"**.
+6. Click **Save** at the bottom of the page.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Without this setting disabled, the application's PDF Viewer will not be able to load documents.
