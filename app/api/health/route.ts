@@ -1,8 +1,5 @@
 import { NextResponse } from "next/server";
-import { pingDb, getDbConnection, query } from "../../lib/db";
-import { getAllContents } from "../../lib/contentStore";
-import { getAllDocuments } from "../../lib/documentStore";
-import type { RowDataPacket } from "mysql2";
+import { pingDb } from "../../lib/db";
 
 // Post-deploy health check. Hit `GET /api/health` after a Vercel deploy to
 // confirm (a) the database is reachable and (b) the required env vars are set.
@@ -12,14 +9,14 @@ import type { RowDataPacket } from "mysql2";
 // values) and, on a DB failure, only the mysql2 error *code* (e.g. ETIMEDOUT,
 // ER_ACCESS_DENIED_ERROR) — enough to diagnose without leaking host/creds.
 //
-// TEMPORARY: `?deep=1` runs the exact code path the /showcase pages use
-// (init + `contents` queries + row mapping) inside try/catch and returns the
-// real error, so we can see what 500s on Vercel. REMOVE the deep block once the
-// showcase 500 is fixed — it leaks error/stack detail.
+// TEMPORARY: `?deep=1` dynamically imports each server module the /showcase
+// pages depend on (one at a time, in try/catch) and then runs the real content
+// queries — so we can see EXACTLY which import or query throws on Vercel. Uses
+// dynamic import() so a broken module can't take down /api/health itself.
+// REMOVE the deep block once the showcase 500 is fixed.
 export const runtime = "nodejs"; // mysql2 needs the Node.js runtime (not Edge)
 export const dynamic = "force-dynamic"; // always probe, never serve a cached result
 
-// Env vars the app cannot function without.
 const REQUIRED_ENV = [
   "DB_HOST",
   "DB_USER",
@@ -31,13 +28,11 @@ const REQUIRED_ENV = [
   "CLOUDINARY_API_SECRET",
 ] as const;
 
-// Not fatal, but features degrade without them (admin user isn't seeded).
 const RECOMMENDED_ENV = ["ADMIN_PASSWORD"] as const;
 
 const missingOf = (keys: readonly string[]) =>
   keys.filter((k) => !process.env[k]);
 
-// Run a probe, returning either its result object or the caught error's detail.
 async function probe(
   fn: () => Promise<Record<string, unknown>>
 ): Promise<Record<string, unknown>> {
@@ -49,47 +44,55 @@ async function probe(
       ok: false,
       error: err?.message ?? String(e),
       code: err?.code ?? null,
-      stack: err?.stack?.split("\n").slice(0, 6).join(" | ") ?? null,
+      stack: err?.stack?.split("\n").slice(0, 8).join(" | ") ?? null,
     };
   }
 }
 
 async function runDeepProbes() {
   return {
-    init: await probe(async () => {
-      await getDbConnection();
+    // Isolate module LOAD (dynamic import) from the DB queries. Whichever of
+    // these `ok:false` first is the module that fails to evaluate on Vercel.
+    importSanitizeHtml: await probe(async () => {
+      await import("../../lib/sanitizeHtml");
       return {};
     }),
-    // Raw query straight against the contents table — isolates a SQL/schema
-    // problem from the JS row-mapping. Also reveals how mysql2 hands back the
-    // JSON `blocks` column on Vercel (string vs object vs Buffer).
+    importDocumentStore: await probe(async () => {
+      await import("../../lib/documentStore");
+      return {};
+    }),
+    importContentStore: await probe(async () => {
+      await import("../../lib/contentStore");
+      return {};
+    }),
+    // If the modules loaded, run the actual queries the pages use.
     rawContents: await probe(async () => {
-      const [rows] = await query<RowDataPacket[]>(
-        "SELECT * FROM contents LIMIT 1"
-      );
-      const sample = rows[0];
+      const { query } = await import("../../lib/db");
+      const [rows] = await query("SELECT * FROM contents LIMIT 1");
+      const arr = rows as unknown as Array<Record<string, unknown>>;
+      const sample = arr[0];
       return {
-        rows: rows.length,
+        rows: arr.length,
         blocksType: sample
           ? Buffer.isBuffer(sample.blocks)
             ? "buffer"
             : typeof sample.blocks
           : "no-rows",
-        columns: sample ? Object.keys(sample) : [],
       };
     }),
-    getAllContents: await probe(async () => ({
-      count: (await getAllContents()).length,
-    })),
-    getAllDocuments: await probe(async () => ({
-      count: (await getAllDocuments()).length,
-    })),
+    getAllContents: await probe(async () => {
+      const { getAllContents } = await import("../../lib/contentStore");
+      return { count: (await getAllContents()).length };
+    }),
+    getAllDocuments: await probe(async () => {
+      const { getAllDocuments } = await import("../../lib/documentStore");
+      return { count: (await getAllDocuments()).length };
+    }),
   };
 }
 
 export async function GET(request: Request) {
-  const deepRequested =
-    new URL(request.url).searchParams.get("deep") === "1";
+  const deepRequested = new URL(request.url).searchParams.get("deep") === "1";
 
   const missingRequired = missingOf(REQUIRED_ENV);
   const missingRecommended = missingOf(RECOMMENDED_ENV);
