@@ -22,10 +22,14 @@ function createPool(): DbPool {
       minVersion: "TLSv1.2",
       rejectUnauthorized: true,
     },
-    connectionLimit: 10,
+    // Keep the pool small: on serverless (Vercel) EACH function instance holds
+    // its own pool, so a high per-instance limit multiplies across instances and
+    // can exhaust the cloud DB's connection budget. A handful is plenty for this
+    // low-concurrency CMS (page renders issue queries sequentially).
+    connectionLimit: 3,
     // Recycle idle connections before the cloud DB (TiDB) drops them, and keep
     // sockets warm. Stale connections still happen, so query() also retries.
-    maxIdle: 10,
+    maxIdle: 2,
     idleTimeout: 60_000,
     enableKeepAlive: true,
     keepAliveInitialDelay: 10_000,
@@ -35,7 +39,7 @@ function createPool(): DbPool {
 
 const pool: DbPool = globalForDb._pool ?? (globalForDb._pool = createPool());
 
-async function initializeDb(): Promise<void> {
+async function bootstrapSchemaOnce(): Promise<void> {
   const connection = await pool.getConnection();
   try {
       await connection.query(`
@@ -189,12 +193,41 @@ async function initializeDb(): Promise<void> {
         );
       }
 
-    } catch (error) {
-      console.error("Failed to initialize database table:", error);
-      throw error;
     } finally {
       connection.release();
     }
+}
+
+// Bootstrap runs once per process — often on a serverless cold start, where the
+// first DB round-trip can hit a transient connection error (TiDB drops idle
+// sockets; the region hop makes cold connects flaky). Retry the whole block on
+// transient errors: it is idempotent (CREATE IF NOT EXISTS / INSERT IGNORE), so
+// re-running is safe, and mysql2 discards a fatally-errored connection on
+// release, so each attempt acquires a fresh one. Without this, one flaky cold
+// connection 500s the first page request (while /api/health, which skips init,
+// still looks healthy).
+async function initializeDb(): Promise<void> {
+  const MAX_ATTEMPTS = 3;
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      await bootstrapSchemaOnce();
+      return;
+    } catch (error) {
+      lastError = error;
+      if (isTransientDbError(error) && attempt < MAX_ATTEMPTS) {
+        console.warn(
+          `DB init transient error (attempt ${attempt}/${MAX_ATTEMPTS}), retrying:`,
+          (error as { code?: string }).code
+        );
+        await new Promise((resolve) => setTimeout(resolve, 200 * attempt));
+        continue;
+      }
+      console.error("Failed to initialize database table:", error);
+      throw error;
+    }
+  }
+  throw lastError;
 }
 
 // Memoize initialization as a single shared promise so concurrent cold-start
