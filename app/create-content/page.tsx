@@ -453,7 +453,7 @@ function CreateContentInner() {
         </div>
 
         {/* Content Blocks */}
-        <div className="space-y-4 mb-8">
+        <div className="mb-8">
           {blocks.length === 0 ? (
             <div className="bg-white rounded-xl shadow-sm p-12 text-center border border-dashed border-gray-300">
               <p className="text-gray-500">ไม่มีบล็อกใดแล้ว</p>
@@ -463,7 +463,9 @@ function CreateContentInner() {
               <div
                 key={block.id}
                 id={`block-${block.id}`}
-                className="relative group transition-all duration-300 bg-white rounded-xl p-6 border-2 border-dashed border-gray-200 hover:border-orange-400 mb-6"
+                // Live gap: dragging "ระยะห่างล่าง" updates the space immediately.
+                style={{ marginBottom: block.spacingBelow ?? 16 }}
+                className="relative group transition-all duration-300 bg-white rounded-xl p-6 border-2 border-dashed border-gray-200 hover:border-orange-400"
               >
                 <button
                   onClick={() => deleteBlock(block.id)}

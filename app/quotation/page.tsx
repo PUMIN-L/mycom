@@ -123,6 +123,7 @@ export default function QuotationPage() {
   const [q, setQ] = useState<QuoteState>(emptyState);
   const [products, setProducts] = useState<ProductItem[]>([]);
   const [uploadingItemId, setUploadingItemId] = useState<string | null>(null);
+  const [generating, setGenerating] = useState(false); // building the PDF
   const [savePrompt, setSavePrompt] = useState(false); // "keep 30d or delete now?" after download
   const [deletingQuote, setDeletingQuote] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
@@ -250,8 +251,44 @@ export default function QuotationPage() {
   const vat = q.vatEnabled ? afterDiscount * 0.07 : 0;
   const grandTotal = afterDiscount + vat;
 
-  // ── Download → save record → print → ask keep/delete ──────────────────────
+  // Render the A4 sheet to a real .pdf file and download it (no print dialog).
+  // Libraries are dynamically imported so they only load on click and never run
+  // on the server. html2canvas-pro (vs html2canvas) supports Tailwind v4's oklch
+  // colors. The sheet is rasterized, then sliced across A4 pages if it's tall.
+  async function generatePdf() {
+    const el = document.getElementById("quote-sheet");
+    if (!el) return;
+    const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
+      import("html2canvas-pro"),
+      import("jspdf"),
+    ]);
+    const canvas = await html2canvas(el, {
+      scale: 2, // sharper text/images
+      useCORS: true, // include Cloudinary/product images
+      backgroundColor: "#ffffff",
+    });
+    const imgData = canvas.toDataURL("image/jpeg", 0.95);
+    const pdf = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait" });
+    const pageW = pdf.internal.pageSize.getWidth();
+    const pageH = pdf.internal.pageSize.getHeight();
+    const imgH = (canvas.height * pageW) / canvas.width;
+    let heightLeft = imgH;
+    let position = 0;
+    pdf.addImage(imgData, "JPEG", 0, position, pageW, imgH);
+    heightLeft -= pageH;
+    while (heightLeft > 0) {
+      position -= pageH;
+      pdf.addPage();
+      pdf.addImage(imgData, "JPEG", 0, position, pageW, imgH);
+      heightLeft -= pageH;
+    }
+    pdf.save(`Quotation-${(q.docNo || "document").replace(/[^\w.-]/g, "_")}.pdf`);
+  }
+
+  // ── Download → save record → generate PDF → ask keep/delete ───────────────
   async function handleDownload() {
+    if (generating) return;
+    setGenerating(true);
     // Persist first so the record exists for the keep/delete prompt and the
     // 30-day auto-purge. Only images uploaded for THIS quote are deletable.
     const uploadedImages = q.items
@@ -268,7 +305,14 @@ export default function QuotationPage() {
     } catch {
       /* save is best-effort — never block the download */
     }
-    window.print(); // browser Save-as-PDF (blocks until the dialog closes)
+    try {
+      await generatePdf();
+    } catch {
+      showToast("สร้าง PDF ไม่สำเร็จ กรุณาลองใหม่", "error");
+      setGenerating(false);
+      return;
+    }
+    setGenerating(false);
     if (saved) setSavePrompt(true);
     else showToast("ดาวน์โหลดแล้ว (แต่บันทึกประวัติไม่สำเร็จ)", "error");
   }

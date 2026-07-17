@@ -747,14 +747,15 @@ export default function ShowcaseClient({
           </div>
         )}
 
-        <div className={isEditing ? "space-y-4" : undefined}>
+        <div>
           {displayBlocks.map((block) => (
             <div
               key={block.id}
               id={`block-${block.id}`}
-              // In view mode each block controls its own gap (spacingBelow).
-              // 16px default matches the old `space-y-4` look for legacy blocks.
-              style={!isEditing ? { marginBottom: block.spacingBelow ?? 16 } : undefined}
+              // Each block owns its bottom gap (spacingBelow) — applied in EDIT
+              // mode too so dragging the "ระยะห่างล่าง" slider updates the gap
+              // live. 16px default matches the old space-y-4 look for legacy blocks.
+              style={{ marginBottom: block.spacingBelow ?? 16 }}
               className={`relative group transition-all duration-300 ${
                 isEditing ? "bg-white rounded-xl p-6 border-2 border-dashed border-gray-200 hover:border-orange-400" : "py-2"
               }`}
