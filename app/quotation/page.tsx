@@ -653,9 +653,10 @@ export default function QuotationPage() {
                   </tr>
                   {(q.sellerPhone || q.sellerEmail) && (
                     <tr>
-                      <td className="pr-3 py-0.5" />
+                      <td className="pr-3 py-0.5 align-top" />
                       <td className="py-0.5 text-gray-600">
-                        {q.sellerPhone}{q.sellerPhone && q.sellerEmail ? " · " : ""}{q.sellerEmail}
+                        {q.sellerPhone && <div>{q.sellerPhone}</div>}
+                        {q.sellerEmail && <div className="break-all">{q.sellerEmail}</div>}
                       </td>
                     </tr>
                   )}
