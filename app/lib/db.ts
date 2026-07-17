@@ -91,6 +91,26 @@ async function bootstrapSchemaOnce(): Promise<void> {
         )
       `);
 
+      // ── Quotations table (saved quotations; auto-purged after 30 days) ────
+      // `uploadedImages` = only images uploaded FOR this quote (deletable);
+      // catalog/product images are never stored here, so they survive deletes.
+      await connection.query(`
+        CREATE TABLE IF NOT EXISTS quotations (
+          id VARCHAR(255) PRIMARY KEY,
+          docNo VARCHAR(255),
+          data JSON NOT NULL,
+          uploadedImages JSON NOT NULL,
+          createdAt VARCHAR(255) NOT NULL
+        )
+      `);
+      try {
+        await connection.query(
+          `CREATE INDEX idx_quotations_createdAt ON quotations (createdAt)`
+        );
+      } catch {
+        // Ignore if index already exists
+      }
+
       // ── Product categories table ──────────────────────────────────────────
 
       await connection.query(`

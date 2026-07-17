@@ -221,6 +221,12 @@ export default function ShowcaseListClient({
                   + Create New Content
                 </Link>
                 <Link
+                  href="/quotation"
+                  className="px-5 py-2.5 bg-white border border-gray-300 text-gray-700 font-semibold rounded-lg hover:bg-gray-50 transition shadow-sm"
+                >
+                  🧾 ใบเสนอราคา
+                </Link>
+                <Link
                   href="/settings"
                   className="px-5 py-2.5 bg-white border border-gray-300 text-gray-700 font-semibold rounded-lg hover:bg-gray-50 transition shadow-sm"
                 >
