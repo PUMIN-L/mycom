@@ -5,6 +5,7 @@ import {
   setSetting,
   CONTACT_EMAIL_SETTING,
 } from "../../../lib/settingsStore";
+import { isMailConfigured, sendContactRecipientChangedEmail } from "../../../lib/mailer";
 
 // Admin-only: read/update where contact-form submissions are emailed.
 // Both verbs require auth — the recipient address is operator config, not
@@ -30,7 +31,23 @@ export const PUT = withRoute(
         { status: 400 }
       );
     }
+
+    const previous = await getContactEmail();
     await setSetting(CONTACT_EMAIL_SETTING, value);
-    return NextResponse.json({ email: value });
+
+    // On a real change, alert BOTH the old and new addresses. Best-effort: a
+    // notification failure (e.g. SMTP unconfigured) must not fail the save.
+    let notified = false;
+    if (value !== previous && isMailConfigured()) {
+      const recipients = Array.from(new Set([previous, value]));
+      try {
+        await sendContactRecipientChangedEmail(recipients, previous, value);
+        notified = true;
+      } catch (err) {
+        console.error("Failed to send recipient-change notice:", err);
+      }
+    }
+
+    return NextResponse.json({ email: value, changed: value !== previous, notified });
   }
 );

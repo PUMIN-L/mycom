@@ -64,7 +64,14 @@ export default function SettingsPage() {
         body: JSON.stringify({ email: contactEmail }),
       });
       if (res.ok) {
-        showToast("บันทึกการตั้งค่าแล้ว", "success");
+        const data = await res.json().catch(() => null);
+        if (data?.changed && data?.notified) {
+          showToast("บันทึกแล้ว + ส่งอีเมลแจ้งเตือนไปยังอีเมลเก่าและใหม่แล้ว", "success");
+        } else if (data?.changed && !data?.notified) {
+          showToast("บันทึกแล้ว (แต่ส่งอีเมลแจ้งเตือนไม่ได้ — ยังไม่ได้ตั้งค่า SMTP)", "error");
+        } else {
+          showToast("บันทึกการตั้งค่าแล้ว", "success");
+        }
       } else {
         const data = await res.json().catch(() => null);
         showToast(data?.error ?? "บันทึกไม่สำเร็จ", "error");

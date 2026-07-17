@@ -33,6 +33,31 @@ export interface ContactMessage {
   message: string;
 }
 
+/**
+ * Notify that the contact-form recipient email was changed. Sent to both the
+ * old and new addresses (audit trail — if an attacker changed it, the previous
+ * owner is alerted). Addresses are passed as structured objects and are already
+ * EMAIL_RE-validated by the caller, so no header-injection surface. Throws on
+ * SMTP failure.
+ */
+export async function sendContactRecipientChangedEmail(
+  recipients: string[],
+  oldEmail: string,
+  newEmail: string
+): Promise<void> {
+  const transport = createTransport();
+  await transport.sendMail({
+    from: { name: "ระบบเว็บไซต์ (Profin Lab Scale)", address: process.env.SMTP_USER ?? "" },
+    to: recipients.map((address) => ({ name: "", address })),
+    subject: "แจ้งเตือน: เปลี่ยนอีเมลรับข้อความจากฟอร์มติดต่อ",
+    text:
+      `อีเมลสำหรับรับข้อความจากฟอร์ม "ติดต่อเรา" ถูกเปลี่ยนแล้ว\n\n` +
+      `จาก: ${oldEmail}\n` +
+      `เป็น: ${newEmail}\n\n` +
+      `หากคุณไม่ได้เป็นผู้เปลี่ยนแปลงนี้ กรุณาตรวจสอบความปลอดภัยของบัญชีผู้ดูแลระบบทันที`,
+  });
+}
+
 /** Send a contact-form submission to `to`. Throws on SMTP failure. */
 export async function sendContactEmail(
   to: string,
