@@ -265,6 +265,28 @@ function isDuplicateKeyError(error: unknown): boolean {
   return (error as { code?: string } | null | undefined)?.code === "ER_DUP_ENTRY";
 }
 
+// ── Lightweight connectivity probe (for /api/health) ─────────────────────────
+//
+// Deliberately does NOT call getDbConnection(), so it never triggers the
+// CREATE TABLE / seed bootstrap — it only answers "can we reach the database
+// right now?". One retry absorbs a stale pooled socket (TiDB drops idle
+// connections server-side; mysql2 discards the broken one on error, so a retry
+// grabs a fresh connection). Returns the round-trip latency in ms.
+export async function pingDb(): Promise<{ latencyMs: number }> {
+  const start = Date.now();
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      await pool.query("SELECT 1");
+      return { latencyMs: Date.now() - start };
+    } catch (error) {
+      lastError = error;
+      if (attempt === 2 || !isTransientDbError(error)) throw error;
+    }
+  }
+  throw lastError;
+}
+
 export async function query<T extends QueryResult>(
   sql: string,
   params?: unknown[]
