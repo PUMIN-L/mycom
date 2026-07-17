@@ -628,10 +628,8 @@ export default function QuotationPage() {
                 <div className="font-semibold">{q.customerContact || "-"}</div>
                 {q.customerCompany && <div>{q.customerCompany}</div>}
                 {q.customerAddress && <div className="whitespace-pre-line text-gray-700">{q.customerAddress}</div>}
-                <div className="text-gray-700">
-                  {q.customerPhone && <>โทร {q.customerPhone} </>}
-                  {q.customerEmail && <>อีเมล {q.customerEmail}</>}
-                </div>
+                {q.customerPhone && <div className="text-gray-700">โทร {q.customerPhone}</div>}
+                {q.customerEmail && <div className="text-gray-700 break-all">อีเมล {q.customerEmail}</div>}
               </div>
               <table className="shrink-0 self-start text-[12.5px]">
                 <tbody>
