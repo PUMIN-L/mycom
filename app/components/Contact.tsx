@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useT } from "../i18n/LanguageContext";
 import { translations } from "../i18n/translations";
 import { LINE_ID, LINE_URL, CONTACT_EMAIL } from "../lib/contact";
@@ -13,26 +13,58 @@ export default function Contact() {
     subject: "",
     message: "",
   });
-  const [status, setStatus] = useState<"idle" | "sending" | "sent">("idle");
+  const [status, setStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
+  // Which localized error to show — mapped from the response status so EN/ZH
+  // visitors don't see the API's Thai-only error strings.
+  const [errorKey, setErrorKey] = useState<"error" | "errorRateLimit" | "errorUnavailable">("error");
 
-  const handleSubmit = (e: React.FormEvent) => {
+  // Status-reset timer. Cleared before each submit (and on unmount) so a stale
+  // timer from a previous attempt can't flip "sending" back to "idle" mid-flight
+  // and re-enable the button for a duplicate send.
+  const resetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    return () => {
+      if (resetTimerRef.current) clearTimeout(resetTimerRef.current);
+    };
+  }, []);
+  const scheduleStatusReset = (ms: number) => {
+    if (resetTimerRef.current) clearTimeout(resetTimerRef.current);
+    resetTimerRef.current = setTimeout(() => setStatus("idle"), ms);
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (resetTimerRef.current) clearTimeout(resetTimerRef.current);
     setStatus("sending");
 
-    // Simulate sending (since we don't have a backend)
-    // In production, use mailto: or an API
-    const mailtoLink = `mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent(
-      formState.subject
-    )}&body=${encodeURIComponent(
-      `Name: ${formState.name}\nEmail: ${formState.email}\n\n${formState.message}`
-    )}`;
-    window.open(mailtoLink, "_blank");
-
-    setTimeout(() => {
+    try {
+      // Sends a real email server-side (/api/contact → SMTP). The recipient is
+      // configurable from the admin /settings page.
+      const res = await fetch("/api/contact", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(formState),
+      });
+      if (!res.ok) {
+        setErrorKey(
+          res.status === 429
+            ? "errorRateLimit"
+            : res.status === 503
+              ? "errorUnavailable"
+              : "error"
+        );
+        setStatus("error");
+        scheduleStatusReset(5000);
+        return;
+      }
       setStatus("sent");
       setFormState({ name: "", email: "", subject: "", message: "" });
-      setTimeout(() => setStatus("idle"), 3000);
-    }, 1000);
+      scheduleStatusReset(3000);
+    } catch {
+      setErrorKey("error");
+      setStatus("error");
+      scheduleStatusReset(5000);
+    }
   };
 
   return (
@@ -177,6 +209,11 @@ export default function Contact() {
                   className="w-full bg-transparent border-b border-gray-200 py-3 text-lg text-[var(--brand-navy)] focus:outline-none focus:border-[var(--accent)] transition-colors resize-none"
                 />
               </div>
+              {status === "error" && (
+                <p className="text-sm text-red-500 font-semibold" role="alert">
+                  {t(translations.contact.form[errorKey])}
+                </p>
+              )}
               <button
                 type="submit"
                 disabled={status === "sending"}

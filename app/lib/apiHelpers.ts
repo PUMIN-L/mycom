@@ -99,6 +99,12 @@ export function withRoute<Args extends unknown[]>(
         return jsonError(error.message, error.status);
       }
       console.error(`${fallbackMessage}:`, error);
+      // Raw error text (SMTP hosts, SQL fragments, driver codes) is for the
+      // server log only — in production, clients (several routes are public)
+      // get just the fallback message.
+      if (process.env.NODE_ENV === "production") {
+        return jsonError(fallbackMessage, 500);
+      }
       const details = error instanceof Error ? error.message : String(error);
       return jsonError(fallbackMessage, 500, details);
     }

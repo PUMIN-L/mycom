@@ -44,6 +44,10 @@ export interface ContentBlock {
   textAlign?: string;
   textColor?: string;
   selectedImageIndex?: number;
+  /** Image display width as a percentage (25–100). Undefined = 100 (legacy). */
+  imageWidth?: number;
+  /** Extra vertical gap below this block in px (0–100). Undefined = default spacing. */
+  spacingBelow?: number;
 }
 
 export interface ContentData {

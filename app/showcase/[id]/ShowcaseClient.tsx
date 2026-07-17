@@ -10,6 +10,7 @@ import ColorPickerDropdown from "../../components/ColorPickerDropdown";
 import ConfirmDialog from "../../components/ConfirmDialog";
 import Toast from "../../components/Toast";
 import RichTextEditor from "../../components/RichTextEditor";
+import BlockRangeControl from "../../components/BlockRangeControl";
 
 interface ContentBlock {
   id: string;
@@ -23,6 +24,8 @@ interface ContentBlock {
   textAlign?: string;
   textColor?: string;
   selectedImageIndex?: number;
+  imageWidth?: number; // image display width % (25–100); undefined = 100
+  spacingBelow?: number; // extra gap below the block in px (0–100)
 }
 
 interface ContentData {
@@ -744,11 +747,14 @@ export default function ShowcaseClient({
           </div>
         )}
 
-        <div className="space-y-4">
+        <div className={isEditing ? "space-y-4" : undefined}>
           {displayBlocks.map((block) => (
             <div
               key={block.id}
               id={`block-${block.id}`}
+              // In view mode each block controls its own gap (spacingBelow).
+              // 16px default matches the old `space-y-4` look for legacy blocks.
+              style={!isEditing ? { marginBottom: block.spacingBelow ?? 16 } : undefined}
               className={`relative group transition-all duration-300 ${
                 isEditing ? "bg-white rounded-xl p-6 border-2 border-dashed border-gray-200 hover:border-orange-400" : "py-2"
               }`}
@@ -809,20 +815,32 @@ export default function ShowcaseClient({
                         <img
                           src={block.imageUrl}
                           alt="Content"
-                          className="w-full h-auto"
+                          className="h-auto"
+                          style={{ width: `${block.imageWidth ?? 100}%` }}
                         />
                     )}
                   </div>
                   {isEditing && (
-                    <button
-                      onClick={() => {
-                        setReplacingBlockId(block.id);
-                        fileInputRef.current?.click();
-                      }}
-                      className="px-4 py-1.5 text-sm rounded-lg bg-orange-100 text-orange-600 hover:bg-orange-200 transition font-semibold border border-orange-300"
-                    >
-                      🔄 เปลี่ยนรูป
-                    </button>
+                    <div className="flex flex-wrap gap-2 justify-center items-center">
+                      <button
+                        onClick={() => {
+                          setReplacingBlockId(block.id);
+                          fileInputRef.current?.click();
+                        }}
+                        className="px-4 py-1.5 text-sm rounded-lg bg-orange-100 text-orange-600 hover:bg-orange-200 transition font-semibold border border-orange-300"
+                      >
+                        🔄 เปลี่ยนรูป
+                      </button>
+                      <BlockRangeControl
+                        label="🔍 ขนาดรูป"
+                        value={block.imageWidth ?? 100}
+                        min={25}
+                        max={100}
+                        step={5}
+                        unit="%"
+                        onChange={(v) => updateBlock(block.id, { imageWidth: v })}
+                      />
+                    </div>
                   )}
                 </div>
               ) : (
@@ -860,7 +878,8 @@ export default function ShowcaseClient({
                         <img
                           src={block.imageUrl}
                           alt="Content"
-                          className="w-full h-auto object-cover"
+                          className="h-auto object-cover mx-auto"
+                          style={{ width: `${block.imageWidth ?? 100}%` }}
                         />
                       ) : isEditing ? (
                         <button
@@ -879,7 +898,7 @@ export default function ShowcaseClient({
                       )}
                     </div>
                     {isEditing && (
-                      <div className="mt-4 flex gap-2 w-full justify-center">
+                      <div className="mt-4 flex flex-wrap gap-2 w-full justify-center items-center">
                         {block.imageUrl && (
                           <button
                             onClick={() => {
@@ -903,9 +922,35 @@ export default function ShowcaseClient({
                           <option value="right">รูปอยู่ขวา</option>
                           <option value="left">รูปอยู่ซ้าย</option>
                         </select>
+                        {block.imageUrl && (
+                          <BlockRangeControl
+                            label="🔍 ขนาดรูป"
+                            value={block.imageWidth ?? 100}
+                            min={25}
+                            max={100}
+                            step={5}
+                            unit="%"
+                            onChange={(v) => updateBlock(block.id, { imageWidth: v })}
+                          />
+                        )}
                       </div>
                     )}
                   </div>
+                </div>
+              )}
+
+              {/* Per-block spacing control (all block types) */}
+              {isEditing && (
+                <div className="mt-4 pt-3 border-t border-dashed border-gray-200 flex justify-center">
+                  <BlockRangeControl
+                    label="↕ ระยะห่างล่าง"
+                    value={block.spacingBelow ?? 16}
+                    min={0}
+                    max={100}
+                    step={4}
+                    unit="px"
+                    onChange={(v) => updateBlock(block.id, { spacingBelow: v })}
+                  />
                 </div>
               )}
             </div>

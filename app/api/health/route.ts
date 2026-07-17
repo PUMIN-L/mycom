@@ -23,8 +23,9 @@ const REQUIRED_ENV = [
   "CLOUDINARY_API_SECRET",
 ] as const;
 
-// Not fatal, but features degrade without them (admin user isn't seeded).
-const RECOMMENDED_ENV = ["ADMIN_PASSWORD"] as const;
+// Not fatal, but features degrade without them (admin user isn't seeded;
+// the contact form can't send email without SMTP credentials).
+const RECOMMENDED_ENV = ["ADMIN_PASSWORD", "SMTP_USER", "SMTP_PASS"] as const;
 
 const missingOf = (keys: readonly string[]) =>
   keys.filter((k) => !process.env[k]);

@@ -146,6 +146,21 @@ export const translations = {
         en: "Message sent successfully!",
         zh: "消息发送成功！",
       },
+      error: {
+        th: "ส่งข้อความไม่สำเร็จ กรุณาลองใหม่",
+        en: "Failed to send. Please try again.",
+        zh: "发送失败，请重试。",
+      },
+      errorRateLimit: {
+        th: "ส่งข้อความบ่อยเกินไป กรุณารอสักครู่แล้วลองใหม่",
+        en: "Too many messages. Please wait a moment and try again.",
+        zh: "发送过于频繁，请稍后重试。",
+      },
+      errorUnavailable: {
+        th: "ระบบส่งอีเมลยังไม่พร้อมใช้งาน กรุณาติดต่อผ่าน LINE",
+        en: "Email is temporarily unavailable — please contact us via LINE.",
+        zh: "邮件系统暂不可用，请通过 LINE 联系我们。",
+      },
     },
     addressLabel: { th: "ที่อยู่", en: "Address", zh: "地址" },
     phoneLabel: { th: "โทรศัพท์", en: "Phone", zh: "电话" },

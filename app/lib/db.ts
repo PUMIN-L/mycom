@@ -83,6 +83,14 @@ async function bootstrapSchemaOnce(): Promise<void> {
         )
       `);
 
+      // ── Settings table (key-value store for CMS-configurable options) ─────
+      await connection.query(`
+        CREATE TABLE IF NOT EXISTS settings (
+          name VARCHAR(191) PRIMARY KEY,
+          value TEXT NOT NULL
+        )
+      `);
+
       // ── Product categories table ──────────────────────────────────────────
 
       await connection.query(`

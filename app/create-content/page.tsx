@@ -4,6 +4,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "../context/AuthContext";
 import ColorPickerDropdown from "../components/ColorPickerDropdown";
 import RichTextEditor from "../components/RichTextEditor";
+import BlockRangeControl from "../components/BlockRangeControl";
 
 interface ContentBlock {
   id: string;
@@ -17,6 +18,8 @@ interface ContentBlock {
   textAlign?: string;
   textColor?: string;
   selectedImageIndex?: number;
+  imageWidth?: number; // image display width % (25–100); undefined = 100
+  spacingBelow?: number; // extra gap below the block in px (0–100)
 }
 
 interface ProductCategory {
@@ -573,19 +576,31 @@ function CreateContentInner() {
                         <img
                           src={block.imageUrl}
                           alt="Content"
-                          className="w-full h-auto rounded-lg"
+                          className="h-auto rounded-lg"
+                          style={{ width: `${block.imageWidth ?? 100}%` }}
                         />
                       )}
                     </div>
-                    <button
-                      onClick={() => {
-                        setReplacingBlockId(block.id);
-                        replaceImageInputRef.current?.click();
-                      }}
-                      className="px-4 py-1.5 text-sm rounded-lg bg-orange-100 text-orange-600 hover:bg-orange-200 transition font-semibold border border-orange-300"
-                    >
-                      🔄 เปลี่ยนรูป
-                    </button>
+                    <div className="flex flex-wrap gap-2 justify-center items-center">
+                      <button
+                        onClick={() => {
+                          setReplacingBlockId(block.id);
+                          replaceImageInputRef.current?.click();
+                        }}
+                        className="px-4 py-1.5 text-sm rounded-lg bg-orange-100 text-orange-600 hover:bg-orange-200 transition font-semibold border border-orange-300"
+                      >
+                        🔄 เปลี่ยนรูป
+                      </button>
+                      <BlockRangeControl
+                        label="🔍 ขนาดรูป"
+                        value={block.imageWidth ?? 100}
+                        min={25}
+                        max={100}
+                        step={5}
+                        unit="%"
+                        onChange={(v) => updateBlock(block.id, { imageWidth: v })}
+                      />
+                    </div>
                   </div>
                 ) : (
                   <div className={`flex flex-col-reverse md:flex-row gap-8 items-center ${block.imagePosition === 'left' ? 'md:flex-row-reverse' : ''}`}>
@@ -608,7 +623,8 @@ function CreateContentInner() {
                           <img
                             src={block.imageUrl}
                             alt="Content"
-                            className="w-full h-auto object-cover rounded-lg"
+                            className="h-auto object-cover rounded-lg mx-auto"
+                            style={{ width: `${block.imageWidth ?? 100}%` }}
                           />
                         ) : (
                           <button
@@ -622,7 +638,7 @@ function CreateContentInner() {
                           </button>
                         )}
                       </div>
-                      <div className="mt-4 flex gap-2 w-full justify-center">
+                      <div className="mt-4 flex flex-wrap gap-2 w-full justify-center items-center">
                         {block.imageUrl && (
                           <button
                             onClick={() => {
@@ -646,10 +662,34 @@ function CreateContentInner() {
                           <option value="right">รูปอยู่ขวา</option>
                           <option value="left">รูปอยู่ซ้าย</option>
                         </select>
+                        {block.imageUrl && (
+                          <BlockRangeControl
+                            label="🔍 ขนาดรูป"
+                            value={block.imageWidth ?? 100}
+                            min={25}
+                            max={100}
+                            step={5}
+                            unit="%"
+                            onChange={(v) => updateBlock(block.id, { imageWidth: v })}
+                          />
+                        )}
                       </div>
                     </div>
                   </div>
                 )}
+
+                {/* Per-block spacing control (all block types) */}
+                <div className="mt-4 pt-3 border-t border-dashed border-gray-200 flex justify-center">
+                  <BlockRangeControl
+                    label="↕ ระยะห่างล่าง"
+                    value={block.spacingBelow ?? 16}
+                    min={0}
+                    max={100}
+                    step={4}
+                    unit="px"
+                    onChange={(v) => updateBlock(block.id, { spacingBelow: v })}
+                  />
+                </div>
               </div>
             ))
           )}
