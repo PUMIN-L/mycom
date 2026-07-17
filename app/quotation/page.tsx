@@ -667,7 +667,6 @@ export default function QuotationPage() {
               <thead>
                 <tr className="bg-gray-800 text-white">
                   <th className="border border-gray-800 px-2 py-1.5 w-[8mm]">ลำดับ</th>
-                  <th className="border border-gray-800 px-2 py-1.5 w-[22mm]">รูป</th>
                   <th className="border border-gray-800 px-2 py-1.5 text-left">รายการ</th>
                   <th className="border border-gray-800 px-2 py-1.5 w-[14mm]">จำนวน</th>
                   <th className="border border-gray-800 px-2 py-1.5 w-[14mm]">หน่วย</th>
@@ -678,7 +677,7 @@ export default function QuotationPage() {
               <tbody>
                 {q.items.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="border border-gray-300 px-2 py-6 text-center text-gray-400">
+                    <td colSpan={6} className="border border-gray-300 px-2 py-6 text-center text-gray-400">
                       — ยังไม่มีรายการสินค้า —
                     </td>
                   </tr>
@@ -686,18 +685,15 @@ export default function QuotationPage() {
                 {q.items.map((it, idx) => (
                   <tr key={it.id} className="align-top">
                     <td className="border border-gray-300 px-2 py-1.5 text-center">{idx + 1}</td>
-                    <td className="border border-gray-300 px-1 py-1.5 text-center">
-                      {it.imageUrl ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img src={it.imageUrl} alt="" className="mx-auto object-contain" style={{ maxWidth: "20mm", maxHeight: "18mm" }} />
-                      ) : (
-                        <span className="text-gray-300">-</span>
-                      )}
-                    </td>
                     <td className="border border-gray-300 px-2 py-1.5">
                       <div className="font-semibold">{it.name || "-"}</div>
+                      {/* Image sits below the name, only when one was added */}
+                      {it.imageUrl && (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={it.imageUrl} alt="" className="mt-1.5 object-contain" style={{ maxWidth: "40mm", maxHeight: "32mm" }} />
+                      )}
                       {it.description && (
-                        <div className="text-gray-600 whitespace-pre-line text-[11.5px]">{it.description}</div>
+                        <div className="mt-1 text-gray-600 whitespace-pre-line text-[11.5px]">{it.description}</div>
                       )}
                     </td>
                     <td className="border border-gray-300 px-2 py-1.5 text-center">{it.qty}</td>
