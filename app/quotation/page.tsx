@@ -411,8 +411,27 @@ export default function QuotationPage() {
       return;
     }
     setGenerating(false);
-    if (saved) setSavePrompt(true);
-    else showToast("ดาวน์โหลดแล้ว (แต่บันทึกประวัติไม่สำเร็จ)", "error");
+    if (saved) {
+      // Reserve the number locally (mirrors handleSave) and settle it, so a
+      // later reset/new quote advances past it and the dup-check stays accurate.
+      settleDocNo();
+      setSavePrompt(true);
+    } else {
+      showToast("ดาวน์โหลดแล้ว (แต่บันทึกประวัติไม่สำเร็จ)", "error");
+    }
+  }
+
+  // After a quote is persisted, reserve its number locally and stop the
+  // auto-running effect from re-firing (which would silently renumber it).
+  function settleDocNo() {
+    isFreshRef.current = false;
+    const doc = q.docNo.trim();
+    if (doc) {
+      setExistingDocs((prev) => [
+        ...prev.filter((d) => d.docNo !== doc),
+        { id: q.id, docNo: doc },
+      ]);
+    }
   }
 
   // ── Save only (no PDF) — blocked while the docNo is a duplicate ────────────
@@ -438,14 +457,7 @@ export default function QuotationPage() {
         return;
       }
       if (res.ok) {
-        // Reserve the number locally so the duplicate check stays accurate.
-        const doc = q.docNo.trim();
-        if (doc) {
-          setExistingDocs((prev) => [
-            ...prev.filter((d) => d.docNo !== doc),
-            { id: q.id, docNo: doc },
-          ]);
-        }
+        settleDocNo(); // reserve locally + stop the auto-running effect renumbering it
         showToast("บันทึกใบเสนอราคาแล้ว (เก็บไว้ 30 วัน)", "success");
       } else {
         showToast("บันทึกไม่สำเร็จ", "error");
