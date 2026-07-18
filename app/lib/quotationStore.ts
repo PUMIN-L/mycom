@@ -93,6 +93,54 @@ export async function getQuotation(id: string): Promise<QuotationRecord | null> 
   return rows.length > 0 ? rowToQuotation(rows[0]) : null;
 }
 
+// ── Saved-quotations list ────────────────────────────────────────────────────
+export interface QuotationSummary {
+  id: string;
+  docNo: string;
+  createdAt: string;
+  customer: string;
+  total: number;
+}
+
+interface QuoteDataLite {
+  items?: Array<{ qty?: number; unitPrice?: number }>;
+  discount?: number;
+  discountType?: string;
+  vatEnabled?: boolean;
+  customerCompany?: string;
+  customerContact?: string;
+}
+
+// Recompute the grand total for the list view (mirrors the client's math).
+function summarize(data: QuoteDataLite): { customer: string; total: number } {
+  const items = Array.isArray(data.items) ? data.items : [];
+  const subtotal = items.reduce(
+    (s, it) => s + (Number(it.qty) || 0) * (Number(it.unitPrice) || 0),
+    0
+  );
+  const d = Math.max(Number(data.discount) || 0, 0);
+  const disc =
+    data.discountType === "percent"
+      ? (subtotal * Math.min(d, 100)) / 100
+      : Math.min(d, subtotal);
+  const afterDisc = subtotal - disc;
+  const total = afterDisc + (data.vatEnabled ? afterDisc * 0.07 : 0);
+  return {
+    customer: data.customerCompany || data.customerContact || "-",
+    total,
+  };
+}
+
+export async function listQuotations(): Promise<QuotationSummary[]> {
+  const [rows] = await query<RowDataPacket[]>(
+    "SELECT id, docNo, data, createdAt FROM quotations ORDER BY createdAt DESC"
+  );
+  return rows.map((r) => {
+    const { customer, total } = summarize(parseJson<QuoteDataLite>(r.data, {}));
+    return { id: r.id, docNo: r.docNo ?? "", createdAt: r.createdAt, customer, total };
+  });
+}
+
 /**
  * Delete a quotation and its uploaded images from Cloudinary. Catalog images
  * are never in `uploadedImages`, so product photos are unaffected.

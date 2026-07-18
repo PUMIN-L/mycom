@@ -4,7 +4,6 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "../context/AuthContext";
 import Toast from "../components/Toast";
-import { bahtText } from "../lib/bahtText";
 
 // ── ใบเสนอราคา (Quotation builder) ──────────────────────────────────────────
 // Admin-only tool: fill the form on the left, see a live A4 sheet on the right,
@@ -136,11 +135,43 @@ export default function QuotationPage() {
     if (!isLoading && !isLoggedIn) router.replace("/login");
   }, [isLoggedIn, isLoading, router]);
 
-  // Hydrate: restore draft, else seed docNo/date. In an effect (not render) —
-  // Date.now()/localStorage during render violate purity rules.
+  // Hydrate: reopen a saved quotation (?id=…), else restore the draft, else seed
+  // a fresh one. In an effect (not render) — Date.now()/localStorage during
+  // render violate purity rules.
   useEffect(() => {
     const now = new Date();
     const iso = now.toISOString().slice(0, 10);
+
+    const seedFresh = () =>
+      setQ({
+        ...emptyState(),
+        id: crypto.randomUUID(),
+        docDate: iso,
+        docNo: `QT${iso.replace(/-/g, "")}-01`,
+        items: [newItem()],
+      });
+
+    const reopenId = new URLSearchParams(window.location.search).get("id");
+    if (reopenId) {
+      // Reopen a saved record. Auth is via the session cookie, so this works
+      // regardless of the client auth-context loading state.
+      fetch(`/api/quotations/${encodeURIComponent(reopenId)}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((rec) => {
+          if (rec?.data && Array.isArray(rec.data.items)) {
+            setQ({ ...emptyState(), ...rec.data, id: rec.id || reopenId });
+          } else {
+            showToast("ไม่พบใบเสนอราคานี้ — เริ่มใบใหม่แทน", "error");
+            seedFresh();
+          }
+        })
+        .catch(() => seedFresh())
+        .finally(() => {
+          hydratedRef.current = true;
+        });
+      return;
+    }
+
     let draft: QuoteState | null = null;
     try {
       const raw = localStorage.getItem(DRAFT_KEY);
@@ -152,13 +183,7 @@ export default function QuotationPage() {
       // Older drafts may lack id — mint one so save/delete has a stable key.
       setQ({ ...emptyState(), ...draft, id: draft.id || crypto.randomUUID() });
     } else {
-      setQ((prev) => ({
-        ...prev,
-        id: crypto.randomUUID(),
-        docDate: iso,
-        docNo: `QT${iso.replace(/-/g, "")}-01`,
-        items: [newItem()],
-      }));
+      seedFresh();
     }
     hydratedRef.current = true;
   }, []);
@@ -272,15 +297,15 @@ export default function QuotationPage() {
     const pageW = pdf.internal.pageSize.getWidth();
     const pageH = pdf.internal.pageSize.getHeight();
     const imgH = (canvas.height * pageW) / canvas.width;
-    let heightLeft = imgH;
-    let position = 0;
-    pdf.addImage(imgData, "JPEG", 0, position, pageW, imgH);
-    heightLeft -= pageH;
-    while (heightLeft > 0) {
-      position -= pageH;
-      pdf.addPage();
-      pdf.addImage(imgData, "JPEG", 0, position, pageW, imgH);
-      heightLeft -= pageH;
+    // Page count with a small tolerance: the sheet's minHeight is exactly one A4,
+    // so rounding used to spill a near-blank 2nd page. The tolerance only ever
+    // trims the very bottom (inside the sheet's 12mm bottom padding), never
+    // content, while genuine overflow still paginates.
+    const TOLERANCE_MM = 4;
+    const pageCount = Math.max(1, Math.ceil((imgH - TOLERANCE_MM) / pageH));
+    for (let i = 0; i < pageCount; i++) {
+      if (i > 0) pdf.addPage();
+      pdf.addImage(imgData, "JPEG", 0, -i * pageH, pageW, imgH);
     }
     pdf.save(`Quotation-${(q.docNo || "document").replace(/[^\w.-]/g, "_")}.pdf`);
   }
@@ -398,17 +423,16 @@ export default function QuotationPage() {
         </div>
       )}
 
-      {/* Print rules: show ONLY the A4 sheet */}
+      {/* Number inputs: typeable, no up/down spinner buttons */}
       <style>{`
-        @media print {
-          @page { size: A4; margin: 10mm 12mm; }
-          body * { visibility: hidden; }
-          #quote-sheet, #quote-sheet * { visibility: visible; }
-          #quote-sheet {
-            position: absolute; left: 0; top: 0; width: 100%;
-            margin: 0 !important; box-shadow: none !important;
-            border: none !important; border-radius: 0 !important;
-          }
+        .quote-form input[type="number"]::-webkit-inner-spin-button,
+        .quote-form input[type="number"]::-webkit-outer-spin-button {
+          -webkit-appearance: none;
+          margin: 0;
+        }
+        .quote-form input[type="number"] {
+          -moz-appearance: textfield;
+          appearance: textfield;
         }
       `}</style>
 
@@ -419,6 +443,9 @@ export default function QuotationPage() {
           <div className="flex items-center gap-2 flex-wrap">
             <Link href="/showcase" className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition">
               ← กลับ
+            </Link>
+            <Link href="/quotation/saved" className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition">
+              📋 ใบที่บันทึกไว้
             </Link>
             <button
               onClick={() => {
@@ -444,7 +471,7 @@ export default function QuotationPage() {
 
       <div className="max-w-[1400px] mx-auto px-4 py-6 grid grid-cols-1 xl:grid-cols-[420px_1fr] gap-6 items-start">
         {/* ══ LEFT: form ══ */}
-        <div className="no-print space-y-4">
+        <div className="quote-form space-y-4">
           {/* เอกสาร */}
           <section className="bg-white rounded-xl shadow-sm border border-gray-200 p-5 space-y-3">
             <h2 className="font-bold text-gray-800">ข้อมูลเอกสาร</h2>
@@ -647,17 +674,26 @@ export default function QuotationPage() {
           >
             {/* Header */}
             <div className="flex justify-between items-start gap-4 pb-3 border-b-2 border-gray-800">
-              <div>
-                <div className="text-lg font-bold">{COMPANY.name}</div>
-                <div className="text-xs text-gray-600">{COMPANY.nameEn}</div>
-                <div className="text-xs mt-1 max-w-[95mm]">{COMPANY.address}</div>
-                <div className="text-xs mt-0.5">
-                  {q.companyPhone && <>โทร {q.companyPhone} </>}
-                  {q.companyEmail && <>อีเมล {q.companyEmail}</>}
+              <div className="flex items-start gap-3">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src="/images/profin-logo-3.png"
+                  alt="Profin Lab Scale"
+                  className="shrink-0 object-contain"
+                  style={{ width: "16mm", height: "auto" }}
+                />
+                <div>
+                  <div className="text-lg font-bold">{COMPANY.name}</div>
+                  <div className="text-xs text-gray-600">{COMPANY.nameEn}</div>
+                  <div className="text-xs mt-1 max-w-[95mm]">{COMPANY.address}</div>
+                  <div className="text-xs mt-0.5">
+                    {q.companyPhone && <>โทร {q.companyPhone} </>}
+                    {q.companyEmail && <>อีเมล {q.companyEmail}</>}
+                  </div>
+                  {q.companyTaxId && (
+                    <div className="text-xs">เลขประจำตัวผู้เสียภาษี {q.companyTaxId}</div>
+                  )}
                 </div>
-                {q.companyTaxId && (
-                  <div className="text-xs">เลขประจำตัวผู้เสียภาษี {q.companyTaxId}</div>
-                )}
               </div>
               <div className="text-right shrink-0">
                 <div className="text-2xl font-bold tracking-wide">ใบเสนอราคา</div>
@@ -752,18 +788,19 @@ export default function QuotationPage() {
             {/* Totals */}
             <div className="flex justify-between gap-6 mt-3">
               <div className="flex-1 text-[12px]">
-                <div className="border border-gray-300 rounded p-2 bg-gray-50">
-                  <span className="font-bold">จำนวนเงิน (ตัวอักษร): </span>
-                  {bahtText(grandTotal)}
-                </div>
-                <div className="mt-3 space-y-0.5 text-gray-700">
+                <div className="space-y-0.5 text-gray-700">
                   <div className="font-bold text-gray-800">เงื่อนไข</div>
                   {q.paymentTerms && <div>• การชำระเงิน: {q.paymentTerms}</div>}
                   {q.deliveryTerms && <div>• กำหนดส่งมอบ: {q.deliveryTerms}</div>}
                   {q.warrantyTerms && <div>• การรับประกัน: {q.warrantyTerms}</div>}
                   <div>• กำหนดยืนราคา {q.validDays} วัน นับจากวันที่เสนอราคา</div>
-                  {q.note && <div className="whitespace-pre-line">• {q.note}</div>}
                 </div>
+                {q.note && (
+                  <div className="mt-3 space-y-0.5 text-gray-700">
+                    <div className="font-bold text-gray-800">หมายเหตุ</div>
+                    <div className="whitespace-pre-line">{q.note}</div>
+                  </div>
+                )}
               </div>
               <table className="shrink-0 self-start w-[70mm] text-[12.5px]">
                 <tbody>

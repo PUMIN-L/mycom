@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withRoute, requireAuth } from "../../lib/apiHelpers";
-import { saveQuotation } from "../../lib/quotationStore";
+import { saveQuotation, listQuotations } from "../../lib/quotationStore";
+
+// GET /api/quotations (login required) — list saved quotations (summary only).
+export const GET = withRoute("โหลดรายการใบเสนอราคาไม่สำเร็จ", async () => {
+  await requireAuth();
+  return NextResponse.json(await listQuotations());
+});
 
 // POST /api/quotations (login required) — save/upsert a quotation so it can be
 // deleted from the "keep or delete?" prompt and auto-purged after 30 days.
