@@ -1,42 +1,81 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Profin Lab Scale — CMS & Catalog
+
+A trilingual (TH / EN / ZH) marketing + product-catalog site with a lightweight
+admin CMS: manage products & rich "showcase" content, host PDF documents, receive
+contact-form email, and build/export PDF quotations.
+
+**Stack:** Next.js 16 (App Router) · React 19 · TypeScript · Tailwind CSS v4 ·
+MySQL/TiDB Cloud (`mysql2`) · Cloudinary · JWT sessions (`jose`) · Vercel.
+
+> **New here? Read [`ARCHITECTURE.md`](./ARCHITECTURE.md) first** — it's the guide
+> to how everything fits together. And note [`AGENTS.md`](./AGENTS.md): this is
+> **Next.js 16**, which has breaking changes vs. older versions.
 
 ## Getting Started
 
-First, run the development server:
-
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install        # also wires up the pre-push test hook (via the "prepare" script)
+npm run dev        # http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+You'll need a `.env.local` with the variables below before data-backed pages work.
 
 ## Environment Variables
 
-Make sure to set up your `.env.local` file with the following Cloudinary credentials:
-
 ```env
-CLOUDINARY_CLOUD_NAME=your_cloud_name
-CLOUDINARY_API_KEY=your_api_key
-CLOUDINARY_API_SECRET=your_api_secret
+# Database (TiDB Cloud / MySQL)
+DB_HOST=          DB_PORT=4000     DB_USER=
+DB_PASSWORD=      DB_NAME=
+
+# Auth — REQUIRED (the app throws at import without it)
+SESSION_SECRET=
+
+# Admin seed — set ADMIN_PASSWORD to create the admin user on first DB init.
+# Leave it unset and NO admin is seeded (no weak default).
+ADMIN_USERNAME=admin     ADMIN_PASSWORD=
+
+# Cloudinary (images + PDF documents)
+CLOUDINARY_CLOUD_NAME=   CLOUDINARY_API_KEY=   CLOUDINARY_API_SECRET=
+
+# Email — contact form (Gmail App Password by default; host/port optional)
+SMTP_USER=        SMTP_PASS=       SMTP_HOST=smtp.gmail.com   SMTP_PORT=465
+
+# Cron secret — protects the quotation-cleanup cron
+CRON_SECRET=
+
+# Canonical site URL (optional; falls back to Vercel vars, then localhost:3000)
+NEXT_PUBLIC_SITE_URL=
 ```
 
-## ⚠️ Important: Cloudinary PDF Configuration
+See [`ARCHITECTURE.md`](./ARCHITECTURE.md#environment-variables) for what each one does.
 
-By default, Cloudinary restricts the delivery of PDF and ZIP files (Strict Delivery) for security reasons. If your application uploads and displays PDF files (e.g., using `react-pdf`), you will encounter a `401 Unauthorized` (`deny or ACL failure`) error when trying to load them.
+## Scripts
 
-To fix this and allow PDFs to be viewed:
+```bash
+npm run dev            # local dev server
+npm run build          # production build
+npm run start          # serve the build
+npm run lint           # eslint
+npm test               # vitest (watch mode)
+npm run test:run       # vitest one-shot (also what the pre-push hook runs)
+npm run test:coverage  # one-shot + coverage report + thresholds
+npx tsc --noEmit       # typecheck
+```
 
-1. Log in to your Cloudinary Dashboard.
-2. Go to **Settings** (Gear icon ⚙️).
-3. Navigate to the **Security** tab.
-4. Scroll down to the **Restricted media types** section.
-5. **Uncheck** the box for **"Delivery of PDF and ZIP files"**.
-6. Click **Save** at the bottom of the page.
+### Tests run before every push
 
-Without this setting disabled, the application's PDF Viewer will not be able to load documents.
+A committed pre-push hook ([`.githooks/pre-push`](./.githooks/pre-push)) runs the
+test suite and **blocks the push if anything fails**. It's activated automatically
+by `npm install` (no husky/dependency). Emergency bypass: `git push --no-verify`.
+
+## ⚠️ Cloudinary PDF Configuration
+
+By default Cloudinary restricts delivery of PDF/ZIP files (Strict Delivery), so
+the `react-pdf` viewer gets a `401 Unauthorized` (`deny or ACL failure`). To allow
+PDFs to load:
+
+1. Cloudinary Dashboard → **Settings** (⚙️) → **Security** tab.
+2. Under **Restricted media types**, **uncheck** **"Delivery of PDF and ZIP files"**.
+3. **Save**.
+
+Without this, uploaded quotations/documents won't render.
