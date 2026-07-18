@@ -404,7 +404,11 @@ Tackle in small, verifiable steps — the test suite is now a safety net for the
 4. **DB bootstrap/seed runs on first request.** Move to an explicit migration +
    seed step for production (the `SCHEMA_VERSION` sentinel already makes it cheap
    to skip, but first-request seeding is still implicit).
-5. **`contents` mutations don't call `revalidateTag`** (products routes do), so
-   content edits may not invalidate cached reads. Confirm whether that's intended.
+5. **Contents are read fresh, not cached — by design.** Unlike products (cached
+   across requests via `unstable_cache` tag `products`, so their mutations call
+   `revalidateTag("products")`), the showcase pages are `force-dynamic` and read
+   contents straight from the DB. That's why contents mutations correctly do
+   **not** call `revalidateTag` — there is no cache to bust. If you ever add
+   caching for contents, remember to `revalidateTag` on every content write.
 6. **Pre-existing lint debt** (`<a>` instead of `<Link>`, `<img>` instead of
    `next/image`) remains in some components — fix opportunistically.
