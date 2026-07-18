@@ -1,6 +1,7 @@
 import { query } from "./db";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { deleteCloudinaryImages } from "./cloudinaryHelper";
+import { computeQuoteTotals } from "./quotationTotals";
 
 // Persisted quotations. `data` is the opaque client QuoteState (stored as JSON).
 // `uploadedImages` lists ONLY the Cloudinary images uploaded specifically for
@@ -154,29 +155,17 @@ export interface QuotationSummary {
 interface QuoteDataLite {
   items?: Array<{ qty?: number; unitPrice?: number }>;
   discount?: number;
-  discountType?: string;
+  discountType?: "amount" | "percent";
   vatEnabled?: boolean;
   customerCompany?: string;
   customerContact?: string;
 }
 
-// Recompute the grand total for the list view (mirrors the client's math).
+// Grand total for the list view — same math as the builder (computeQuoteTotals).
 function summarize(data: QuoteDataLite): { customer: string; total: number } {
-  const items = Array.isArray(data.items) ? data.items : [];
-  const subtotal = items.reduce(
-    (s, it) => s + (Number(it.qty) || 0) * (Number(it.unitPrice) || 0),
-    0
-  );
-  const d = Math.max(Number(data.discount) || 0, 0);
-  const disc =
-    data.discountType === "percent"
-      ? (subtotal * Math.min(d, 100)) / 100
-      : Math.min(d, subtotal);
-  const afterDisc = subtotal - disc;
-  const total = afterDisc + (data.vatEnabled ? afterDisc * 0.07 : 0);
   return {
     customer: data.customerCompany || data.customerContact || "-",
-    total,
+    total: computeQuoteTotals(data).grandTotal,
   };
 }
 

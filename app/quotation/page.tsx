@@ -4,6 +4,8 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "../context/AuthContext";
 import Toast from "../components/Toast";
+import { DOCNO_START, pad2, nextDocNo } from "../lib/quotationNumber";
+import { computeQuoteTotals } from "../lib/quotationTotals";
 
 // ── ใบเสนอราคา (Quotation builder) ──────────────────────────────────────────
 // Admin-only tool: fill the form on the left, see a live A4 sheet on the right,
@@ -143,23 +145,6 @@ function NumberInput({
       }}
     />
   );
-}
-
-// Each day's running number starts here (business convention).
-const DOCNO_START = 22;
-const pad2 = (n: number) => String(n).padStart(2, "0");
-
-// Next free trailing number for a date prefix (e.g. "QT20260718-"): the day's
-// first number is DOCNO_START (-22), then -23, -24, …
-function nextDocNo(prefix: string, used: string[]): string {
-  let max = 0;
-  for (const d of used) {
-    if (d.startsWith(prefix)) {
-      const n = parseInt(d.slice(prefix.length), 10);
-      if (!Number.isNaN(n) && n > max) max = n;
-    }
-  }
-  return `${prefix}${pad2(Math.max(max + 1, DOCNO_START))}`;
 }
 
 const thaiDate = (iso: string) => {
@@ -359,14 +344,8 @@ export default function QuotationPage() {
   }
 
   // ── Totals ──────────────────────────────────────────────────────────────
-  const subtotal = q.items.reduce((sum, it) => sum + (it.qty || 0) * (it.unitPrice || 0), 0);
-  const discountValue =
-    q.discountType === "percent"
-      ? (subtotal * Math.min(Math.max(q.discount || 0, 0), 100)) / 100
-      : Math.min(Math.max(q.discount || 0, 0), subtotal);
-  const afterDiscount = subtotal - discountValue;
-  const vat = q.vatEnabled ? afterDiscount * 0.07 : 0;
-  const grandTotal = afterDiscount + vat;
+  const { subtotal, discountValue, afterDiscount, vat, grandTotal } =
+    computeQuoteTotals(q);
 
   // Duplicate doc-number guard: is this docNo already used by a DIFFERENT saved
   // quotation? (Same id = editing the same one, allowed.)
