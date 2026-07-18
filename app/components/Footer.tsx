@@ -9,14 +9,18 @@ export default function Footer() {
   const t = useT();
   const { isLoggedIn, user, logout } = useAuth();
 
+  // Home-section anchors need the leading "/" so they work from any page
+  // (navigate to home, then scroll) — matching the Navbar. Without it they only
+  // resolve on the home page itself.
   const quickLinks = [
     { href: "/", label: t(translations.nav.home) },
-    { href: "#services", label: t(translations.nav.services) },
-    { href: "#products", label: t(translations.nav.products) },
+    { href: "/#services", label: t(translations.nav.services) },
+    { href: "/#products", label: t(translations.nav.products) },
     { href: "/catalog", label: t(translations.nav.catalog) },
     { href: "/about", label: t(translations.nav.about) },
-    // { href: "#clients", label: t(translations.nav.clients) },
-    { href: "#contact", label: t(translations.nav.contact) },
+    // { href: "/#clients", label: t(translations.nav.clients) },
+    // Contact is a standalone page (not a home section) — match the Navbar.
+    { href: "/contact", label: t(translations.nav.contact) },
     { href: "/showcase", label: "Content" },
   ];
 

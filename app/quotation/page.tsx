@@ -143,6 +143,7 @@ export default function QuotationPage() {
   const [generating, setGenerating] = useState(false); // building the PDF
   const [savePrompt, setSavePrompt] = useState(false); // "keep 30d or delete now?" after download
   const [deletingQuote, setDeletingQuote] = useState(false);
+  const [savingQuote, setSavingQuote] = useState(false); // "เซฟ" (save without printing)
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const uploadTargetRef = useRef<string | null>(null);
@@ -414,6 +415,48 @@ export default function QuotationPage() {
     else showToast("ดาวน์โหลดแล้ว (แต่บันทึกประวัติไม่สำเร็จ)", "error");
   }
 
+  // ── Save only (no PDF) — blocked while the docNo is a duplicate ────────────
+  async function handleSave() {
+    if (savingQuote) return;
+    if (docNoDup) {
+      showToast("เลขที่ใบเสนอราคานี้ซ้ำกับใบที่บันทึกไว้ กรุณาเปลี่ยนเลขที่ก่อน", "error");
+      return;
+    }
+    setSavingQuote(true);
+    const uploadedImages = q.items
+      .filter((it) => it.imageUploaded && it.imageUrl)
+      .map((it) => it.imageUrl);
+    try {
+      const res = await fetch("/api/quotations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: q.id, docNo: q.docNo, data: q, uploadedImages }),
+      });
+      if (res.status === 409) {
+        const data = await res.json().catch(() => null);
+        showToast(data?.error ?? "เลขที่ใบเสนอราคาซ้ำ กรุณาเปลี่ยนเลขที่", "error");
+        return;
+      }
+      if (res.ok) {
+        // Reserve the number locally so the duplicate check stays accurate.
+        const doc = q.docNo.trim();
+        if (doc) {
+          setExistingDocs((prev) => [
+            ...prev.filter((d) => d.docNo !== doc),
+            { id: q.id, docNo: doc },
+          ]);
+        }
+        showToast("บันทึกใบเสนอราคาแล้ว (เก็บไว้ 30 วัน)", "success");
+      } else {
+        showToast("บันทึกไม่สำเร็จ", "error");
+      }
+    } catch {
+      showToast("เกิดข้อผิดพลาดในการบันทึก", "error");
+    } finally {
+      setSavingQuote(false);
+    }
+  }
+
   async function handleDeleteQuotation() {
     setDeletingQuote(true);
     try {
@@ -534,8 +577,16 @@ export default function QuotationPage() {
               ↺ เริ่มใหม่
             </button>
             <button
+              onClick={handleSave}
+              disabled={savingQuote || docNoDup}
+              className="px-5 py-2 rounded-lg border border-green-500 text-green-600 text-sm font-bold hover:bg-green-50 transition disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {savingQuote ? "กำลังเซฟ..." : "💾 เซฟ"}
+            </button>
+            <button
               onClick={handleDownload}
-              className="px-5 py-2 rounded-lg bg-orange-500 text-white text-sm font-bold hover:bg-orange-600 transition shadow-sm"
+              disabled={docNoDup}
+              className="px-5 py-2 rounded-lg bg-orange-500 text-white text-sm font-bold hover:bg-orange-600 transition shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
             >
               ⬇️ ดาวน์โหลด PDF
             </button>

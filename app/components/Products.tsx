@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, use, useEffect } from "react";
+import { useState, use, useEffect, useRef } from "react";
 import { useT, useLanguage } from "../i18n/LanguageContext";
 import { translations } from "../i18n/translations";
 import { useAuth } from "../context/AuthContext";
@@ -21,6 +21,30 @@ interface ProductsProps {
     products: ProductData[];
   }>;
 }
+
+// Which page buttons to show: the first 3 and last 3 pages, plus a window around
+// the current page, with "…" filling the gaps (e.g. 1 2 3 … 8 9 10). Small
+// counts (<=7) show every page.
+function pageList(current: number, total: number): (number | "…")[] {
+  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
+  const keep = new Set<number>();
+  for (const p of [1, 2, 3, total - 2, total - 1, total, current - 1, current, current + 1]) {
+    if (p >= 1 && p <= total) keep.add(p);
+  }
+  const sorted = [...keep].sort((a, b) => a - b);
+  const out: (number | "…")[] = [];
+  let prev = 0;
+  for (const p of sorted) {
+    if (p - prev > 1) out.push("…");
+    out.push(p);
+    prev = p;
+  }
+  return out;
+}
+
+// Persist list position (category + page) in this key so returning from a
+// product detail via Back restores it (state alone resets on remount).
+const LIST_POS_KEY = "products-list-pos";
 
 export default function Products({ dataPromise }: ProductsProps) {
   const t = useT();
@@ -49,6 +73,37 @@ export default function Products({ dataPromise }: ProductsProps) {
 
   const [selectedCategory, setSelectedCategory] = useState(-1);
   const [currentPage, setCurrentPage] = useState(1);
+
+  // Restore the saved list position on mount (e.g. after Back from a detail
+  // page). Read in an effect (not initial state) to keep SSR/hydration matching.
+  const restoredRef = useRef(false);
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem(LIST_POS_KEY);
+      if (raw) {
+        const s = JSON.parse(raw);
+        if (typeof s.cat === "number") setSelectedCategory(s.cat);
+        if (typeof s.page === "number" && s.page >= 1) setCurrentPage(s.page);
+      }
+    } catch {
+      /* unavailable/corrupt — ignore */
+    }
+    restoredRef.current = true;
+  }, []);
+
+  // Persist it whenever it changes (skip the initial mount so we don't clobber
+  // the value the restore effect is about to read).
+  useEffect(() => {
+    if (!restoredRef.current) return;
+    try {
+      sessionStorage.setItem(
+        LIST_POS_KEY,
+        JSON.stringify({ cat: selectedCategory, page: currentPage })
+      );
+    } catch {
+      /* storage full/blocked — nonfatal */
+    }
+  }, [selectedCategory, currentPage]);
 
   const ITEMS_PER_PAGE = 9;
   const CATEGORIES_LIMIT = 10;
@@ -754,33 +809,22 @@ export default function Products({ dataPromise }: ProductsProps) {
                 </button>
 
                 <div className="flex items-center gap-2">
-                  {Array.from({ length: totalPages }).map((_, i) => {
-                    const page = i + 1;
-                    if (
-                      totalPages > 7 &&
-                      page !== 1 &&
-                      page !== totalPages &&
-                      Math.abs(page - currentPage) > 1
-                    ) {
-                      if (page === 2 || page === totalPages - 1) {
-                        return <span key={page} className="px-1 text-gray-400">...</span>;
-                      }
-                      return null;
-                    }
-
-                    return (
+                  {pageList(currentPage, totalPages).map((p, idx) =>
+                    p === "…" ? (
+                      <span key={`gap-${idx}`} className="px-1 text-gray-400">…</span>
+                    ) : (
                       <button
-                        key={page}
-                        onClick={() => handlePageChange(page)}
-                        className={`w-10 h-10 flex items-center justify-center rounded-lg font-medium transition-colors ${currentPage === page
+                        key={p}
+                        onClick={() => handlePageChange(p)}
+                        className={`w-10 h-10 flex items-center justify-center rounded-lg font-medium transition-colors ${currentPage === p
                           ? "bg-orange-500 text-white shadow-md shadow-orange-500/20"
                           : "bg-white border border-gray-200 text-gray-600 hover:bg-orange-50 hover:text-orange-600 hover:border-orange-200"
                           }`}
                       >
-                        {page}
+                        {p}
                       </button>
-                    );
-                  })}
+                    )
+                  )}
                 </div>
 
                 <button
