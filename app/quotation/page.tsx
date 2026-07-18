@@ -121,6 +121,7 @@ export default function QuotationPage() {
   const { isLoggedIn, isLoading } = useAuth();
   const [q, setQ] = useState<QuoteState>(emptyState);
   const [products, setProducts] = useState<ProductItem[]>([]);
+  const [existingDocs, setExistingDocs] = useState<{ id: string; docNo: string }[]>([]);
   const [uploadingItemId, setUploadingItemId] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false); // building the PDF
   const [savePrompt, setSavePrompt] = useState(false); // "keep 30d or delete now?" after download
@@ -207,6 +208,21 @@ export default function QuotationPage() {
       .catch(() => {});
   }, [isLoggedIn]);
 
+  // Saved quotation numbers — to warn about duplicate docNo before download.
+  useEffect(() => {
+    if (!isLoggedIn) return;
+    fetch("/api/quotations")
+      .then((r) => (r.ok ? r.json() : []))
+      .then((list) =>
+        setExistingDocs(
+          Array.isArray(list)
+            ? list.map((x: { id: string; docNo: string }) => ({ id: x.id, docNo: x.docNo }))
+            : []
+        )
+      )
+      .catch(() => {});
+  }, [isLoggedIn]);
+
   function showToast(message: string, type: "success" | "error") {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3000);
@@ -276,6 +292,13 @@ export default function QuotationPage() {
   const vat = q.vatEnabled ? afterDiscount * 0.07 : 0;
   const grandTotal = afterDiscount + vat;
 
+  // Duplicate doc-number guard: is this docNo already used by a DIFFERENT saved
+  // quotation? (Same id = editing the same one, allowed.)
+  const trimmedDocNo = q.docNo.trim();
+  const docNoDup =
+    trimmedDocNo !== "" &&
+    existingDocs.some((d) => d.docNo === trimmedDocNo && d.id !== q.id);
+
   // Render the A4 sheet to a real .pdf file and download it (no print dialog).
   // Libraries are dynamically imported so they only load on click and never run
   // on the server. html2canvas-pro (vs html2canvas) supports Tailwind v4's oklch
@@ -313,6 +336,10 @@ export default function QuotationPage() {
   // ── Download → save record → generate PDF → ask keep/delete ───────────────
   async function handleDownload() {
     if (generating) return;
+    if (docNoDup) {
+      showToast("เลขที่ใบเสนอราคานี้ซ้ำกับใบที่บันทึกไว้ กรุณาเปลี่ยนเลขที่ก่อน", "error");
+      return;
+    }
     setGenerating(true);
     // Persist first so the record exists for the keep/delete prompt and the
     // 30-day auto-purge. Only images uploaded for THIS quote are deletable.
@@ -326,6 +353,13 @@ export default function QuotationPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: q.id, docNo: q.docNo, data: q, uploadedImages }),
       });
+      if (res.status === 409) {
+        // Another quotation grabbed this number since the page loaded.
+        const data = await res.json().catch(() => null);
+        showToast(data?.error ?? "เลขที่ใบเสนอราคาซ้ำ กรุณาเปลี่ยนเลขที่", "error");
+        setGenerating(false);
+        return;
+      }
       saved = res.ok;
     } catch {
       /* save is best-effort — never block the download */
@@ -478,7 +512,16 @@ export default function QuotationPage() {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className={labelCls}>เลขที่ (No.)</label>
-                <input className={inputCls} value={q.docNo} onChange={(e) => set("docNo", e.target.value)} />
+                <input
+                  className={`${inputCls} ${docNoDup ? "border-red-400 ring-1 ring-red-300" : ""}`}
+                  value={q.docNo}
+                  onChange={(e) => set("docNo", e.target.value)}
+                />
+                {docNoDup && (
+                  <p className="mt-1 text-xs text-red-500 font-semibold">
+                    ⚠ เลขที่นี้ซ้ำกับใบที่บันทึกไว้ — กรุณาเปลี่ยน
+                  </p>
+                )}
               </div>
               <div>
                 <label className={labelCls}>วันที่ (Date)</label>

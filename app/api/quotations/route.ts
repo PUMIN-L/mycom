@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withRoute, requireAuth } from "../../lib/apiHelpers";
-import { saveQuotation, listQuotations } from "../../lib/quotationStore";
+import { saveQuotation, listQuotations, isDocNoTaken } from "../../lib/quotationStore";
 
 // GET /api/quotations (login required) — list saved quotations (summary only).
 export const GET = withRoute("โหลดรายการใบเสนอราคาไม่สำเร็จ", async () => {
@@ -21,6 +21,16 @@ export const POST = withRoute(
       return NextResponse.json({ error: "id is required" }, { status: 400 });
     }
 
+    // Reject a docNo already used by a DIFFERENT quotation (409). Re-saving the
+    // same quotation (same id) keeps its own number — that's an update, not a dup.
+    const docNo = String(body?.docNo ?? "").slice(0, 255);
+    if (docNo && (await isDocNoTaken(docNo, id))) {
+      return NextResponse.json(
+        { error: "เลขที่ใบเสนอราคานี้ถูกใช้ไปแล้ว กรุณาเปลี่ยนเลขที่" },
+        { status: 409 }
+      );
+    }
+
     // Server backstop for the image-deletion safety invariant: only accept URLs
     // on OUR Cloudinary cloud. Anything else (foreign host, garbage) is dropped
     // so it can never reach cloudinary.destroy(). deleteQuotation additionally
@@ -36,7 +46,7 @@ export const POST = withRoute(
 
     await saveQuotation({
       id,
-      docNo: String(body?.docNo ?? "").slice(0, 255),
+      docNo,
       data: body?.data ?? {},
       uploadedImages,
       createdAt: new Date().toISOString(),

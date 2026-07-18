@@ -85,6 +85,15 @@ export async function saveQuotation(rec: QuotationRecord): Promise<void> {
   );
 }
 
+/** True if another quotation (id != exceptId) already uses this docNo. */
+export async function isDocNoTaken(docNo: string, exceptId: string): Promise<boolean> {
+  const [rows] = await query<RowDataPacket[]>(
+    "SELECT id FROM quotations WHERE docNo = ? AND id != ? LIMIT 1",
+    [docNo, exceptId]
+  );
+  return rows.length > 0;
+}
+
 export async function getQuotation(id: string): Promise<QuotationRecord | null> {
   const [rows] = await query<RowDataPacket[]>(
     "SELECT * FROM quotations WHERE id = ?",
