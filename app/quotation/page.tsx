@@ -615,7 +615,8 @@ export default function QuotationPage() {
                   </div>
                   <div>
                     <label className={labelCls}>ราคา/หน่วย (฿)</label>
-                    <input type="number" min={0} step="0.01" className={inputCls} value={it.unitPrice}
+                    <input type="number" min={0} step="0.01" className={inputCls} placeholder="0.00"
+                      value={it.unitPrice || ""}
                       onChange={(e) => setItem(it.id, { unitPrice: Math.max(0, Number(e.target.value)) })} />
                   </div>
                 </div>
@@ -629,7 +630,8 @@ export default function QuotationPage() {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className={labelCls}>ส่วนลด</label>
-                <input type="number" min={0} step="0.01" className={inputCls} value={q.discount}
+                <input type="number" min={0} step="0.01" className={inputCls} placeholder="0"
+                  value={q.discount || ""}
                   onChange={(e) => set("discount", Math.max(0, Number(e.target.value)))} />
               </div>
               <div>
