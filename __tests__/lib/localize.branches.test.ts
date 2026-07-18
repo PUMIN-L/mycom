@@ -39,12 +39,11 @@ describe('localize (branch gaps)', () => {
       expect(localize({ title_th: 0, title_en: 0, title_zh: 0 } as unknown as object, 'title', 'zh')).toBe('');
     });
 
-    it('returns a truthy non-string value AS-IS (type-unsafe: signature claims string)', () => {
-      // The `(r[...] as string) || ""` cast does not actually coerce to string,
-      // so a truthy number/boolean is returned unchanged. Documents current
-      // behaviour — see report note.
-      expect(localize({ title_en: 42 } as unknown as object, 'title', 'en')).toBe(42);
-      expect(localize({ title_th: true } as unknown as object, 'title', 'th')).toBe(true);
+    it('coerces a truthy non-string value to a string (honours the string return type)', () => {
+      // A truthy number/boolean is stringified via String(v) rather than leaking
+      // through the cast, so the `: string` signature always holds.
+      expect(localize({ title_en: 42 } as unknown as object, 'title', 'en')).toBe('42');
+      expect(localize({ title_th: true } as unknown as object, 'title', 'th')).toBe('true');
     });
   });
 });
