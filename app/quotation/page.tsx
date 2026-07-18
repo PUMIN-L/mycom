@@ -108,6 +108,43 @@ const emptyState = (): QuoteState => ({
 const fmt = (n: number) =>
   n.toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+// A number field that keeps the user's RAW text (so partial values like "0.5"
+// aren't clobbered by controlled-input reconciliation) and shows a placeholder
+// when empty instead of a pre-filled 0. Emits a clamped (>= 0) number.
+function NumberInput({
+  value,
+  onChange,
+  className,
+  placeholder,
+}: {
+  value: number;
+  onChange: (value: number) => void;
+  className?: string;
+  placeholder?: string;
+}) {
+  const [text, setText] = useState(value === 0 ? "" : String(value));
+  useEffect(() => {
+    // Resync when the value changes from outside (reset / reopen / autofill).
+    if ((Number(text) || 0) !== value) setText(value === 0 ? "" : String(value));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
+  return (
+    <input
+      type="text"
+      inputMode="decimal"
+      className={className}
+      placeholder={placeholder}
+      value={text}
+      onChange={(e) => {
+        const raw = e.target.value;
+        if (raw !== "" && !/^\d*\.?\d*$/.test(raw)) return; // digits + one dot
+        setText(raw);
+        onChange(Math.max(0, Number(raw) || 0));
+      }}
+    />
+  );
+}
+
 // Each day's running number starts here (business convention).
 const DOCNO_START = 22;
 const pad2 = (n: number) => String(n).padStart(2, "0");
@@ -761,9 +798,9 @@ export default function QuotationPage() {
                   </div>
                   <div>
                     <label className={labelCls}>ราคา/หน่วย (฿)</label>
-                    <input type="number" min={0} step="0.01" className={inputCls} placeholder="0.00"
-                      value={it.unitPrice || ""}
-                      onChange={(e) => setItem(it.id, { unitPrice: Math.max(0, Number(e.target.value)) })} />
+                    <NumberInput className={inputCls} placeholder="0.00"
+                      value={it.unitPrice}
+                      onChange={(v) => setItem(it.id, { unitPrice: v })} />
                   </div>
                 </div>
               </div>
@@ -776,9 +813,9 @@ export default function QuotationPage() {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className={labelCls}>ส่วนลด</label>
-                <input type="number" min={0} step="0.01" className={inputCls} placeholder="0"
-                  value={q.discount || ""}
-                  onChange={(e) => set("discount", Math.max(0, Number(e.target.value)))} />
+                <NumberInput className={inputCls} placeholder="0"
+                  value={q.discount}
+                  onChange={(v) => set("discount", v)} />
               </div>
               <div>
                 <label className={labelCls}>ประเภทส่วนลด</label>
