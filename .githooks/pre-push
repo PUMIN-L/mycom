@@ -1,0 +1,19 @@
+#!/usr/bin/env sh
+# Pre-push gate: run the unit-test suite before every push and BLOCK the push if
+# anything fails. Wired up via `git config core.hooksPath .githooks`, which the
+# package.json "prepare" script sets automatically on `npm install` — so this
+# hook is version-controlled and works for anyone who clones the repo.
+#
+# Emergency bypass (use sparingly):  git push --no-verify
+
+echo "▶ pre-push: running unit tests (vitest run)…"
+
+# `npm test` is watch mode in this project, so call the one-shot runner directly.
+if ! npx vitest run; then
+  echo ""
+  echo "✗ Tests failed — push aborted."
+  echo "  Fix the failures, or bypass with:  git push --no-verify"
+  exit 1
+fi
+
+echo "✓ All tests passed — continuing push."
