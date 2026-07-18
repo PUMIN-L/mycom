@@ -27,9 +27,15 @@ function createPool(): DbPool {
     // can exhaust the cloud DB's connection budget. A handful is plenty for this
     // low-concurrency CMS (page renders issue queries sequentially).
     connectionLimit: 3,
-    // Recycle idle connections before the cloud DB (TiDB) drops them, and keep
-    // sockets warm. Stale connections still happen, so query() also retries.
-    maxIdle: 2,
+    // maxIdle MUST equal connectionLimit. With maxIdle < connectionLimit, mysql2's
+    // eviction timer destroys the surplus connection after EVERY request, so a page
+    // that opens >maxIdle connections at once (e.g. /showcase/[id] runs ~4 queries
+    // via Promise.all) pays a full ~1s+ TiDB TLS reconnect on the next view. Keeping
+    // maxIdle == connectionLimit means warm sockets are never torn down between
+    // requests. (Trade-off: the idle-eviction timer no longer arms, so server-side
+    // drops aren't proactively recycled — but query() already retries transient
+    // connection errors, which covers that.)
+    maxIdle: 3,
     idleTimeout: 60_000,
     enableKeepAlive: true,
     keepAliveInitialDelay: 10_000,

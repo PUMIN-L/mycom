@@ -13,7 +13,10 @@ export const metadata: Metadata = {
 };
 
 export default async function ShowcaseListPage() {
-  const contents = await getAllContents();
-  const documents = await getAllDocuments();
+  // Parallel — these two reads are independent (was serial, one extra round trip).
+  const [contents, documents] = await Promise.all([
+    getAllContents(),
+    getAllDocuments(),
+  ]);
   return <ShowcaseListClient initialContents={contents} initialDocuments={documents} />;
 }
