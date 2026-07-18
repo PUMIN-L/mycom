@@ -733,8 +733,8 @@ export default function QuotationPage() {
                     <tr>
                       <td className="pr-3 py-0.5 align-top" />
                       <td className="py-0.5 text-gray-600">
-                        {q.sellerPhone && <div>{q.sellerPhone}</div>}
-                        {q.sellerEmail && <div className="break-all">{q.sellerEmail}</div>}
+                        {q.sellerPhone && <div>โทร {q.sellerPhone}</div>}
+                        {q.sellerEmail && <div className="break-all">อีเมล {q.sellerEmail}</div>}
                       </td>
                     </tr>
                   )}
