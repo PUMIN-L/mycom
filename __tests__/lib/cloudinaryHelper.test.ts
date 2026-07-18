@@ -138,9 +138,7 @@ describe('cloudinaryHelper', () => {
       expect(collectContentImageUrls(makeContent([]))).toEqual([]);
     });
 
-    it('does NOT collect gallery imageUrls[] arrays (only the singular imageUrl)', () => {
-      // Documents current behavior: a gallery block that carries `imageUrls`
-      // but no `imageUrl` is ignored. See report — possible orphaned-asset bug.
+    it('collects gallery imageUrls[] arrays (so gallery assets are not orphaned)', () => {
       const content = makeContent([
         {
           id: 'b1',
@@ -151,7 +149,37 @@ describe('cloudinaryHelper', () => {
           ],
         },
       ]);
-      expect(collectContentImageUrls(content)).toEqual([]);
+      expect(collectContentImageUrls(content)).toEqual([
+        'https://res.cloudinary.com/a/image/upload/v1/g1.jpg',
+        'https://res.cloudinary.com/a/image/upload/v1/g2.jpg',
+      ]);
+    });
+
+    it('collects both a singular imageUrl and an imageUrls[] on the same block', () => {
+      const content = makeContent([
+        {
+          id: 'b1',
+          type: 'gallery',
+          imageUrl: 'https://res.cloudinary.com/a/image/upload/v1/cover.jpg',
+          imageUrls: ['https://res.cloudinary.com/a/image/upload/v1/g1.jpg'],
+        },
+      ]);
+      expect(collectContentImageUrls(content)).toEqual([
+        'https://res.cloudinary.com/a/image/upload/v1/cover.jpg',
+        'https://res.cloudinary.com/a/image/upload/v1/g1.jpg',
+      ]);
+    });
+
+    it('de-duplicates a URL that appears in both imageUrl and imageUrls[] or across blocks', () => {
+      const dup = 'https://res.cloudinary.com/a/image/upload/v1/same.jpg';
+      const content = makeContent([
+        { id: 'b1', type: 'image', imageUrl: dup },
+        { id: 'b2', type: 'gallery', imageUrls: [dup, 'https://res.cloudinary.com/a/image/upload/v1/other.jpg'] },
+      ]);
+      expect(collectContentImageUrls(content)).toEqual([
+        dup,
+        'https://res.cloudinary.com/a/image/upload/v1/other.jpg',
+      ]);
     });
   });
 

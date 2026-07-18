@@ -103,15 +103,21 @@ export async function deleteCloudinaryImages(imageUrls: string[]): Promise<void>
 /**
  * Collect every Cloudinary image URL referenced by a content's blocks.
  *
- * Both `image` and `text-image` blocks can carry an `imageUrl`, so we key off
- * the presence of `imageUrl` rather than the block type — otherwise images in
- * `text-image` blocks would be orphaned on Cloudinary when their content/product
- * is deleted.
+ * A block can carry a single `imageUrl` (`image`/`text-image` blocks) AND/OR an
+ * `imageUrls[]` array (`gallery` blocks), so we collect BOTH rather than keying
+ * off the block type — otherwise gallery images (or any block that only fills
+ * `imageUrls`) would be orphaned on Cloudinary when their content/product is
+ * deleted. Returns a de-duplicated list.
  */
 export function collectContentImageUrls(content: ContentData): string[] {
-  return content.blocks
-    .filter((b) => b.imageUrl)
-    .map((b) => b.imageUrl as string);
+  const urls = new Set<string>();
+  for (const b of content.blocks) {
+    if (typeof b.imageUrl === "string" && b.imageUrl) urls.add(b.imageUrl);
+    if (Array.isArray(b.imageUrls)) {
+      for (const u of b.imageUrls) if (typeof u === "string" && u) urls.add(u);
+    }
+  }
+  return [...urls];
 }
 
 /**
