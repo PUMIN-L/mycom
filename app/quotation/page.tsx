@@ -680,7 +680,7 @@ export default function QuotationPage() {
                   src="/images/profin-logo-3.png"
                   alt="Profin Lab Scale"
                   className="shrink-0 object-contain"
-                  style={{ width: "16mm", height: "auto" }}
+                  style={{ width: "11mm", height: "auto" }}
                 />
                 <div>
                   <div className="text-lg font-bold">{COMPANY.name}</div>
