@@ -36,6 +36,15 @@ interface ContentData {
   productId?: string | null;
 }
 
+// Sibling contents list (no blocks) — used only for "Other Contents" and the
+// edit-mode product-link check.
+interface ContentMeta {
+  id: string;
+  title: string;
+  createdAt: string;
+  productId?: string | null;
+}
+
 interface ProductItem {
   id: string;
   categoryId: number;
@@ -53,7 +62,7 @@ interface ProductCategory {
 
 interface ShowcaseClientProps {
   initialContent: ContentData;
-  initialAllContents: ContentData[];
+  initialAllContents: ContentMeta[];
   initialProducts: ProductItem[];
   initialCategories: ProductCategory[];
 }
@@ -197,7 +206,7 @@ export default function ShowcaseClient({
 
   // Seeded from server-fetched data (no client loading spinner / waterfall).
   const [content, setContent] = useState<ContentData>(initialContent);
-  const [allContents, setAllContents] = useState<ContentData[]>(initialAllContents);
+  const [allContents, setAllContents] = useState<ContentMeta[]>(initialAllContents);
   const { isLoggedIn } = useAuth();
 
   // Edit mode
@@ -972,7 +981,7 @@ export default function ShowcaseClient({
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {allContents
                   .filter((c) => c.id !== content.id)
-                  .map((c: ContentData) => (
+                  .map((c: ContentMeta) => (
                     <Link
                       key={c.id}
                       href={`/showcase/${c.id}`}

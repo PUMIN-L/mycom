@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import {
   getContent,
-  getAllContents,
+  getAllContentsMeta,
   ContentBlock,
 } from "../../lib/contentStore";
 import { getAllProducts, getAllCategories } from "../../lib/productStore";
@@ -68,10 +68,12 @@ export default async function ShowcaseContentPage({
 }) {
   const { id } = await params;
 
-  // Fetch everything the editor needs on the server, in parallel.
+  // Fetch everything the editor needs on the server, in parallel. allContents is
+  // metadata-only (no blocks) — it's used just for the "Other Contents" list and
+  // the edit-mode product-link check, never for block bodies.
   const [content, allContents, products, categories] = await Promise.all([
     getContent(id),
-    getAllContents(),
+    getAllContentsMeta(),
     getAllProducts(),
     getAllCategories(),
   ]);

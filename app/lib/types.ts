@@ -58,6 +58,18 @@ export interface ContentData {
   productId?: string | null;
 }
 
+// Lightweight projection for list / related-content views: everything those
+// UIs need (title, counts, link, product link) WITHOUT the heavy blocks JSON,
+// so pages don't serialize ~120KB of block content the client never renders.
+export interface ContentMeta {
+  id: string;
+  title: string;
+  createdAt: string;
+  productId: string | null;
+  textCount: number;
+  imageCount: number;
+}
+
 // ── Documents ───────────────────────────────────────────────────────────────
 
 export interface DocumentData {

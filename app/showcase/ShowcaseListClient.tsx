@@ -5,10 +5,10 @@ import { useAuth } from "../context/AuthContext";
 import ConfirmDialog from "../components/ConfirmDialog";
 import Toast from "../components/Toast";
 
-import type { DocumentData, ContentData } from "../lib/types";
+import type { DocumentData, ContentMeta } from "../lib/types";
 
 interface ShowcaseListClientProps {
-  initialContents: ContentData[];
+  initialContents: ContentMeta[];
   initialDocuments: DocumentData[];
 }
 
@@ -17,11 +17,11 @@ export default function ShowcaseListClient({
   initialContents,
   initialDocuments,
 }: ShowcaseListClientProps) {
-  const [contents, setContents] = useState<ContentData[]>(initialContents);
+  const [contents, setContents] = useState<ContentMeta[]>(initialContents);
   const [documents, setDocuments] = useState<DocumentData[]>(initialDocuments);
   
   // Content delete state
-  const [pendingDelete, setPendingDelete] = useState<ContentData | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<ContentMeta | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   
   // Document delete state
@@ -62,7 +62,7 @@ export default function ShowcaseListClient({
     setTimeout(() => setToast(null), 3000);
   }
 
-  async function handleDeleteContent(item: ContentData) {
+  async function handleDeleteContent(item: ContentMeta) {
     setDeletingId(item.id);
     try {
       const res = await fetch(`/api/contents/${item.id}`, { method: "DELETE" });
@@ -267,8 +267,7 @@ export default function ShowcaseListClient({
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
             {contents.map((item) => {
-              const textCount = item.blocks.filter((b) => b.type === "text").length;
-              const imageCount = item.blocks.filter((b) => b.type === "image").length;
+              const { textCount, imageCount } = item;
               const isDeleting = deletingId === item.id;
 
               return (

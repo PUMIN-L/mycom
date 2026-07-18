@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { getAllContents } from "../lib/contentStore";
+import { getAllContentsMeta } from "../lib/contentStore";
 import { getAllDocuments } from "../lib/documentStore";
 import { SITE_NAME } from "../lib/site";
 import ShowcaseListClient from "./ShowcaseListClient";
@@ -14,8 +14,9 @@ export const metadata: Metadata = {
 
 export default async function ShowcaseListPage() {
   // Parallel — these two reads are independent (was serial, one extra round trip).
+  // Meta-only contents (no blocks JSON) — the list just shows title + counts.
   const [contents, documents] = await Promise.all([
-    getAllContents(),
+    getAllContentsMeta(),
     getAllDocuments(),
   ]);
   return <ShowcaseListClient initialContents={contents} initialDocuments={documents} />;

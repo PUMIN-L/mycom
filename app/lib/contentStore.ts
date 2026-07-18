@@ -1,10 +1,10 @@
 import { query } from "./db";
 import { RowDataPacket, ResultSetHeader } from "mysql2";
-import type { ContentBlock, ContentData } from "./types";
+import type { ContentBlock, ContentData, ContentMeta } from "./types";
 import { sanitizeRichText } from "./sanitizeHtml";
 
 // Re-exported so existing callers can keep importing these from "./contentStore".
-export type { ContentBlock, ContentData } from "./types";
+export type { ContentBlock, ContentData, ContentMeta } from "./types";
 
 // Sanitize the rich-text HTML on every block before it is stored, so content
 // rendered later with dangerouslySetInnerHTML on public pages is always safe.
@@ -64,6 +64,29 @@ export async function getAllContents(): Promise<ContentData[]> {
   );
 
   return rows.map(rowToContent);
+}
+
+// Like getAllContents but returns metadata only (block counts computed
+// server-side) — used by the showcase list and the related-content list, which
+// never render block bodies. Avoids serializing ~120KB of blocks JSON to the
+// client. Note: still reads blocks from the DB to count them; the win is the
+// client payload, not the query.
+export async function getAllContentsMeta(): Promise<ContentMeta[]> {
+  const [rows] = await query<RowDataPacket[]>(
+    "SELECT id, title, blocks, createdAt, productId FROM contents ORDER BY createdAt DESC"
+  );
+  return rows.map((row) => {
+    const blocks: ContentBlock[] =
+      typeof row.blocks === "string" ? JSON.parse(row.blocks) : row.blocks ?? [];
+    return {
+      id: row.id,
+      title: row.title,
+      createdAt: row.createdAt,
+      productId: row.productId ?? null,
+      textCount: blocks.filter((b) => b.type === "text").length,
+      imageCount: blocks.filter((b) => b.type === "image").length,
+    };
+  });
 }
 
 export async function getContentByProductId(

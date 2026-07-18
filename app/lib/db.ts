@@ -1,6 +1,10 @@
 import mysql from "mysql2/promise";
 import bcrypt from "bcryptjs";
-import type { QueryResult, FieldPacket } from "mysql2";
+import type { QueryResult, FieldPacket, RowDataPacket } from "mysql2";
+
+// Bump whenever the schema below changes — a mismatch re-runs the (idempotent)
+// bootstrap; a match lets returning cold instances skip it in one SELECT.
+const SCHEMA_VERSION = 1;
 
 type DbPool = ReturnType<typeof mysql.createPool>;
 
@@ -48,6 +52,22 @@ const pool: DbPool = globalForDb._pool ?? (globalForDb._pool = createPool());
 async function bootstrapSchemaOnce(): Promise<void> {
   const connection = await pool.getConnection();
   try {
+      // Fast path: skip the whole bootstrap when the schema is already at the
+      // current version. Collapses ~37 sequential round trips + a bcrypt hash
+      // into ONE SELECT on returning cold instances (Vercel runs this per cold
+      // start). All bootstrap statements are idempotent, so re-running after a
+      // SCHEMA_VERSION bump is safe.
+      try {
+        const [verRows] = await connection.query<RowDataPacket[]>(
+          "SELECT value FROM settings WHERE name = 'schema_version' LIMIT 1"
+        );
+        if (verRows.length > 0 && Number(verRows[0].value) >= SCHEMA_VERSION) {
+          return;
+        }
+      } catch {
+        // `settings` doesn't exist yet (fresh DB) — fall through to full bootstrap.
+      }
+
       await connection.query(`
         CREATE TABLE IF NOT EXISTS contents (
           id VARCHAR(255) PRIMARY KEY,
@@ -168,12 +188,19 @@ async function bootstrapSchemaOnce(): Promise<void> {
       // default account. ADMIN_USERNAME defaults to "admin".
       const adminPassword = process.env.ADMIN_PASSWORD;
       if (adminPassword) {
-        const adminUsername = process.env.ADMIN_USERNAME || "admin";
-        const passwordHash = await bcrypt.hash(adminPassword, 12);
-        await connection.query(
-          "INSERT IGNORE INTO users (id, username, passwordHash, createdAt) VALUES (?, ?, ?, ?)",
-          ["admin-001", adminUsername, passwordHash, new Date().toISOString()]
+        // Only hash + insert when the admin row is absent — bcrypt(cost 12) is
+        // ~250ms of CPU, wasted on every run where the account already exists.
+        const [adminRows] = await connection.query<RowDataPacket[]>(
+          "SELECT id FROM users WHERE id = 'admin-001' LIMIT 1"
         );
+        if (adminRows.length === 0) {
+          const adminUsername = process.env.ADMIN_USERNAME || "admin";
+          const passwordHash = await bcrypt.hash(adminPassword, 12);
+          await connection.query(
+            "INSERT IGNORE INTO users (id, username, passwordHash, createdAt) VALUES (?, ?, ?, ?)",
+            ["admin-001", adminUsername, passwordHash, new Date().toISOString()]
+          );
+        }
       } else {
         console.warn(
           "ADMIN_PASSWORD not set — skipping admin user seed. Set ADMIN_PASSWORD to create/seed the admin account."
@@ -226,6 +253,12 @@ async function bootstrapSchemaOnce(): Promise<void> {
           [p.id, p.categoryId, p.image, p.title_th, p.title_en, p.title_zh, p.desc_th, p.desc_en, p.desc_zh, now, true]
         );
       }
+
+      // Record the schema version so future cold instances take the fast path.
+      await connection.query(
+        "INSERT INTO settings (name, value) VALUES ('schema_version', ?) ON DUPLICATE KEY UPDATE value = VALUES(value)",
+        [String(SCHEMA_VERSION)]
+      );
 
     } finally {
       connection.release();
