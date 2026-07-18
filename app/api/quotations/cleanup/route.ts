@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withRoute } from "../../../lib/apiHelpers";
-import { purgeExpiredQuotations } from "../../../lib/quotationStore";
+import { purgeExpiredQuotations, purgeOldDocNos } from "../../../lib/quotationStore";
 
 // GET /api/quotations/cleanup — invoked daily by Vercel Cron (see vercel.json)
 // to delete quotations older than 30 days plus their uploaded Cloudinary images.
@@ -12,6 +12,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const RETENTION_DAYS = 30;
+const DOCNO_RETENTION_DAYS = 2;
 
 export const GET = withRoute(
   "ล้างใบเสนอราคาไม่สำเร็จ",
@@ -22,6 +23,7 @@ export const GET = withRoute(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
     const deleted = await purgeExpiredQuotations(RETENTION_DAYS);
-    return NextResponse.json({ deleted });
+    const docNosPurged = await purgeOldDocNos(DOCNO_RETENTION_DAYS);
+    return NextResponse.json({ deleted, docNosPurged });
   }
 );

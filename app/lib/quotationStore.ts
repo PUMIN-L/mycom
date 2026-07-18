@@ -1,5 +1,5 @@
 import { query } from "./db";
-import type { RowDataPacket } from "mysql2";
+import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { deleteCloudinaryImages } from "./cloudinaryHelper";
 
 // Persisted quotations. `data` is the opaque client QuoteState (stored as JSON).
@@ -85,13 +85,53 @@ export async function saveQuotation(rec: QuotationRecord): Promise<void> {
   );
 }
 
-/** True if another quotation (id != exceptId) already uses this docNo. */
-export async function isDocNoTaken(docNo: string, exceptId: string): Promise<boolean> {
+// ── Issued quotation-number ledger (used_docnos) ─────────────────────────────
+// Separate from `quotations` so a number stays reserved even after its
+// quotation is deleted/auto-purged. Kept ~2 days (docNo is date-prefixed).
+
+export interface UsedDocNo {
+  docNo: string;
+  quotationId: string;
+}
+
+/** The quotation that owns this docNo, or null if it's free. */
+export async function getDocNoOwner(docNo: string): Promise<string | null> {
   const [rows] = await query<RowDataPacket[]>(
-    "SELECT id FROM quotations WHERE docNo = ? AND id != ? LIMIT 1",
-    [docNo, exceptId]
+    "SELECT quotationId FROM used_docnos WHERE docNo = ? LIMIT 1",
+    [docNo]
   );
-  return rows.length > 0;
+  return rows.length > 0 ? String(rows[0].quotationId) : null;
+}
+
+/** Reserve a docNo for a quotation (idempotent; refreshes the 2-day clock). */
+export async function reserveDocNo(
+  docNo: string,
+  quotationId: string,
+  createdAt: string
+): Promise<void> {
+  await query(
+    `INSERT INTO used_docnos (docNo, quotationId, createdAt) VALUES (?, ?, ?)
+     ON DUPLICATE KEY UPDATE createdAt = VALUES(createdAt)`,
+    [docNo, quotationId, createdAt]
+  );
+}
+
+/** All currently-reserved numbers (the ledger is small — only ~2 days). */
+export async function listRecentDocNos(): Promise<UsedDocNo[]> {
+  const [rows] = await query<RowDataPacket[]>(
+    "SELECT docNo, quotationId FROM used_docnos"
+  );
+  return rows.map((r) => ({ docNo: r.docNo, quotationId: String(r.quotationId) }));
+}
+
+/** Purge reserved numbers older than `days` days. Returns how many were removed. */
+export async function purgeOldDocNos(days: number): Promise<number> {
+  const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+  const [res] = await query<ResultSetHeader>(
+    "DELETE FROM used_docnos WHERE createdAt < ?",
+    [cutoff]
+  );
+  return res.affectedRows ?? 0;
 }
 
 export async function getQuotation(id: string): Promise<QuotationRecord | null> {

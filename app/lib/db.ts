@@ -4,7 +4,7 @@ import type { QueryResult, FieldPacket, RowDataPacket } from "mysql2";
 
 // Bump whenever the schema below changes — a mismatch re-runs the (idempotent)
 // bootstrap; a match lets returning cold instances skip it in one SELECT.
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 type DbPool = ReturnType<typeof mysql.createPool>;
 
@@ -136,6 +136,18 @@ async function bootstrapSchemaOnce(): Promise<void> {
       } catch {
         // Ignore if index already exists
       }
+
+      // ── Used quotation numbers ledger ─────────────────────────────────────
+      // Records every issued quotation docNo so a number can't be reused even
+      // after its quotation is deleted. docNo starts with the date, so numbers
+      // roll over daily; this ledger is purged after ~2 days by the cleanup cron.
+      await connection.query(`
+        CREATE TABLE IF NOT EXISTS used_docnos (
+          docNo VARCHAR(255) PRIMARY KEY,
+          quotationId VARCHAR(255) NOT NULL,
+          createdAt VARCHAR(255) NOT NULL
+        )
+      `);
 
       // ── Product categories table ──────────────────────────────────────────
 

@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withRoute, requireAuth } from "../../lib/apiHelpers";
-import { saveQuotation, listQuotations, isDocNoTaken } from "../../lib/quotationStore";
+import {
+  saveQuotation,
+  listQuotations,
+  getDocNoOwner,
+  reserveDocNo,
+} from "../../lib/quotationStore";
 
 // GET /api/quotations (login required) — list saved quotations (summary only).
 export const GET = withRoute("โหลดรายการใบเสนอราคาไม่สำเร็จ", async () => {
@@ -21,14 +26,19 @@ export const POST = withRoute(
       return NextResponse.json({ error: "id is required" }, { status: 400 });
     }
 
-    // Reject a docNo already used by a DIFFERENT quotation (409). Re-saving the
-    // same quotation (same id) keeps its own number — that's an update, not a dup.
+    // Reject a docNo already reserved by a DIFFERENT quotation (409). The ledger
+    // survives quotation deletion, so a number stays reserved for ~2 days even
+    // after the quote is gone. Re-saving the same quotation (same id) is an
+    // update, not a dup.
     const docNo = String(body?.docNo ?? "").slice(0, 255);
-    if (docNo && (await isDocNoTaken(docNo, id))) {
-      return NextResponse.json(
-        { error: "เลขที่ใบเสนอราคานี้ถูกใช้ไปแล้ว กรุณาเปลี่ยนเลขที่" },
-        { status: 409 }
-      );
+    if (docNo) {
+      const owner = await getDocNoOwner(docNo);
+      if (owner && owner !== id) {
+        return NextResponse.json(
+          { error: "เลขที่ใบเสนอราคานี้ถูกใช้ไปแล้ว กรุณาเปลี่ยนเลขที่" },
+          { status: 409 }
+        );
+      }
     }
 
     // Server backstop for the image-deletion safety invariant: only accept URLs
@@ -44,13 +54,9 @@ export const POST = withRoute(
         )
       : [];
 
-    await saveQuotation({
-      id,
-      docNo,
-      data: body?.data ?? {},
-      uploadedImages,
-      createdAt: new Date().toISOString(),
-    });
+    const createdAt = new Date().toISOString();
+    await saveQuotation({ id, docNo, data: body?.data ?? {}, uploadedImages, createdAt });
+    if (docNo) await reserveDocNo(docNo, id, createdAt);
 
     return NextResponse.json({ id });
   }

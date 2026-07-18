@@ -108,6 +108,23 @@ const emptyState = (): QuoteState => ({
 const fmt = (n: number) =>
   n.toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+// Each day's running number starts here (business convention).
+const DOCNO_START = 22;
+const pad2 = (n: number) => String(n).padStart(2, "0");
+
+// Next free trailing number for a date prefix (e.g. "QT20260718-"): the day's
+// first number is DOCNO_START (-22), then -23, -24, …
+function nextDocNo(prefix: string, used: string[]): string {
+  let max = 0;
+  for (const d of used) {
+    if (d.startsWith(prefix)) {
+      const n = parseInt(d.slice(prefix.length), 10);
+      if (!Number.isNaN(n) && n > max) max = n;
+    }
+  }
+  return `${prefix}${pad2(Math.max(max + 1, DOCNO_START))}`;
+}
+
 const thaiDate = (iso: string) => {
   if (!iso) return "-";
   const [y, m, d] = iso.split("-").map(Number);
@@ -130,6 +147,9 @@ export default function QuotationPage() {
   const imageInputRef = useRef<HTMLInputElement>(null);
   const uploadTargetRef = useRef<string | null>(null);
   const hydratedRef = useRef(false);
+  // A brand-new quote (not a reopened/restored one) — eligible to auto-advance
+  // its running number once the reserved-numbers ledger loads.
+  const isFreshRef = useRef(false);
 
   // Redirect if not logged in (same client gate as the other admin pages)
   useEffect(() => {
@@ -143,14 +163,16 @@ export default function QuotationPage() {
     const now = new Date();
     const iso = now.toISOString().slice(0, 10);
 
-    const seedFresh = () =>
+    const seedFresh = () => {
+      isFreshRef.current = true;
       setQ({
         ...emptyState(),
         id: crypto.randomUUID(),
         docDate: iso,
-        docNo: `QT${iso.replace(/-/g, "")}-01`,
+        docNo: `QT${iso.replace(/-/g, "")}-${pad2(DOCNO_START)}`,
         items: [newItem()],
       });
+    };
 
     const reopenId = new URLSearchParams(window.location.search).get("id");
     if (reopenId) {
@@ -208,20 +230,36 @@ export default function QuotationPage() {
       .catch(() => {});
   }, [isLoggedIn]);
 
-  // Saved quotation numbers — to warn about duplicate docNo before download.
+  // Reserved quotation numbers (last ~2 days) — for the duplicate warning and
+  // the auto-running number. Survives deletion (separate ledger).
   useEffect(() => {
     if (!isLoggedIn) return;
-    fetch("/api/quotations")
+    fetch("/api/quotations/docnos")
       .then((r) => (r.ok ? r.json() : []))
       .then((list) =>
         setExistingDocs(
           Array.isArray(list)
-            ? list.map((x: { id: string; docNo: string }) => ({ id: x.id, docNo: x.docNo }))
+            ? list.map((x: { quotationId: string; docNo: string }) => ({
+                id: x.quotationId,
+                docNo: x.docNo,
+              }))
             : []
         )
       )
       .catch(() => {});
   }, [isLoggedIn]);
+
+  // Once the ledger is loaded, bump a fresh quote's still-default docNo to the
+  // next free trailing number (e.g. today's -01 is taken → -02).
+  useEffect(() => {
+    if (!isFreshRef.current) return;
+    setQ((prev) => {
+      const prefix = `QT${prev.docDate.replace(/-/g, "")}-`;
+      if (prev.docNo !== `${prefix}${pad2(DOCNO_START)}`) return prev; // user edited it
+      const next = nextDocNo(prefix, existingDocs.map((u) => u.docNo));
+      return next === prev.docNo ? prev : { ...prev, docNo: next };
+    });
+  }, [existingDocs]);
 
   function showToast(message: string, type: "success" | "error") {
     setToast({ message, type });
@@ -486,7 +524,9 @@ export default function QuotationPage() {
                 if (window.confirm("ล้างข้อมูลทั้งหมดและเริ่มใหม่?")) {
                   localStorage.removeItem(DRAFT_KEY);
                   const iso = new Date().toISOString().slice(0, 10);
-                  setQ({ ...emptyState(), id: crypto.randomUUID(), docDate: iso, docNo: `QT${iso.replace(/-/g, "")}-01`, items: [newItem()] });
+                  const prefix = `QT${iso.replace(/-/g, "")}-`;
+                  isFreshRef.current = true;
+                  setQ({ ...emptyState(), id: crypto.randomUUID(), docDate: iso, docNo: nextDocNo(prefix, existingDocs.map((u) => u.docNo)), items: [newItem()] });
                 }
               }}
               className="px-4 py-2 rounded-lg border border-red-300 text-red-500 text-sm font-semibold hover:bg-red-50 transition"
