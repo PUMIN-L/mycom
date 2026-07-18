@@ -602,7 +602,7 @@ export default function QuotationPage() {
               }}
               className="px-4 py-2 rounded-lg border border-red-300 text-red-500 text-sm font-semibold hover:bg-red-50 transition"
             >
-              ↺ เริ่มใหม่
+              ↺ เริ่มทำใบเสนอราคาใบใหม่
             </button>
             <button
               onClick={handleSave}
