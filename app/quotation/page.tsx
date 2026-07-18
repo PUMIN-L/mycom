@@ -17,7 +17,7 @@ const COMPANY = {
   name: "บริษัท โปรฟิน แล็บสเกล จำกัด",
   nameEn: "PROFIN LAB SCALE CO., LTD.",
   address:
-    "93 ซอยงามวงศ์วาน 6 แยก 19 ถนนงามวงศ์วาน ตำบลบางเขน อำเภอเมืองนนทบุรี จ.นนทบุรี 11000",
+    "93 ซอยงามวงศ์วาน 6 แยก 19 ถนนงามวงศ์วาน\nตำบลบางเขน อำเภอเมืองนนทบุรี จ.นนทบุรี 11000",
 };
 
 interface QuoteItem {
@@ -685,7 +685,7 @@ export default function QuotationPage() {
                 <div>
                   <div className="text-lg font-bold">{COMPANY.name}</div>
                   <div className="text-xs text-gray-600">{COMPANY.nameEn}</div>
-                  <div className="text-xs mt-1 max-w-[95mm]">{COMPANY.address}</div>
+                  <div className="text-xs mt-1 max-w-[95mm] whitespace-pre-line">{COMPANY.address}</div>
                   <div className="text-xs mt-0.5">
                     {q.companyPhone && <>โทร {q.companyPhone} </>}
                     {q.companyEmail && <>อีเมล {q.companyEmail}</>}
