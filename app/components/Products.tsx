@@ -740,9 +740,17 @@ export default function Products({ dataPromise }: ProductsProps) {
                     </div>
 
                     <div className={`flex flex-col flex-1 p-6 relative z-10 ${item.isPublished === false ? "bg-gray-50" : "bg-white"}`}>
-                      <h3 className={`text-lg font-bold text-[var(--text-primary)] mb-2 transition-colors line-clamp-2 ${item.isPublished === false ? "" : "group-hover:text-[var(--accent)]"}`}>
+                      <h3 className={`text-lg font-bold text-[var(--text-primary)] mb-1 transition-colors line-clamp-2 ${item.isPublished === false ? "" : "group-hover:text-[var(--accent)]"}`}>
                         {getTitle(item)}
                       </h3>
+                      {/* Show the English name too when viewing another language:
+                          Thai B2B buyers search equipment by its English name, so
+                          keeping it in the (crawlable) markup helps those searches. */}
+                      {lang !== "en" && item.title_en && item.title_en !== getTitle(item) && (
+                        <p className="text-xs font-medium text-gray-400 mb-2 line-clamp-1">
+                          {item.title_en}
+                        </p>
+                      )}
                       <div
                         className="text-gray-500 leading-relaxed font-light text-sm line-clamp-2 mb-6 [&_p]:inline [&_p]:m-0"
                         dangerouslySetInnerHTML={{ __html: getDesc(item) }}

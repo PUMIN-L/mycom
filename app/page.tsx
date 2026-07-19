@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
+import { SITE_DESCRIPTION } from "./lib/site";
 import Navbar from "./components/Navbar";
 import Hero from "./components/Hero";
 import Services from "./components/Services";
@@ -15,9 +16,15 @@ import { getProductsData } from "./lib/getProductsData";
 export const revalidate = 60;
 
 // The homepage owns the site-root canonical (moved off the layout so other pages
-// don't inherit it).
+// don't inherit it). The description keeps the Thai brand line but appends the
+// ENGLISH equipment categories customers actually search for, so the homepage
+// itself ranks for "hardness tester", "viscometer", etc. — not just Thai terms.
 export const metadata: Metadata = {
   alternates: { canonical: "/" },
+  description:
+    `${SITE_DESCRIPTION} — Digital calipers, micrometers, dial gauges, hardness testers (durometers), ` +
+    `viscometers, COF & leak testers, colorimeters, spectrophotometers, gloss meters, ` +
+    `analytical & precision balances, and industrial & laboratory drying ovens.`,
 };
 
 export default function Home() {
