@@ -2,7 +2,7 @@
 // navigation, so the page never flashes empty.
 export default function Loading() {
   return (
-    <div className="min-h-screen bg-gray-50 pt-28 pb-20">
+    <div className="min-h-screen bg-gray-50 py-12">
       <div className="max-w-6xl mx-auto px-4">
         <div className="h-10 w-64 rounded-lg bg-gray-200/70 animate-pulse mb-10" />
         <div className="h-12 w-full max-w-xl rounded-xl bg-gray-200/60 animate-pulse mb-10" />

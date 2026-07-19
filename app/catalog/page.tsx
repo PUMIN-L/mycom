@@ -1,6 +1,4 @@
 import type { Metadata } from "next";
-import Navbar from "../components/Navbar";
-import Footer from "../components/Footer";
 import CatalogClient from "./CatalogClient";
 import { getAllDocuments } from "../lib/documentStore";
 import { SITE_URL } from "../lib/site";
@@ -22,14 +20,6 @@ export const metadata: Metadata = {
 
 export default async function CatalogPage() {
   const documents = await getAllDocuments();
-  
-  return (
-    <>
-      <Navbar />
-      <main className="bg-gray-50 min-h-screen pt-24 pb-20">
-        <CatalogClient initialDocuments={documents} />
-      </main>
-      <Footer />
-    </>
-  );
+  // Navbar/main/Footer live in layout.tsx (shared with loading.tsx).
+  return <CatalogClient initialDocuments={documents} />;
 }

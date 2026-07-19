@@ -8,10 +8,10 @@ import { useEffect } from "react";
 
 export default function GlobalError({
   error,
-  reset,
+  unstable_retry,
 }: {
   error: Error & { digest?: string };
-  reset: () => void;
+  unstable_retry: () => void;
 }) {
   useEffect(() => {
     console.error(error);
@@ -41,7 +41,7 @@ export default function GlobalError({
             ระบบขัดข้อง กรุณาลองใหม่อีกครั้ง
           </p>
           <button
-            onClick={reset}
+            onClick={() => unstable_retry()}
             style={{
               padding: "12px 24px",
               borderRadius: 8,

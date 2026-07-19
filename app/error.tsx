@@ -2,17 +2,19 @@
 
 // Route-segment error boundary. Catches errors thrown while rendering any page
 // under the root layout (a DB hiccup, an unexpected throw) and shows a branded,
-// recoverable page instead of Next's bare default. `reset()` re-renders the
-// segment so a transient failure can be retried without a full reload.
+// recoverable page instead of Next's bare default. `unstable_retry()` (Next
+// 16.2+) RE-FETCHES and re-renders the failed segment, so a transient
+// server-side data error is actually retried — unlike `reset()`, which only
+// re-renders without re-fetching and would just re-throw.
 import Link from "next/link";
 import { useEffect } from "react";
 
 export default function Error({
   error,
-  reset,
+  unstable_retry,
 }: {
   error: Error & { digest?: string };
-  reset: () => void;
+  unstable_retry: () => void;
 }) {
   useEffect(() => {
     // Surfaced to the server via instrumentation.ts / Vercel logs.
@@ -31,7 +33,7 @@ export default function Error({
       </p>
       <div className="flex gap-3 flex-wrap justify-center">
         <button
-          onClick={reset}
+          onClick={() => unstable_retry()}
           className="px-6 py-3 rounded-lg font-semibold text-white bg-[var(--accent)] hover:opacity-90 transition shadow-sm"
         >
           ลองใหม่อีกครั้ง

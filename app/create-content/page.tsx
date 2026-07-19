@@ -114,9 +114,13 @@ function CreateContentInner() {
     }, 100);
   };
 
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   function showToast(message: string, type: "success" | "error") {
     setToast({ message, type });
-    setTimeout(() => setToast(null), 3000);
+    // Clear the previous auto-dismiss so an earlier toast's timer can't hide a
+    // newer toast fired within the 3s window.
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 3000);
   }
 
   const addImageBlock = () => {

@@ -42,9 +42,13 @@ export default function EditProduct({ params }: { params: Promise<{ id: string }
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
 
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   function showToast(message: string, type: "success" | "error") {
     setToast({ message, type });
-    setTimeout(() => setToast(null), 3000);
+    // Clear the previous auto-dismiss so an earlier toast's timer can't hide a
+    // newer toast fired within the 3s window.
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 3000);
   }
 
   // Redirect if not logged in
