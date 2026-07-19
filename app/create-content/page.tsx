@@ -5,6 +5,7 @@ import { useAuth } from "../context/AuthContext";
 import ColorPickerDropdown from "../components/ColorPickerDropdown";
 import RichTextEditor from "../components/RichTextEditor";
 import BlockRangeControl from "../components/BlockRangeControl";
+import Toast from "../components/Toast";
 
 interface ContentBlock {
   id: string;
@@ -54,6 +55,7 @@ function CreateContentInner() {
   const [galleryUploadingId, setGalleryUploadingId] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadingBlockId, setUploadingBlockId] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
 
   // Products from API
   const [allProducts, setAllProducts] = useState<ProductItem[]>([]);
@@ -111,6 +113,11 @@ function CreateContentInner() {
       document.getElementById(`block-${id}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
     }, 100);
   };
+
+  function showToast(message: string, type: "success" | "error") {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 3000);
+  }
 
   const addImageBlock = () => {
     fileInputRef.current?.click();
@@ -170,7 +177,7 @@ function CreateContentInner() {
       setBlocks((prev) => [...prev, newBlock]);
       scrollToBlock(newBlock.id);
     } catch (error) {
-      alert("Error uploading image. Please try again.");
+      showToast("Error uploading image. Please try again.", "error");
       console.error(error);
     } finally {
       setIsUploading(false);
@@ -194,7 +201,7 @@ function CreateContentInner() {
       const data = await response.json();
       updateBlock(replacingBlockId, { imageUrl: data.url });
     } catch (error) {
-      alert("Error uploading image");
+      showToast("Error uploading image", "error");
       console.error(error);
     } finally {
       setUploadingBlockId(null);
@@ -216,7 +223,7 @@ function CreateContentInner() {
     const filesArray = Array.from(files);
     
     if (currentCount + filesArray.length > 10) {
-      alert("สามารถเพิ่มรูปได้ไม่เกิน 10 รูป");
+      showToast("สามารถเพิ่มรูปได้ไม่เกิน 10 รูป", "error");
       return;
     }
 
@@ -244,7 +251,7 @@ function CreateContentInner() {
         return b;
       }));
     } catch (error) {
-      alert("Error uploading images");
+      showToast("Error uploading images", "error");
       console.error(error);
     } finally {
       setUploadingBlockId(null);
@@ -289,11 +296,11 @@ function CreateContentInner() {
 
   const handleSubmit = async () => {
     if (!title.trim()) {
-      alert("Please enter a title");
+      showToast("Please enter a title", "error");
       return;
     }
     if (blocks.length === 0) {
-      alert("Please add at least one content block");
+      showToast("Please add at least one content block", "error");
       return;
     }
 
@@ -329,13 +336,14 @@ function CreateContentInner() {
       // Redirect to showcase page
       router.push(`/showcase/${contentData.id}`);
     } catch (error: any) {
-      alert(error.message || "Error saving content. Please try again.");
+      showToast(error.message || "Error saving content. Please try again.", "error");
       console.error(error);
     }
   };
 
   return (
     <div className="min-h-screen bg-gray-50 py-12">
+      {toast && <Toast message={toast.message} type={toast.type} />}
       <div className="max-w-4xl mx-auto px-4">
         <h1 className="text-4xl font-bold mb-2 text-gray-900">Create Content</h1>
         <p className="text-gray-600 mb-8">

@@ -3,6 +3,7 @@ import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "../context/AuthContext";
 import RichTextEditor from "../components/RichTextEditor";
+import Toast from "../components/Toast";
 
 interface ProductCategory {
   id: number;
@@ -34,6 +35,12 @@ export default function CreateProduct() {
   const [imagePreview, setImagePreview] = useState("");
   const [isUploading, setIsUploading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
+
+  function showToast(message: string, type: "success" | "error") {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 3000);
+  }
 
   // Redirect if not logged in
   useEffect(() => {
@@ -81,7 +88,7 @@ export default function CreateProduct() {
       setImageUrl(data.url);
       setImagePreview(data.url);
     } catch (error) {
-      alert("Error uploading image. Please try again.");
+      showToast("Error uploading image. Please try again.", "error");
       console.error(error);
     } finally {
       setIsUploading(false);
@@ -91,11 +98,11 @@ export default function CreateProduct() {
 
   const handleSubmit = async () => {
     if (!titleTh.trim() && !titleEn.trim()) {
-      alert("กรุณากรอกชื่อสินค้าอย่างน้อย 1 ภาษา");
+      showToast("กรุณากรอกชื่อสินค้าอย่างน้อย 1 ภาษา", "error");
       return;
     }
     if (!imageUrl) {
-      alert("กรุณาอัปโหลดรูปภาพสินค้า");
+      showToast("กรุณาอัปโหลดรูปภาพสินค้า", "error");
       return;
     }
 
@@ -158,7 +165,7 @@ export default function CreateProduct() {
 
       router.push("/#products");
     } catch (error: any) {
-      alert(error.message || "Error saving product. Please try again.");
+      showToast(error.message || "Error saving product. Please try again.", "error");
       console.error(error);
     } finally {
       setIsSubmitting(false);
@@ -178,6 +185,7 @@ export default function CreateProduct() {
 
   return (
     <div className="min-h-screen bg-gray-50 py-12">
+      {toast && <Toast message={toast.message} type={toast.type} />}
       <div className="max-w-4xl mx-auto px-4">
         <h1 className="text-4xl font-bold mb-2 text-gray-900">สร้างสินค้าใหม่</h1>
         <p className="text-gray-600 mb-8">
