@@ -42,9 +42,23 @@ export default function ShowcaseListClient({
   const [savingDoc, setSavingDoc] = useState(false);
 
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
+  const [search, setSearch] = useState("");
   const { isLoggedIn, user, logout } = useAuth();
 
   const isProcessing = uploadingDoc || savingDoc || deletingDocId !== null || deletingId !== null;
+
+  // Filter both lists by the search box (content title; document title + desc).
+  const q = search.trim().toLowerCase();
+  const filteredContents = q
+    ? contents.filter((c) => c.title.toLowerCase().includes(q))
+    : contents;
+  const filteredDocuments = q
+    ? documents.filter(
+        (d) =>
+          d.title.toLowerCase().includes(q) ||
+          (d.description || "").toLowerCase().includes(q)
+      )
+    : documents;
 
   useEffect(() => {
     if (isProcessing) {
@@ -252,6 +266,37 @@ export default function ShowcaseListClient({
           </div>
         </div>
 
+        {/* Search */}
+        <div className="mb-10">
+          <div className="relative max-w-xl">
+            <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none">
+              🔍
+            </span>
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="ค้นหาเนื้อหาหรือเอกสาร..."
+              aria-label="ค้นหา"
+              className="w-full pl-11 pr-10 py-3 rounded-xl border border-gray-300 shadow-sm focus:border-orange-400 focus:ring-2 focus:ring-orange-200 outline-none transition"
+            />
+            {search && (
+              <button
+                onClick={() => setSearch("")}
+                aria-label="ล้างการค้นหา"
+                className="absolute right-3 top-1/2 -translate-y-1/2 w-6 h-6 flex items-center justify-center rounded-full text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition text-lg leading-none"
+              >
+                ×
+              </button>
+            )}
+          </div>
+          {q && (
+            <p className="text-sm text-gray-500 mt-2">
+              พบ {filteredContents.length} เนื้อหา · {filteredDocuments.length} เอกสาร
+            </p>
+          )}
+        </div>
+
         {/* Content Grid */}
         {contents.length === 0 ? (
           <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-16 text-center">
@@ -264,9 +309,13 @@ export default function ShowcaseListClient({
               Get Started
             </Link>
           </div>
+        ) : filteredContents.length === 0 ? (
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center text-gray-500">
+            ไม่พบเนื้อหาที่ตรงกับ “{search}”
+          </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-            {contents.map((item) => {
+            {filteredContents.map((item) => {
               const { textCount, imageCount } = item;
               const isDeleting = deletingId === item.id;
 
@@ -349,9 +398,13 @@ export default function ShowcaseListClient({
             <div className="bg-white rounded-xl border border-dashed border-gray-300 p-12 text-center">
               <p className="text-gray-500">ยังไม่มีเอกสารในระบบ</p>
             </div>
+          ) : filteredDocuments.length === 0 ? (
+            <div className="bg-white rounded-xl border border-dashed border-gray-300 p-12 text-center">
+              <p className="text-gray-500">ไม่พบเอกสารที่ตรงกับ “{search}”</p>
+            </div>
           ) : (
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-              {documents.map((doc) => {
+              {filteredDocuments.map((doc) => {
                 const isDeleting = deletingDocId === doc.id;
                 return (
                   <div
