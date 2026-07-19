@@ -21,7 +21,7 @@ vi.mock('@/app/lib/contactMessageStore', () => ({
   markContactMessageEmailed: vi.fn(),
   listContactMessages: vi.fn(),
 }));
-import { saveContactMessage } from '@/app/lib/contactMessageStore';
+import { saveContactMessage, markContactMessageEmailed } from '@/app/lib/contactMessageStore';
 
 const valid = {
   name: 'John Visitor',
@@ -112,6 +112,19 @@ describe('POST /api/contact (public contact form)', () => {
     expect(await res.json()).toEqual({ success: true, emailed: false });
     // The lead was still saved despite the mail failure.
     expect(saveContactMessage).toHaveBeenCalledTimes(1);
+    // The send failed, so the flag was never touched.
+    expect(markContactMessageEmailed).not.toHaveBeenCalled();
+  });
+
+  it('still returns 200 emailed:true when the send succeeds but the flag UPDATE fails', async () => {
+    // The email DID go out; a failed emailedOk update must not flip the response
+    // or be misreported — the send-failure path is separate now.
+    vi.mocked(markContactMessageEmailed).mockRejectedValueOnce(new Error('DB blip'));
+    const res = await POST(makeReq(valid, '203.0.113.8'));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ success: true, emailed: true });
+    expect(sendContactEmail).toHaveBeenCalledTimes(1);
+    expect(markContactMessageEmailed).toHaveBeenCalledWith(expect.any(String), true);
   });
 
   it('rate-limits an ip to 5 messages per window, then returns 429', async () => {

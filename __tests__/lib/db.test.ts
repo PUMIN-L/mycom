@@ -397,6 +397,40 @@ describe('db.ts', () => {
       expect(mockConnection.release).toHaveBeenCalled();
     });
 
+    it('retries the whole transaction on a transient connection error, then commits', async () => {
+      const db = await freshImport();
+      mockConnection.query.mockResolvedValue(SCHEMA_MATCH);
+      // A stale TiDB socket surfaces on beginTransaction; the second attempt (a
+      // fresh connection) succeeds — the save must not spuriously 500.
+      mockConnection.beginTransaction
+        .mockRejectedValueOnce(
+          Object.assign(new Error('lost'), { code: 'PROTOCOL_CONNECTION_LOST' })
+        )
+        .mockResolvedValue(undefined);
+      const fn = vi.fn().mockResolvedValue('ok');
+
+      const result = await db.withTransaction(fn);
+
+      expect(result).toBe('ok');
+      expect(mockConnection.beginTransaction).toHaveBeenCalledTimes(2); // retried once
+      expect(mockConnection.commit).toHaveBeenCalledTimes(1);
+      expect(fn).toHaveBeenCalledTimes(1); // body ran only once (2nd attempt)
+      expect(mockConnection.rollback).toHaveBeenCalledTimes(1); // rolled back the failed attempt
+    });
+
+    it('does NOT retry a non-transient (business) error — propagates immediately', async () => {
+      const db = await freshImport();
+      mockConnection.query.mockResolvedValue(SCHEMA_MATCH);
+      const conflict = new Error('DocNoConflict'); // no transient .code
+      await expect(
+        db.withTransaction(async () => {
+          throw conflict;
+        }),
+      ).rejects.toBe(conflict);
+      expect(mockConnection.beginTransaction).toHaveBeenCalledTimes(1); // no retry
+      expect(mockConnection.rollback).toHaveBeenCalledTimes(1);
+    });
+
     it('rolls back and rethrows when the callback throws', async () => {
       const db = await freshImport();
       mockConnection.query.mockResolvedValue(SCHEMA_MATCH);

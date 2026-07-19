@@ -1,14 +1,16 @@
 import { type Instrumentation } from "next";
 
-// Server-side error observability (Next 16). Every uncaught error in a Server
-// Component, Route Handler, or Server Action is delivered here — a single place
-// to forward failures somewhere durable instead of losing them in Vercel's
-// ephemeral runtime logs.
+// Server-side error observability (Next 16). onRequestError fires for errors
+// that propagate UNCAUGHT out of the Next server — i.e. Server Component render
+// and Server Action failures. NOTE: our Route Handlers are wrapped in withRoute,
+// which converts thrown errors into a 500 Response, so they never reach here —
+// those are captured (logged) inside withRoute itself. Wire a future tracker in
+// BOTH places for full coverage.
 //
 // Today it emits ONE structured line per error so failures are greppable and
 // can drive an alert. To wire a real tracker (Sentry has first-class Vercel
 // serverless support), add its SDK, init it in `register()`, and call
-// `captureException(err)` below — no other app code has to change.
+// `captureException(err)` below (and in withRoute's 500 branch).
 export const onRequestError: Instrumentation.onRequestError = (
   err,
   request,

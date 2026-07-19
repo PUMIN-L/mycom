@@ -117,9 +117,18 @@ export const POST = withRoute(
     try {
       await sendContactEmail(to, { name, email, subject, message });
       emailed = true;
-      await markContactMessageEmailed(id, true);
     } catch (err) {
       console.error("contact: lead saved but email delivery failed:", err);
+    }
+
+    // Flag update is separate: a failure here must NOT be logged as an email
+    // failure (the email already went out) — the flag just ends up stale-false.
+    if (emailed) {
+      try {
+        await markContactMessageEmailed(id, true);
+      } catch (err) {
+        console.error("contact: email sent but marking emailedOk failed:", err);
+      }
     }
 
     return NextResponse.json({ success: true, emailed });

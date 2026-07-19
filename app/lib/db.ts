@@ -394,22 +394,43 @@ export async function withTransaction<T>(
   fn: (conn: mysql.PoolConnection) => Promise<T>
 ): Promise<T> {
   const p = await getDbConnection();
-  const conn = await p.getConnection();
-  try {
-    await conn.beginTransaction();
-    const result = await fn(conn);
-    await conn.commit();
-    return result;
-  } catch (error) {
+  const MAX_ATTEMPTS = 3;
+  let lastError: unknown;
+
+  // Retry the whole transaction on a TRANSIENT connection error (a stale TiDB
+  // socket surfaces as PROTOCOL_CONNECTION_LOST on beginTransaction, before any
+  // work). Each attempt acquires a FRESH pooled connection (mysql2 discards the
+  // errored one on release), rollback discards any partial work, and callers
+  // pass idempotent bodies — so retrying is safe and mirrors query()'s behavior.
+  // Without this, saves that the old query()-based path would have retried now
+  // spuriously 500 after an idle period.
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const conn = await p.getConnection();
     try {
-      await conn.rollback();
-    } catch {
-      /* ignore rollback failure */
+      await conn.beginTransaction();
+      const result = await fn(conn);
+      await conn.commit();
+      return result;
+    } catch (error) {
+      try {
+        await conn.rollback();
+      } catch {
+        /* ignore rollback failure */
+      }
+      lastError = error;
+      // Business errors (e.g. DocNoConflictError) have no transient DB code, so
+      // they propagate immediately instead of being retried.
+      if (!isTransientDbError(error) || attempt === MAX_ATTEMPTS) throw error;
+      console.warn(
+        `DB transaction transient error (attempt ${attempt}/${MAX_ATTEMPTS}), retrying:`,
+        (error as { code?: string }).code
+      );
+      await new Promise((resolve) => setTimeout(resolve, 150 * attempt));
+    } finally {
+      conn.release();
     }
-    throw error;
-  } finally {
-    conn.release();
   }
+  throw lastError;
 }
 
 // ── Query helper with transient-error retry ──────────────────────────────────

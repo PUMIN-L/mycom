@@ -32,8 +32,11 @@ export const GET = withRoute(
       return NextResponse.json({ ok: true, deleted, docNosPurged });
     } catch (err) {
       // Log then rethrow so withRoute returns 500 → Vercel marks the cron run
-      // FAILED (and the instrumentation.ts hook records it) instead of the
-      // failure disappearing silently.
+      // FAILED instead of the failure disappearing silently. (Note: withRoute
+      // converts this into a 500 Response, so Next's onRequestError hook does NOT
+      // fire for it — the structured log here + the failed-run status are the
+      // signals; a future tracker should hook withRoute's 500 branch, not rely on
+      // onRequestError for route handlers.)
       console.error("[cron:quotations-cleanup] FAILED", err);
       throw err;
     }
