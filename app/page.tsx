@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { Suspense } from "react";
 import Navbar from "./components/Navbar";
 import Hero from "./components/Hero";
@@ -9,9 +10,15 @@ import Clients from "./components/Clients";
 import Footer from "./components/Footer";
 import { getProductsData } from "./lib/getProductsData";
 
-// Product data is admin-editable, so we use ISR (revalidate) to serve from cache 
+// Product data is admin-editable, so we use ISR (revalidate) to serve from cache
 // and refresh in the background when needed, instead of force-dynamic.
 export const revalidate = 60;
+
+// The homepage owns the site-root canonical (moved off the layout so other pages
+// don't inherit it).
+export const metadata: Metadata = {
+  alternates: { canonical: "/" },
+};
 
 export default function Home() {
   // Start fetching on the server immediately, but DON'T await here — the promise

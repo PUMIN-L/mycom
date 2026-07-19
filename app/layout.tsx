@@ -41,9 +41,10 @@ export const metadata: Metadata = {
   authors: [{ name: SITE_NAME }],
   creator: SITE_NAME,
   publisher: SITE_NAME,
-  alternates: {
-    canonical: "/",
-  },
+  // NOTE: no site-wide `alternates.canonical` here — a hardcoded "/" in the root
+  // layout makes every page that forgets its own canonical self-canonicalize to
+  // the homepage (that footgun already dropped /catalog from the index). Each
+  // page sets its own canonical instead; the homepage's lives in app/page.tsx.
   openGraph: {
     type: "website",
     siteName: SITE_NAME,

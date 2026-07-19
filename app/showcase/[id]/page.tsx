@@ -85,15 +85,36 @@ export default async function ShowcaseContentPage({
   const description = plainTextFromBlocks(content.blocks).slice(0, 200);
   const image = firstImage(content.blocks);
 
+  const logo = { "@type": "ImageObject", url: `${SITE_URL}/icon.png` };
   const articleLd = {
     "@context": "https://schema.org",
     "@type": "Article",
     headline: content.title,
     description: description || undefined,
-    image: image || undefined,
+    image: image ? [image] : undefined,
     datePublished: content.createdAt || undefined,
-    publisher: { "@type": "Organization", name: SITE_NAME, url: SITE_URL },
+    // No updatedAt column yet, so modified == published; Google's Article
+    // guidelines still want the field present.
+    dateModified: content.createdAt || undefined,
+    author: { "@type": "Organization", name: SITE_NAME, url: SITE_URL },
+    publisher: { "@type": "Organization", name: SITE_NAME, url: SITE_URL, logo },
     mainEntityOfPage: `${SITE_URL}/showcase/${content.id}`,
+  };
+
+  // Breadcrumb trail (Home › Showcase › Title) for rich results.
+  const breadcrumbLd = {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    itemListElement: [
+      { "@type": "ListItem", position: 1, name: "Home", item: SITE_URL },
+      { "@type": "ListItem", position: 2, name: "Showcase", item: `${SITE_URL}/showcase` },
+      {
+        "@type": "ListItem",
+        position: 3,
+        name: content.title,
+        item: `${SITE_URL}/showcase/${content.id}`,
+      },
+    ],
   };
 
   return (
@@ -101,6 +122,10 @@ export default async function ShowcaseContentPage({
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(articleLd).replace(/</g, '\\u003c') }}
+      />
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbLd).replace(/</g, '\\u003c') }}
       />
       <ShowcaseClient
         initialContent={content}
