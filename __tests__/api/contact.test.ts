@@ -15,6 +15,14 @@ import { sendContactEmail, isMailConfigured } from '@/app/lib/mailer';
 vi.mock('@/app/lib/settingsStore', () => ({ getContactEmail: vi.fn() }));
 import { getContactEmail } from '@/app/lib/settingsStore';
 
+// The lead is persisted before the email send; mock the store so no DB is hit.
+vi.mock('@/app/lib/contactMessageStore', () => ({
+  saveContactMessage: vi.fn(),
+  markContactMessageEmailed: vi.fn(),
+  listContactMessages: vi.fn(),
+}));
+import { saveContactMessage } from '@/app/lib/contactMessageStore';
+
 const valid = {
   name: 'John Visitor',
   email: 'john@example.com',
@@ -78,10 +86,15 @@ describe('POST /api/contact (public contact form)', () => {
     expect(sendContactEmail).not.toHaveBeenCalled();
   });
 
-  it('sends to the CMS-resolved recipient and returns 200 on success', async () => {
+  it('persists the lead, sends to the CMS-resolved recipient, and returns 200', async () => {
     const res = await POST(makeReq(valid, '203.0.113.6'));
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ success: true });
+    expect(await res.json()).toEqual({ success: true, emailed: true });
+    // Lead is stored BEFORE the send, so a mail failure can't drop it.
+    expect(saveContactMessage).toHaveBeenCalledTimes(1);
+    const savedLead = vi.mocked(saveContactMessage).mock.calls[0][0];
+    expect(savedLead).toMatchObject({ ...valid, emailedOk: false });
+    expect(typeof savedLead.id).toBe('string');
     expect(getContactEmail).toHaveBeenCalledTimes(1);
     // Recipient is the resolved settings value, NOT anything from the request body.
     expect(sendContactEmail).toHaveBeenCalledWith('admin@shop.test', {
@@ -90,6 +103,15 @@ describe('POST /api/contact (public contact form)', () => {
       subject: valid.subject,
       message: valid.message,
     });
+  });
+
+  it('still returns 200 (lead captured) when the email send throws', async () => {
+    vi.mocked(sendContactEmail).mockRejectedValueOnce(new Error('SMTP down'));
+    const res = await POST(makeReq(valid, '203.0.113.7'));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ success: true, emailed: false });
+    // The lead was still saved despite the mail failure.
+    expect(saveContactMessage).toHaveBeenCalledTimes(1);
   });
 
   it('rate-limits an ip to 5 messages per window, then returns 429', async () => {

@@ -4,7 +4,7 @@ import type { QueryResult, FieldPacket, RowDataPacket } from "mysql2";
 
 // Bump whenever the schema below changes — a mismatch re-runs the (idempotent)
 // bootstrap; a match lets returning cold instances skip it in one SELECT.
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 type DbPool = ReturnType<typeof mysql.createPool>;
 
@@ -50,6 +50,18 @@ function createPool(): DbPool {
 const pool: DbPool = globalForDb._pool ?? (globalForDb._pool = createPool());
 
 async function bootstrapSchemaOnce(): Promise<void> {
+  // Never mutate/seed the DB from a Vercel PREVIEW deployment. Preview builds
+  // share the production database (until a dedicated preview DB is provisioned),
+  // so a branch that bumps SCHEMA_VERSION or edits seeds must NOT run
+  // CREATE/ALTER/seed against prod before it is merged. Reads still work against
+  // the existing prod schema. Set ALLOW_DB_BOOTSTRAP=1 for an environment that
+  // has its OWN throwaway database and should bootstrap it.
+  if (
+    process.env.VERCEL_ENV === "preview" &&
+    process.env.ALLOW_DB_BOOTSTRAP !== "1"
+  ) {
+    return;
+  }
   const connection = await pool.getConnection();
   try {
       // Fast path: skip the whole bootstrap when the schema is already at the
@@ -82,8 +94,11 @@ async function bootstrapSchemaOnce(): Promise<void> {
         await connection.query(
           `ALTER TABLE contents ADD COLUMN IF NOT EXISTS productId VARCHAR(255) NULL`
         );
-      } catch {
-        // Ignore if already exists or not supported
+      } catch (error) {
+        // Swallow only "already exists" / "syntax unsupported"; rethrow a REAL
+        // failure (lock timeout, permission) so it isn't silently skipped and
+        // the schema_version below is never stamped over a broken migration.
+        if (!isBenignSchemaError(error)) throw error;
       }
 
       // ── Users table ────────────────────────────────────────────────────────
@@ -117,6 +132,50 @@ async function bootstrapSchemaOnce(): Promise<void> {
         )
       `);
 
+      // ── Contact messages (persisted leads from the public contact form) ───
+      // Stored independently of the email send so a failed SMTP delivery never
+      // drops the lead; `emailedOk` records whether the notification went out.
+      await connection.query(`
+        CREATE TABLE IF NOT EXISTS contact_messages (
+          id VARCHAR(255) PRIMARY KEY,
+          name VARCHAR(255) NOT NULL,
+          email VARCHAR(320) NOT NULL,
+          subject VARCHAR(300),
+          message TEXT NOT NULL,
+          emailedOk BOOLEAN DEFAULT FALSE,
+          createdAt VARCHAR(255) NOT NULL
+        )
+      `);
+      try {
+        await connection.query(
+          `CREATE INDEX idx_contact_messages_createdAt ON contact_messages (createdAt)`
+        );
+      } catch (error) {
+        // Only "index already exists" is benign here — rethrow anything real.
+        if (!isBenignSchemaError(error)) throw error;
+      }
+
+      // ── Revisions (edit history for products / contents / documents) ──────
+      // A snapshot of the PREVIOUS value is written before every update so an
+      // accidental overwrite can be restored. Generic across entity types.
+      await connection.query(`
+        CREATE TABLE IF NOT EXISTS revisions (
+          id VARCHAR(255) PRIMARY KEY,
+          entityType VARCHAR(32) NOT NULL,
+          entityId VARCHAR(255) NOT NULL,
+          data JSON NOT NULL,
+          createdAt VARCHAR(255) NOT NULL
+        )
+      `);
+      try {
+        await connection.query(
+          `CREATE INDEX idx_revisions_entity ON revisions (entityType, entityId, createdAt)`
+        );
+      } catch (error) {
+        // Only "index already exists" is benign here — rethrow anything real.
+        if (!isBenignSchemaError(error)) throw error;
+      }
+
       // ── Quotations table (saved quotations; auto-purged after 30 days) ────
       // `uploadedImages` = only images uploaded FOR this quote (deletable);
       // catalog/product images are never stored here, so they survive deletes.
@@ -133,8 +192,9 @@ async function bootstrapSchemaOnce(): Promise<void> {
         await connection.query(
           `CREATE INDEX idx_quotations_createdAt ON quotations (createdAt)`
         );
-      } catch {
-        // Ignore if index already exists
+      } catch (error) {
+        // Only "index already exists" is benign here — rethrow anything real.
+        if (!isBenignSchemaError(error)) throw error;
       }
 
       // ── Used quotation numbers ledger ─────────────────────────────────────
@@ -182,16 +242,20 @@ async function bootstrapSchemaOnce(): Promise<void> {
         await connection.query(
           `ALTER TABLE products ADD COLUMN IF NOT EXISTS isPublished BOOLEAN DEFAULT TRUE`
         );
-      } catch {
-        // Ignore if already exists or not supported
+      } catch (error) {
+        // Swallow only "already exists" / "syntax unsupported"; rethrow a REAL
+        // failure (lock timeout, permission) so it isn't silently skipped and
+        // the schema_version below is never stamped over a broken migration.
+        if (!isBenignSchemaError(error)) throw error;
       }
       
       try {
         await connection.query(
           `CREATE INDEX idx_products_category_created ON products (categoryId, createdAt)`
         );
-      } catch {
-        // Ignore if index already exists
+      } catch (error) {
+        // Only "index already exists" is benign here — rethrow anything real.
+        if (!isBenignSchemaError(error)) throw error;
       }
 
       // ── Seed default admin user ────────────────────────────────────────────
@@ -375,6 +439,23 @@ function isTransientDbError(error: unknown): boolean {
 
 function isDuplicateKeyError(error: unknown): boolean {
   return (error as { code?: string } | null | undefined)?.code === "ER_DUP_ENTRY";
+}
+
+// Errors that are genuinely safe to ignore when running the idempotent schema
+// migrations (ADD COLUMN / CREATE INDEX): the column/index already exists, or
+// the engine doesn't support the `IF NOT EXISTS` syntax. Anything else (lock
+// timeout, permission, connection) is a REAL failure that must propagate so the
+// migration is retried/surfaced instead of being silently — and permanently —
+// skipped while schema_version gets stamped anyway.
+const BENIGN_SCHEMA_ERROR_CODES = new Set([
+  "ER_DUP_FIELDNAME", // column already exists
+  "ER_DUP_KEYNAME", // index already exists
+  "ER_PARSE_ERROR", // `IF NOT EXISTS` syntax unsupported on this engine
+]);
+
+function isBenignSchemaError(error: unknown): boolean {
+  const code = (error as { code?: string } | null | undefined)?.code;
+  return code !== undefined && BENIGN_SCHEMA_ERROR_CODES.has(code);
 }
 
 // ── Lightweight connectivity probe (for /api/health) ─────────────────────────

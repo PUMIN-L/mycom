@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withRoute, requireAuth } from "../../lib/apiHelpers";
 import {
-  saveQuotation,
+  saveQuotationAtomic,
+  DocNoConflictError,
   listQuotations,
-  getDocNoOwner,
-  reserveDocNo,
 } from "../../lib/quotationStore";
 
 // GET /api/quotations (login required) — list saved quotations (summary only).
@@ -26,20 +25,7 @@ export const POST = withRoute(
       return NextResponse.json({ error: "id is required" }, { status: 400 });
     }
 
-    // Reject a docNo already reserved by a DIFFERENT quotation (409). The ledger
-    // survives quotation deletion, so a number stays reserved for ~2 days even
-    // after the quote is gone. Re-saving the same quotation (same id) is an
-    // update, not a dup.
     const docNo = String(body?.docNo ?? "").slice(0, 255);
-    if (docNo) {
-      const owner = await getDocNoOwner(docNo);
-      if (owner && owner !== id) {
-        return NextResponse.json(
-          { error: "เลขที่ใบเสนอราคานี้ถูกใช้ไปแล้ว กรุณาเปลี่ยนเลขที่" },
-          { status: 409 }
-        );
-      }
-    }
 
     // Server backstop for the image-deletion safety invariant: only accept URLs
     // on OUR Cloudinary cloud. Anything else (foreign host, garbage) is dropped
@@ -55,8 +41,27 @@ export const POST = withRoute(
       : [];
 
     const createdAt = new Date().toISOString();
-    await saveQuotation({ id, docNo, data: body?.data ?? {}, uploadedImages, createdAt });
-    if (docNo) await reserveDocNo(docNo, id, createdAt);
+    // Save + reserve the docNo atomically. A docNo already owned by a DIFFERENT
+    // quotation aborts the whole transaction (409) — re-saving the same id is an
+    // update, not a dup. The ledger survives quote deletion, so a number stays
+    // reserved ~2 days even after the quote is gone.
+    try {
+      await saveQuotationAtomic({
+        id,
+        docNo,
+        data: body?.data ?? {},
+        uploadedImages,
+        createdAt,
+      });
+    } catch (err) {
+      if (err instanceof DocNoConflictError) {
+        return NextResponse.json(
+          { error: "เลขที่ใบเสนอราคานี้ถูกใช้ไปแล้ว กรุณาเปลี่ยนเลขที่" },
+          { status: 409 }
+        );
+      }
+      throw err;
+    }
 
     return NextResponse.json({ id });
   }

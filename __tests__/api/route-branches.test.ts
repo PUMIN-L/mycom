@@ -55,11 +55,10 @@ import {
 } from '@/app/lib/cloudinaryHelper';
 
 vi.mock('@/app/lib/quotationStore', () => ({
-  saveQuotation: vi.fn(),
-  reserveDocNo: vi.fn(),
-  getDocNoOwner: vi.fn(),
+  saveQuotationAtomic: vi.fn(),
+  DocNoConflictError: class DocNoConflictError extends Error {},
 }));
-import { saveQuotation, getDocNoOwner } from '@/app/lib/quotationStore';
+import { saveQuotationAtomic } from '@/app/lib/quotationStore';
 
 vi.mock('@/app/lib/settingsStore', () => ({
   getContactEmail: vi.fn(),
@@ -137,7 +136,7 @@ describe('POST /api/quotations — uploadedImages safety filter', () => {
     const prev = process.env.CLOUDINARY_CLOUD_NAME;
     process.env.CLOUDINARY_CLOUD_NAME = 'mycloud';
     try {
-      vi.mocked(getDocNoOwner).mockResolvedValue(null);
+      vi.mocked(saveQuotationAtomic).mockResolvedValue(undefined);
       const res = await postQuotation(
         req('POST', {
           id: 'q1',
@@ -151,7 +150,7 @@ describe('POST /api/quotations — uploadedImages safety filter', () => {
         }) as any
       );
       expect(res.status).toBe(200);
-      const saved = vi.mocked(saveQuotation).mock.calls[0][0];
+      const saved = vi.mocked(saveQuotationAtomic).mock.calls[0][0];
       expect(saved.uploadedImages).toEqual([
         'https://res.cloudinary.com/mycloud/image/upload/v1/keep.png',
       ]);

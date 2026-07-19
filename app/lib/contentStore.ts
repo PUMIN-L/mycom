@@ -2,6 +2,7 @@ import { query } from "./db";
 import { RowDataPacket, ResultSetHeader } from "mysql2";
 import type { ContentBlock, ContentData, ContentMeta } from "./types";
 import { sanitizeRichText } from "./sanitizeHtml";
+import { saveRevision } from "./revisionStore";
 
 // Re-exported so existing callers can keep importing these from "./contentStore".
 export type { ContentBlock, ContentData, ContentMeta } from "./types";
@@ -16,15 +17,27 @@ function sanitizeBlocks(blocks: ContentBlock[]): ContentBlock[] {
 
 // `blocks` is stored as a JSON column. mysql2 may hand it back already parsed
 // (object) or as a raw string depending on driver/column config, so handle both.
-function rowToContent(row: RowDataPacket): ContentData {
-  let blocks: ContentBlock[] = [];
-  if (row.blocks) {
-    blocks = typeof row.blocks === "string" ? JSON.parse(row.blocks) : row.blocks;
+// A corrupt/truncated value degrades to an empty block list (logged) rather than
+// throwing — one bad row must not 500 the entire showcase list.
+function parseBlocks(raw: unknown, contentId?: string): ContentBlock[] {
+  if (!raw) return [];
+  if (typeof raw !== "string") return raw as ContentBlock[];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    console.error(
+      `contentStore: failed to parse blocks JSON for content ${contentId ?? "?"} — treating as empty`
+    );
+    return [];
   }
+}
+
+function rowToContent(row: RowDataPacket): ContentData {
   return {
     id: row.id,
     title: row.title,
-    blocks,
+    blocks: parseBlocks(row.blocks, row.id),
     createdAt: row.createdAt,
     productId: row.productId ?? null,
   };
@@ -76,8 +89,7 @@ export async function getAllContentsMeta(): Promise<ContentMeta[]> {
     "SELECT id, title, blocks, createdAt, productId FROM contents ORDER BY createdAt DESC"
   );
   return rows.map((row) => {
-    const blocks: ContentBlock[] =
-      typeof row.blocks === "string" ? JSON.parse(row.blocks) : row.blocks ?? [];
+    const blocks = parseBlocks(row.blocks, row.id);
     return {
       id: row.id,
       title: row.title,
@@ -144,6 +156,8 @@ export async function updateContent(
   if ("productId" in updatedContent) set("productId", productId);
 
   if (sets.length > 0) {
+    // Snapshot the previous value first so an accidental overwrite is restorable.
+    await saveRevision("content", id, existing);
     await query(
       `UPDATE contents SET ${sets.join(", ")} WHERE id = ?`,
       [...values, id]

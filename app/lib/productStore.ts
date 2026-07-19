@@ -2,6 +2,7 @@ import { query, withTransaction } from "./db";
 import { RowDataPacket, ResultSetHeader } from "mysql2";
 import type { ProductCategory, ProductData } from "./types";
 import { sanitizeRichText } from "./sanitizeHtml";
+import { saveRevision } from "./revisionStore";
 
 // Re-exported so existing callers can keep importing these from "./productStore".
 export type { ProductCategory, ProductData } from "./types";
@@ -192,6 +193,9 @@ export async function updateProduct(
   if (updates.isPublished !== undefined) set("isPublished", updates.isPublished !== false);
 
   if (sets.length > 0) {
+    // Snapshot the previous value first so an accidental overwrite is restorable
+    // (a failed snapshot aborts before we touch the row).
+    await saveRevision("product", id, existing);
     await query(
       `UPDATE products SET ${sets.join(", ")} WHERE id = ?`,
       [...values, id]

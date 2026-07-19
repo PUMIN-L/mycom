@@ -59,7 +59,8 @@ app/
 │   ├── documents/        CRUD PDF documents + proxy/ (inline PDF streaming)
 │   ├── quotations/       save/list/delete quotes + docnos/ ledger + cleanup/ cron
 │   ├── settings/         contact-email/ (get/change the contact inbox address)
-│   ├── contact/          public contact form → sends real email
+│   ├── contact/          public contact form (stores lead + emails) + messages/ inbox
+│   ├── revisions/        edit history list + [id]/restore/ (product/content/document)
 │   ├── upload/           Cloudinary upload + delete/
 │   └── health/           DB reachability probe (public, force-dynamic)
 │
@@ -73,6 +74,8 @@ app/
 │   ├── quotationTotals.ts ⭐ Money math (subtotal/discount/VAT) — shared by UI + list.
 │   ├── quotationNumber.ts docNo running-number helpers (DOCNO_START=22, nextDocNo).
 │   ├── settingsStore.ts  Key/value settings (contact_email).
+│   ├── contactMessageStore.ts  Persisted contact-form leads (admin inbox).
+│   ├── revisionStore.ts  Edit-history snapshots for product/content/document.
 │   ├── session.ts        JWT encrypt/decrypt + cookie helpers (server-only).
 │   ├── apiHelpers.ts     ⭐ withRoute / requireAuth / jsonError / ApiError + CSRF guard.
 │   ├── cloudinaryHelper.ts  upload / delete / collect-image-urls / pdf-cover.
@@ -95,6 +98,8 @@ app/
 ├── login/               Admin login page.
 └── showcase/            Public content browsing + admin in-place editing.
 
+instrumentation.ts       Next 16 server error hook (onRequestError) — structured
+                         error logging; wire Sentry here (see §Observability).
 __tests__/               Vitest suites (unit tests for lib/* + api/*). See §Testing.
 .githooks/pre-push       Runs the test suite before every push (see §Testing).
 scratch/                 One-off maintenance scripts (NOT part of the app).
@@ -246,17 +251,39 @@ raw-text `NumberInput` so sub-1 values (e.g. `0.5%` discount) are enterable.
 number starts at `DOCNO_START` (22) each day ([`quotationNumber.ts`](./app/lib/quotationNumber.ts)).
 Issued numbers are recorded in `used_docnos` — a ledger **separate** from
 `quotations` so a number stays reserved (~2 days) even after its quote is
-deleted/auto-purged. Saving rejects a docNo already owned by a *different* quote
-(409). A Vercel Cron (`/api/quotations/cleanup`, gated by `CRON_SECRET`) purges
+deleted/auto-purged. Save + reserve run in **one transaction**
+(`saveQuotationAtomic`, `SELECT … FOR UPDATE` on the ledger row): a docNo owned by
+a *different* quote aborts with 409, and the quote can never be persisted without
+its reservation — so the "one live number" invariant holds under failure and
+concurrency. A Vercel Cron (`/api/quotations/cleanup`, gated by `CRON_SECRET`) purges
 quotations older than 30 days and ledger entries older than 2 days.
 
-### 9. Email (contact form)
+### 9. Email (contact form) + lead persistence
 [`app/lib/mailer.ts`](./app/lib/mailer.ts) sends via SMTP (`nodemailer`, Gmail by
-default). The public `POST /api/contact` sends to the address stored in
-`settings.contact_email` (default from [`contact.ts`](./app/lib/contact.ts)),
-changeable at `/settings` (admin). Changing it notifies **both** the old and new
-addresses. Visitor-controlled fields go into structured `{name,address}` objects
-(not raw header strings) to prevent header injection.
+default). The public `POST /api/contact` **persists the lead to `contact_messages`
+first** (via [`contactMessageStore`](./app/lib/contactMessageStore.ts)), then
+emails the address stored in `settings.contact_email` (default from
+[`contact.ts`](./app/lib/contact.ts), changeable at `/settings`). A send failure
+is logged and reported as `emailed:false` but the submission still succeeds — the
+lead is never dropped, and admins read it via `GET /api/contact/messages`.
+Changing the recipient notifies **both** the old and new addresses. Visitor
+fields go into structured `{name,address}` objects to prevent header injection.
+
+### 9a. Edit history (revisions)
+Every `updateProduct` / `updateContent` / `updateDocument` snapshots the previous
+value into `revisions` ([`revisionStore.ts`](./app/lib/revisionStore.ts)) BEFORE
+overwriting, so an accidental edit is restorable via
+`POST /api/revisions/[id]/restore`. Restore lives in the route (not the store) so
+the stores → `revisionStore` dependency stays acyclic. Restore is itself an
+update, so it too is undoable.
+
+### 9b. Observability
+[`instrumentation.ts`](./instrumentation.ts) (Next 16, project root) exports
+`onRequestError`, which fires for every uncaught server error. Today it emits one
+structured JSON line per error; wire a real tracker (Sentry has first-class Vercel
+support) by initialising it in `register()` and calling `captureException` in the
+hook. The daily cleanup cron logs a structured success line and rethrows failures
+so Vercel marks the run FAILED instead of losing it silently.
 
 ### 10. Sessions
 [`app/lib/session.ts`](./app/lib/session.ts) is `server-only`. A 3-day HS256 JWT
@@ -297,8 +324,16 @@ components.
 > existing databases will skip the (idempotent) migration and never get the new
 > columns/tables.
 
+- **Migrations fail loud, not silent.** The `ADD COLUMN` / `CREATE INDEX` steps
+  swallow only *benign* errors (already-exists / unsupported-syntax); a real
+  failure (lock timeout, permission) rethrows so `schema_version` is never
+  stamped over a half-applied migration.
+- **Preview deploys never mutate the DB.** Bootstrap (CREATE/ALTER/seed) is
+  skipped when `VERCEL_ENV === "preview"`, because previews share the production
+  database — a branch bumping `SCHEMA_VERSION` must not alter prod before merge.
+  Set `ALLOW_DB_BOOTSTRAP=1` for an environment with its own throwaway DB.
 - Tables: `users`, `product_categories`, `products`, `contents`, `documents`,
-  `settings`, `quotations`, `used_docnos`.
+  `settings`, `quotations`, `used_docnos`, `contact_messages`, `revisions`.
 
 > ⚠️ The seed inserts an `admin` user (id `admin-001`) from `ADMIN_USERNAME` /
 > `ADMIN_PASSWORD` (env, **not** source) — but only if the row doesn't already

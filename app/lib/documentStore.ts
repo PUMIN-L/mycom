@@ -1,6 +1,7 @@
 import { query } from "./db";
 import type { DocumentData } from "./types";
 import type { RowDataPacket } from "mysql2";
+import { saveRevision } from "./revisionStore";
 
 export type { DocumentData };
 
@@ -69,6 +70,8 @@ export async function updateDocument(
   if (updates.sortOrder !== undefined) set("sortOrder", updates.sortOrder);
 
   if (sets.length > 0) {
+    // Snapshot the previous value first so an accidental overwrite is restorable.
+    await saveRevision("document", id, doc);
     await query(
       `UPDATE documents SET ${sets.join(", ")} WHERE id = ?`,
       [...values, id]

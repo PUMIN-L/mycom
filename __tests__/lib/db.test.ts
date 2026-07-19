@@ -40,9 +40,9 @@ process.env.DB_USER = 'tester';
 process.env.DB_PASSWORD = 'pw';
 process.env.DB_NAME = 'testdb';
 
-// A version SELECT result that MATCHES SCHEMA_VERSION (2) → bootstrap fast-path,
+// A version SELECT result that MATCHES SCHEMA_VERSION (3) → bootstrap fast-path,
 // i.e. skip the whole CREATE TABLE / seed block.
-const SCHEMA_MATCH: [Array<{ value: string }>, unknown[]] = [[{ value: '2' }], []];
+const SCHEMA_MATCH: [Array<{ value: string }>, unknown[]] = [[{ value: '3' }], []];
 // An empty result → no schema_version row / no admin row → full bootstrap.
 const EMPTY: [unknown[], unknown[]] = [[], []];
 
@@ -74,6 +74,9 @@ beforeEach(() => {
   // Bootstrap admin seed is opt-in via ADMIN_PASSWORD — default it OFF.
   delete process.env.ADMIN_PASSWORD;
   delete process.env.ADMIN_USERNAME;
+  // The preview-deploy guard skips bootstrap when VERCEL_ENV==="preview"; keep it
+  // unset so these tests deterministically exercise the real bootstrap.
+  delete process.env.VERCEL_ENV;
 
   warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
   errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -138,9 +141,36 @@ describe('db.ts', () => {
       // Schema version is recorded so future cold instances take the fast-path.
       expect(mockConnection.query).toHaveBeenCalledWith(
         expect.stringContaining("INSERT INTO settings"),
-        ['2'],
+        ['3'],
       );
       expect(mockConnection.release).toHaveBeenCalledTimes(1);
+    });
+
+    it('SKIPS bootstrap entirely on a Vercel preview deploy (never mutates the shared prod DB)', async () => {
+      process.env.VERCEL_ENV = 'preview';
+      try {
+        const db = await freshImport();
+        await db.getDbConnection();
+        // Guard returns before acquiring a connection or running any statement.
+        expect(mockPool.getConnection).not.toHaveBeenCalled();
+        expect(mockConnection.query).not.toHaveBeenCalled();
+      } finally {
+        delete process.env.VERCEL_ENV;
+      }
+    });
+
+    it('DOES bootstrap on preview when ALLOW_DB_BOOTSTRAP=1 (opt-in for a dedicated preview DB)', async () => {
+      process.env.VERCEL_ENV = 'preview';
+      process.env.ALLOW_DB_BOOTSTRAP = '1';
+      try {
+        const db = await freshImport();
+        mockConnection.query.mockResolvedValue(SCHEMA_MATCH);
+        await db.getDbConnection();
+        expect(mockPool.getConnection).toHaveBeenCalledTimes(1);
+      } finally {
+        delete process.env.VERCEL_ENV;
+        delete process.env.ALLOW_DB_BOOTSTRAP;
+      }
     });
 
     it('falls through to full bootstrap when the settings table is absent (SELECT throws)', async () => {

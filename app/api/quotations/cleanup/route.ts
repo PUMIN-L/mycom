@@ -22,8 +22,20 @@ export const GET = withRoute(
     if (!secret || auth !== `Bearer ${secret}`) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-    const deleted = await purgeExpiredQuotations(RETENTION_DAYS);
-    const docNosPurged = await purgeOldDocNos(DOCNO_RETENTION_DAYS);
-    return NextResponse.json({ deleted, docNosPurged });
+    try {
+      const deleted = await purgeExpiredQuotations(RETENTION_DAYS);
+      const docNosPurged = await purgeOldDocNos(DOCNO_RETENTION_DAYS);
+      // Structured success line so a MISSING nightly run is detectable in logs.
+      console.log(
+        `[cron:quotations-cleanup] ok deleted=${deleted} docNosPurged=${docNosPurged}`
+      );
+      return NextResponse.json({ ok: true, deleted, docNosPurged });
+    } catch (err) {
+      // Log then rethrow so withRoute returns 500 → Vercel marks the cron run
+      // FAILED (and the instrumentation.ts hook records it) instead of the
+      // failure disappearing silently.
+      console.error("[cron:quotations-cleanup] FAILED", err);
+      throw err;
+    }
   }
 );

@@ -3,6 +3,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock the DB layer. query() resolves to a tuple [rows, fields] for reads and
 // [{ affectedRows, insertId }] for writes — set per-test below.
+// updateContent snapshots the previous value via revisionStore before writing;
+// stub it so it doesn't add a query the call-order assertions don't expect.
+vi.mock('@/app/lib/revisionStore', () => ({ saveRevision: vi.fn() }));
+
 vi.mock('@/app/lib/db', () => ({
   query: vi.fn(),
   withTransaction: vi.fn(),
@@ -143,6 +147,25 @@ describe('contentStore', () => {
       const result = await getContent('c');
       expect(result?.blocks).toEqual([]);
       expect(result?.productId).toBeNull(); // missing productId -> null
+    });
+
+    it('degrades a CORRUPT blocks JSON to an empty list instead of throwing (one bad row must not 500 the page)', async () => {
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      mockedQuery.mockResolvedValue([
+        [{ id: 'c1', title: 'T', blocks: 'not-valid-json{', createdAt: 't', productId: null }],
+      ] as any);
+      const result = await getContent('c1');
+      expect(result?.blocks).toEqual([]);
+      expect(errSpy).toHaveBeenCalled();
+      errSpy.mockRestore();
+    });
+
+    it('degrades a non-array parsed blocks value to an empty list', async () => {
+      mockedQuery.mockResolvedValue([
+        [{ id: 'c1', title: 'T', blocks: '{"not":"an array"}', createdAt: 't', productId: null }],
+      ] as any);
+      const result = await getContent('c1');
+      expect(result?.blocks).toEqual([]);
     });
 
     it('returns undefined when no row matches', async () => {

@@ -6,20 +6,25 @@ import { GET as docnosGET } from '@/app/api/quotations/docnos/route';
 import { GET as cleanupGET } from '@/app/api/quotations/cleanup/route';
 
 // Quotation persistence layer — fully mocked so no DB/Cloudinary is touched.
+// DocNoConflictError is a real class in the mock so the route's `instanceof`
+// check (→ 409) works against the same reference.
 vi.mock('@/app/lib/quotationStore', () => ({
   listQuotations: vi.fn(),
-  saveQuotation: vi.fn(),
-  reserveDocNo: vi.fn(),
-  getDocNoOwner: vi.fn(),
+  saveQuotationAtomic: vi.fn(),
+  DocNoConflictError: class DocNoConflictError extends Error {
+    constructor(public docNo: string) {
+      super(`docNo ${docNo} conflict`);
+      this.name = 'DocNoConflictError';
+    }
+  },
   listRecentDocNos: vi.fn(),
   purgeExpiredQuotations: vi.fn(),
   purgeOldDocNos: vi.fn(),
 }));
 import {
   listQuotations,
-  saveQuotation,
-  reserveDocNo,
-  getDocNoOwner,
+  saveQuotationAtomic,
+  DocNoConflictError,
   listRecentDocNos,
   purgeExpiredQuotations,
   purgeOldDocNos,
@@ -69,7 +74,7 @@ describe('Quotations API', () => {
     it('rejects anonymous callers with 401, without saving', async () => {
       const res = await savePOST(postReq({ id: 'q1' }));
       expect(res.status).toBe(401);
-      expect(saveQuotation).not.toHaveBeenCalled();
+      expect(saveQuotationAtomic).not.toHaveBeenCalled();
     });
 
     it('returns 400 when id is missing', async () => {
@@ -77,37 +82,35 @@ describe('Quotations API', () => {
       const res = await savePOST(postReq({ docNo: 'D-1' }));
       expect(res.status).toBe(400);
       expect((await res.json()).error).toBe('id is required');
-      expect(saveQuotation).not.toHaveBeenCalled();
+      expect(saveQuotationAtomic).not.toHaveBeenCalled();
     });
 
-    it('returns 409 when docNo is owned by a different quotation, without saving', async () => {
+    it('returns 409 when the atomic save reports a docNo conflict', async () => {
       vi.mocked(getSession).mockResolvedValue(adminSession);
-      vi.mocked(getDocNoOwner).mockResolvedValue('some-other-id');
+      vi.mocked(saveQuotationAtomic).mockRejectedValue(
+        new (DocNoConflictError as any)('D-1')
+      );
       const res = await savePOST(postReq({ id: 'q1', docNo: 'D-1' }));
       expect(res.status).toBe(409);
       expect((await res.json()).error).toBe(
         'เลขที่ใบเสนอราคานี้ถูกใช้ไปแล้ว กรุณาเปลี่ยนเลขที่'
       );
-      expect(saveQuotation).not.toHaveBeenCalled();
-      expect(reserveDocNo).not.toHaveBeenCalled();
     });
 
-    it('saves the quotation and reserves the docNo on success', async () => {
+    it('saves + reserves the docNo atomically on success', async () => {
       vi.mocked(getSession).mockResolvedValue(adminSession);
-      vi.mocked(getDocNoOwner).mockResolvedValue(null); // docNo is free
+      vi.mocked(saveQuotationAtomic).mockResolvedValue(undefined);
       const res = await savePOST(postReq({ id: 'q1', docNo: 'D-1', data: { foo: 'bar' } }));
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual({ id: 'q1' });
 
-      expect(saveQuotation).toHaveBeenCalledTimes(1);
-      const saved = vi.mocked(saveQuotation).mock.calls[0][0];
+      expect(saveQuotationAtomic).toHaveBeenCalledTimes(1);
+      const saved = vi.mocked(saveQuotationAtomic).mock.calls[0][0];
       expect(saved.id).toBe('q1');
       expect(saved.docNo).toBe('D-1');
       expect(saved.data).toEqual({ foo: 'bar' });
       expect(saved.uploadedImages).toEqual([]); // no valid Cloudinary URLs supplied
       expect(typeof saved.createdAt).toBe('string');
-
-      expect(reserveDocNo).toHaveBeenCalledWith('D-1', 'q1', saved.createdAt);
     });
   });
 
@@ -168,7 +171,7 @@ describe('Quotations API', () => {
       vi.mocked(purgeOldDocNos).mockResolvedValue(5);
       const res = await cleanupGET(cleanupReq('Bearer cron-test-secret'));
       expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ deleted: 3, docNosPurged: 5 });
+      expect(await res.json()).toEqual({ ok: true, deleted: 3, docNosPurged: 5 });
       expect(purgeExpiredQuotations).toHaveBeenCalledWith(30);
       expect(purgeOldDocNos).toHaveBeenCalledWith(2);
     });

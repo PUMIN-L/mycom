@@ -4,6 +4,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Mock the DB layer. `query()` resolves to a tuple `[rows|result, fields]`, so
 // callers destructure `const [rows] = await query(...)`. `withTransaction` runs
 // a callback with a pooled connection.
+// updateProduct snapshots the previous value via revisionStore before writing;
+// stub it so it doesn't add a query the call-order assertions don't expect.
+vi.mock('@/app/lib/revisionStore', () => ({ saveRevision: vi.fn() }));
+
 vi.mock('@/app/lib/db', () => ({
   query: vi.fn(),
   withTransaction: vi.fn(),

@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { withRoute } from "../../lib/apiHelpers";
 import { getContactEmail } from "../../lib/settingsStore";
 import { sendContactEmail, isMailConfigured } from "../../lib/mailer";
+import {
+  saveContactMessage,
+  markContactMessageEmailed,
+} from "../../lib/contactMessageStore";
 
 // Public contact-form endpoint. Validates, rate-limits, then emails the
 // submission to the CMS-configured recipient (settings.contact_email).
@@ -89,9 +93,35 @@ export const POST = withRoute(
       expiresAt: rec && rec.expiresAt > now ? rec.expiresAt : now + WINDOW_MS,
     });
 
-    const to = await getContactEmail();
-    await sendContactEmail(to, { name, email, subject, message });
+    // Persist the lead BEFORE sending, so an SMTP failure can never drop it.
+    // If saving itself fails, withRoute turns it into a 500 (we genuinely
+    // couldn't capture the lead) — the visitor can retry.
+    const id = crypto.randomUUID();
+    const createdAt = new Date().toISOString();
+    await saveContactMessage({
+      id,
+      name,
+      email,
+      subject,
+      message,
+      createdAt,
+      emailedOk: false,
+    });
 
-    return NextResponse.json({ success: true });
+    // The lead is now safe. A send failure is logged and reported as
+    // emailed:false, but the submission still succeeds (the admin sees it in the
+    // inbox and can follow up) rather than 500-ing and telling the visitor it
+    // failed.
+    const to = await getContactEmail();
+    let emailed = false;
+    try {
+      await sendContactEmail(to, { name, email, subject, message });
+      emailed = true;
+      await markContactMessageEmailed(id, true);
+    } catch (err) {
+      console.error("contact: lead saved but email delivery failed:", err);
+    }
+
+    return NextResponse.json({ success: true, emailed });
   }
 );

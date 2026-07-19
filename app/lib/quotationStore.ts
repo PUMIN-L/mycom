@@ -1,4 +1,4 @@
-import { query } from "./db";
+import { query, withTransaction } from "./db";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { deleteCloudinaryImages } from "./cloudinaryHelper";
 import { computeQuoteTotals } from "./quotationTotals";
@@ -84,6 +84,61 @@ export async function saveQuotation(rec: QuotationRecord): Promise<void> {
       rec.createdAt,
     ]
   );
+}
+
+/** Thrown by saveQuotationAtomic when the docNo is owned by a different quote. */
+export class DocNoConflictError extends Error {
+  constructor(public readonly docNo: string) {
+    super(`docNo ${docNo} is already reserved by another quotation`);
+    this.name = "DocNoConflictError";
+  }
+}
+
+/**
+ * Save a quotation AND reserve its docNo atomically, in one transaction.
+ *
+ * The old flow (check owner → save → reserve as three independent queries) had
+ * two holes: (1) if the save committed but the reserve failed, the quote lived
+ * with NO ledger entry, so a later quote saw the number as free and reused it;
+ * (2) two concurrent saves of the same new number both read owner=null and both
+ * won. Here we lock the ledger row `FOR UPDATE`, reject a different-owner docNo
+ * (409), then upsert the quote and the reservation together — so the invariant
+ * "one live quotation number" actually holds under failure and concurrency.
+ */
+export async function saveQuotationAtomic(rec: QuotationRecord): Promise<void> {
+  await withTransaction(async (conn) => {
+    if (rec.docNo) {
+      const [rows] = await conn.query<RowDataPacket[]>(
+        "SELECT quotationId FROM used_docnos WHERE docNo = ? FOR UPDATE",
+        [rec.docNo]
+      );
+      if (rows.length > 0 && String(rows[0].quotationId) !== rec.id) {
+        throw new DocNoConflictError(rec.docNo);
+      }
+    }
+    await conn.query(
+      `INSERT INTO quotations (id, docNo, data, uploadedImages, createdAt)
+       VALUES (?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         docNo = VALUES(docNo), data = VALUES(data),
+         uploadedImages = VALUES(uploadedImages), createdAt = VALUES(createdAt)`,
+      [
+        rec.id,
+        rec.docNo,
+        JSON.stringify(rec.data),
+        JSON.stringify(rec.uploadedImages),
+        rec.createdAt,
+      ]
+    );
+    if (rec.docNo) {
+      await conn.query(
+        `INSERT INTO used_docnos (docNo, quotationId, createdAt) VALUES (?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+           quotationId = VALUES(quotationId), createdAt = VALUES(createdAt)`,
+        [rec.docNo, rec.id, rec.createdAt]
+      );
+    }
+  });
 }
 
 // ── Issued quotation-number ledger (used_docnos) ─────────────────────────────
