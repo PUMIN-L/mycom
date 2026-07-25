@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { query } from "../../../lib/db";
-import { getSession } from "../../../lib/auth";
+import { getSession } from "../../../lib/session";
 
 export async function PUT(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
