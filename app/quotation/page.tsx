@@ -997,7 +997,7 @@ export default function QuotationPage() {
               </button>
             </div>
             {q.items.map((it, idx) => (
-              <div key={it.id} className="border border-dashed border-gray-300 rounded-lg p-3 space-y-2 relative">
+              <div key={it.id} className={`border border-dashed border-gray-300 rounded-lg p-3 space-y-2 relative ${idx % 2 === 0 ? 'bg-pink-50' : 'bg-green-50'}`}>
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-bold text-gray-400">#{idx + 1}</span>
                   <div className="flex gap-1">
