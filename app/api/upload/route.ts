@@ -2,11 +2,62 @@ import { NextRequest, NextResponse } from "next/server";
 import { uploadImage } from "../../lib/cloudinaryHelper";
 import { requireAuth, withRoute } from "../../lib/apiHelpers";
 
+const UPLOAD_LIMIT = 60; // 60 uploads per block window
+const BLOCK_MS = 60 * 1000; // 1 minute window
+const MAX_TRACKED = 10_000;
+
+const uploadRateMap = new Map<string, { count: number; expiresAt: number }>();
+
+function prune(now: number) {
+  for (const [key, rec] of uploadRateMap) {
+    if (rec.expiresAt <= now) uploadRateMap.delete(key);
+  }
+  if (uploadRateMap.size > MAX_TRACKED) {
+    let excess = uploadRateMap.size - MAX_TRACKED;
+    for (const key of uploadRateMap.keys()) {
+      if (excess-- <= 0) break;
+      uploadRateMap.delete(key);
+    }
+  }
+}
+
 // POST — upload an image or document to Cloudinary (login required)
 export const POST = withRoute(
   "Failed to upload to Cloudinary",
   async (request: NextRequest) => {
-    await requireAuth();
+    const session = await requireAuth();
+    
+    // Rate Limiting: Prevent a compromised admin session from spamming uploads
+    // and exhausting Cloudinary quotas or bandwidth.
+    const now = Date.now();
+    prune(now);
+    
+    const limitRecord = uploadRateMap.get(session.userId);
+    if (limitRecord && limitRecord.expiresAt > now && limitRecord.count >= UPLOAD_LIMIT) {
+      return NextResponse.json(
+        { error: "อัปโหลดบ่อยเกินไป กรุณารอสักครู่ (Rate limit exceeded)" },
+        { status: 429 }
+      );
+    }
+    
+    if (limitRecord && limitRecord.expiresAt > now) {
+      limitRecord.count++;
+    } else {
+      uploadRateMap.set(session.userId, { count: 1, expiresAt: now + BLOCK_MS });
+    }
+
+    // Prevent DoS: Reject oversized payloads before parsing the body.
+    const contentLengthStr = request.headers.get("content-length");
+    if (contentLengthStr) {
+      const contentLength = parseInt(contentLengthStr, 10);
+      const MAX_PAYLOAD_BYTES = 30 * 1024 * 1024; // 30 MB absolute limit for the whole request
+      if (contentLength > MAX_PAYLOAD_BYTES) {
+        return NextResponse.json(
+          { error: `Payload too large. Maximum ${Math.round(MAX_PAYLOAD_BYTES / (1024 * 1024))}MB.` },
+          { status: 413 }
+        );
+      }
+    }
 
     const formData = await request.formData();
     const file = formData.get("file") as File | null;

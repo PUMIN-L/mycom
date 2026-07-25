@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "../context/AuthContext";
 import RichTextEditor from "../components/RichTextEditor";
 import Toast from "../components/Toast";
+import ErrorModal from "../components/ErrorModal";
 import { stripHtml } from "../lib/stripHtml";
 
 interface ProductCategory {
@@ -37,6 +38,10 @@ export default function CreateProduct() {
   const [isUploading, setIsUploading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
+  const [errorModal, setErrorModal] = useState<{ isOpen: boolean; title?: string; message: string }>({
+    isOpen: false,
+    message: ""
+  });
 
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   function showToast(message: string, type: "success" | "error") {
@@ -102,12 +107,21 @@ export default function CreateProduct() {
   };
 
   const handleSubmit = async () => {
-    if (!titleTh.trim() && !titleEn.trim()) {
+    if (!stripHtml(titleTh).trim() && !stripHtml(titleEn).trim()) {
       showToast("กรุณากรอกชื่อสินค้าอย่างน้อย 1 ภาษา", "error");
       return;
     }
     if (!imageUrl) {
       showToast("กรุณาอัปโหลดรูปภาพสินค้า", "error");
+      return;
+    }
+
+    if (stripHtml(titleTh).length > 255 || stripHtml(titleEn).length > 255 || stripHtml(titleZh).length > 255) {
+      setErrorModal({ isOpen: true, message: "ชื่อสินค้าต้องมีความยาวไม่เกิน 255 ตัวอักษร" });
+      return;
+    }
+    if (stripHtml(descTh).length > 10000 || stripHtml(descEn).length > 10000 || stripHtml(descZh).length > 10000) {
+      setErrorModal({ isOpen: true, message: "รายละเอียดสินค้าต้องมีความยาวไม่เกิน 10,000 ตัวอักษร" });
       return;
     }
 
@@ -170,7 +184,7 @@ export default function CreateProduct() {
 
       router.push("/#products");
     } catch (error: any) {
-      showToast(error.message || "Error saving product. Please try again.", "error");
+      setErrorModal({ isOpen: true, message: error.message || "เกิดข้อผิดพลาดในการบันทึกข้อมูล กรุณาลองใหม่อีกครั้ง" });
       console.error(error);
     } finally {
       setIsSubmitting(false);
@@ -407,6 +421,13 @@ export default function CreateProduct() {
           </a>
         </div>
       </div>
+
+      <ErrorModal
+        isOpen={errorModal.isOpen}
+        title={errorModal.title}
+        message={errorModal.message}
+        onClose={() => setErrorModal({ ...errorModal, isOpen: false })}
+      />
     </div>
   );
 }

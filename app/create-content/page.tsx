@@ -6,6 +6,8 @@ import ColorPickerDropdown from "../components/ColorPickerDropdown";
 import RichTextEditor from "../components/RichTextEditor";
 import BlockRangeControl from "../components/BlockRangeControl";
 import Toast from "../components/Toast";
+import ErrorModal from "../components/ErrorModal";
+import { stripHtml } from "../lib/stripHtml";
 
 interface ContentBlock {
   id: string;
@@ -56,6 +58,10 @@ function CreateContentInner() {
   const [isUploading, setIsUploading] = useState(false);
   const [uploadingBlockId, setUploadingBlockId] = useState<string | null>(null);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
+  const [errorModal, setErrorModal] = useState<{ isOpen: boolean; title?: string; message: string }>({
+    isOpen: false,
+    message: ""
+  });
 
   // Products from API
   const [allProducts, setAllProducts] = useState<ProductItem[]>([]);
@@ -299,8 +305,12 @@ function CreateContentInner() {
   };
 
   const handleSubmit = async () => {
-    if (!title.trim()) {
+    if (!stripHtml(title).trim()) {
       showToast("Please enter a title", "error");
+      return;
+    }
+    if (stripHtml(title).length > 255) {
+      setErrorModal({ isOpen: true, message: "หัวข้อคอนเทนต์ต้องมีความยาวไม่เกิน 255 ตัวอักษร" });
       return;
     }
     if (blocks.length === 0) {
@@ -327,21 +337,15 @@ function CreateContentInner() {
       });
 
       if (!response.ok) {
-        let errMsg = "Failed to save content";
-        try {
-          const errData = await response.json();
-          if (errData.details) {
-            errMsg += ` (${errData.details})`;
-          }
-        } catch (_) {}
-        throw new Error(errMsg);
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || "Failed to save content");
       }
 
       // Redirect to showcase page
       router.push(`/showcase/${contentData.id}`);
     } catch (error: any) {
-      showToast(error.message || "Error saving content. Please try again.", "error");
       console.error(error);
+      setErrorModal({ isOpen: true, message: error.message || "เกิดข้อผิดพลาดในการบันทึกข้อมูล กรุณาลองใหม่อีกครั้ง" });
     }
   };
 
@@ -724,6 +728,13 @@ function CreateContentInner() {
           </a>
         </div>
       </div>
+
+      <ErrorModal
+        isOpen={errorModal.isOpen}
+        title={errorModal.title}
+        message={errorModal.message}
+        onClose={() => setErrorModal({ ...errorModal, isOpen: false })}
+      />
     </div>
   );
 }

@@ -30,6 +30,14 @@ export interface ProductData {
   isPublished?: boolean;
 }
 
+export interface ProductSpec {
+  id: string;
+  productId: string;
+  name: string;
+  detail: string;
+  createdAt: string;
+}
+
 // ── Contents ────────────────────────────────────────────────────────────────
 
 export interface ContentBlock {

@@ -4,7 +4,7 @@ import type { QueryResult, FieldPacket, RowDataPacket } from "mysql2";
 
 // Bump whenever the schema below changes — a mismatch re-runs the (idempotent)
 // bootstrap; a match lets returning cold instances skip it in one SELECT.
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 9;
 
 type DbPool = ReturnType<typeof mysql.createPool>;
 
@@ -95,11 +95,36 @@ async function bootstrapSchemaOnce(): Promise<void> {
           `ALTER TABLE contents ADD COLUMN IF NOT EXISTS productId VARCHAR(255) NULL`
         );
       } catch (error) {
-        // Swallow only "already exists" / "syntax unsupported"; rethrow a REAL
-        // failure (lock timeout, permission) so it isn't silently skipped and
-        // the schema_version below is never stamped over a broken migration.
         if (!isBenignSchemaError(error)) throw error;
       }
+      
+      try {
+        await connection.query(
+          `CREATE INDEX idx_contents_productId ON contents (productId)`
+        );
+      } catch (error) {
+        if (!isBenignSchemaError(error)) throw error;
+      }
+
+      try {
+        await connection.query(
+          `ALTER TABLE contents ADD CONSTRAINT fk_content_product FOREIGN KEY (productId) REFERENCES products(id) ON DELETE CASCADE`
+        );
+      } catch (error) {
+        if (!isBenignSchemaError(error)) throw error;
+      }
+
+      // ── Product Specs table ────────────────────────────────────────────────
+      await connection.query(`
+        CREATE TABLE IF NOT EXISTS product_specs (
+          id VARCHAR(255) PRIMARY KEY,
+          productId VARCHAR(255) NOT NULL,
+          name VARCHAR(255) NOT NULL,
+          detail TEXT NOT NULL,
+          createdAt VARCHAR(255) NOT NULL,
+          FOREIGN KEY (productId) REFERENCES products(id) ON DELETE CASCADE
+        )
+      `);
 
       // ── Users table ────────────────────────────────────────────────────────
       await connection.query(`
@@ -257,6 +282,22 @@ async function bootstrapSchemaOnce(): Promise<void> {
         // Only "index already exists" is benign here — rethrow anything real.
         if (!isBenignSchemaError(error)) throw error;
       }
+      
+      try {
+        await connection.query(
+          `CREATE INDEX idx_products_categoryId ON products (categoryId)`
+        );
+      } catch (error) {
+        if (!isBenignSchemaError(error)) throw error;
+      }
+
+      try {
+        await connection.query(
+          `ALTER TABLE products ADD CONSTRAINT fk_product_category FOREIGN KEY (categoryId) REFERENCES product_categories(id) ON DELETE RESTRICT`
+        );
+      } catch (error) {
+        if (!isBenignSchemaError(error)) throw error;
+      }
 
       // ── Companies table ──────────────────────────────────────────────────────
       await connection.query(`
@@ -306,6 +347,18 @@ async function bootstrapSchemaOnce(): Promise<void> {
       } catch (error) {
         if (!isBenignSchemaError(error)) throw error;
       }
+
+      // ── Salespeople table ────────────────────────────────────────────────────
+      await connection.query(`
+        CREATE TABLE IF NOT EXISTS salespeople (
+          id VARCHAR(255) PRIMARY KEY,
+          name VARCHAR(255) NOT NULL,
+          phone VARCHAR(255),
+          email VARCHAR(255),
+          note TEXT,
+          createdAt VARCHAR(255) NOT NULL
+        )
+      `);
 
       // ── Seed default admin user ────────────────────────────────────────────
       // Credentials come from the environment, never from source. If

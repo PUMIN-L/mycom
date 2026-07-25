@@ -2,6 +2,7 @@ import { query } from "./db";
 import type { DocumentData } from "./types";
 import type { RowDataPacket } from "mysql2";
 import { saveRevision } from "./revisionStore";
+import { sanitizePlainText } from "./sanitizeHtml";
 
 export type { DocumentData };
 
@@ -34,12 +35,15 @@ export async function getDocument(id: string): Promise<DocumentData | null> {
 }
 
 export async function addDocument(doc: DocumentData): Promise<void> {
+  const title = sanitizePlainText(doc.title).substring(0, 255);
+  const description = sanitizePlainText(doc.description || "").substring(0, 2000);
+
   await query(
     "INSERT INTO documents (id, title, description, pdfUrl, coverUrl, createdAt, sortOrder) VALUES (?, ?, ?, ?, ?, ?, ?)",
     [
       doc.id,
-      doc.title,
-      doc.description,
+      title,
+      description,
       doc.pdfUrl,
       doc.coverUrl,
       doc.createdAt,
@@ -63,8 +67,8 @@ export async function updateDocument(
     sets.push(`${col} = ?`);
     values.push(val);
   };
-  if (updates.title !== undefined) set("title", updates.title);
-  if (updates.description !== undefined) set("description", updates.description);
+  if (updates.title !== undefined) set("title", sanitizePlainText(updates.title).substring(0, 255));
+  if (updates.description !== undefined) set("description", sanitizePlainText(updates.description || "").substring(0, 2000));
   if (updates.pdfUrl !== undefined) set("pdfUrl", updates.pdfUrl);
   if (updates.coverUrl !== undefined) set("coverUrl", updates.coverUrl);
   if (updates.sortOrder !== undefined) set("sortOrder", updates.sortOrder);

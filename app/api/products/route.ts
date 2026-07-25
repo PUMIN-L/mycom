@@ -4,6 +4,8 @@ import { getAllProducts, addProduct, ProductData } from "../../lib/productStore"
 import { requireAuth, withRoute } from "../../lib/apiHelpers";
 import { getSession } from "../../lib/session";
 
+export const dynamic = "force-dynamic";
+
 // GET — list products. Public callers get only published products; an
 // authenticated admin gets the full list (so hidden/draft items are never
 // exposed to anonymous clients, but admins can still manage them).

@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "../../context/AuthContext";
 import RichTextEditor from "../../components/RichTextEditor";
 import Toast from "../../components/Toast";
+import ErrorModal from "../../components/ErrorModal";
 import { stripHtml } from "../../lib/stripHtml";
 
 interface ProductCategory {
@@ -42,6 +43,10 @@ export default function EditProduct({ params }: { params: Promise<{ id: string }
   const [isUploading, setIsUploading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
+  const [errorModal, setErrorModal] = useState<{ isOpen: boolean; title?: string; message: string }>({
+    isOpen: false,
+    message: ""
+  });
 
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   function showToast(message: string, type: "success" | "error") {
@@ -136,12 +141,21 @@ export default function EditProduct({ params }: { params: Promise<{ id: string }
   };
 
   const handleSubmit = async () => {
-    if (!titleTh.trim() && !titleEn.trim()) {
+    if (!stripHtml(titleTh).trim() && !stripHtml(titleEn).trim()) {
       showToast("กรุณากรอกชื่อสินค้าอย่างน้อย 1 ภาษา", "error");
       return;
     }
     if (!imageUrl) {
       showToast("กรุณาอัปโหลดรูปภาพสินค้า", "error");
+      return;
+    }
+
+    if (stripHtml(titleTh).length > 255 || stripHtml(titleEn).length > 255 || stripHtml(titleZh).length > 255) {
+      setErrorModal({ isOpen: true, message: "ชื่อสินค้าต้องมีความยาวไม่เกิน 255 ตัวอักษร" });
+      return;
+    }
+    if (stripHtml(descTh).length > 10000 || stripHtml(descEn).length > 10000 || stripHtml(descZh).length > 10000) {
+      setErrorModal({ isOpen: true, message: "รายละเอียดสินค้าต้องมีความยาวไม่เกิน 10,000 ตัวอักษร" });
       return;
     }
 
@@ -193,18 +207,17 @@ export default function EditProduct({ params }: { params: Promise<{ id: string }
       });
 
       if (!response.ok) {
-        let errMsg = "Failed to update product";
-        try {
-          const errData = await response.json();
-          if (errData.details) errMsg += ` (${errData.details})`;
-        } catch (_) {}
-        throw new Error(errMsg);
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || "Failed to update product");
       }
 
-      router.push("/#products");
+      showToast("บันทึกการแก้ไขสำเร็จ", "success");
+      setTimeout(() => {
+        router.push("/catalog");
+      }, 1000);
     } catch (error: any) {
-      showToast(error.message || "Error updating product. Please try again.", "error");
       console.error(error);
+      setErrorModal({ isOpen: true, message: error.message || "เกิดข้อผิดพลาดในการบันทึกข้อมูล กรุณาลองใหม่อีกครั้ง" });
     } finally {
       setIsSubmitting(false);
     }
@@ -224,7 +237,7 @@ export default function EditProduct({ params }: { params: Promise<{ id: string }
   return (
     <div className="min-h-screen bg-gray-50 py-12">
       {toast && <Toast message={toast.message} type={toast.type} />}
-      <div className="max-w-4xl mx-auto px-4">
+      <main className="max-w-4xl mx-auto px-4">
         <h1 className="text-4xl font-bold mb-2 text-gray-900">แก้ไขสินค้า</h1>
         <p className="text-gray-600 mb-8">
           Edit product — แก้ไขข้อมูลสินค้าและอัปเดตรูปภาพ
@@ -440,7 +453,14 @@ export default function EditProduct({ params }: { params: Promise<{ id: string }
             ← กลับหน้าแรก
           </a>
         </div>
-      </div>
+      </main>
+
+      <ErrorModal
+        isOpen={errorModal.isOpen}
+        title={errorModal.title}
+        message={errorModal.message}
+        onClose={() => setErrorModal({ ...errorModal, isOpen: false })}
+      />
     </div>
   );
 }

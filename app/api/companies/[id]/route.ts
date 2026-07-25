@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { query } from "../../../lib/db";
 import { getSession } from "../../../lib/session";
-import { stripHtml } from "../../../lib/stripHtml";
+import { sanitizePlainText } from "../../../lib/sanitizeHtml";
 
 export async function PUT(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -17,17 +17,17 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
       return NextResponse.json({ error: "Name is required" }, { status: 400 });
     }
 
-    const name = stripHtml(data.name).substring(0, 255);
-    const addressNo = stripHtml(data.addressNo || "").substring(0, 255);
-    const moo = stripHtml(data.moo || "").substring(0, 255);
-    const soi = stripHtml(data.soi || "").substring(0, 255);
-    const road = stripHtml(data.road || "").substring(0, 255);
-    const subDistrict = stripHtml(data.subDistrict || "").substring(0, 255);
-    const district = stripHtml(data.district || "").substring(0, 255);
-    const province = stripHtml(data.province || "").substring(0, 255);
-    const postalCode = stripHtml(data.postalCode || "").substring(0, 255);
-    const phone = stripHtml(data.phone || "").substring(0, 255);
-    const note = stripHtml(data.note || "").substring(0, 2000);
+    const name = sanitizePlainText(data.name).substring(0, 255);
+    const addressNo = sanitizePlainText(data.addressNo || "").substring(0, 255);
+    const moo = sanitizePlainText(data.moo || "").substring(0, 255);
+    const soi = sanitizePlainText(data.soi || "").substring(0, 255);
+    const road = sanitizePlainText(data.road || "").substring(0, 255);
+    const subDistrict = sanitizePlainText(data.subDistrict || "").substring(0, 255);
+    const district = sanitizePlainText(data.district || "").substring(0, 255);
+    const province = sanitizePlainText(data.province || "").substring(0, 255);
+    const postalCode = sanitizePlainText(data.postalCode || "").substring(0, 255);
+    const phone = sanitizePlainText(data.phone || "").substring(0, 255);
+    const note = sanitizePlainText(data.note || "").substring(0, 2000);
 
     await query(
       `UPDATE companies SET 

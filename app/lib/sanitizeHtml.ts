@@ -41,3 +41,11 @@ export function sanitizeRichText(html: string | null | undefined): string {
   if (!html) return "";
   return sanitize(html, SANITIZE_OPTIONS);
 }
+
+/**
+ * Sanitize plain-text fields (like titles) that shouldn't contain any HTML tags.
+ */
+export function sanitizePlainText(text: string | null | undefined): string {
+  if (!text) return "";
+  return sanitize(text, { allowedTags: [], allowedAttributes: {} });
+}

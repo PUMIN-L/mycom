@@ -4,31 +4,25 @@ import Link from "next/link";
 import { useAuth } from "../context/AuthContext";
 import ConfirmDialog from "../components/ConfirmDialog";
 import Toast from "../components/Toast";
+import ErrorModal from "../components/ErrorModal";
 
-import type { DocumentData, ContentMeta } from "../lib/types";
+import type { DocumentData } from "../lib/types";
 import { stripHtml } from "../lib/stripHtml";
 
-interface ShowcaseListClientProps {
-  initialContents: ContentMeta[];
+interface DocumentListClientProps {
   initialDocuments: DocumentData[];
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
-export default function ShowcaseListClient({
-  initialContents,
+export default function DocumentListClient({
   initialDocuments,
-}: ShowcaseListClientProps) {
-  const [contents, setContents] = useState<ContentMeta[]>(initialContents);
+}: DocumentListClientProps) {
   const [documents, setDocuments] = useState<DocumentData[]>(initialDocuments);
-  
-  // Content delete state
-  const [pendingDelete, setPendingDelete] = useState<ContentMeta | null>(null);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
-  
+
   // Document delete state
   const [pendingDeleteDoc, setPendingDeleteDoc] = useState<DocumentData | null>(null);
   const [deletingDocId, setDeletingDocId] = useState<string | null>(null);
-  
+
   // Document upload state
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [uploadingDoc, setUploadingDoc] = useState(false);
@@ -43,22 +37,23 @@ export default function ShowcaseListClient({
   const [savingDoc, setSavingDoc] = useState(false);
 
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
+  const [errorModal, setErrorModal] = useState<{ isOpen: boolean; title?: string; message: string }>({
+    isOpen: false,
+    message: ""
+  });
   const [search, setSearch] = useState("");
   const { isLoggedIn, user, logout } = useAuth();
 
-  const isProcessing = uploadingDoc || savingDoc || deletingDocId !== null || deletingId !== null;
+  const isProcessing = uploadingDoc || savingDoc || deletingDocId !== null;
 
-  // Filter both lists by the search box (content title; document title + desc).
+  // Filter both lists by the search box (document title + desc).
   const q = search.trim().toLowerCase();
-  const filteredContents = q
-    ? contents.filter((c) => stripHtml(c.title).toLowerCase().includes(q))
-    : contents;
   const filteredDocuments = q
     ? documents.filter(
-        (d) =>
-          d.title.toLowerCase().includes(q) ||
-          (d.description || "").toLowerCase().includes(q)
-      )
+      (d) =>
+        d.title.toLowerCase().includes(q) ||
+        (d.description || "").toLowerCase().includes(q)
+    )
     : documents;
 
   useEffect(() => {
@@ -77,23 +72,7 @@ export default function ShowcaseListClient({
     setTimeout(() => setToast(null), 3000);
   }
 
-  async function handleDeleteContent(item: ContentMeta) {
-    setDeletingId(item.id);
-    try {
-      const res = await fetch(`/api/contents/${item.id}`, { method: "DELETE" });
-      if (res.ok) {
-        setContents((prev) => prev.filter((c) => c.id !== item.id));
-        showToast("ลบ content สำเร็จ", "success");
-      } else {
-        showToast("เกิดข้อผิดพลาดในการลบ", "error");
-      }
-    } catch {
-      showToast("เกิดข้อผิดพลาดในการลบ", "error");
-    } finally {
-      setDeletingId(null);
-      setPendingDelete(null);
-    }
-  }
+
 
   // ── Document Handlers ────────────────────────────────────────────────────────
   async function handleUploadDocument(e: React.FormEvent) {
@@ -102,24 +81,33 @@ export default function ShowcaseListClient({
       showToast("กรุณากรอกชื่อและเลือกไฟล์", "error");
       return;
     }
-    
+
+    if (stripHtml(docTitle).length > 255) {
+      setErrorModal({ isOpen: true, message: "ชื่อเอกสารต้องมีความยาวไม่เกิน 255 ตัวอักษร" });
+      return;
+    }
+    if (stripHtml(docDesc).length > 2000) {
+      setErrorModal({ isOpen: true, message: "รายละเอียดเอกสารต้องมีความยาวไม่เกิน 2,000 ตัวอักษร" });
+      return;
+    }
+
     setUploadingDoc(true);
     try {
       // 1. Upload PDF to Cloudinary (our API now handles double upload for PDFs to get both raw and cover images)
       const formData = new FormData();
       formData.append("file", docFile);
       formData.append("isDocument", "true");
-      
+
       const uploadRes = await fetch("/api/upload", {
         method: "POST",
         body: formData,
       });
       if (!uploadRes.ok) throw new Error("Upload failed");
       const uploadData = await uploadRes.json();
-      
+
       const pdfUrl = uploadData.url;
       const coverUrl = uploadData.coverUrl || pdfUrl.replace(/\.pdf$/i, ".jpg");
-      
+
       // 2. Save to database
       const id = "doc-" + Date.now();
       const saveRes = await fetch("/api/documents", {
@@ -133,21 +121,22 @@ export default function ShowcaseListClient({
           coverUrl,
         }),
       });
-      
+
       if (!saveRes.ok) throw new Error("Save failed");
       const newDoc = await saveRes.json();
-      
+
       setDocuments((prev) => [newDoc, ...prev]);
       showToast("อัปโหลดเอกสารสำเร็จ", "success");
-      
+
       // Reset form
       setShowUploadModal(false);
       setDocTitle("");
       setDocDesc("");
       setDocFile(null);
-    } catch (error) {
+      setDocFile(null);
+    } catch (error: any) {
       console.error(error);
-      showToast("เกิดข้อผิดพลาดในการอัปโหลด", "error");
+      setErrorModal({ isOpen: true, message: error.message || "เกิดข้อผิดพลาดในการบันทึกข้อมูล กรุณาลองใหม่อีกครั้ง" });
     } finally {
       setUploadingDoc(false);
     }
@@ -156,6 +145,16 @@ export default function ShowcaseListClient({
   async function handleEditDocument(e: React.FormEvent) {
     e.preventDefault();
     if (!editingDoc) return;
+
+    if (stripHtml(editDocTitle).length > 255) {
+      setErrorModal({ isOpen: true, message: "ชื่อเอกสารต้องมีความยาวไม่เกิน 255 ตัวอักษร" });
+      return;
+    }
+    if (stripHtml(editDocDesc).length > 2000) {
+      setErrorModal({ isOpen: true, message: "รายละเอียดเอกสารต้องมีความยาวไม่เกิน 2,000 ตัวอักษร" });
+      return;
+    }
+
     setSavingDoc(true);
     try {
       const res = await fetch(`/api/documents/${editingDoc.id}`, {
@@ -167,7 +166,7 @@ export default function ShowcaseListClient({
         const text = await res.text();
         throw new Error(`Save failed: ${res.status} ${text}`);
       }
-      
+
       setDocuments((prev) =>
         prev.map((doc) =>
           doc.id === editingDoc.id ? { ...doc, title: editDocTitle, description: editDocDesc } : doc
@@ -175,9 +174,9 @@ export default function ShowcaseListClient({
       );
       showToast("บันทึกการเปลี่ยนแปลงสำเร็จ", "success");
       setEditingDoc(null);
-    } catch (error) {
+    } catch (error: any) {
       console.error(error);
-      showToast("เกิดข้อผิดพลาดในการบันทึก", "error");
+      setErrorModal({ isOpen: true, message: error.message || "เกิดข้อผิดพลาดในการบันทึกข้อมูล กรุณาลองใหม่อีกครั้ง" });
     } finally {
       setSavingDoc(false);
     }
@@ -204,14 +203,7 @@ export default function ShowcaseListClient({
   return (
     <div className="min-h-screen bg-gray-50 py-12">
       {toast && <Toast message={toast.message} type={toast.type} />}
-      {pendingDelete && (
-        <ConfirmDialog
-          message={`ต้องการลบ "${pendingDelete.title}" ใช่ไหม? รูปภาพทั้งหมดจะถูกลบออกจาก Cloudinary ด้วย`}
-          onConfirm={() => handleDeleteContent(pendingDelete)}
-          onCancel={() => setPendingDelete(null)}
-          loading={deletingId !== null}
-        />
-      )}
+
 
       <div className="max-w-6xl mx-auto px-4">
         {/* Header */}
@@ -222,54 +214,11 @@ export default function ShowcaseListClient({
           </div>
           <div className="flex gap-3 flex-wrap">
             <Link
-              href="/"
+              href="/showcase"
               className="px-5 py-2.5 bg-white border border-gray-300 text-gray-700 font-semibold rounded-lg hover:bg-gray-50 transition shadow-sm"
             >
-              ← Back to Home
+              ← Back to Showcase
             </Link>
-            {isLoggedIn && (
-              <>
-                <Link
-                  href="/create-content"
-                  className="px-5 py-2.5 bg-orange-500 text-white font-semibold rounded-lg hover:bg-orange-600 transition shadow-sm"
-                >
-                  + Create New Content
-                </Link>
-                <Link
-                  href="/quotation"
-                  className="px-5 py-2.5 bg-white border border-gray-300 text-gray-700 font-semibold rounded-lg hover:bg-gray-50 transition shadow-sm"
-                >
-                  🧾 ใบเสนอราคา
-                </Link>
-                <Link
-                  href="/quotation/saved"
-                  className="px-5 py-2.5 bg-white border border-gray-300 text-gray-700 font-semibold rounded-lg hover:bg-gray-50 transition shadow-sm"
-                >
-                  📋 ใบที่บันทึกไว้
-                </Link>
-                <Link
-                  href="/customers"
-                  className="px-5 py-2.5 bg-white border border-gray-300 text-gray-700 font-semibold rounded-lg hover:bg-gray-50 transition shadow-sm"
-                >
-                  👥 จัดการลูกค้าและบริษัท
-                </Link>
-                <Link
-                  href="/settings"
-                  className="px-5 py-2.5 bg-white border border-gray-300 text-gray-700 font-semibold rounded-lg hover:bg-gray-50 transition shadow-sm"
-                >
-                  ⚙️ ตั้งค่า
-                </Link>
-                <button
-                  onClick={logout}
-                  className="px-5 py-2.5 bg-white border border-red-300 text-red-500 font-semibold rounded-lg hover:bg-red-500 hover:text-white transition shadow-sm flex items-center gap-2"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-                  </svg>
-                  Logout ({user?.username})
-                </button>
-              </>
-            )}
           </div>
         </div>
 
@@ -299,91 +248,15 @@ export default function ShowcaseListClient({
           </div>
           {q && (
             <p className="text-sm text-gray-500 mt-2">
-              พบ {filteredContents.length} เนื้อหา · {filteredDocuments.length} เอกสาร
+              พบ {filteredDocuments.length} เอกสาร
             </p>
           )}
         </div>
 
-        {/* Content Grid */}
-        {contents.length === 0 ? (
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-16 text-center">
-            <h3 className="text-xl font-bold text-gray-800 mb-2">No Contents Yet</h3>
-            <p className="text-gray-600 mb-6">Create your first database-backed page using our content editor!</p>
-            <Link
-              href="/create-content"
-              className="px-6 py-3 bg-orange-500 text-white font-bold rounded-lg hover:bg-orange-600 transition"
-            >
-              Get Started
-            </Link>
-          </div>
-        ) : filteredContents.length === 0 ? (
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center text-gray-500">
-            ไม่พบเนื้อหาที่ตรงกับ “{search}”
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-            {filteredContents.map((item) => {
-              const { textCount, imageCount } = item;
-              const isDeleting = deletingId === item.id;
 
-              return (
-                <div
-                  key={item.id}
-                  className={`bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden flex flex-col hover:shadow-md hover:border-orange-400 transition duration-300 ${
-                    isDeleting ? "opacity-50 pointer-events-none" : ""
-                  }`}
-                >
-                  <Link href={`/showcase/${item.id}`} className="group p-6 flex-grow flex flex-col justify-between">
-                    <div>
-                      <h2 
-                        className="text-2xl font-bold text-gray-900 group-hover:text-orange-500 transition duration-300 line-clamp-2 mb-2 font-serif [&_p]:inline [&_p]:m-0"
-                        dangerouslySetInnerHTML={{ __html: item.title }}
-                      />
-                    </div>
-
-                    <div className="mt-6 pt-4 border-t border-gray-100 flex items-center justify-between text-sm text-gray-500">
-                      <div className="flex gap-4">
-                        <span className="flex items-center gap-1">
-                          📝 {textCount} {textCount === 1 ? "Text" : "Texts"}
-                        </span>
-                        <span className="flex items-center gap-1">
-                          🖼️ {imageCount} {imageCount === 1 ? "Image" : "Images"}
-                        </span>
-                      </div>
-                      <span className="text-orange-500 font-bold group-hover:translate-x-1 transition duration-300 inline-block">
-                        View →
-                      </span>
-                    </div>
-                  </Link>
-
-                  {/* Action bar — only visible to logged-in users */}
-                  {isLoggedIn && (
-                    <div className="px-6 py-3 bg-gray-50 border-t border-gray-100 flex gap-2">
-                      <Link
-                        href={`/showcase/${item.id}`}
-                        className="flex-1 text-center py-1.5 text-sm rounded-lg border border-orange-300 text-orange-600 hover:bg-orange-50 transition font-semibold"
-                      >
-                        ✏️ แก้ไข
-                      </Link>
-                      <button
-                        onClick={(e) => {
-                          e.preventDefault();
-                          setPendingDelete(item);
-                        }}
-                        className="flex-1 py-1.5 text-sm rounded-lg bg-red-50 text-red-500 hover:bg-red-500 hover:text-white transition font-semibold border border-red-200"
-                      >
-                        🗑️ ลบ
-                      </button>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
 
         {/* ── Document Library Section ──────────────────────────────────────── */}
-        <div className="mt-24 pt-12 border-t border-gray-200">
+        <div>
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-10">
             <div>
               <h2 className="text-3xl font-bold text-gray-900 font-serif">เอกสารดาวน์โหลด</h2>
@@ -417,9 +290,8 @@ export default function ShowcaseListClient({
                 return (
                   <div
                     key={doc.id}
-                    className={`group bg-white rounded-2xl border border-gray-100 shadow-sm hover:shadow-xl hover:shadow-black/[0.04] transition-all duration-300 overflow-hidden flex flex-col ${
-                      isDeleting ? "opacity-50 pointer-events-none" : ""
-                    }`}
+                    className={`group bg-white rounded-2xl border border-gray-100 shadow-sm hover:shadow-xl hover:shadow-black/[0.04] transition-all duration-300 overflow-hidden flex flex-col ${isDeleting ? "opacity-50 pointer-events-none" : ""
+                      }`}
                   >
                     <Link href={`/document/${doc.id}`} target="_blank" rel="noopener noreferrer" className="block relative aspect-[4/3] bg-gray-50 border-b border-gray-100 p-4 overflow-hidden">
                       {/* We use standard img here because Cloudinary returns a jpg and we might not know dimensions */}
@@ -442,7 +314,7 @@ export default function ShowcaseListClient({
                       {doc.description && (
                         <p className="text-sm text-gray-500 line-clamp-2 mb-4">{doc.description}</p>
                       )}
-                      
+
                       {isLoggedIn && (
                         <div className="mt-auto pt-4 border-t border-gray-100 flex gap-2">
                           <button
@@ -613,6 +485,13 @@ export default function ShowcaseListClient({
         .animate-fadeIn { animation: fadeIn 0.2s ease-out; }
         .animate-slideUp { animation: slideUp 0.3s ease-out; }
       `}</style>
+
+      <ErrorModal
+        isOpen={errorModal.isOpen}
+        title={errorModal.title}
+        message={errorModal.message}
+        onClose={() => setErrorModal({ ...errorModal, isOpen: false })}
+      />
     </div>
   );
 }

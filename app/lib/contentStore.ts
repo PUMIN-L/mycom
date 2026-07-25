@@ -45,17 +45,18 @@ function rowToContent(row: RowDataPacket): ContentData {
 
 export async function addContent(content: ContentData): Promise<ContentData> {
   const blocks = sanitizeBlocks(content.blocks);
+  const sanitizedTitle = sanitizeRichText(content.title).substring(0, 255);
   await query(
     "INSERT INTO contents (id, title, blocks, createdAt, productId) VALUES (?, ?, ?, ?, ?)",
     [
       content.id,
-      content.title,
+      sanitizedTitle,
       JSON.stringify(blocks),
       content.createdAt,
       content.productId ?? null,
     ]
   );
-  return { ...content, blocks };
+  return { ...content, title: sanitizedTitle, blocks };
 }
 
 export async function getContent(id: string): Promise<ContentData | undefined> {
@@ -131,7 +132,7 @@ export async function updateContent(
     return undefined;
   }
 
-  const title = updatedContent.title !== undefined ? updatedContent.title : existing.title;
+  const title = updatedContent.title !== undefined ? sanitizeRichText(updatedContent.title).substring(0, 255) : existing.title;
   const blocks = sanitizeBlocks(
     updatedContent.blocks !== undefined ? updatedContent.blocks : existing.blocks
   );

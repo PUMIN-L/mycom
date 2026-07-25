@@ -7,6 +7,8 @@ import Toast from "../components/Toast";
 import { DOCNO_START, pad2, nextDocNo } from "../lib/quotationNumber";
 import { computeQuoteTotals } from "../lib/quotationTotals";
 import { stripHtml } from "../lib/stripHtml";
+import SearchableDropdown from "../components/SearchableDropdown";
+import ConfirmDialog from "../components/ConfirmDialog";
 
 // ── ใบเสนอราคา (Quotation builder) ──────────────────────────────────────────
 // Admin-only tool: fill the form on the left, see a live A4 sheet on the right,
@@ -25,6 +27,7 @@ const COMPANY = {
 
 interface QuoteItem {
   id: string;
+  productId?: string; // Links back to product for specs
   name: string; // ชื่อเครื่อง / รุ่น
   description: string; // สเปค / รายละเอียดเพิ่มเติม
   imageUrl: string;
@@ -54,9 +57,10 @@ interface QuoteState {
   discount: number;
   discountType: "amount" | "percent";
   vatEnabled: boolean;
-  paymentTerms: string;
-  deliveryTerms: string;
-  warrantyTerms: string;
+  paymentTerms?: string;
+  deliveryTerms?: string;
+  warrantyTerms?: string;
+  conditions: { id: string; label: string; value: string }[];
   note: string;
 }
 
@@ -102,14 +106,27 @@ const emptyState = (): QuoteState => ({
   discount: 0,
   discountType: "amount",
   vatEnabled: true,
-  paymentTerms: "ชำระเงิน 100% ก่อนส่งมอบสินค้า",
-  deliveryTerms: "30-45 วัน หลังยืนยันการสั่งซื้อ",
-  warrantyTerms: "รับประกันสินค้า 1 ปี",
+  conditions: [
+    { id: crypto.randomUUID(), label: "เงื่อนไขชำระเงิน", value: "ชำระเงิน 100% ก่อนส่งมอบสินค้า" },
+    { id: crypto.randomUUID(), label: "กำหนดส่งมอบ", value: "30-45 วัน หลังยืนยันการสั่งซื้อ" },
+    { id: crypto.randomUUID(), label: "การรับประกัน", value: "รับประกันสินค้า 1 ปี" },
+  ],
   note: "",
 });
 
 const fmt = (n: number) =>
   n.toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+function migrateQuoteState(state: any): QuoteState {
+  if (!state.conditions || !Array.isArray(state.conditions)) {
+    const conditions = [];
+    if (state.paymentTerms) conditions.push({ id: crypto.randomUUID(), label: "เงื่อนไขชำระเงิน", value: state.paymentTerms });
+    if (state.deliveryTerms) conditions.push({ id: crypto.randomUUID(), label: "กำหนดส่งมอบ", value: state.deliveryTerms });
+    if (state.warrantyTerms) conditions.push({ id: crypto.randomUUID(), label: "การรับประกัน", value: state.warrantyTerms });
+    state.conditions = conditions.length > 0 ? conditions : emptyState().conditions;
+  }
+  return state as QuoteState;
+}
 
 // A number field that keeps the user's RAW text (so partial values like "0.5"
 // aren't clobbered by controlled-input reconciliation) and shows a placeholder
@@ -156,17 +173,47 @@ const thaiDate = (iso: string) => {
   return `${d} ${months[m - 1]} ${y + 543}`;
 };
 
+function formatAddress(comp: any) {
+  const parts = [];
+  if (comp.addressNo) parts.push(comp.addressNo);
+  if (comp.moo) parts.push(`ม.${comp.moo}`);
+  if (comp.soi) parts.push(`ซ.${comp.soi}`);
+  if (comp.road) parts.push(`ถ.${comp.road}`);
+  if (comp.subDistrict) parts.push(`ต.${comp.subDistrict}`);
+  if (comp.district) parts.push(`อ.${comp.district}`);
+  if (comp.province) parts.push(`จ.${comp.province}`);
+  if (comp.postalCode) parts.push(comp.postalCode);
+  return parts.join(' ');
+}
+
+function formatPhone(phone: string) {
+  if (!phone) return phone;
+  const digits = phone.replace(/\D/g, '');
+  if (digits.length === 10) {
+    return `${digits.slice(0, 3)}-${digits.slice(3, 6)}-${digits.slice(6)}`;
+  }
+  if (digits.length === 9) {
+    return `${digits.slice(0, 2)}-${digits.slice(2, 5)}-${digits.slice(5)}`;
+  }
+  return phone;
+}
+
 export default function QuotationPage() {
   const router = useRouter();
   const { isLoggedIn, isLoading } = useAuth();
   const [q, setQ] = useState<QuoteState>(emptyState);
   const [products, setProducts] = useState<ProductItem[]>([]);
+  const [dbCompanies, setDbCompanies] = useState<any[]>([]);
+  const [dbCustomers, setDbCustomers] = useState<any[]>([]);
+  const [dbSalespeople, setDbSalespeople] = useState<any[]>([]);
+  const [dbProductSpecs, setDbProductSpecs] = useState<any[]>([]);
   const [existingDocs, setExistingDocs] = useState<{ id: string; docNo: string }[]>([]);
   const [uploadingItemId, setUploadingItemId] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false); // building the PDF
   const [savePrompt, setSavePrompt] = useState(false); // "keep 30d or delete now?" after download
   const [deletingQuote, setDeletingQuote] = useState(false);
   const [savingQuote, setSavingQuote] = useState(false); // "เซฟ" (save without printing)
+  const [showResetConfirm, setShowResetConfirm] = useState(false); // reset form modal
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const uploadTargetRef = useRef<string | null>(null);
@@ -206,7 +253,7 @@ export default function QuotationPage() {
         .then((r) => (r.ok ? r.json() : null))
         .then((rec) => {
           if (rec?.data && Array.isArray(rec.data.items)) {
-            setQ({ ...emptyState(), ...rec.data, id: rec.id || reopenId });
+            setQ(migrateQuoteState({ ...emptyState(), ...rec.data, id: rec.id || reopenId }));
           } else {
             showToast("ไม่พบใบเสนอราคานี้ — เริ่มใบใหม่แทน", "error");
             seedFresh();
@@ -228,7 +275,7 @@ export default function QuotationPage() {
     }
     if (draft && Array.isArray(draft.items)) {
       // Older drafts may lack id — mint one so save/delete has a stable key.
-      setQ({ ...emptyState(), ...draft, id: draft.id || crypto.randomUUID() });
+      setQ(migrateQuoteState({ ...emptyState(), ...draft, id: draft.id || crypto.randomUUID() }));
     } else {
       seedFresh();
     }
@@ -251,6 +298,26 @@ export default function QuotationPage() {
     fetch("/api/products")
       .then((r) => (r.ok ? r.json() : []))
       .then((list) => setProducts(Array.isArray(list) ? list : []))
+      .catch(() => {});
+      
+    fetch("/api/companies")
+      .then((r) => (r.ok ? r.json() : []))
+      .then((list) => setDbCompanies(Array.isArray(list) ? list : []))
+      .catch(() => {});
+
+    fetch("/api/customers")
+      .then((r) => (r.ok ? r.json() : []))
+      .then((list) => setDbCustomers(Array.isArray(list) ? list : []))
+      .catch(() => {});
+
+    fetch("/api/salespeople")
+      .then((r) => (r.ok ? r.json() : []))
+      .then((list) => setDbSalespeople(Array.isArray(list) ? list : []))
+      .catch(() => {});
+
+    fetch("/api/product-specs")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((res) => setDbProductSpecs(Array.isArray(res?.data) ? res.data : []))
       .catch(() => {});
   }, [isLoggedIn]);
 
@@ -316,8 +383,15 @@ export default function QuotationPage() {
   // image as a shared catalog asset — it must NOT be deleted on quote delete.
   const applyProduct = (itemId: string, productId: string) => {
     const p = products.find((x) => x.id === productId);
-    if (!p) return;
-    setItem(itemId, { name: stripHtml(p.title_th || p.title_en), imageUrl: p.image, imageUploaded: false });
+    if (p) {
+      setItem(itemId, {
+        productId: p.id,
+        name: stripHtml(p.title_th || p.title_en),
+        description: "",
+        imageUrl: p.image,
+        imageUploaded: false,
+      });
+    }
   };
 
   // Upload a custom image for an item (reuses the existing Cloudinary route)
@@ -529,6 +603,25 @@ export default function QuotationPage() {
   return (
     <div className="min-h-screen bg-gray-100">
       {toast && <Toast message={toast.message} type={toast.type} />}
+
+      {showResetConfirm && (
+        <ConfirmDialog
+          title="ยืนยันการล้างข้อมูล"
+          message="คุณต้องการล้างข้อมูลทั้งหมดและเริ่มทำใบเสนอราคาใหม่ใช่หรือไม่? ข้อมูลปัจจุบันที่ยังไม่ได้บันทึกจะสูญหาย"
+          confirmText="เริ่มใหม่"
+          cancelText="ยกเลิก"
+          onConfirm={() => {
+            setShowResetConfirm(false);
+            localStorage.removeItem(DRAFT_KEY);
+            const iso = new Date().toISOString().slice(0, 10);
+            const prefix = `QT${iso.replace(/-/g, "")}-`;
+            isFreshRef.current = true;
+            setQ({ ...emptyState(), id: crypto.randomUUID(), docDate: iso, docNo: nextDocNo(prefix, existingDocs.map((u) => u.docNo)), items: [newItem()] });
+          }}
+          onCancel={() => setShowResetConfirm(false)}
+        />
+      )}
+
       <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageUpload} />
 
       {/* Keep-or-delete prompt shown after download */}
@@ -592,15 +685,7 @@ export default function QuotationPage() {
               📋 ใบที่บันทึกไว้
             </Link>
             <button
-              onClick={() => {
-                if (window.confirm("ล้างข้อมูลทั้งหมดและเริ่มใหม่?")) {
-                  localStorage.removeItem(DRAFT_KEY);
-                  const iso = new Date().toISOString().slice(0, 10);
-                  const prefix = `QT${iso.replace(/-/g, "")}-`;
-                  isFreshRef.current = true;
-                  setQ({ ...emptyState(), id: crypto.randomUUID(), docDate: iso, docNo: nextDocNo(prefix, existingDocs.map((u) => u.docNo)), items: [newItem()] });
-                }
-              }}
+              onClick={() => setShowResetConfirm(true)}
               className="px-4 py-2 rounded-lg border border-red-300 text-red-500 text-sm font-semibold hover:bg-red-50 transition"
             >
               ↺ เริ่มทำใบเสนอราคาใบใหม่
@@ -669,8 +754,33 @@ export default function QuotationPage() {
           </section>
 
           {/* เซลล์ */}
-          <section className="bg-white rounded-xl shadow-sm border border-gray-200 p-5 space-y-3">
-            <h2 className="font-bold text-gray-800">พนักงานขาย (Sales)</h2>
+          <section className="bg-white rounded-xl shadow-sm border border-gray-200 p-5 space-y-3 relative z-30">
+            <div className="flex items-center justify-between flex-wrap gap-3">
+              <h2 className="font-bold text-gray-800">พนักงานขาย (Sales)</h2>
+              <SearchableDropdown
+                className="w-[240px]"
+                placeholder="+ เลือกพนักงานขาย"
+                value={q.sellerId || ""}
+                options={dbSalespeople.map(s => ({
+                  value: s.id,
+                  label: s.name,
+                  subLabel: s.phone || s.email || ""
+                }))}
+                onChange={(val) => {
+                  const s = dbSalespeople.find(x => x.id === val);
+                  if (s) {
+                    set("sellerId", val);
+                    setQ(prev => ({
+                      ...prev,
+                      sellerName: s.name,
+                      sellerPhone: s.phone || prev.sellerPhone,
+                      sellerEmail: s.email || prev.sellerEmail
+                    }));
+                  }
+                }}
+                buttonClassName="!bg-blue-50 !border-blue-300 !text-blue-700 hover:!bg-blue-100 font-medium transition-colors"
+              />
+            </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="col-span-2">
                 <label className={labelCls}>ชื่อเซลล์</label>
@@ -689,7 +799,57 @@ export default function QuotationPage() {
 
           {/* ลูกค้า */}
           <section className="bg-white rounded-xl shadow-sm border border-gray-200 p-5 space-y-3">
-            <h2 className="font-bold text-gray-800">ข้อมูลลูกค้า</h2>
+            <div className="flex items-center justify-between flex-wrap gap-3">
+              <h2 className="font-bold text-gray-800">ข้อมูลลูกค้า</h2>
+              <div className="flex flex-wrap gap-2 relative z-20">
+                <SearchableDropdown
+                  className="w-[240px]"
+                  placeholder="+ เลือกลูกค้าจากระบบ"
+                  value=""
+                  options={dbCustomers.map(c => ({
+                    value: c.id,
+                    label: c.name,
+                    subLabel: c.companyName || ""
+                  }))}
+                  onChange={(val) => {
+                    const c = dbCustomers.find(x => x.id === val);
+                    if (c) {
+                      const comp = dbCompanies.find(x => x.id === c.companyId);
+                      setQ(prev => ({
+                        ...prev,
+                        customerContact: c.name,
+                        customerCompany: c.companyName || comp?.name || "",
+                        customerAddress: comp ? formatAddress(comp) : prev.customerAddress,
+                        customerPhone: c.phone || comp?.phone || prev.customerPhone,
+                        customerEmail: c.email || prev.customerEmail
+                      }));
+                    }
+                  }}
+                  buttonClassName="!bg-emerald-50 !border-emerald-300 !text-emerald-700 hover:!bg-emerald-100 font-medium transition-colors"
+                />
+                <SearchableDropdown
+                  className="w-[240px]"
+                  placeholder="+ เลือกบริษัทจากระบบ"
+                  value=""
+                  options={dbCompanies.map(c => ({
+                    value: c.id,
+                    label: c.name
+                  }))}
+                  onChange={(val) => {
+                    const comp = dbCompanies.find(x => x.id === val);
+                    if (comp) {
+                      setQ(prev => ({
+                        ...prev,
+                        customerCompany: comp.name,
+                        customerAddress: formatAddress(comp),
+                        customerPhone: comp.phone || prev.customerPhone
+                      }));
+                    }
+                  }}
+                  buttonClassName="!bg-purple-50 !border-purple-300 !text-purple-700 hover:!bg-purple-100 font-medium transition-colors"
+                />
+              </div>
+            </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className={labelCls}>ชื่อผู้ติดต่อ</label>
@@ -735,12 +895,33 @@ export default function QuotationPage() {
                       className="w-7 h-7 rounded bg-red-100 text-red-500 hover:bg-red-500 hover:text-white text-xs font-bold">✕</button>
                   </div>
                 </div>
-                <select className={inputCls} value="" onChange={(e) => applyProduct(it.id, e.target.value)}>
-                  <option value="" disabled>📦 เลือกจากสินค้าในระบบ (autofill ชื่อ+รูป)…</option>
-                  {products.map((p) => (
-                    <option key={p.id} value={p.id}>{stripHtml(p.title_th || p.title_en)}</option>
-                  ))}
-                </select>
+                <SearchableDropdown
+                  className="w-full"
+                  buttonClassName={inputCls}
+                  placeholder="📦 เลือกจากสินค้าในระบบ (autofill ชื่อ+รูป)…"
+                  value=""
+                  onChange={(val) => applyProduct(it.id, val)}
+                  options={products.map((p) => ({
+                    value: p.id,
+                    label: stripHtml(p.title_th || p.title_en)
+                  }))}
+                />
+                {it.productId && dbProductSpecs.filter(s => s.productId === it.productId).length > 0 && (
+                  <SearchableDropdown
+                    className="w-full"
+                    buttonClassName={`${inputCls} !bg-blue-50 !border-blue-200 !text-blue-800 font-medium`}
+                    placeholder="📋 เลือกสเปคเพื่อเติมข้อความอัตโนมัติ (Optional)"
+                    value=""
+                    onChange={(val) => {
+                      const spec = dbProductSpecs.find(s => s.id === val);
+                      if (spec) setItem(it.id, { description: spec.detail });
+                    }}
+                    options={dbProductSpecs.filter(s => s.productId === it.productId).map(s => ({
+                      value: s.id,
+                      label: s.name
+                    }))}
+                  />
+                )}
                 <input className={inputCls} placeholder="ชื่อเครื่อง / รุ่น" value={it.name}
                   onChange={(e) => setItem(it.id, { name: e.target.value })} />
                 <textarea rows={2} className={inputCls} placeholder="รายละเอียด / สเปค (ถ้ามี)" value={it.description}
@@ -811,17 +992,69 @@ export default function QuotationPage() {
                 className="w-4 h-4 accent-orange-500" />
               คิดภาษีมูลค่าเพิ่ม (VAT 7%)
             </label>
-            <div>
-              <label className={labelCls}>เงื่อนไขชำระเงิน</label>
-              <input className={inputCls} value={q.paymentTerms} onChange={(e) => set("paymentTerms", e.target.value)} />
-            </div>
-            <div>
-              <label className={labelCls}>กำหนดส่งมอบ</label>
-              <input className={inputCls} value={q.deliveryTerms} onChange={(e) => set("deliveryTerms", e.target.value)} />
-            </div>
-            <div>
-              <label className={labelCls}>การรับประกัน</label>
-              <input className={inputCls} value={q.warrantyTerms} onChange={(e) => set("warrantyTerms", e.target.value)} />
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <label className="font-bold text-gray-800">เงื่อนไขอื่นๆ</label>
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setQ(prev => ({ ...prev, conditions: emptyState().conditions }))}
+                    className="text-gray-500 hover:text-gray-700 text-sm font-medium flex items-center gap-1"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                    คืนค่าเริ่มต้น
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setQ(prev => ({
+                      ...prev,
+                      conditions: [...(prev.conditions || []), { id: crypto.randomUUID(), label: "", value: "" }]
+                    }))}
+                    className="text-orange-600 hover:text-orange-700 text-sm font-medium flex items-center gap-1"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"/></svg>
+                    เพิ่มเงื่อนไข
+                  </button>
+                </div>
+              </div>
+              
+              {(q.conditions || []).map((cond, idx) => (
+                <div key={cond.id} className="p-3 bg-gray-50 border border-gray-200 rounded-lg space-y-2 relative">
+                  <button
+                    type="button"
+                    onClick={() => setQ(prev => ({
+                      ...prev,
+                      conditions: (prev.conditions || []).filter(c => c.id !== cond.id)
+                    }))}
+                    className="absolute top-2 right-2 text-gray-400 hover:text-red-500"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                  </button>
+                  <div className="pr-8 space-y-2">
+                    <input 
+                      placeholder="หัวข้อ (เช่น เงื่อนไขชำระเงิน)" 
+                      className={`${inputCls} font-bold text-gray-800`}
+                      value={cond.label} 
+                      onChange={(e) => {
+                        const newConds = [...(q.conditions || [])];
+                        newConds[idx].label = e.target.value;
+                        set("conditions", newConds);
+                      }} 
+                    />
+                    <textarea 
+                      rows={2} 
+                      placeholder="รายละเอียด"
+                      className={inputCls} 
+                      value={cond.value} 
+                      onChange={(e) => {
+                        const newConds = [...(q.conditions || [])];
+                        newConds[idx].value = e.target.value;
+                        set("conditions", newConds);
+                      }} 
+                    />
+                  </div>
+                </div>
+              ))}
             </div>
             <div>
               <label className={labelCls}>หมายเหตุเพิ่มเติม</label>
@@ -831,7 +1064,7 @@ export default function QuotationPage() {
         </div>
 
         {/* ══ RIGHT: A4 sheet (what gets printed) ══ */}
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto xl:sticky xl:top-[90px] xl:max-h-[calc(100vh-100px)] xl:overflow-y-auto rounded-sm">
           <div
             id="quote-sheet"
             className="bg-white shadow-lg border border-gray-200 rounded-sm mx-auto text-gray-900"
@@ -873,33 +1106,36 @@ export default function QuotationPage() {
                 <div className="font-semibold">{q.customerContact || "-"}</div>
                 {q.customerCompany && <div>{q.customerCompany}</div>}
                 {q.customerAddress && <div className="whitespace-pre-line text-gray-700">{q.customerAddress}</div>}
-                {q.customerPhone && <div className="text-gray-700">โทร {q.customerPhone}</div>}
+                {q.customerPhone && <div className="text-gray-700">โทร {formatPhone(q.customerPhone)}</div>}
                 {q.customerEmail && <div className="text-gray-700 break-all">อีเมล {q.customerEmail}</div>}
               </div>
               <table className="shrink-0 self-start text-[12.5px]">
                 <tbody>
                   <tr>
-                    <td className="pr-3 py-0.5 font-bold text-gray-700">เลขที่ (No.)</td>
-                    <td className="py-0.5">{q.docNo || "-"}</td>
+                    <td className="pr-3 py-0.5 font-bold text-gray-700 text-right">เลขที่ (No.)</td>
+                    <td className="py-0.5 text-right">{q.docNo || "-"}</td>
                   </tr>
                   <tr>
-                    <td className="pr-3 py-0.5 font-bold text-gray-700">วันที่ (Date)</td>
-                    <td className="py-0.5">{thaiDate(q.docDate)}</td>
+                    <td className="pr-3 py-0.5 font-bold text-gray-700 text-right">วันที่ (Date)</td>
+                    <td className="py-0.5 text-right">{thaiDate(q.docDate)}</td>
                   </tr>
                   <tr>
-                    <td className="pr-3 py-0.5 font-bold text-gray-700">ยืนราคา (Valid)</td>
-                    <td className="py-0.5">{q.validDays} วัน</td>
+                    <td className="pr-3 py-0.5 font-bold text-gray-700 text-right">ยืนราคา (Valid)</td>
+                    <td className="py-0.5 text-right">{q.validDays} วัน</td>
                   </tr>
                   <tr>
-                    <td className="pr-3 py-0.5 font-bold text-gray-700">พนักงานขาย</td>
-                    <td className="py-0.5">{q.sellerName || "-"}</td>
+                    <td className="pr-3 py-0.5 font-bold text-gray-700 align-top text-right">พนักงานขาย</td>
+                    <td className="py-0.5 text-right">
+                      <div className="text-gray-900">{q.sellerName || "-"}</div>
+                    </td>
                   </tr>
                   {(q.sellerPhone || q.sellerEmail) && (
                     <tr>
-                      <td className="pr-3 py-0.5 align-top" />
-                      <td className="py-0.5 text-gray-600">
-                        {q.sellerPhone && <div>โทร {q.sellerPhone}</div>}
-                        {q.sellerEmail && <div className="break-all">อีเมล {q.sellerEmail}</div>}
+                      <td colSpan={2} className="py-0.5 text-right">
+                        <div className="text-[11.5px] text-gray-500 mt-0.5 flex flex-col items-end">
+                          {q.sellerPhone && <div>โทร: {formatPhone(q.sellerPhone)}</div>}
+                          {q.sellerEmail && <div className="break-all text-right">อีเมล: {q.sellerEmail}</div>}
+                        </div>
                       </td>
                     </tr>
                   )}
@@ -932,13 +1168,13 @@ export default function QuotationPage() {
                     <td className="border border-gray-300 px-2 py-1.5 text-center">{idx + 1}</td>
                     <td className="border border-gray-300 px-2 py-1.5">
                       <div className="font-semibold">{it.name || "-"}</div>
-                      {/* Image sits below the name, only when one was added */}
+                      {it.description && (
+                        <div className="mt-1 text-gray-600 whitespace-pre-line text-[11.5px]">{it.description}</div>
+                      )}
+                      {/* Image sits below the description, only when one was added */}
                       {it.imageUrl && (
                         // eslint-disable-next-line @next/next/no-img-element
                         <img src={it.imageUrl} alt="" className="mt-1.5 object-contain" style={{ maxWidth: "40mm", maxHeight: "32mm" }} />
-                      )}
-                      {it.description && (
-                        <div className="mt-1 text-gray-600 whitespace-pre-line text-[11.5px]">{it.description}</div>
                       )}
                     </td>
                     <td className="border border-gray-300 px-2 py-1.5 text-center">{it.qty}</td>
@@ -955,10 +1191,13 @@ export default function QuotationPage() {
               <div className="flex-1 text-[12px]">
                 <div className="space-y-0.5 text-gray-700">
                   <div className="font-bold text-gray-800">เงื่อนไข</div>
-                  {q.paymentTerms && <div>• การชำระเงิน: {q.paymentTerms}</div>}
-                  {q.deliveryTerms && <div>• กำหนดส่งมอบ: {q.deliveryTerms}</div>}
-                  {q.warrantyTerms && <div>• การรับประกัน: {q.warrantyTerms}</div>}
-                  <div>• กำหนดยืนราคา {q.validDays} วัน นับจากวันที่เสนอราคา</div>
+                  {(q.conditions || []).map((cond) => (
+                    (cond.label || cond.value) ? (
+                      <div key={cond.id} className="whitespace-pre-line">
+                        • {cond.label}{cond.label && cond.value ? ': ' : ''}{cond.value}
+                      </div>
+                    ) : null
+                  ))}
                 </div>
                 {q.note && (
                   <div className="mt-3 space-y-0.5 text-gray-700">
@@ -1005,16 +1244,20 @@ export default function QuotationPage() {
             <div className="grid grid-cols-3 gap-6 mt-10 text-center text-[12px]">
               {[
                 { title: "ผู้เสนอราคา", name: q.sellerName },
-                { title: "ผู้อนุมัติ", name: "" },
+                null,
                 { title: "ผู้สั่งซื้อ (ลูกค้า)", name: "" },
-              ].map((s) => (
-                <div key={s.title}>
-                  <div className="border-b border-gray-400 h-12 mb-1" />
-                  <div>( {s.name || " ".repeat(20)} )</div>
-                  <div className="font-bold">{s.title}</div>
-                  <div className="text-gray-500">วันที่ ______ / ______ / ______</div>
-                </div>
-              ))}
+              ].map((s, idx) => 
+                s ? (
+                  <div key={s.title}>
+                    <div className="border-b border-gray-400 h-12 mb-2" />
+                    <div className="min-h-[18px] mt-2 text-gray-800">{s.name}</div>
+                    <div className="font-bold mt-2">{s.title}</div>
+                    <div className="text-gray-500 mt-2">วันที่ ______ / ______ / ______</div>
+                  </div>
+                ) : (
+                  <div key={`empty-${idx}`} />
+                )
+              )}
             </div>
           </div>
         </div>

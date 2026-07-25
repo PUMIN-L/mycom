@@ -30,8 +30,23 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    '/customers/:path*',
+    '/create-content',
+    '/create-content/:path*',
+    '/create-product',
     '/create-product/:path*',
-    '/edit-product/:path*'
+    '/customers',
+    '/customers/:path*',
+    '/edit-product',
+    '/edit-product/:path*',
+    '/quotation',
+    '/quotation/:path*',
+    '/settings',
+    '/settings/:path*',
+    '/document',
+    '/document/:path*',
+    '/documents',
+    '/documents/:path*',
+    '/product-specs',
+    '/product-specs/:path*'
   ],
 };

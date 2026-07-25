@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { query } from "../../lib/db";
 import { getSession } from "../../lib/session";
-import { stripHtml } from "../../lib/stripHtml";
+import { sanitizePlainText } from "../../lib/sanitizeHtml";
 
 export async function GET(request: Request) {
   try {
@@ -42,12 +42,12 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Name is required" }, { status: 400 });
     }
 
-    const companyId = stripHtml(data.companyId).substring(0, 255);
-    const name = stripHtml(data.name).substring(0, 255);
-    const department = stripHtml(data.department || "").substring(0, 255);
-    const phone = stripHtml(data.phone || "").substring(0, 255);
-    const email = stripHtml(data.email || "").substring(0, 255);
-    const note = stripHtml(data.note || "").substring(0, 2000);
+    const companyId = sanitizePlainText(data.companyId).substring(0, 255);
+    const name = sanitizePlainText(data.name).substring(0, 255);
+    const department = sanitizePlainText(data.department || "").substring(0, 255);
+    const phone = sanitizePlainText(data.phone || "").substring(0, 255);
+    const email = sanitizePlainText(data.email || "").substring(0, 255);
+    const note = sanitizePlainText(data.note || "").substring(0, 2000);
 
     await query(
       `INSERT INTO customers (id, companyId, name, department, phone, email, note, createdAt)

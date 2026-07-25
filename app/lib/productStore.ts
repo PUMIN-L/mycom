@@ -32,13 +32,19 @@ export async function addCategory(
     try {
       await query(
         "INSERT INTO product_categories (id, name_th, name_en, name_zh, sortOrder) VALUES (?, ?, ?, ?, ?)",
-        [nextId, category.name_th, category.name_en, category.name_zh, nextId]
+        [
+          nextId, 
+          sanitizeRichText(category.name_th).substring(0, 255), 
+          sanitizeRichText(category.name_en).substring(0, 255), 
+          sanitizeRichText(category.name_zh).substring(0, 255), 
+          nextId
+        ]
       );
       return {
         id: nextId,
-        name_th: category.name_th,
-        name_en: category.name_en,
-        name_zh: category.name_zh,
+        name_th: sanitizeRichText(category.name_th).substring(0, 255),
+        name_en: sanitizeRichText(category.name_en).substring(0, 255),
+        name_zh: sanitizeRichText(category.name_zh).substring(0, 255),
         sortOrder: nextId,
       };
     } catch (error) {
@@ -111,18 +117,21 @@ export async function addProduct(product: ProductData): Promise<ProductData> {
   const isPublished = product.isPublished !== false;
   // Sanitize rich-text descriptions on write so stored HTML is always safe to
   // render with dangerouslySetInnerHTML on public pages.
-  const desc_th = sanitizeRichText(product.desc_th);
-  const desc_en = sanitizeRichText(product.desc_en);
-  const desc_zh = sanitizeRichText(product.desc_zh);
+  const title_th = sanitizeRichText(product.title_th).substring(0, 255);
+  const title_en = sanitizeRichText(product.title_en).substring(0, 255);
+  const title_zh = sanitizeRichText(product.title_zh).substring(0, 255);
+  const desc_th = sanitizeRichText(product.desc_th).substring(0, 10000);
+  const desc_en = sanitizeRichText(product.desc_en).substring(0, 10000);
+  const desc_zh = sanitizeRichText(product.desc_zh).substring(0, 10000);
   await query(
     "INSERT INTO products (id, categoryId, image, title_th, title_en, title_zh, desc_th, desc_en, desc_zh, createdAt, isPublished) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     [
       product.id,
       product.categoryId,
       product.image,
-      product.title_th,
-      product.title_en,
-      product.title_zh,
+      title_th,
+      title_en,
+      title_zh,
       desc_th,
       desc_en,
       desc_zh,
@@ -130,7 +139,7 @@ export async function addProduct(product: ProductData): Promise<ProductData> {
       isPublished,
     ]
   );
-  return { ...product, desc_th, desc_en, desc_zh, isPublished };
+  return { ...product, title_th, title_en, title_zh, desc_th, desc_en, desc_zh, isPublished };
 }
 
 export async function getProduct(id: string): Promise<ProductData | undefined> {
@@ -184,12 +193,12 @@ export async function updateProduct(
 
   if (updates.categoryId !== undefined) set("categoryId", updates.categoryId);
   if (updates.image !== undefined) set("image", updates.image);
-  if (updates.title_th !== undefined) set("title_th", updates.title_th);
-  if (updates.title_en !== undefined) set("title_en", updates.title_en);
-  if (updates.title_zh !== undefined) set("title_zh", updates.title_zh);
-  if (updates.desc_th !== undefined) set("desc_th", sanitizeRichText(updates.desc_th));
-  if (updates.desc_en !== undefined) set("desc_en", sanitizeRichText(updates.desc_en));
-  if (updates.desc_zh !== undefined) set("desc_zh", sanitizeRichText(updates.desc_zh));
+  if (updates.title_th !== undefined) set("title_th", sanitizeRichText(updates.title_th).substring(0, 255));
+  if (updates.title_en !== undefined) set("title_en", sanitizeRichText(updates.title_en).substring(0, 255));
+  if (updates.title_zh !== undefined) set("title_zh", sanitizeRichText(updates.title_zh).substring(0, 255));
+  if (updates.desc_th !== undefined) set("desc_th", sanitizeRichText(updates.desc_th).substring(0, 10000));
+  if (updates.desc_en !== undefined) set("desc_en", sanitizeRichText(updates.desc_en).substring(0, 10000));
+  if (updates.desc_zh !== undefined) set("desc_zh", sanitizeRichText(updates.desc_zh).substring(0, 10000));
   if (updates.isPublished !== undefined) set("isPublished", updates.isPublished !== false);
 
   if (sets.length > 0) {
