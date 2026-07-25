@@ -975,32 +975,7 @@ export default function ShowcaseClient({
           )}
         </div>
 
-        {/* ── Other Contents — only for logged-in users ── */}
-        {!isEditing && isLoggedIn && (
-          <div className="mt-12 bg-white rounded-xl shadow-sm p-8 border border-gray-100">
-            <h2 className="text-2xl font-bold text-gray-900 mb-6">Other Contents</h2>
-            {allContents.filter((c) => c.id !== content.id).length > 0 ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {allContents
-                  .filter((c) => c.id !== content.id)
-                  .map((c: ContentMeta) => (
-                    <Link
-                      key={c.id}
-                      href={`/showcase/${c.id}`}
-                      className="p-5 rounded-xl border-2 border-gray-200 hover:border-orange-400 hover:bg-orange-50 transition"
-                    >
-                      <h3 className="font-bold text-gray-900 truncate">{c.title}</h3>
-                      <p className="text-sm text-gray-500 mt-1">
-                        {new Date(c.createdAt).toLocaleDateString()}
-                      </p>
-                    </Link>
-                  ))}
-              </div>
-            ) : (
-              <p className="text-gray-500">ไม่มี content อื่นแล้ว</p>
-            )}
-          </div>
-        )}
+
 
         {/* ── Footer links ── */}
         {!isEditing && (
