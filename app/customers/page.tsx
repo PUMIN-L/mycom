@@ -335,7 +335,7 @@ function CustomersInner() {
                 </div>
                 <div>
                   <label className="block text-sm font-semibold mb-1">เบอร์โทรศัพท์</label>
-                  <input type="text" className="w-full border rounded-lg p-2" value={editingCompany?.phone || ""} onChange={e => setEditingCompany({...editingCompany, phone: e.target.value})} />
+                  <input type="tel" pattern="[0-9]*" className="w-full border rounded-lg p-2" value={editingCompany?.phone || ""} onChange={e => setEditingCompany({...editingCompany, phone: e.target.value.replace(/\\D/g, "")})} />
                 </div>
                 <div className="md:col-span-2">
                   <label className="block text-sm font-semibold mb-1">หมายเหตุ</label>
@@ -377,7 +377,7 @@ function CustomersInner() {
               </div>
               <div>
                 <label className="block text-sm font-semibold mb-1">เบอร์โทรศัพท์</label>
-                <input type="text" className="w-full border rounded-lg p-2" value={editingCustomer?.phone || ""} onChange={e => setEditingCustomer({...editingCustomer, phone: e.target.value})} />
+                <input type="tel" pattern="[0-9]*" className="w-full border rounded-lg p-2" value={editingCustomer?.phone || ""} onChange={e => setEditingCustomer({...editingCustomer, phone: e.target.value.replace(/\\D/g, "")})} />
               </div>
               <div>
                 <label className="block text-sm font-semibold mb-1">อีเมล</label>
