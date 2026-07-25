@@ -48,6 +48,9 @@ function CustomersInner() {
   const [viewingCompany, setViewingCompany] = useState<Company | null>(null);
   const [viewingCustomer, setViewingCustomer] = useState<Customer | null>(null);
 
+  const [companySubmitAttempted, setCompanySubmitAttempted] = useState(false);
+  const [customerSubmitAttempted, setCustomerSubmitAttempted] = useState(false);
+
   const [searchCustomerName, setSearchCustomerName] = useState("");
   const [searchCompanyName, setSearchCompanyName] = useState("");
   const [searchProvince, setSearchProvince] = useState("");
@@ -227,7 +230,7 @@ function CustomersInner() {
                   <h2 className="text-2xl font-bold text-gray-800">บริษัททั้งหมด <span className="text-gray-400 text-lg font-normal">({filteredCompanies.length})</span></h2>
                 </div>
                 <button
-                  onClick={() => { setEditingCompany({}); setIsCompanyModalOpen(true); }}
+                  onClick={() => { setEditingCompany({}); setCompanySubmitAttempted(false); setIsCompanyModalOpen(true); }}
                   className="bg-gray-900 hover:bg-gray-800 text-white px-5 py-2.5 rounded-xl font-medium transition-all shadow-sm hover:shadow-md flex items-center gap-2"
                 >
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"></path></svg>
@@ -272,7 +275,7 @@ function CustomersInner() {
                   </thead>
                   <tbody className="divide-y divide-gray-50">
                     {filteredCompanies.map(c => (
-                      <tr key={c.id} className="hover:bg-gray-50/50 transition-colors group">
+                      <tr key={c.id} onClick={() => setViewingCompany(c)} className="hover:bg-gray-50/50 transition-colors group cursor-pointer">
                         <td className="px-6 py-5">
                           <p className="font-semibold text-gray-900">{c.name}</p>
                         </td>
@@ -281,9 +284,9 @@ function CustomersInner() {
                           <p className="text-gray-500 text-sm truncate max-w-xs">{c.note || "-"}</p>
                         </td>
                         <td className="px-6 py-5 text-right space-x-3">
-                          <button onClick={() => setViewingCompany(c)} className="text-gray-400 hover:text-gray-800 font-medium text-sm transition-colors">ดูข้อมูล</button>
-                          <button onClick={() => { setEditingCompany(c); setIsCompanyModalOpen(true); }} className="text-blue-500 hover:text-blue-700 font-medium text-sm transition-colors">แก้ไข</button>
-                          <button onClick={() => handleDeleteCompany(c.id)} className="text-red-500 hover:text-red-700 font-medium text-sm transition-colors">ลบ</button>
+                          <button onClick={(e) => { e.stopPropagation(); setViewingCompany(c); }} className="text-gray-400 hover:text-gray-800 font-medium text-sm transition-colors">ดูข้อมูล</button>
+                          <button onClick={(e) => { e.stopPropagation(); setEditingCompany(c); setCompanySubmitAttempted(false); setIsCompanyModalOpen(true); }} className="text-blue-500 hover:text-blue-700 font-medium text-sm transition-colors">แก้ไข</button>
+                          <button onClick={(e) => { e.stopPropagation(); handleDeleteCompany(c.id); }} className="text-red-500 hover:text-red-700 font-medium text-sm transition-colors">ลบ</button>
                         </td>
                       </tr>
                     ))}
@@ -313,7 +316,7 @@ function CustomersInner() {
                   <h2 className="text-2xl font-bold text-gray-800">ลูกค้าทั้งหมด <span className="text-gray-400 text-lg font-normal">({filteredCustomers.length})</span></h2>
                 </div>
                 <button
-                  onClick={() => { setEditingCustomer({}); setIsCustomerModalOpen(true); }}
+                  onClick={() => { setEditingCustomer({}); setCustomerSubmitAttempted(false); setIsCustomerModalOpen(true); }}
                   className="bg-orange-500 hover:bg-orange-600 text-white px-5 py-2.5 rounded-xl font-medium transition-all shadow-sm hover:shadow-md hover:-translate-y-0.5 flex items-center gap-2"
                 >
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"></path></svg>
@@ -345,7 +348,7 @@ function CustomersInner() {
                   </thead>
                   <tbody className="divide-y divide-gray-50">
                     {filteredCustomers.map(c => (
-                      <tr key={c.id} className="hover:bg-gray-50/50 transition-colors group">
+                      <tr key={c.id} onClick={() => setViewingCustomer(c)} className="hover:bg-gray-50/50 transition-colors group cursor-pointer">
                         <td className="px-6 py-5">
                           <div className="flex items-center gap-3">
                             <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-orange-200 to-orange-100 flex items-center justify-center text-orange-700 font-bold">
@@ -361,9 +364,9 @@ function CustomersInner() {
                         <td className="px-6 py-5 text-gray-600">{c.department || "-"}</td>
                         <td className="px-6 py-5 text-gray-600">{c.phone || "-"}</td>
                         <td className="px-6 py-5 text-right space-x-3">
-                          <button onClick={() => setViewingCustomer(c)} className="text-gray-400 hover:text-gray-800 font-medium text-sm transition-colors">ดูข้อมูล</button>
-                          <button onClick={() => { setEditingCustomer(c); setIsCustomerModalOpen(true); }} className="text-blue-500 hover:text-blue-700 font-medium text-sm transition-colors">แก้ไข</button>
-                          <button onClick={() => handleDeleteCustomer(c.id)} className="text-red-500 hover:text-red-700 font-medium text-sm transition-colors">ลบ</button>
+                          <button onClick={(e) => { e.stopPropagation(); setViewingCustomer(c); }} className="text-gray-400 hover:text-gray-800 font-medium text-sm transition-colors">ดูข้อมูล</button>
+                          <button onClick={(e) => { e.stopPropagation(); setEditingCustomer(c); setCustomerSubmitAttempted(false); setIsCustomerModalOpen(true); }} className="text-blue-500 hover:text-blue-700 font-medium text-sm transition-colors">แก้ไข</button>
+                          <button onClick={(e) => { e.stopPropagation(); handleDeleteCustomer(c.id); }} className="text-red-500 hover:text-red-700 font-medium text-sm transition-colors">ลบ</button>
                         </td>
                       </tr>
                     ))}
@@ -520,10 +523,10 @@ function CustomersInner() {
             </div>
             
             <div className="overflow-y-auto flex-1 p-8">
-              <form id="company-form" onSubmit={handleSaveCompany} className="space-y-6">
+              <form id="company-form" onSubmit={handleSaveCompany} onInvalid={() => setCompanySubmitAttempted(true)} className="space-y-6">
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-2">ชื่อบริษัท <span className="text-red-500">*</span></label>
-                  <input required type="text" className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 focus:bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all" placeholder="บริษัท เอบีซี จำกัด" value={editingCompany?.name || ""} onChange={e => setEditingCompany({...editingCompany, name: e.target.value})} />
+                  <input required type="text" className={`w-full bg-gray-50 border rounded-xl px-4 py-3 outline-none transition-all focus:bg-white focus:ring-2 ${companySubmitAttempted ? 'invalid:border-red-500 invalid:ring-red-500 invalid:bg-red-50 border-gray-200 focus:border-transparent focus:ring-blue-500 focus:invalid:border-red-500 focus:invalid:ring-red-500' : 'border-gray-200 focus:border-transparent focus:ring-blue-500'}`} placeholder="บริษัท เอบีซี จำกัด" value={editingCompany?.name || ""} onChange={e => setEditingCompany({...editingCompany, name: e.target.value})} />
                 </div>
                 
                 <div className="bg-gray-50/50 p-6 rounded-2xl border border-gray-100 space-y-4">
@@ -597,14 +600,14 @@ function CustomersInner() {
             </div>
             
             <div className="overflow-y-auto flex-1 p-8">
-              <form id="customer-form" onSubmit={handleSaveCustomer} className="space-y-5">
+              <form id="customer-form" onSubmit={handleSaveCustomer} onInvalid={() => setCustomerSubmitAttempted(true)} className="space-y-5">
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-2">ชื่อ-นามสกุล <span className="text-red-500">*</span></label>
-                  <input required type="text" className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 focus:bg-white focus:ring-2 focus:ring-orange-500 outline-none transition-all" placeholder="สมหญิง ใจดี" value={editingCustomer?.name || ""} onChange={e => setEditingCustomer({...editingCustomer, name: e.target.value})} />
+                  <input required type="text" className={`w-full bg-gray-50 border rounded-xl px-4 py-3 outline-none transition-all focus:bg-white focus:ring-2 ${customerSubmitAttempted ? 'invalid:border-red-500 invalid:ring-red-500 invalid:bg-red-50 border-gray-200 focus:border-transparent focus:ring-orange-500 focus:invalid:border-red-500 focus:invalid:ring-red-500' : 'border-gray-200 focus:border-transparent focus:ring-orange-500'}`} placeholder="สมหญิง ใจดี" value={editingCustomer?.name || ""} onChange={e => setEditingCustomer({...editingCustomer, name: e.target.value})} />
                 </div>
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-2">สังกัดบริษัท <span className="text-red-500">*</span></label>
-                  <select required className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 focus:bg-white focus:ring-2 focus:ring-orange-500 outline-none transition-all appearance-none" style={{ backgroundImage: 'url("data:image/svg+xml,%3csvg xmlns=%27http://www.w3.org/2000/svg%27 fill=%27none%27 viewBox=%270 0 20 20%27%3e%3cpath stroke=%27%236b7280%27 stroke-linecap=%27round%27 stroke-linejoin=%27round%27 stroke-width=%271.5%27 d=%27M6 8l4 4 4-4%27/%3e%3c/svg%3e")', backgroundPosition: 'right 0.5rem center', backgroundRepeat: 'no-repeat', backgroundSize: '1.5em 1.5em', paddingRight: '2.5rem' }} value={editingCustomer?.companyId || ""} onChange={e => setEditingCustomer({...editingCustomer, companyId: e.target.value})}>
+                  <select required className={`w-full bg-gray-50 border rounded-xl px-4 py-3 outline-none transition-all appearance-none focus:bg-white focus:ring-2 ${customerSubmitAttempted ? 'invalid:border-red-500 invalid:ring-red-500 invalid:bg-red-50 border-gray-200 focus:border-transparent focus:ring-orange-500 focus:invalid:border-red-500 focus:invalid:ring-red-500' : 'border-gray-200 focus:border-transparent focus:ring-orange-500'}`} style={{ backgroundImage: 'url("data:image/svg+xml,%3csvg xmlns=%27http://www.w3.org/2000/svg%27 fill=%27none%27 viewBox=%270 0 20 20%27%3e%3cpath stroke=%27%236b7280%27 stroke-linecap=%27round%27 stroke-linejoin=%27round%27 stroke-width=%271.5%27 d=%27M6 8l4 4 4-4%27/%3e%3c/svg%3e")', backgroundPosition: 'right 0.5rem center', backgroundRepeat: 'no-repeat', backgroundSize: '1.5em 1.5em', paddingRight: '2.5rem' }} value={editingCustomer?.companyId || ""} onChange={e => setEditingCustomer({...editingCustomer, companyId: e.target.value})}>
                     <option value="" disabled>-- เลือกบริษัท --</option>
                     {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                   </select>
