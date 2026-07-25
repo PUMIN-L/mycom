@@ -6,6 +6,7 @@ import ConfirmDialog from "../components/ConfirmDialog";
 import Toast from "../components/Toast";
 
 import type { DocumentData, ContentMeta } from "../lib/types";
+import { stripHtml } from "../lib/stripHtml";
 
 interface ShowcaseListClientProps {
   initialContents: ContentMeta[];
@@ -50,7 +51,7 @@ export default function ShowcaseListClient({
   // Filter both lists by the search box (content title; document title + desc).
   const q = search.trim().toLowerCase();
   const filteredContents = q
-    ? contents.filter((c) => c.title.toLowerCase().includes(q))
+    ? contents.filter((c) => stripHtml(c.title).toLowerCase().includes(q))
     : contents;
   const filteredDocuments = q
     ? documents.filter(
@@ -328,9 +329,10 @@ export default function ShowcaseListClient({
                 >
                   <Link href={`/showcase/${item.id}`} className="group p-6 flex-grow flex flex-col justify-between">
                     <div>
-                      <h2 className="text-2xl font-bold text-gray-900 group-hover:text-orange-500 transition duration-300 line-clamp-2 mb-2 font-serif">
-                        {item.title}
-                      </h2>
+                      <h2 
+                        className="text-2xl font-bold text-gray-900 group-hover:text-orange-500 transition duration-300 line-clamp-2 mb-2 font-serif [&_p]:inline [&_p]:m-0"
+                        dangerouslySetInnerHTML={{ __html: item.title }}
+                      />
                     </div>
 
                     <div className="mt-6 pt-4 border-t border-gray-100 flex items-center justify-between text-sm text-gray-500">

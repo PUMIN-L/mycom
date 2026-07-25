@@ -11,6 +11,7 @@ import ConfirmDialog from "../../components/ConfirmDialog";
 import Toast from "../../components/Toast";
 import RichTextEditor from "../../components/RichTextEditor";
 import BlockRangeControl from "../../components/BlockRangeControl";
+import { stripHtml } from "../../lib/stripHtml";
 
 interface ContentBlock {
   id: string;
@@ -595,14 +596,15 @@ export default function ShowcaseClient({
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <div className="flex-1 min-w-0">
               {isEditing ? (
-                <input
-                  type="text"
-                  value={editTitle}
-                  onChange={(e) => setEditTitle(e.target.value)}
-                  className="text-3xl font-bold text-gray-900 border-b-2 border-orange-400 focus:outline-none bg-transparent w-full"
-                />
+                <div className="w-full bg-white border border-gray-200 rounded">
+                  <RichTextEditor
+                    value={editTitle}
+                    onChange={setEditTitle}
+                    placeholder="หัวข้อ..."
+                  />
+                </div>
               ) : (
-                <h1 className="text-4xl font-bold text-gray-900 truncate">{content.title}</h1>
+                <h1 className="text-4xl font-bold text-gray-900 truncate [&_p]:inline [&_p]:m-0" dangerouslySetInnerHTML={{ __html: content.title }} />
               )}
 
               {/* Product badge / selector */}
@@ -616,7 +618,7 @@ export default function ShowcaseClient({
                   >
                     <option value="" disabled>-- กรุณาเลือก Product --</option>
                     {allCategories.map((cat) => (
-                      <optgroup key={cat.id} label={cat.name_en}>
+                      <optgroup key={cat.id} label={stripHtml(cat.name_en)}>
                         {allProducts
                           .filter((p) => p.categoryId === cat.id)
                           .map((p) => {
@@ -625,7 +627,7 @@ export default function ShowcaseClient({
                             const isLinked = !!linkedContent;
                             return (
                               <option key={p.id} value={p.id} disabled={isLinked}>
-                                {p.title_en} {isLinked ? "(มี Content แล้ว)" : ""}
+                                {stripHtml(p.title_en)} {isLinked ? "(มี Content แล้ว)" : ""}
                               </option>
                             );
                           })}
@@ -635,14 +637,14 @@ export default function ShowcaseClient({
                 </div>
               ) : content.productId ? (
                 <div className="mt-2">
-                  <span className="inline-flex items-center gap-1.5 text-xs font-semibold bg-orange-100 text-orange-700 px-3 py-1 rounded-full">
-                    {(() => {
+                  <span className="inline-flex items-center gap-1.5 text-xs font-semibold bg-orange-100 text-orange-700 px-3 py-1 rounded-full [&_p]:inline [&_p]:m-0">
+                    <span dangerouslySetInnerHTML={{ __html: (() => {
                       const p = allProducts.find((p) => p.id === content.productId);
                       if (!p) return content.productId;
                       if (lang === "zh") return p.title_zh || p.title_en || p.title_th;
                       if (lang === "en") return p.title_en || p.title_th;
                       return p.title_th || p.title_en || p.title_zh;
-                    })()}
+                    })() }} />
                   </span>
                 </div>
               ) : null}

@@ -12,6 +12,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { ProductCategory, ProductData } from "../lib/types";
 import { pageList } from "../lib/pagination";
+import RichTextEditor from "./RichTextEditor";
+import { stripHtml } from "../lib/stripHtml";
 
 interface ProductsProps {
   // Promise created on the server and passed down so the data is fetched during
@@ -332,7 +334,7 @@ export default function Products({ dataPromise }: ProductsProps) {
 
   const filteredItems = visibleProducts.filter((item) => {
     const matchesCategory = selectedCategory === -1 || item.categoryId === selectedCategory;
-    const matchesSearch = !searchProduct || getTitle(item).toLowerCase().includes(searchProduct.toLowerCase());
+    const matchesSearch = !searchProduct || stripHtml(getTitle(item)).toLowerCase().includes(searchProduct.toLowerCase());
     return matchesCategory && matchesSearch;
   });
 
@@ -523,41 +525,38 @@ export default function Products({ dataPromise }: ProductsProps) {
                     >
                       <div className="flex items-center justify-between w-full pr-2">
                         {editingCatId === category.id ? (
-                          <div className="flex items-center gap-2 w-full mr-2" onClick={e => e.stopPropagation()}>
-                            <input
-                              type="text"
-                              value={editingCatName}
-                              onChange={(e) => setEditingCatName(e.target.value)}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') handleUpdateCategory(category.id);
-                                if (e.key === 'Escape') setEditingCatId(null);
-                              }}
-                              className="w-full px-2 py-1 text-sm border-b-2 border-orange-400 bg-orange-50/50 focus:outline-none text-gray-800"
-                              autoFocus
-                              disabled={savingCat}
-                            />
-                            <button
-                              onClick={() => handleUpdateCategory(category.id)}
-                              disabled={savingCat || !editingCatName.trim()}
-                              className="p-1 text-green-600 hover:bg-green-50 rounded"
-                            >
-                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                              </svg>
-                            </button>
-                            <button
-                              onClick={() => setEditingCatId(null)}
-                              disabled={savingCat}
-                              className="p-1 text-red-500 hover:bg-red-50 rounded"
-                            >
-                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                              </svg>
-                            </button>
+                          <div className="flex flex-col gap-2 w-full mr-2" onClick={e => e.stopPropagation()}>
+                            <div className="bg-white border rounded">
+                              <RichTextEditor
+                                value={editingCatName}
+                                onChange={setEditingCatName}
+                                placeholder="ชื่อหมวดหมู่..."
+                              />
+                            </div>
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => handleUpdateCategory(category.id)}
+                                disabled={savingCat || !stripHtml(editingCatName).trim()}
+                                className="p-1 text-green-600 hover:bg-green-50 rounded"
+                              >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                </svg>
+                              </button>
+                              <button
+                                onClick={() => setEditingCatId(null)}
+                                disabled={savingCat}
+                                className="p-1 text-red-500 hover:bg-red-50 rounded"
+                              >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                              </button>
+                            </div>
                           </div>
                         ) : (
                           <span className="relative py-2 font-serif text-base md:text-lg tracking-wide inline-block whitespace-nowrap lg:whitespace-normal lg:break-words leading-tight">
-                            {getCatName(category)}
+                            <span dangerouslySetInnerHTML={{ __html: getCatName(category) }} className="[&_p]:inline [&_p]:m-0" />
                             <div
                               className={`absolute bottom-0 left-0 h-[2px] bg-[var(--accent)] transition-all duration-500 ${category.id === selectedCategory ? "w-full" : "w-0 group-hover:w-full opacity-30"
                                 }`}
@@ -669,7 +668,7 @@ export default function Products({ dataPromise }: ProductsProps) {
                     <div className={`relative aspect-[4/3] sm:aspect-square overflow-hidden border-b border-gray-50 ${item.isPublished === false ? "bg-gray-100" : "bg-white"}`}>
                       <Image
                         src={item.image}
-                        alt={getTitle(item)}
+                        alt={stripHtml(getTitle(item))}
                         fill
                         sizes="(max-width: 1024px) 100vw, 30vw"
                         className={`object-contain p-8 transition-transform duration-700 ease-out ${item.isPublished === false ? "grayscale opacity-80 mix-blend-multiply" : "group-hover:scale-105"}`}
@@ -740,16 +739,18 @@ export default function Products({ dataPromise }: ProductsProps) {
                     </div>
 
                     <div className={`flex flex-col flex-1 p-6 relative z-10 ${item.isPublished === false ? "bg-gray-50" : "bg-white"}`}>
-                      <h3 className={`text-lg font-bold text-[var(--text-primary)] mb-1 transition-colors line-clamp-2 ${item.isPublished === false ? "" : "group-hover:text-[var(--accent)]"}`}>
-                        {getTitle(item)}
-                      </h3>
+                      <h3 
+                        className={`text-lg font-bold text-[var(--text-primary)] mb-1 transition-colors line-clamp-2 [&_p]:inline [&_p]:m-0 ${item.isPublished === false ? "" : "group-hover:text-[var(--accent)]"}`}
+                        dangerouslySetInnerHTML={{ __html: getTitle(item) }}
+                      />
                       {/* Show the English name too when viewing another language:
                           Thai B2B buyers search equipment by its English name, so
                           keeping it in the (crawlable) markup helps those searches. */}
                       {lang !== "en" && item.title_en && item.title_en !== getTitle(item) && (
-                        <p className="text-xs font-medium text-gray-400 mb-2 line-clamp-1">
-                          {item.title_en}
-                        </p>
+                        <div 
+                          className="text-xs font-medium text-gray-400 mb-2 line-clamp-1 [&_p]:inline [&_p]:m-0"
+                          dangerouslySetInnerHTML={{ __html: item.title_en }}
+                        />
                       )}
                       <div
                         className="text-gray-500 leading-relaxed font-light text-sm line-clamp-2 mb-6 [&_p]:inline [&_p]:m-0"

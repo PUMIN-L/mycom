@@ -6,6 +6,7 @@ import { useAuth } from "../context/AuthContext";
 import Toast from "../components/Toast";
 import { DOCNO_START, pad2, nextDocNo } from "../lib/quotationNumber";
 import { computeQuoteTotals } from "../lib/quotationTotals";
+import { stripHtml } from "../lib/stripHtml";
 
 // ── ใบเสนอราคา (Quotation builder) ──────────────────────────────────────────
 // Admin-only tool: fill the form on the left, see a live A4 sheet on the right,
@@ -316,7 +317,7 @@ export default function QuotationPage() {
   const applyProduct = (itemId: string, productId: string) => {
     const p = products.find((x) => x.id === productId);
     if (!p) return;
-    setItem(itemId, { name: p.title_th || p.title_en, imageUrl: p.image, imageUploaded: false });
+    setItem(itemId, { name: stripHtml(p.title_th || p.title_en), imageUrl: p.image, imageUploaded: false });
   };
 
   // Upload a custom image for an item (reuses the existing Cloudinary route)
@@ -737,7 +738,7 @@ export default function QuotationPage() {
                 <select className={inputCls} value="" onChange={(e) => applyProduct(it.id, e.target.value)}>
                   <option value="" disabled>📦 เลือกจากสินค้าในระบบ (autofill ชื่อ+รูป)…</option>
                   {products.map((p) => (
-                    <option key={p.id} value={p.id}>{p.title_th || p.title_en}</option>
+                    <option key={p.id} value={p.id}>{stripHtml(p.title_th || p.title_en)}</option>
                   ))}
                 </select>
                 <input className={inputCls} placeholder="ชื่อเครื่อง / รุ่น" value={it.name}

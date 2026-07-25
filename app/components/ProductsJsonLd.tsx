@@ -2,6 +2,7 @@ import { getProductsData } from "../lib/getProductsData";
 import { getAllContentsMeta } from "../lib/contentStore";
 import { SITE_NAME, SITE_URL, SITE_DESCRIPTION } from "../lib/site";
 import { CONTACT_EMAIL, LINE_URL } from "../lib/contact";
+import { stripHtml } from "../lib/stripHtml";
 
 // Absolute URL for structured data (relative /images/... and Cloudinary URLs).
 function absUrl(u: string): string {
@@ -80,10 +81,10 @@ export default async function ProductsJsonLd() {
     name: "Products",
     numberOfItems: products.length,
     itemListElement: products.map((p, i) => {
-      const name = p.title_en || p.title_th || p.title_zh;
-      const alternateName = [p.title_th, p.title_zh].filter(
-        (n): n is string => Boolean(n) && n !== name
-      );
+      const name = stripHtml(p.title_en || p.title_th || p.title_zh || "");
+      const alternateName = [p.title_th, p.title_zh]
+        .map(n => n ? stripHtml(n) : "")
+        .filter((n): n is string => Boolean(n) && n !== name);
       return {
         "@type": "ListItem",
         position: i + 1,
@@ -91,7 +92,7 @@ export default async function ProductsJsonLd() {
           "@type": "Product",
           name, // English-first so EN searches match
           alternateName: alternateName.length ? alternateName : undefined,
-          description: p.desc_en || p.desc_th || p.desc_zh || undefined,
+          description: stripHtml(p.desc_en || p.desc_th || p.desc_zh || "") || undefined,
           image: p.image ? absUrl(p.image) : undefined,
           url: productUrl(p.id),
         },

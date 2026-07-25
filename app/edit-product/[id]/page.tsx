@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "../../context/AuthContext";
 import RichTextEditor from "../../components/RichTextEditor";
 import Toast from "../../components/Toast";
+import { stripHtml } from "../../lib/stripHtml";
 
 interface ProductCategory {
   id: number;
@@ -248,7 +249,7 @@ export default function EditProduct({ params }: { params: Promise<{ id: string }
               >
                 {categories.map((cat) => (
                   <option key={cat.id} value={cat.id}>
-                    {cat.name_th} / {cat.name_en}
+                    {stripHtml(cat.name_th)} / {stripHtml(cat.name_en)}
                   </option>
                 ))}
                 <option value="new" className="font-bold text-orange-600">
@@ -262,31 +263,25 @@ export default function EditProduct({ params }: { params: Promise<{ id: string }
                   <p className="text-sm font-semibold text-orange-800">สร้างหมวดหมู่ใหม่</p>
                   <div>
                     <label className="block text-xs font-medium text-gray-500 mb-1">🇹🇭 ภาษาไทย</label>
-                    <input
-                      type="text"
+                    <RichTextEditor
                       value={newCatTh}
-                      onChange={(e) => setNewCatTh(e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-orange-500"
+                      onChange={setNewCatTh}
                       placeholder="ชื่อหมวดหมู่ภาษาไทย..."
                     />
                   </div>
                   <div>
                     <label className="block text-xs font-medium text-gray-500 mb-1">🇬🇧 English</label>
-                    <input
-                      type="text"
+                    <RichTextEditor
                       value={newCatEn}
-                      onChange={(e) => setNewCatEn(e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-orange-500"
+                      onChange={setNewCatEn}
                       placeholder="Category name in English..."
                     />
                   </div>
                   <div>
                     <label className="block text-xs font-medium text-gray-500 mb-1">🇨🇳 中文</label>
-                    <input
-                      type="text"
+                    <RichTextEditor
                       value={newCatZh}
-                      onChange={(e) => setNewCatZh(e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-orange-500"
+                      onChange={setNewCatZh}
                       placeholder="分类名称..."
                     />
                   </div>
@@ -362,31 +357,25 @@ export default function EditProduct({ params }: { params: Promise<{ id: string }
           <div className="space-y-4">
             <div>
               <label className="block text-xs font-medium text-gray-500 mb-1">🇹🇭 ภาษาไทย</label>
-              <input
-                type="text"
+              <RichTextEditor
                 value={titleTh}
-                onChange={(e) => setTitleTh(e.target.value)}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500"
+                onChange={setTitleTh}
                 placeholder="ชื่อสินค้าภาษาไทย..."
               />
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-500 mb-1">🇬🇧 English</label>
-              <input
-                type="text"
+              <RichTextEditor
                 value={titleEn}
-                onChange={(e) => setTitleEn(e.target.value)}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500"
+                onChange={setTitleEn}
                 placeholder="Product name in English..."
               />
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-500 mb-1">🇨🇳 中文</label>
-              <input
-                type="text"
+              <RichTextEditor
                 value={titleZh}
-                onChange={(e) => setTitleZh(e.target.value)}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500"
+                onChange={setTitleZh}
                 placeholder="产品名称..."
               />
             </div>
