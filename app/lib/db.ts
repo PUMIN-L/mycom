@@ -4,7 +4,7 @@ import type { QueryResult, FieldPacket, RowDataPacket } from "mysql2";
 
 // Bump whenever the schema below changes — a mismatch re-runs the (idempotent)
 // bootstrap; a match lets returning cold instances skip it in one SELECT.
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
 type DbPool = ReturnType<typeof mysql.createPool>;
 
@@ -257,6 +257,39 @@ async function bootstrapSchemaOnce(): Promise<void> {
         // Only "index already exists" is benign here — rethrow anything real.
         if (!isBenignSchemaError(error)) throw error;
       }
+
+      // ── Companies table ──────────────────────────────────────────────────────
+      await connection.query(`
+        CREATE TABLE IF NOT EXISTS companies (
+          id VARCHAR(255) PRIMARY KEY,
+          name VARCHAR(255) NOT NULL,
+          addressNo VARCHAR(255),
+          moo VARCHAR(255),
+          soi VARCHAR(255),
+          road VARCHAR(255),
+          subDistrict VARCHAR(255),
+          district VARCHAR(255),
+          province VARCHAR(255),
+          postalCode VARCHAR(255),
+          phone VARCHAR(255),
+          note TEXT,
+          createdAt VARCHAR(255) NOT NULL
+        )
+      `);
+
+      // ── Customers table ──────────────────────────────────────────────────────
+      await connection.query(`
+        CREATE TABLE IF NOT EXISTS customers (
+          id VARCHAR(255) PRIMARY KEY,
+          companyId VARCHAR(255) NOT NULL,
+          name VARCHAR(255) NOT NULL,
+          department VARCHAR(255),
+          phone VARCHAR(255),
+          email VARCHAR(255),
+          note TEXT,
+          createdAt VARCHAR(255) NOT NULL
+        )
+      `);
 
       // ── Seed default admin user ────────────────────────────────────────────
       // Credentials come from the environment, never from source. If
