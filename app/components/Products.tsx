@@ -329,12 +329,21 @@ export default function Products({ dataPromise }: ProductsProps) {
       if (!hasPublishedProduct) return false;
     }
     if (!searchCategory) return true;
-    return getCatName(cat).toLowerCase().includes(searchCategory.toLowerCase());
+    const s = searchCategory.toLowerCase();
+    return stripHtml(cat.name_th || "").toLowerCase().includes(s) ||
+           stripHtml(cat.name_en || "").toLowerCase().includes(s) ||
+           stripHtml(cat.name_zh || "").toLowerCase().includes(s);
   });
 
   const filteredItems = visibleProducts.filter((item) => {
     const matchesCategory = selectedCategory === -1 || item.categoryId === selectedCategory;
-    const matchesSearch = !searchProduct || stripHtml(getTitle(item)).toLowerCase().includes(searchProduct.toLowerCase());
+    let matchesSearch = true;
+    if (searchProduct) {
+      const s = searchProduct.toLowerCase();
+      matchesSearch = stripHtml(item.title_th || "").toLowerCase().includes(s) ||
+                      stripHtml(item.title_en || "").toLowerCase().includes(s) ||
+                      stripHtml(item.title_zh || "").toLowerCase().includes(s);
+    }
     return matchesCategory && matchesSearch;
   });
 
