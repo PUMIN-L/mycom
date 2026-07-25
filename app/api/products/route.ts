@@ -15,7 +15,7 @@ export const GET = withRoute("Failed to fetch products", async () => {
   const session = await getSession();
   const visible = session
     ? products
-    : products.filter((p) => p.isPublished !== false);
+    : products.filter((p) => p.isPublished !== false && !p.pendingDeleteAt);
   return NextResponse.json(visible);
 });
 

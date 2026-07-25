@@ -21,9 +21,9 @@ export const GET = withRoute(
     if (!product) {
       return NextResponse.json({ error: "Product not found" }, { status: 404 });
     }
-    // Hide unpublished products from anonymous callers (report 404, not 403,
+    // Hide unpublished and pending-delete products from anonymous callers (report 404, not 403,
     // so their existence isn't disclosed).
-    if (product.isPublished === false) {
+    if (product.isPublished === false || !!product.pendingDeleteAt) {
       const session = await getSession();
       if (!session) {
         return NextResponse.json({ error: "Product not found" }, { status: 404 });

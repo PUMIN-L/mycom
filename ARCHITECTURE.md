@@ -447,3 +447,22 @@ Tackle in small, verifiable steps — the test suite is now a safety net for the
    caching for contents, remember to `revalidateTag` on every content write.
 6. **Pre-existing lint debt** (`<a>` instead of `<Link>`, `<img>` instead of
    `next/image`) remains in some components — fix opportunistically.
+
+---
+
+## Recent Architectural Changes (July 2026)
+
+**1. Product Soft-Deletion (`pendingDeleteAt`)**
+- A product's deletion is now a 2-stage process: "Soft Delete" (marks `pendingDeleteAt` timestamp) and "Hard Delete" (removes from DB + Cloudinary).
+- **Important Invariant:** All public endpoints (`getProductsData.ts`, `GET /api/products`, `GET /api/products/[id]`) MUST filter out products where `pendingDeleteAt !== null`. This ensures that items marked for deletion are invisible to the public. If you write new fetch logic for products, you must respect both `isPublished !== false` AND `!pendingDeleteAt`.
+
+**2. Quotation Generation (PDF DoS Protection)**
+- Quotation PDFs are generated entirely on the client side using `jspdf` and `html2canvas-pro`. The server only stores the JSON blob.
+- To prevent database/memory bloat, the `POST /api/quotations` route strictly enforces a payload size limit (`JSON.stringify(body).length <= 200000` bytes). Do not increase this arbitrarily without checking memory impacts.
+
+**3. Product Search Performance**
+- Global search in `app/components/Products.tsx` is performed on the client-side across all products and languages.
+- To prevent UI freezing (especially on low-end devices), the search input is governed by a 300ms debounce (`debouncedSearchProduct`). When modifying this component, maintain the use of the debounced value for any filtering logic.
+
+**4. Testing Updates & Mocks**
+- The `updateProduct` mock in Vitest needs to be carefully constructed because it runs within `withTransaction`. When testing API routes that mutate products, use `mockImplementation` or ensure you return the exact object properties requested (e.g. `pendingDeleteAt`).

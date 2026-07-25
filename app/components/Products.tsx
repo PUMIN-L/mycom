@@ -93,6 +93,14 @@ export default function Products({ dataPromise }: ProductsProps) {
   const [showAllCategories, setShowAllCategories] = useState(false);
   const [searchCategory, setSearchCategory] = useState("");
   const [searchProduct, setSearchProduct] = useState("");
+  const [debouncedSearchProduct, setDebouncedSearchProduct] = useState("");
+
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedSearchProduct(searchProduct);
+    }, 300);
+    return () => clearTimeout(handler);
+  }, [searchProduct]);
 
   const [pendingDeleteCat, setPendingDeleteCat] = useState<number | null>(null);
   const [deletingCat, setDeletingCat] = useState(false);
@@ -358,8 +366,8 @@ export default function Products({ dataPromise }: ProductsProps) {
   const filteredItems = visibleProducts.filter((item) => {
     const matchesCategory = selectedCategory === -1 || item.categoryId === selectedCategory;
     let matchesSearch = true;
-    if (searchProduct) {
-      const s = searchProduct.toLowerCase();
+    if (debouncedSearchProduct) {
+      const s = debouncedSearchProduct.toLowerCase();
       matchesSearch = stripHtml(item.title_th || "").toLowerCase().includes(s) ||
                       stripHtml(item.title_en || "").toLowerCase().includes(s) ||
                       stripHtml(item.title_zh || "").toLowerCase().includes(s);

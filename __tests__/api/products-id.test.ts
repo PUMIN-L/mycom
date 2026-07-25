@@ -158,13 +158,14 @@ describe('Products [id] API Route', () => {
         id: '1',
         title_en: 'Doomed',
         image: 'https://example.com/local.png', // not Cloudinary → no image cleanup
+        pendingDeleteAt: '2026-07-25T00:00:00.000Z',
       } as any);
       vi.mocked(getAllContents).mockResolvedValue([]); // no linked contents
       vi.mocked(deleteProduct).mockResolvedValue(true);
 
       const res = await DELETE(mutatingRequest('DELETE'), ctx('1'));
       expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ success: true });
+      expect(await res.json()).toEqual({ success: true, hardDeleted: true });
       expect(deleteProduct).toHaveBeenCalledWith('1');
       expect(revalidateTag).toHaveBeenCalledWith('products', { expire: 0 });
     });

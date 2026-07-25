@@ -21,7 +21,7 @@ const fetchProductsData = async (): Promise<ProductsData> => {
     // This result is cached and served to the PUBLIC (home grid SSR, JSON-LD,
     // sitemap). Unpublished products must never leak here — the admin UI
     // re-fetches the full list from the authenticated /api/products instead.
-    const publicProducts = products.filter((p) => p.isPublished !== false);
+    const publicProducts = products.filter((p) => p.isPublished !== false && !p.pendingDeleteAt);
     return { categories, products: publicProducts };
   } catch (error) {
     console.error("Error fetching products data:", error);

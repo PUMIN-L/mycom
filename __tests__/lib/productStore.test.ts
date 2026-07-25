@@ -226,6 +226,7 @@ describe('productStore', () => {
         desc_zh: 'desc zh',
         createdAt: '2026-07-17T00:00:00.000Z',
         isPublished: true,
+        pendingDeleteAt: null,
         supplierIds: [],
       });
       expect(vi.mocked(query).mock.calls[0][0]).toContain('WHERE id = ?');
@@ -412,14 +413,21 @@ describe('productStore', () => {
     });
 
     it('updates only supplied columns and returns the re-read product', async () => {
-      vi.mocked(query)
-        .mockResolvedValueOnce([[makeRow()]] as any)
-        .mockResolvedValueOnce([[]] as any)
-        .mockResolvedValueOnce([[makeRow({ title_en: 'Updated', isPublished: 0 })]] as any)
-        .mockResolvedValueOnce([[]] as any);
+      let isAfterUpdate = false;
+      vi.mocked(query).mockImplementation(async (sql: string) => {
+        if (sql.includes('SELECT * FROM products')) {
+          return [[makeRow(isAfterUpdate ? { title_en: 'Updated', isPublished: 0 } : undefined)]] as any;
+        }
+        if (sql.includes('SELECT supplierId')) return [[]] as any;
+        if (sql.includes('INSERT INTO revisions')) return [{ affectedRows: 1 }] as any;
+        return [] as any;
+      });
 
       const conn = { query: vi.fn().mockResolvedValue([{ affectedRows: 1 }] as any) };
-      vi.mocked(withTransaction).mockImplementation(async (fn: any) => fn(conn));
+      vi.mocked(withTransaction).mockImplementation(async (fn: any) => {
+        isAfterUpdate = true;
+        return fn(conn);
+      });
 
       const result = await updateProduct('p1', { title_en: 'Updated', isPublished: false });
 
@@ -434,11 +442,12 @@ describe('productStore', () => {
     });
 
     it('sanitizes description columns in the UPDATE', async () => {
-      vi.mocked(query)
-        .mockResolvedValueOnce([[makeRow()]] as any)
-        .mockResolvedValueOnce([[]] as any)
-        .mockResolvedValueOnce([[makeRow()]] as any)
-        .mockResolvedValueOnce([[]] as any);
+      vi.mocked(query).mockImplementation(async (sql: string) => {
+        if (sql.includes('SELECT * FROM products')) return [[makeRow()]] as any;
+        if (sql.includes('SELECT supplierId')) return [[]] as any;
+        if (sql.includes('INSERT INTO revisions')) return [{ affectedRows: 1 }] as any;
+        return [] as any;
+      });
 
       const conn = { query: vi.fn().mockResolvedValue([{ affectedRows: 1 }] as any) };
       vi.mocked(withTransaction).mockImplementation(async (fn: any) => fn(conn));

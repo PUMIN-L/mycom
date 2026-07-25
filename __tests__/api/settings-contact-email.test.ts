@@ -7,9 +7,10 @@ import { GET, PUT } from '@/app/api/settings/contact-email/route';
 vi.mock('@/app/lib/settingsStore', () => ({
   getContactEmail: vi.fn(),
   setSetting: vi.fn(),
+  getSetting: vi.fn(),
   CONTACT_EMAIL_SETTING: 'contact_email',
 }));
-import { getContactEmail, setSetting } from '@/app/lib/settingsStore';
+import { getContactEmail, setSetting, getSetting } from '@/app/lib/settingsStore';
 
 // Mailer — the change-notification side effect.
 vi.mock('@/app/lib/mailer', () => ({
@@ -54,7 +55,7 @@ describe('Settings contact-email API Route', () => {
       vi.mocked(getContactEmail).mockResolvedValue('current@example.com');
       const res = await GET();
       expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ email: 'current@example.com' });
+      expect(await res.json()).toEqual({ email: 'c***t@example.com' });
     });
   });
 
@@ -69,7 +70,7 @@ describe('Settings contact-email API Route', () => {
 
     it('rejects an invalid email with 400 and does not persist', async () => {
       vi.mocked(getSession).mockResolvedValue(adminSession);
-      const res = await PUT(putRequest({ email: 'not-an-email' }));
+      const res = await PUT(putRequest({ email: 'not-an-email', otp: '123456' }));
       expect(res.status).toBe(400);
       expect((await res.json()).error).toBe('รูปแบบอีเมลไม่ถูกต้อง');
       expect(setSetting).not.toHaveBeenCalled();
@@ -79,11 +80,17 @@ describe('Settings contact-email API Route', () => {
     it('persists a valid change and notifies both old and new addresses', async () => {
       vi.mocked(getSession).mockResolvedValue(adminSession);
       vi.mocked(getContactEmail).mockResolvedValue('old@example.com');
+      vi.mocked(getSetting).mockImplementation(async (key) => {
+        if (key === 'contact_email_otp') return '123456';
+        if (key === 'contact_email_otp_expires') return String(Date.now() + 100000);
+        if (key === 'contact_email_pending') return 'new@example.com';
+        return null;
+      });
 
-      const res = await PUT(putRequest({ email: 'new@example.com' }));
+      const res = await PUT(putRequest({ email: 'new@example.com', otp: '123456' }));
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual({
-        email: 'new@example.com',
+        email: 'n***w@example.com',
         changed: true,
         notified: true,
       });
@@ -100,12 +107,18 @@ describe('Settings contact-email API Route', () => {
       vi.mocked(getSession).mockResolvedValue(adminSession);
       vi.mocked(getContactEmail).mockResolvedValue('old@example.com');
       vi.mocked(sendContactRecipientChangedEmail).mockRejectedValue(new Error('SMTP down'));
+      vi.mocked(getSetting).mockImplementation(async (key) => {
+        if (key === 'contact_email_otp') return '123456';
+        if (key === 'contact_email_otp_expires') return String(Date.now() + 100000);
+        if (key === 'contact_email_pending') return 'new@example.com';
+        return null;
+      });
 
-      const res = await PUT(putRequest({ email: 'new@example.com' }));
+      const res = await PUT(putRequest({ email: 'new@example.com', otp: '123456' }));
       expect(res.status).toBe(200);
       // Save happened; notification is best-effort so `notified` is false.
       expect(await res.json()).toEqual({
-        email: 'new@example.com',
+        email: 'n***w@example.com',
         changed: true,
         notified: false,
       });
@@ -115,11 +128,17 @@ describe('Settings contact-email API Route', () => {
     it('does not notify when the value is unchanged', async () => {
       vi.mocked(getSession).mockResolvedValue(adminSession);
       vi.mocked(getContactEmail).mockResolvedValue('same@example.com');
+      vi.mocked(getSetting).mockImplementation(async (key) => {
+        if (key === 'contact_email_otp') return '123456';
+        if (key === 'contact_email_otp_expires') return String(Date.now() + 100000);
+        if (key === 'contact_email_pending') return 'same@example.com';
+        return null;
+      });
 
-      const res = await PUT(putRequest({ email: 'same@example.com' }));
+      const res = await PUT(putRequest({ email: 'same@example.com', otp: '123456' }));
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual({
-        email: 'same@example.com',
+        email: 's***e@example.com',
         changed: false,
         notified: false,
       });

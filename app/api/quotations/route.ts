@@ -25,6 +25,10 @@ export const POST = withRoute(
       return NextResponse.json({ error: "id is required" }, { status: 400 });
     }
 
+    if (JSON.stringify(body).length > 200000) {
+      return NextResponse.json({ error: "ข้อมูลมีขนาดใหญ่เกินไป (สูงสุด 200KB)" }, { status: 413 });
+    }
+
     const docNo = String(body?.docNo ?? "").slice(0, 255);
 
     // Server backstop for the image-deletion safety invariant: only accept URLs
