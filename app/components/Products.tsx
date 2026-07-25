@@ -268,8 +268,17 @@ export default function Products({ dataPromise }: ProductsProps) {
       if (!res.ok) {
         throw new Error("Failed to delete product");
       }
-      // success
-      setProducts(products.filter(p => p.id !== id));
+      const data = await res.json();
+      
+      if (data.hardDeleted) {
+        setProducts(products.filter(p => p.id !== id));
+        showToast("ลบสินค้าถาวรเรียบร้อยแล้ว", "success");
+      } else {
+        setProducts(products.map(p => 
+          p.id === id ? { ...p, isPublished: false, pendingDeleteAt: data.pendingDeleteAt } : p
+        ));
+        showToast("เปลี่ยนสินค้าเป็นสถานะรอยืนยันการลบแล้ว", "success");
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       showToast("ไม่สามารถลบสินค้าได้: " + message, "error");
@@ -286,7 +295,7 @@ export default function Products({ dataPromise }: ProductsProps) {
       const p = products.find(prod => prod.id === id);
       if (!p) return;
 
-      const updatedPayload = { ...p, isPublished: newStatus };
+      const updatedPayload = { isPublished: newStatus };
       const res = await fetch(`/api/products/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -294,7 +303,8 @@ export default function Products({ dataPromise }: ProductsProps) {
       });
       if (!res.ok) throw new Error("Failed to update status");
 
-      setProducts(products.map(prod => prod.id === id ? { ...prod, isPublished: newStatus } : prod));
+      const updatedItem = await res.json();
+      setProducts(products.map(prod => prod.id === id ? updatedItem : prod));
       showToast(newStatus ? "เผยแพร่สินค้าเรียบร้อยแล้ว" : "ซ่อนสินค้าแล้ว", "success");
     } catch (err) {
       showToast("ไม่สามารถเปลี่ยนสถานะได้", "error");
@@ -324,9 +334,19 @@ export default function Products({ dataPromise }: ProductsProps) {
   const visibleProducts = isLoggedIn ? products : products.filter(p => p.isPublished !== false);
 
   const filteredCategories = allCategories.filter((cat) => {
-    if (!isLoggedIn && cat.id !== -1) {
-      const hasPublishedProduct = visibleProducts.some(p => p.categoryId === cat.id);
-      if (!hasPublishedProduct) return false;
+    if (cat.id !== -1) {
+      const productsInCat = products.filter(p => p.categoryId === cat.id);
+      
+      if (productsInCat.length > 0) {
+        // If it has products, hide it if ALL of them are unpublished (but show for admins)
+        if (!isLoggedIn) {
+          const hasPublishedProduct = productsInCat.some(p => p.isPublished !== false);
+          if (!hasPublishedProduct) return false;
+        }
+      } else {
+        // If it has NO products, hide it for regular users, but show it for admins
+        if (!isLoggedIn) return false;
+      }
     }
     if (!searchCategory) return true;
     const s = searchCategory.toLowerCase();
@@ -410,14 +430,21 @@ export default function Products({ dataPromise }: ProductsProps) {
             loading={deletingCat}
           />
         )}
-        {pendingDeleteProd !== null && (
-          <ConfirmDialog
-            message={"คุณแน่ใจหรือไม่ที่จะลบสินค้านี้?\nระบบจะลบรูปภาพจากเซิร์ฟเวอร์ด้วย"}
-            onConfirm={handleDeleteProduct}
-            onCancel={() => setPendingDeleteProd(null)}
-            loading={deletingProd}
-          />
-        )}
+        {pendingDeleteProd !== null && (() => {
+          const productToDelete = products.find(p => p.id === pendingDeleteProd);
+          const isAlreadyPending = productToDelete?.pendingDeleteAt != null;
+          return (
+            <ConfirmDialog
+              message={isAlreadyPending 
+                ? "คุณแน่ใจหรือไม่ที่จะลบสินค้านี้ถาวร?\n(ระบบจะลบรูปภาพและหน้าเนื้อหาทั้งหมดด้วยแบบกู้คืนไม่ได้)" 
+                : "คุณแน่ใจหรือไม่ที่จะลบสินค้านี้?\n(สินค้าจะเปลี่ยนเป็นสถานะรอยืนยันการลบ และสามารถยกเลิกได้โดยการกดปุ่มรูปตา)"
+              }
+              onConfirm={handleDeleteProduct}
+              onCancel={() => setPendingDeleteProd(null)}
+              loading={deletingProd}
+            />
+          );
+        })()}
         {pendingPublishToggle !== null && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
             <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 sm:p-8 animate-in zoom-in-95 duration-200">
@@ -655,7 +682,11 @@ export default function Products({ dataPromise }: ProductsProps) {
                   placeholder="ค้นหาสินค้า..."
                   value={searchProduct}
                   onChange={(e) => {
-                    setSearchProduct(e.target.value);
+                    const val = e.target.value;
+                    setSearchProduct(val);
+                    if (val.trim() !== "") {
+                      setSelectedCategory(-1);
+                    }
                     setCurrentPage(1);
                     ensureInputVisible(e.target);
                   }}
@@ -683,6 +714,14 @@ export default function Products({ dataPromise }: ProductsProps) {
                         className={`object-contain p-8 transition-transform duration-700 ease-out ${item.isPublished === false ? "grayscale opacity-80 mix-blend-multiply" : "group-hover:scale-105"}`}
                       />
                       <div className={`absolute inset-0 bg-black/0 transition-colors duration-500 ${item.isPublished === false ? "" : "group-hover:bg-black/[0.02]"}`} />
+                      
+                      {item.pendingDeleteAt && (
+                        <div className="absolute top-4 left-4 z-20">
+                          <span className="px-3 py-1 bg-red-500 text-white text-xs font-bold rounded-full shadow-lg shadow-red-500/30">
+                            รอยืนยันการลบ
+                          </span>
+                        </div>
+                      )}
 
                       {/* Admin Actions */}
                       {isLoggedIn && (
@@ -696,8 +735,8 @@ export default function Products({ dataPromise }: ProductsProps) {
                             }}
                             disabled={publishTogglingId === item.id}
                             className={`p-2 rounded-full shadow-lg transition-all disabled:cursor-wait ${item.isPublished !== false ? "bg-white/90 text-green-500 hover:bg-green-500 hover:text-white" : "bg-gray-100 text-gray-400 hover:bg-gray-500 hover:text-white"}`}
-                            aria-label={item.isPublished !== false ? "ซ่อนสินค้า" : "เผยแพร่สินค้า"}
-                            title={item.isPublished !== false ? "ซ่อนสินค้า" : "เผยแพร่สินค้า"}
+                            aria-label={item.isPublished !== false ? "ซ่อนสินค้า" : "เผยแพร่สินค้า / ยกเลิกการลบ"}
+                            title={item.isPublished !== false ? "ซ่อนสินค้า" : "เผยแพร่สินค้า / ยกเลิกการลบ"}
                           >
                             {publishTogglingId === item.id ? (
                               <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
@@ -736,8 +775,8 @@ export default function Products({ dataPromise }: ProductsProps) {
                               setPendingDeleteProd(item.id);
                             }}
                             className="p-2 bg-white/90 text-red-500 rounded-full shadow-lg hover:bg-red-500 hover:text-white transition-all"
-                            aria-label="ลบสินค้า"
-                            title="ลบสินค้า"
+                            aria-label={item.pendingDeleteAt ? "ลบถาวรทันที" : "ลบสินค้า"}
+                            title={item.pendingDeleteAt ? "ลบถาวรทันที" : "ลบสินค้า"}
                           >
                             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />

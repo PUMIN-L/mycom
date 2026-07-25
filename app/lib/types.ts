@@ -28,6 +28,20 @@ export interface ProductData {
   desc_zh: string;
   createdAt: string;
   isPublished?: boolean;
+  pendingDeleteAt?: string | null;
+  supplierIds?: string[];
+}
+
+// ── Suppliers ────────────────────────────────────────────────────────────────
+
+export interface Supplier {
+  id: string;
+  companyName: string;
+  contactName: string;
+  phone: string;
+  note: string;
+  createdAt: string;
+  linkedProducts?: Array<{ id: string; title_th: string; title_en: string }>;
 }
 
 export interface ProductSpec {

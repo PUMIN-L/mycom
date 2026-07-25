@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { revalidateTag } from "next/cache";
 import { getAllProducts, addProduct, ProductData } from "../../lib/productStore";
+import { cleanupExpiredProducts } from "../../lib/productDeleter";
 import { requireAuth, withRoute } from "../../lib/apiHelpers";
 import { getSession } from "../../lib/session";
 

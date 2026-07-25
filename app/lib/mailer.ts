@@ -80,3 +80,18 @@ export async function sendContactEmail(
     text: `ชื่อ: ${msg.name}\nอีเมล: ${msg.email}\nหัวข้อ: ${msg.subject}\n\n${msg.message}`,
   });
 }
+
+/** Send an OTP to `to` to authorize changing the contact email to `newEmail`. */
+export async function sendOtpEmail(
+  to: string,
+  otp: string,
+  newEmail: string
+): Promise<void> {
+  const transport = createTransport();
+  await transport.sendMail({
+    from: { name: "ระบบเว็บไซต์ (Profin Lab Scale)", address: process.env.SMTP_USER ?? "" },
+    to: { name: "", address: to },
+    subject: `[รหัส OTP] ยืนยันการเปลี่ยนอีเมลรับข้อความ`,
+    text: `มีการขอเปลี่ยนอีเมลรับข้อความ (Contact Email) เป็นอีเมลใหม่: ${newEmail}\n\nหากคุณเป็นผู้ดำเนินการ กรุณานำรหัสผ่านชั่วคราวด้านล่างนี้ไปกรอกในหน้าต่างตั้งค่า:\n\nรหัสยืนยัน: ${otp}\n\n(รหัสนี้มีอายุ 15 นาที)\n\nหากคุณไม่ได้เป็นผู้ดำเนินการ กรุณาเพิกเฉยต่ออีเมลฉบับนี้ และตรวจสอบความปลอดภัยของรหัสผ่านผู้ดูแลระบบของคุณทันที`,
+  });
+}

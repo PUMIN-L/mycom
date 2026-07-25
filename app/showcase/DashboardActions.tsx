@@ -62,6 +62,13 @@ export default function DashboardActions() {
       color: "bg-purple-50 text-purple-600 border-purple-200 hover:border-purple-400 hover:shadow-purple-100",
     },
     {
+      href: "/suppliers",
+      title: "จัดการผู้ผลิต (Suppliers)",
+      description: "เพิ่ม แก้ไข และลบรายชื่อซัพพลายเออร์",
+      icon: "🏭",
+      color: "bg-amber-50 text-amber-600 border-amber-200 hover:border-amber-400 hover:shadow-amber-100",
+    },
+    {
       href: "/settings",
       title: "ตั้งค่าระบบ",
       description: "ตั้งค่าเว็บไซต์และข้อมูลผู้ใช้งาน",

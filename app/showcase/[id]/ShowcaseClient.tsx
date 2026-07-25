@@ -95,7 +95,7 @@ function GalleryViewer({
 }) {
   const [localIndex, setLocalIndex] = useState(block.selectedImageIndex || 0);
   const activeIndex = isEditing ? (block.selectedImageIndex || 0) : localIndex;
-  
+
   const setIndex = (idx: number) => {
     if (isEditing) {
       updateBlock(block.id, { selectedImageIndex: idx });
@@ -132,7 +132,7 @@ function GalleryViewer({
           </div>
         )}
       </div>
-      
+
       {/* Thumbnails */}
       {images.length > 0 && (
         <div className="flex flex-wrap gap-3 justify-center w-full p-2">
@@ -142,9 +142,8 @@ function GalleryViewer({
                 src={url}
                 alt={`Thumbnail ${idx}`}
                 onClick={() => setIndex(idx)}
-                className={`w-24 h-24 object-cover rounded-md cursor-pointer border-4 ${
-                  activeIndex === idx ? "border-orange-500 shadow-md" : "border-transparent"
-                } hover:border-orange-300 transition-all`}
+                className={`w-24 h-24 object-cover rounded-md cursor-pointer border-4 ${activeIndex === idx ? "border-orange-500 shadow-md" : "border-transparent"
+                  } hover:border-orange-300 transition-all`}
               />
               {isEditing && (
                 <button
@@ -156,7 +155,7 @@ function GalleryViewer({
                     updateBlock(block.id, { imageUrls: newUrls, selectedImageIndex: newIndex });
                     try {
                       await deleteImageFromCloudinary(url);
-                    } catch(err) {}
+                    } catch (err) { }
                   }}
                   className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition-opacity shadow-sm font-bold"
                 >
@@ -167,7 +166,7 @@ function GalleryViewer({
           ))}
         </div>
       )}
-      
+
       {/* Upload button for gallery */}
       {isEditing && images.length < 10 && (
         <button
@@ -251,6 +250,33 @@ export default function ShowcaseClient({
     setTimeout(() => setToast(null), 3000);
   }
 
+  // Suppliers view modal state
+  const [showSuppliersModal, setShowSuppliersModal] = useState(false);
+  const [productSuppliers, setProductSuppliers] = useState<any[]>([]);
+  const [loadingSuppliers, setLoadingSuppliers] = useState(false);
+
+  useEffect(() => {
+    if (showSuppliersModal && content.productId) {
+      setLoadingSuppliers(true);
+      Promise.all([
+        fetch(`/api/products/${content.productId}`).then((res) => res.json()),
+        fetch('/api/suppliers').then((res) => res.json())
+      ])
+        .then(([product, allSuppliers]) => {
+          if (!product.error && !allSuppliers.error) {
+            const sIds = product.supplierIds || [];
+            const matched = allSuppliers.filter((s: any) => sIds.includes(s.id));
+            setProductSuppliers(matched);
+          }
+          setLoadingSuppliers(false);
+        })
+        .catch((err) => {
+          console.error(err);
+          setLoadingSuppliers(false);
+        });
+    }
+  }, [showSuppliersModal, content.productId]);
+
   // ── Delete whole content ───────────────────────────────────────────────────
   async function handleDeleteContent() {
     setDeletingContent(true);
@@ -284,12 +310,12 @@ export default function ShowcaseClient({
       if (block.type === "image" && block.imageUrl) {
         await deleteImageFromCloudinary(block.imageUrl);
       }
-      
+
       if (block.type === "gallery" && block.imageUrls) {
         for (const url of block.imageUrls) {
           try {
             await deleteImageFromCloudinary(url);
-          } catch(err) { console.error("Error deleting gallery image", err); }
+          } catch (err) { console.error("Error deleting gallery image", err); }
         }
       }
 
@@ -476,7 +502,7 @@ export default function ShowcaseClient({
 
     const currentCount = block.imageUrls?.length || 0;
     const filesArray = Array.from(files);
-    
+
     if (currentCount + filesArray.length > 10) {
       showToast("สามารถเพิ่มรูปได้ไม่เกิน 10 รูป", "error");
       return;
@@ -495,8 +521,8 @@ export default function ShowcaseClient({
       });
 
       const uploadedUrls = await Promise.all(uploadPromises);
-      
-      const newBlocks = editBlocksRef.current.map(b => 
+
+      const newBlocks = editBlocksRef.current.map(b =>
         b.id === galleryUploadingId ? { ...b, imageUrls: [...(b.imageUrls || []), ...uploadedUrls] } : b
       );
       setEditBlocks(newBlocks);
@@ -526,281 +552,289 @@ export default function ShowcaseClient({
 
   return (
     <>
-    <Navbar />
-    <div className="min-h-screen bg-white pt-25">
-      {/* ── Toast ── */}
-      {toast && <Toast message={toast.message} type={toast.type} />}
+      <Navbar />
+      <div className="min-h-screen bg-white pt-25">
+        {/* ── Toast ── */}
+        {toast && <Toast message={toast.message} type={toast.type} />}
 
-      {/* ── Confirm delete content ── */}
-      {showDeleteContentConfirm && (
-        <ConfirmDialog
-          message={`ต้องการลบ "${content.title}" ใช่ไหม? รูปภาพทั้งหมดใน Content นี้จะถูกลบออกจาก Cloudinary ด้วย`}
-          onConfirm={handleDeleteContent}
-          onCancel={() => setShowDeleteContentConfirm(false)}
-          loading={deletingContent}
-        />
-      )}
-
-      {/* ── Confirm delete block ── */}
-      {pendingDeleteBlock && (
-        <ConfirmDialog
-          message={
-            pendingDeleteBlock.type === "image"
-              ? "ต้องการลบรูปภาพนี้ใช่ไหม? รูปจะถูกลบออกจาก Cloudinary ด้วย"
-              : "ต้องการลบข้อความนี้ใช่ไหม?"
-          }
-          onConfirm={() => handleDeleteBlock(pendingDeleteBlock)}
-          onCancel={() => setPendingDeleteBlock(null)}
-          loading={isDeletingBlock}
-        />
-      )}
-
-      {/* Hidden file input for image replacement */}
-      {/* File input: replace existing image */}
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept="image/*"
-        className="hidden"
-        onChange={(e) => {
-          const file = e.target.files?.[0];
-          if (file && replacingBlockId) {
-            handleReplaceImage(replacingBlockId, file);
-          }
-          e.target.value = "";
-        }}
-      />
-      <input
-        ref={addImageFileRef}
-        type="file"
-        accept="image/*"
-        className="hidden"
-        onChange={(e) => {
-          const file = e.target.files?.[0];
-          if (file) handleAddImage(file);
-          e.target.value = "";
-        }}
-      />
-      <input
-        ref={galleryInputRef}
-        type="file"
-        accept="image/*"
-        multiple
-        className="hidden"
-        onChange={handleGalleryUpload}
-      />
-
-      {/* ── Header ── */}
-      <div className="bg-white">
-        <div className="max-w-4xl mx-auto px-4 py-12">
-          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-            <div className="flex-1 min-w-0">
-              {isEditing ? (
-                <div className="w-full bg-white border border-gray-200 rounded">
-                  <RichTextEditor
-                    value={editTitle}
-                    onChange={setEditTitle}
-                    placeholder="หัวข้อ..."
-                  />
-                </div>
-              ) : (
-                <h1 className="text-4xl font-bold text-gray-900 truncate [&_p]:inline [&_p]:m-0" dangerouslySetInnerHTML={{ __html: content.title }} />
-              )}
-
-              {/* Product badge / selector */}
-              {isEditing ? (
-                <div className="mt-3">
-                  <label className="block text-xs font-semibold text-gray-500 mb-1">ผูกกับ Product (จำเป็น)</label>
-                  <select
-                    value={editProductId}
-                    onChange={(e) => setEditProductId(e.target.value)}
-                    className="text-sm border border-gray-300 rounded-lg px-3 py-1.5 focus:outline-none focus:border-orange-400 bg-white"
-                  >
-                    <option value="" disabled>-- กรุณาเลือก Product --</option>
-                    {allCategories.map((cat) => (
-                      <optgroup key={cat.id} label={stripHtml(cat.name_en)}>
-                        {allProducts
-                          .filter((p) => p.categoryId === cat.id)
-                          .map((p) => {
-                            // Find if this product is already linked to another content
-                            const linkedContent = allContents.find((c) => c.productId === p.id && c.id !== content?.id);
-                            const isLinked = !!linkedContent;
-                            return (
-                              <option key={p.id} value={p.id} disabled={isLinked}>
-                                {stripHtml(p.title_en)} {isLinked ? "(มี Content แล้ว)" : ""}
-                              </option>
-                            );
-                          })}
-                      </optgroup>
-                    ))}
-                  </select>
-                </div>
-              ) : content.productId ? (
-                <div className="mt-2">
-                  <span className="inline-flex items-center gap-1.5 text-xs font-semibold bg-orange-100 text-orange-700 px-3 py-1 rounded-full [&_p]:inline [&_p]:m-0">
-                    <span dangerouslySetInnerHTML={{ __html: (() => {
-                      const p = allProducts.find((p) => p.id === content.productId);
-                      if (!p) return content.productId;
-                      if (lang === "zh") return p.title_zh || p.title_en || p.title_th;
-                      if (lang === "en") return p.title_en || p.title_th;
-                      return p.title_th || p.title_en || p.title_zh;
-                    })() }} />
-                  </span>
-                </div>
-              ) : null}
-            </div>
-
-            {/* Action buttons — only logged-in users */}
-            <div className="flex items-center gap-2 flex-shrink-0">
-              {isLoggedIn && (
-                isEditing ? (
-                  <>
-                    <button
-                      onClick={() => {
-                        setIsEditing(false);
-                        setEditTitle(content.title);
-                        setEditBlocks(content.blocks);
-                        setEditProductId(content.productId ?? "");
-                      }}
-                      className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 font-semibold hover:bg-gray-50 transition text-sm"
-                    >
-                      ยกเลิก
-                    </button>
-                    <button
-                      onClick={handleSaveEdit}
-                      disabled={saving}
-                      className="px-4 py-2 rounded-lg bg-green-500 text-white font-semibold hover:bg-green-600 transition text-sm disabled:opacity-60 flex items-center gap-2"
-                    >
-                      {saving && (
-                        <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                        </svg>
-                      )}
-                      {saving ? "กำลังบันทึก..." : "💾 บันทึก"}
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <button
-                      onClick={() => setIsEditing(true)}
-                      className="px-4 py-2 rounded-lg border border-orange-400 text-orange-600 font-semibold hover:bg-orange-50 transition text-sm"
-                    >
-                      ✏️ แก้ไข
-                    </button>
-                    <button
-                      onClick={() => setShowDeleteContentConfirm(true)}
-                      disabled={deletingContent}
-                      className="px-4 py-2 rounded-lg bg-red-500 text-white font-semibold hover:bg-red-600 transition text-sm disabled:opacity-60"
-                    >
-                      🗑️ ลบ Content
-                    </button>
-                    <Link
-                      href="/create-content"
-                      className="px-4 py-2 rounded-lg bg-orange-500 text-white font-semibold hover:bg-orange-600 transition text-sm"
-                    >
-                      + สร้างใหม่
-                    </Link>
-                  </>
-                )
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-
-
-      {/* ── Content Blocks ── */}
-      <div className="max-w-4xl mx-auto px-4 py-10">
-        {isEditing && (
-          <div className="mb-4 space-y-3">
-            <div className="p-3 bg-orange-50 border border-orange-200 rounded-lg text-sm text-orange-700 font-medium">
-              🖊️ โหมดแก้ไข — แก้ไขข้อความในแต่ละบล็อกได้โดยตรง กดปุ่ม ✕ เพื่อลบบล็อก
-            </div>
-            {/* Add block toolbar */}
-            <div className="flex gap-3">
-              <button
-                onClick={addTextBlock}
-                className="flex items-center gap-2 px-4 py-2 rounded-lg border-2 border-dashed border-gray-300 text-gray-600 hover:border-orange-400 hover:text-orange-600 hover:bg-orange-50 transition text-sm font-semibold"
-              >
-                📝 เพิ่มบล็อกข้อความ
-              </button>
-              <button
-                onClick={() => addImageFileRef.current?.click()}
-                disabled={addingImage}
-                className="flex items-center gap-2 px-4 py-2 rounded-lg border-2 border-dashed border-gray-300 text-gray-600 hover:border-orange-400 hover:text-orange-600 hover:bg-orange-50 transition text-sm font-semibold disabled:opacity-60"
-              >
-                {addingImage ? (
-                  <>
-                    <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                    </svg>
-                    กำลังอัปโหลด...
-                  </>
-                ) : (
-                  <>🖼️ เพิ่มรูปภาพ</>
-                )}
-              </button>
-              <button
-                onClick={addTextImageBlock}
-                className="flex items-center gap-2 px-4 py-2 rounded-lg border-2 border-dashed border-gray-300 text-gray-600 hover:border-orange-400 hover:text-orange-600 hover:bg-orange-50 transition text-sm font-semibold"
-              >
-                📝🖼️ เพิ่มข้อความและรูปภาพ
-              </button>
-              <button
-                onClick={addGalleryBlock}
-                className="flex items-center gap-2 px-4 py-2 rounded-lg border-2 border-dashed border-gray-300 text-gray-600 hover:border-orange-400 hover:text-orange-600 hover:bg-orange-50 transition text-sm font-semibold"
-              >
-                🖼️🖼️ เพิ่มแกลลอรี่ (Gallery)
-              </button>
-            </div>
-          </div>
+        {/* ── Confirm delete content ── */}
+        {showDeleteContentConfirm && (
+          <ConfirmDialog
+            message={`ต้องการลบ "${content.title}" ใช่ไหม? รูปภาพทั้งหมดใน Content นี้จะถูกลบออกจาก Cloudinary ด้วย`}
+            onConfirm={handleDeleteContent}
+            onCancel={() => setShowDeleteContentConfirm(false)}
+            loading={deletingContent}
+          />
         )}
 
-        <div>
-          {displayBlocks.map((block) => (
-            <div
-              key={block.id}
-              id={`block-${block.id}`}
-              // Each block owns its bottom gap (spacingBelow) — applied in EDIT
-              // mode too so dragging the "ระยะห่างล่าง" slider updates the gap
-              // live. 16px default matches the old space-y-4 look for legacy blocks.
-              style={{ marginBottom: block.spacingBelow ?? 16 }}
-              className={`relative group transition-all duration-300 ${
-                isEditing ? "bg-white rounded-xl p-6 border-2 border-dashed border-gray-200 hover:border-orange-400" : "py-2"
-              }`}
-            >
-              {/* Delete block button (shown in edit mode or on hover when editing) */}
-              {isEditing && (
-                <button
-                  onClick={() => setPendingDeleteBlock(block)}
-                  title="ลบบล็อกนี้"
-                  className="absolute -top-3 -right-3 z-10 w-8 h-8 rounded-full bg-red-100 text-red-500 hover:bg-red-500 hover:text-white transition flex items-center justify-center text-sm font-bold shadow-md"
-                >
-                  ✕
-                </button>
-              )}
+        {/* ── Confirm delete block ── */}
+        {pendingDeleteBlock && (
+          <ConfirmDialog
+            message={
+              pendingDeleteBlock.type === "image"
+                ? "ต้องการลบรูปภาพนี้ใช่ไหม? รูปจะถูกลบออกจาก Cloudinary ด้วย"
+                : "ต้องการลบข้อความนี้ใช่ไหม?"
+            }
+            onConfirm={() => handleDeleteBlock(pendingDeleteBlock)}
+            onCancel={() => setPendingDeleteBlock(null)}
+            loading={isDeletingBlock}
+          />
+        )}
 
-              {block.type === "gallery" ? (
-                <GalleryViewer 
-                  block={block} 
-                  isEditing={isEditing} 
-                  updateBlock={updateBlock}
-                  uploadingBlockId={uploadingBlockId}
-                  setGalleryUploadingId={setGalleryUploadingId}
-                  galleryInputRef={galleryInputRef}
-                />
-              ) : block.type === "text" ? (
-                isEditing ? (
-                  <div className="flex flex-col gap-4">
+        {/* Hidden file input for image replacement */}
+        {/* File input: replace existing image */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file && replacingBlockId) {
+              handleReplaceImage(replacingBlockId, file);
+            }
+            e.target.value = "";
+          }}
+        />
+        <input
+          ref={addImageFileRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) handleAddImage(file);
+            e.target.value = "";
+          }}
+        />
+        <input
+          ref={galleryInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          className="hidden"
+          onChange={handleGalleryUpload}
+        />
+
+        {/* ── Header ── */}
+        <div className="bg-white">
+          <div className="max-w-4xl mx-auto px-4 py-12">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+              <div className="flex-1 min-w-0">
+                {isEditing ? (
+                  <div className="w-full bg-white border border-gray-200 rounded">
                     <RichTextEditor
-                      value={block.content ?? ""}
-                      onChange={(content) => updateBlock(block.id, { content })}
-                      placeholder="พิมพ์ข้อความของคุณที่นี่..."
+                      value={editTitle}
+                      onChange={setEditTitle}
+                      placeholder="หัวข้อ..."
                     />
                   </div>
                 ) : (
+                  <h1 className="text-4xl font-bold text-gray-900 truncate [&_p]:inline [&_p]:m-0" dangerouslySetInnerHTML={{ __html: content.title }} />
+                )}
+
+                {/* Product badge / selector */}
+                {isEditing ? (
+                  <div className="mt-3">
+                    <label className="block text-xs font-semibold text-gray-500 mb-1">ผูกกับ Product (จำเป็น)</label>
+                    <select
+                      value={editProductId}
+                      onChange={(e) => setEditProductId(e.target.value)}
+                      className="text-sm border border-gray-300 rounded-lg px-3 py-1.5 focus:outline-none focus:border-orange-400 bg-white"
+                    >
+                      <option value="" disabled>-- กรุณาเลือก Product --</option>
+                      {allCategories.map((cat) => (
+                        <optgroup key={cat.id} label={stripHtml(cat.name_en)}>
+                          {allProducts
+                            .filter((p) => p.categoryId === cat.id)
+                            .map((p) => {
+                              // Find if this product is already linked to another content
+                              const linkedContent = allContents.find((c) => c.productId === p.id && c.id !== content?.id);
+                              const isLinked = !!linkedContent;
+                              return (
+                                <option key={p.id} value={p.id} disabled={isLinked}>
+                                  {stripHtml(p.title_en)} {isLinked ? "(มี Content แล้ว)" : ""}
+                                </option>
+                              );
+                            })}
+                        </optgroup>
+                      ))}
+                    </select>
+                  </div>
+                ) : content.productId ? (
+                  <div className="mt-2">
+                    <span className="inline-flex items-center gap-1.5 text-xs font-semibold bg-orange-100 text-orange-700 px-3 py-1 rounded-full [&_p]:inline [&_p]:m-0">
+                      <span dangerouslySetInnerHTML={{
+                        __html: (() => {
+                          const p = allProducts.find((p) => p.id === content.productId);
+                          if (!p) return content.productId;
+                          if (lang === "zh") return p.title_zh || p.title_en || p.title_th;
+                          if (lang === "en") return p.title_en || p.title_th;
+                          return p.title_th || p.title_en || p.title_zh;
+                        })()
+                      }} />
+                    </span>
+                  </div>
+                ) : null}
+              </div>
+
+              {/* Action buttons — only logged-in users */}
+              <div className="flex items-center gap-2 flex-shrink-0">
+                {isLoggedIn && (
+                  isEditing ? (
+                    <>
+                      <button
+                        onClick={() => {
+                          setIsEditing(false);
+                          setEditTitle(content.title);
+                          setEditBlocks(content.blocks);
+                          setEditProductId(content.productId ?? "");
+                        }}
+                        className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 font-semibold hover:bg-gray-50 transition text-sm"
+                      >
+                        ยกเลิก
+                      </button>
+                      <button
+                        onClick={handleSaveEdit}
+                        disabled={saving}
+                        className="px-4 py-2 rounded-lg bg-green-500 text-white font-semibold hover:bg-green-600 transition text-sm disabled:opacity-60 flex items-center gap-2"
+                      >
+                        {saving && (
+                          <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                          </svg>
+                        )}
+                        {saving ? "กำลังบันทึก..." : "💾 บันทึก"}
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      {content.productId && (
+                        <button
+                          onClick={() => setShowSuppliersModal(true)}
+                          className="px-4 py-2 rounded-lg border border-blue-400 text-blue-600 font-semibold hover:bg-blue-50 transition text-sm flex items-center gap-1.5"
+                          title="ดูรายชื่อซัพพลายเออร์ของสินค้านี้"
+                        >
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+                          </svg>
+                          ดูซัพพลายเออร์
+                        </button>
+                      )}
+                      <button
+                        onClick={() => setIsEditing(true)}
+                        className="px-4 py-2 rounded-lg border border-orange-400 text-orange-600 font-semibold hover:bg-orange-50 transition text-sm"
+                      >
+                        ✏️ แก้ไข
+                      </button>
+                      <button
+                        onClick={() => setShowDeleteContentConfirm(true)}
+                        disabled={deletingContent}
+                        className="px-4 py-2 rounded-lg bg-red-500 text-white font-semibold hover:bg-red-600 transition text-sm disabled:opacity-60"
+                      >
+                        🗑️ ลบ Content
+                      </button>
+
+                    </>
+                  )
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+
+
+        {/* ── Content Blocks ── */}
+        <div className="max-w-4xl mx-auto px-4 py-10">
+          {isEditing && (
+            <div className="mb-4 space-y-3">
+              <div className="p-3 bg-orange-50 border border-orange-200 rounded-lg text-sm text-orange-700 font-medium">
+                🖊️ โหมดแก้ไข — แก้ไขข้อความในแต่ละบล็อกได้โดยตรง กดปุ่ม ✕ เพื่อลบบล็อก
+              </div>
+              {/* Add block toolbar */}
+              <div className="flex gap-3">
+                <button
+                  onClick={addTextBlock}
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg border-2 border-dashed border-gray-300 text-gray-600 hover:border-orange-400 hover:text-orange-600 hover:bg-orange-50 transition text-sm font-semibold"
+                >
+                  📝 เพิ่มบล็อกข้อความ
+                </button>
+                <button
+                  onClick={() => addImageFileRef.current?.click()}
+                  disabled={addingImage}
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg border-2 border-dashed border-gray-300 text-gray-600 hover:border-orange-400 hover:text-orange-600 hover:bg-orange-50 transition text-sm font-semibold disabled:opacity-60"
+                >
+                  {addingImage ? (
+                    <>
+                      <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                      </svg>
+                      กำลังอัปโหลด...
+                    </>
+                  ) : (
+                    <>🖼️ เพิ่มรูปภาพ</>
+                  )}
+                </button>
+                <button
+                  onClick={addTextImageBlock}
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg border-2 border-dashed border-gray-300 text-gray-600 hover:border-orange-400 hover:text-orange-600 hover:bg-orange-50 transition text-sm font-semibold"
+                >
+                  📝🖼️ เพิ่มข้อความและรูปภาพ
+                </button>
+                <button
+                  onClick={addGalleryBlock}
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg border-2 border-dashed border-gray-300 text-gray-600 hover:border-orange-400 hover:text-orange-600 hover:bg-orange-50 transition text-sm font-semibold"
+                >
+                  🖼️🖼️ เพิ่มแกลลอรี่ (Gallery)
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div>
+            {displayBlocks.map((block) => (
+              <div
+                key={block.id}
+                id={`block-${block.id}`}
+                // Each block owns its bottom gap (spacingBelow) — applied in EDIT
+                // mode too so dragging the "ระยะห่างล่าง" slider updates the gap
+                // live. 16px default matches the old space-y-4 look for legacy blocks.
+                style={{ marginBottom: block.spacingBelow ?? 16 }}
+                className={`relative group transition-all duration-300 ${isEditing ? "bg-white rounded-xl p-6 border-2 border-dashed border-gray-200 hover:border-orange-400" : "py-2"
+                  }`}
+              >
+                {/* Delete block button (shown in edit mode or on hover when editing) */}
+                {isEditing && (
+                  <button
+                    onClick={() => setPendingDeleteBlock(block)}
+                    title="ลบบล็อกนี้"
+                    className="absolute -top-3 -right-3 z-10 w-8 h-8 rounded-full bg-red-100 text-red-500 hover:bg-red-500 hover:text-white transition flex items-center justify-center text-sm font-bold shadow-md"
+                  >
+                    ✕
+                  </button>
+                )}
+
+                {block.type === "gallery" ? (
+                  <GalleryViewer
+                    block={block}
+                    isEditing={isEditing}
+                    updateBlock={updateBlock}
+                    uploadingBlockId={uploadingBlockId}
+                    setGalleryUploadingId={setGalleryUploadingId}
+                    galleryInputRef={galleryInputRef}
+                  />
+                ) : block.type === "text" ? (
+                  isEditing ? (
+                    <div className="flex flex-col gap-4">
+                      <RichTextEditor
+                        value={block.content ?? ""}
+                        onChange={(content) => updateBlock(block.id, { content })}
+                        placeholder="พิมพ์ข้อความของคุณที่นี่..."
+                      />
+                    </div>
+                  ) : (
                     <div
                       className="w-full break-words"
                       style={{
@@ -813,193 +847,267 @@ export default function ShowcaseClient({
                       dangerouslySetInnerHTML={{ __html: block.content ?? "" }}
                     />
                   )
-              ) : block.type === "image" ? (
-                <div className="flex flex-col items-center gap-3">
-                  <div className="relative w-full flex justify-center">
-                    {uploadingBlockId === block.id ? (
-                      <div className="flex items-center justify-center w-64 h-40 bg-gray-100 rounded-lg">
-                        <svg className="animate-spin h-8 w-8 text-orange-500" viewBox="0 0 24 24" fill="none">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                        </svg>
-                      </div>
-                    ) : (
+                ) : block.type === "image" ? (
+                  <div className="flex flex-col items-center gap-3">
+                    <div className="relative w-full flex justify-center">
+                      {uploadingBlockId === block.id ? (
+                        <div className="flex items-center justify-center w-64 h-40 bg-gray-100 rounded-lg">
+                          <svg className="animate-spin h-8 w-8 text-orange-500" viewBox="0 0 24 24" fill="none">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                          </svg>
+                        </div>
+                      ) : (
                         <img
                           src={block.imageUrl}
                           alt="Content"
                           className="h-auto"
                           style={{ width: `${block.imageWidth ?? 100}%` }}
                         />
-                    )}
-                  </div>
-                  {isEditing && (
-                    <div className="flex flex-wrap gap-2 justify-center items-center">
-                      <button
-                        onClick={() => {
-                          setReplacingBlockId(block.id);
-                          fileInputRef.current?.click();
-                        }}
-                        className="px-4 py-1.5 text-sm rounded-lg bg-orange-100 text-orange-600 hover:bg-orange-200 transition font-semibold border border-orange-300"
-                      >
-                        🔄 เปลี่ยนรูป
-                      </button>
-                      <BlockRangeControl
-                        label="🔍 ขนาดรูป"
-                        value={block.imageWidth ?? 100}
-                        min={25}
-                        max={100}
-                        step={5}
-                        unit="%"
-                        onChange={(v) => updateBlock(block.id, { imageWidth: v })}
-                      />
+                      )}
                     </div>
-                  )}
-                </div>
-              ) : (
-                <div className={`flex flex-col-reverse md:flex-row gap-8 items-center ${block.imagePosition === 'left' ? 'md:flex-row-reverse' : ''}`}>
-                  <div className="flex-1 w-full min-w-0">
-                    {isEditing ? (
-                      <div className="flex flex-col gap-4">
-                        <RichTextEditor
-                          value={block.content ?? ""}
-                          onChange={(content) => updateBlock(block.id, { content })}
-                          placeholder="พิมพ์ข้อความของคุณที่นี่..."
-                        />
-                      </div>
-                    ) : (
-                      <div
-                        className="w-full break-words"
-                        style={{
-                          fontSize: `${block.fontSize}px`,
-                          fontWeight: block.fontWeight as any,
-                          textAlign: block.textAlign as any,
-                          color: block.textColor,
-                          lineHeight: "1.6",
-                        }}
-                        dangerouslySetInnerHTML={{ __html: block.content ?? "" }}
-                      />
-                    )}
-                  </div>
-                  <div className="flex-1 w-full min-w-0 flex flex-col items-center">
-                    <div className="relative w-full">
-                      {uploadingBlockId === block.id ? (
-                        <div className="flex items-center justify-center w-full h-64 bg-gray-100 rounded-lg">
-                          <span className="text-sm text-gray-500">กำลังอัปโหลด...</span>
-                        </div>
-                      ) : block.imageUrl ? (
-                        <img
-                          src={block.imageUrl}
-                          alt="Content"
-                          className="h-auto object-cover mx-auto"
-                          style={{ width: `${block.imageWidth ?? 100}%` }}
-                        />
-                      ) : isEditing ? (
+                    {isEditing && (
+                      <div className="flex flex-wrap gap-2 justify-center items-center">
                         <button
                           onClick={() => {
                             setReplacingBlockId(block.id);
                             fileInputRef.current?.click();
                           }}
-                          className="flex flex-col items-center justify-center w-full h-64 bg-gray-50 border-2 border-dashed border-gray-300 hover:border-orange-400 hover:text-orange-500 text-gray-400 transition cursor-pointer"
+                          className="px-4 py-1.5 text-sm rounded-lg bg-orange-100 text-orange-600 hover:bg-orange-200 transition font-semibold border border-orange-300"
                         >
-                          <span className="text-sm font-semibold">+ เพิ่มรูปภาพ</span>
+                          🔄 เปลี่ยนรูป
                         </button>
-                      ) : (
-                        <div className="flex items-center justify-center w-full h-64 bg-gray-50 border-2 border-dashed border-gray-300">
-                          <span className="text-sm text-gray-400">ยังไม่มีรูปภาพ</span>
+                        <BlockRangeControl
+                          label="🔍 ขนาดรูป"
+                          value={block.imageWidth ?? 100}
+                          min={25}
+                          max={100}
+                          step={5}
+                          unit="%"
+                          onChange={(v) => updateBlock(block.id, { imageWidth: v })}
+                        />
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className={`flex flex-col-reverse md:flex-row gap-8 items-center ${block.imagePosition === 'left' ? 'md:flex-row-reverse' : ''}`}>
+                    <div className="flex-1 w-full min-w-0">
+                      {isEditing ? (
+                        <div className="flex flex-col gap-4">
+                          <RichTextEditor
+                            value={block.content ?? ""}
+                            onChange={(content) => updateBlock(block.id, { content })}
+                            placeholder="พิมพ์ข้อความของคุณที่นี่..."
+                          />
                         </div>
+                      ) : (
+                        <div
+                          className="w-full break-words"
+                          style={{
+                            fontSize: `${block.fontSize}px`,
+                            fontWeight: block.fontWeight as any,
+                            textAlign: block.textAlign as any,
+                            color: block.textColor,
+                            lineHeight: "1.6",
+                          }}
+                          dangerouslySetInnerHTML={{ __html: block.content ?? "" }}
+                        />
                       )}
                     </div>
-                    {isEditing && (
-                      <div className="mt-4 flex flex-wrap gap-2 w-full justify-center items-center">
-                        {block.imageUrl && (
+                    <div className="flex-1 w-full min-w-0 flex flex-col items-center">
+                      <div className="relative w-full">
+                        {uploadingBlockId === block.id ? (
+                          <div className="flex items-center justify-center w-full h-64 bg-gray-100 rounded-lg">
+                            <span className="text-sm text-gray-500">กำลังอัปโหลด...</span>
+                          </div>
+                        ) : block.imageUrl ? (
+                          <img
+                            src={block.imageUrl}
+                            alt="Content"
+                            className="h-auto object-cover mx-auto"
+                            style={{ width: `${block.imageWidth ?? 100}%` }}
+                          />
+                        ) : isEditing ? (
                           <button
                             onClick={() => {
                               setReplacingBlockId(block.id);
                               fileInputRef.current?.click();
                             }}
-                            className="px-4 py-1.5 text-sm rounded-lg bg-orange-100 text-orange-600 hover:bg-orange-200 transition font-semibold border border-orange-300"
+                            className="flex flex-col items-center justify-center w-full h-64 bg-gray-50 border-2 border-dashed border-gray-300 hover:border-orange-400 hover:text-orange-500 text-gray-400 transition cursor-pointer"
                           >
-                            🔄 เปลี่ยนรูป
+                            <span className="text-sm font-semibold">+ เพิ่มรูปภาพ</span>
                           </button>
-                        )}
-                        <select
-                          value={block.imagePosition || "right"}
-                          onChange={(e) =>
-                            updateBlock(block.id, {
-                              imagePosition: e.target.value as "left" | "right",
-                            })
-                          }
-                          className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-orange-400"
-                        >
-                          <option value="right">รูปอยู่ขวา</option>
-                          <option value="left">รูปอยู่ซ้าย</option>
-                        </select>
-                        {block.imageUrl && (
-                          <BlockRangeControl
-                            label="🔍 ขนาดรูป"
-                            value={block.imageWidth ?? 100}
-                            min={25}
-                            max={100}
-                            step={5}
-                            unit="%"
-                            onChange={(v) => updateBlock(block.id, { imageWidth: v })}
-                          />
+                        ) : (
+                          <div className="flex items-center justify-center w-full h-64 bg-gray-50 border-2 border-dashed border-gray-300">
+                            <span className="text-sm text-gray-400">ยังไม่มีรูปภาพ</span>
+                          </div>
                         )}
                       </div>
-                    )}
+                      {isEditing && (
+                        <div className="mt-4 flex flex-wrap gap-2 w-full justify-center items-center">
+                          {block.imageUrl && (
+                            <button
+                              onClick={() => {
+                                setReplacingBlockId(block.id);
+                                fileInputRef.current?.click();
+                              }}
+                              className="px-4 py-1.5 text-sm rounded-lg bg-orange-100 text-orange-600 hover:bg-orange-200 transition font-semibold border border-orange-300"
+                            >
+                              🔄 เปลี่ยนรูป
+                            </button>
+                          )}
+                          <select
+                            value={block.imagePosition || "right"}
+                            onChange={(e) =>
+                              updateBlock(block.id, {
+                                imagePosition: e.target.value as "left" | "right",
+                              })
+                            }
+                            className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-orange-400"
+                          >
+                            <option value="right">รูปอยู่ขวา</option>
+                            <option value="left">รูปอยู่ซ้าย</option>
+                          </select>
+                          {block.imageUrl && (
+                            <BlockRangeControl
+                              label="🔍 ขนาดรูป"
+                              value={block.imageWidth ?? 100}
+                              min={25}
+                              max={100}
+                              step={5}
+                              unit="%"
+                              onChange={(v) => updateBlock(block.id, { imageWidth: v })}
+                            />
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
 
-              {/* Per-block spacing control (all block types) */}
-              {isEditing && (
-                <div className="mt-4 pt-3 border-t border-dashed border-gray-200 flex justify-center">
-                  <BlockRangeControl
-                    label="↕ ระยะห่างล่าง"
-                    value={block.spacingBelow ?? 16}
-                    min={0}
-                    max={100}
-                    step={4}
-                    unit="px"
-                    onChange={(v) => updateBlock(block.id, { spacingBelow: v })}
-                  />
-                </div>
-              )}
-            </div>
-          ))}
+                {/* Per-block spacing control (all block types) */}
+                {isEditing && (
+                  <div className="mt-4 pt-3 border-t border-dashed border-gray-200 flex justify-center">
+                    <BlockRangeControl
+                      label="↕ ระยะห่างล่าง"
+                      value={block.spacingBelow ?? 16}
+                      min={0}
+                      max={100}
+                      step={4}
+                      unit="px"
+                      onChange={(v) => updateBlock(block.id, { spacingBelow: v })}
+                    />
+                  </div>
+                )}
+              </div>
+            ))}
 
-          {displayBlocks.length === 0 && (
-            <div className="bg-white rounded-xl shadow-sm p-12 text-center border border-dashed border-gray-300">
-              <p className="text-gray-500">ไม่มีบล็อกใดแล้ว</p>
+            {displayBlocks.length === 0 && (
+              <div className="bg-white rounded-xl shadow-sm p-12 text-center border border-dashed border-gray-300">
+                <p className="text-gray-500">ไม่มีบล็อกใดแล้ว</p>
+              </div>
+            )}
+          </div>
+
+
+
+          {/* ── Footer links ── */}
+          {!isEditing && (
+            <div className="mt-8 text-center space-y-4">
+              {isLoggedIn && (
+                <Link
+                  href="/create-content"
+                  className="inline-block px-8 py-3 bg-orange-500 text-white font-bold rounded-xl hover:bg-orange-600 transition shadow"
+                >
+                  + Create New Content
+                </Link>
+              )}
+              {isLoggedIn && (
+                <p>
+                  <Link href="/showcase" className="text-orange-500 hover:text-orange-600 font-medium">
+                    ← Back to All Contents
+                  </Link>
+                </p>
+              )}
             </div>
           )}
         </div>
 
+        {/* ── Suppliers Modal (Luxury Hotel UI) ── */}
+        {showSuppliersModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-black/50 backdrop-blur-md animate-fadeIn" onClick={() => setShowSuppliersModal(false)}>
+            <div className="bg-[#FCFCFC] rounded-sm shadow-2xl w-full max-w-2xl overflow-hidden animate-slideUp flex flex-col max-h-[90vh] border border-gray-200" onClick={e => e.stopPropagation()}>
 
+              {/* Elegant Header - Minimalist */}
+              <div className="relative bg-white px-8 py-3 sm:py-4 flex-shrink-0 flex flex-col items-center justify-center">
+                <button
+                  onClick={() => setShowSuppliersModal(false)}
+                  className="absolute top-1/2 -translate-y-1/2 right-4 sm:right-6 p-2 text-gray-400 hover:text-gray-900 transition-colors"
+                >
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
 
-        {/* ── Footer links ── */}
-        {!isEditing && (
-          <div className="mt-8 text-center space-y-4">
-            {isLoggedIn && (
-              <Link
-                href="/create-content"
-                className="inline-block px-8 py-3 bg-orange-500 text-white font-bold rounded-xl hover:bg-orange-600 transition shadow"
-              >
-                + Create New Content
-              </Link>
-            )}
-            {isLoggedIn && (
-              <p>
-                <Link href="/showcase" className="text-orange-500 hover:text-orange-600 font-medium">
-                  ← Back to All Contents
-                </Link>
-              </p>
-            )}
+              {/* Elegant Body */}
+              <div className="p-6 sm:p-8 overflow-y-auto bg-white flex-1">
+                {loadingSuppliers ? (
+                  <div className="flex flex-col items-center justify-center py-16">
+                    <svg className="animate-spin h-8 w-8 text-orange-400 mb-4" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                    <span className="text-gray-400 text-xs uppercase tracking-widest">Loading...</span>
+                  </div>
+                ) : productSuppliers.length > 0 ? (
+                  <div className="space-y-10">
+                    {productSuppliers.map((supplier, index) => (
+                      <div key={supplier.id} className="relative">
+                        {index > 0 && <div className="absolute -top-5 left-1/2 transform -translate-x-1/2 w-8 h-[1px] bg-gray-200"></div>}
+                        <div className="text-center mb-6">
+                          <h4 className="text-xl font-medium text-gray-900">{supplier.companyName}</h4>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 sm:gap-10 max-w-md mx-auto">
+                          <div className="text-center sm:text-right border-b sm:border-b-0 sm:border-r border-gray-100 pb-4 sm:pb-0 sm:pr-10">
+                            <p className="text-gray-400 uppercase tracking-[0.1em] text-[10px] mb-1.5 font-medium">Contact Person</p>
+                            <p className="text-gray-800 font-light text-base">{supplier.contactName || "-"}</p>
+                          </div>
+                          <div className="text-center sm:text-left pt-2 sm:pt-0 sm:pl-2">
+                            <p className="text-gray-400 uppercase tracking-[0.1em] text-[10px] mb-1.5 font-medium">Phone Number</p>
+                            <p className="text-gray-800 font-light text-base">{supplier.phone || "-"}</p>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center justify-center py-16 text-center">
+                    <div className="w-16 h-16 rounded-full bg-gray-50 flex items-center justify-center text-gray-300 mb-6">
+                      <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+                      </svg>
+                    </div>
+                    <span className="text-gray-400 font-light tracking-wide">ไม่มีผู้ผลิตที่เชื่อมโยงกับสินค้านี้</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Elegant Footer */}
+              <div className="px-8 py-6 bg-white flex justify-center border-t border-gray-100">
+                <button
+                  onClick={() => setShowSuppliersModal(false)}
+                  className="px-10 py-3 text-xs font-semibold tracking-widest uppercase text-gray-600 bg-white border border-gray-200 hover:bg-gray-50 hover:text-gray-900 transition-colors duration-300"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
           </div>
         )}
-      </div>
 
-      <style>{`
+        <style>{`
         @keyframes fadeIn {
           from { opacity: 0; transform: scale(0.95); }
           to   { opacity: 1; transform: scale(1); }
@@ -1011,8 +1119,8 @@ export default function ShowcaseClient({
         .animate-fadeIn { animation: fadeIn 0.2s ease-out; }
         .animate-slideUp { animation: slideUp 0.3s ease-out; }
       `}</style>
-    </div>
-    <Footer />
+      </div>
+      <Footer />
     </>
   );
 }

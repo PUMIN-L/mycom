@@ -52,7 +52,7 @@ export const PUT = withRoute(
   }
 );
 
-// DELETE — delete product + its linked contents + Cloudinary images (login required)
+// DELETE — soft delete product (sets pendingDeleteAt). If already pending, hard deletes.
 export const DELETE = withRoute(
   "Failed to delete product",
   async (_request: NextRequest, { params }: Ctx) => {
@@ -63,30 +63,28 @@ export const DELETE = withRoute(
       return NextResponse.json({ error: "Product not found" }, { status: 404 });
     }
 
-    // Delete linked contents first (and their images)
-    const allContents = await getAllContents();
-    const linkedContents = allContents.filter((c) => c.productId === id);
-    for (const content of linkedContents) {
-      const imageUrls = collectContentImageUrls(content);
-      if (imageUrls.length > 0) {
-        await deleteCloudinaryImages(imageUrls);
+    if (product.pendingDeleteAt) {
+      // It's already in pending delete status, so this is a force hard-delete
+      const { hardDeleteProduct } = await import("../../../lib/productDeleter");
+      const success = await hardDeleteProduct(id);
+      if (!success) {
+        throw new ApiError(500, "Failed to hard delete product");
       }
-      await deleteContent(content.id);
+      
+      revalidateTag("products", { expire: 0 });
+      return NextResponse.json({ success: true, hardDeleted: true });
+    } else {
+      // Soft delete: Mark as pending delete and unpublish
+      const updated = await updateProduct(id, {
+        isPublished: false,
+        pendingDeleteAt: new Date().toISOString()
+      });
+      if (!updated) {
+        throw new ApiError(500, "Failed to soft delete product");
+      }
+      
+      revalidateTag("products", { expire: 0 });
+      return NextResponse.json({ success: true, hardDeleted: false, pendingDeleteAt: updated.pendingDeleteAt });
     }
-
-    const deleted = await deleteProduct(id);
-    if (!deleted) {
-      throw new ApiError(500, "Failed to delete product");
-    }
-
-    // Delete the product's own image if it lives on Cloudinary
-    if (product.image && product.image.includes("cloudinary.com")) {
-      await deleteCloudinaryImage(product.image);
-    }
-
-    // Invalidate product cache
-    revalidateTag("products", { expire: 0 });
-
-    return NextResponse.json({ success: true });
   }
 );

@@ -4,7 +4,7 @@ import type { QueryResult, FieldPacket, RowDataPacket } from "mysql2";
 
 // Bump whenever the schema below changes — a mismatch re-runs the (idempotent)
 // bootstrap; a match lets returning cold instances skip it in one SELECT.
-const SCHEMA_VERSION = 9;
+const SCHEMA_VERSION = 13;
 
 type DbPool = ReturnType<typeof mysql.createPool>;
 
@@ -276,6 +276,22 @@ async function bootstrapSchemaOnce(): Promise<void> {
       
       try {
         await connection.query(
+          `ALTER TABLE products ADD COLUMN IF NOT EXISTS pendingDeleteAt VARCHAR(255) NULL`
+        );
+      } catch (error) {
+        if (!isBenignSchemaError(error)) throw error;
+      }
+      
+      try {
+        await connection.query(
+          `CREATE INDEX idx_products_pendingDelete ON products (pendingDeleteAt)`
+        );
+      } catch (error) {
+        if (!isBenignSchemaError(error)) throw error;
+      }
+      
+      try {
+        await connection.query(
           `CREATE INDEX idx_products_category_created ON products (categoryId, createdAt)`
         );
       } catch (error) {
@@ -359,6 +375,43 @@ async function bootstrapSchemaOnce(): Promise<void> {
           createdAt VARCHAR(255) NOT NULL
         )
       `);
+
+      // ── Suppliers table ──────────────────────────────────────────────────────
+      await connection.query(`
+        CREATE TABLE IF NOT EXISTS suppliers (
+          id VARCHAR(255) PRIMARY KEY,
+          companyName VARCHAR(255) NOT NULL,
+          contactName VARCHAR(255),
+          phone VARCHAR(255),
+          note TEXT,
+          createdAt VARCHAR(255) NOT NULL
+        )
+      `);
+
+      // ── Product-Suppliers junction table ─────────────────────────────────────
+      await connection.query(`
+        CREATE TABLE IF NOT EXISTS product_suppliers (
+          productId VARCHAR(255) NOT NULL,
+          supplierId VARCHAR(255) NOT NULL,
+          PRIMARY KEY (productId, supplierId)
+        )
+      `);
+      
+      try {
+        await connection.query(
+          `ALTER TABLE product_suppliers ADD CONSTRAINT fk_ps_product FOREIGN KEY (productId) REFERENCES products(id) ON DELETE CASCADE`
+        );
+      } catch (error) {
+        if (!isBenignSchemaError(error)) throw error;
+      }
+      
+      try {
+        await connection.query(
+          `ALTER TABLE product_suppliers ADD CONSTRAINT fk_ps_supplier FOREIGN KEY (supplierId) REFERENCES suppliers(id) ON DELETE CASCADE`
+        );
+      } catch (error) {
+        if (!isBenignSchemaError(error)) throw error;
+      }
 
       // ── Seed default admin user ────────────────────────────────────────────
       // Credentials come from the environment, never from source. If

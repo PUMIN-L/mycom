@@ -21,7 +21,9 @@ export default function CreateProduct() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [categories, setCategories] = useState<ProductCategory[]>([]);
+  const [suppliers, setSuppliers] = useState<any[]>([]);
   const [loadingCategories, setLoadingCategories] = useState(true);
+  const [selectedSupplierIds, setSelectedSupplierIds] = useState<string[]>([]);
 
   const [titleTh, setTitleTh] = useState("");
   const [titleEn, setTitleEn] = useState("");
@@ -59,23 +61,30 @@ export default function CreateProduct() {
     }
   }, [isLoggedIn, isLoading]);
 
-  // Fetch categories
+  // Fetch categories and suppliers
   useEffect(() => {
-    const fetchCategories = async () => {
+    const fetchData = async () => {
       try {
-        const res = await fetch("/api/products/categories");
-        if (res.ok) {
-          const data = await res.json();
+        const [catRes, supRes] = await Promise.all([
+          fetch("/api/products/categories"),
+          fetch("/api/suppliers")
+        ]);
+        if (catRes.ok) {
+          const data = await catRes.json();
           setCategories(data);
           if (data.length > 0) setSelectedCategoryId(data[0].id);
         }
+        if (supRes.ok) {
+          const supData = await supRes.json();
+          setSuppliers(supData);
+        }
       } catch (err) {
-        console.error("Error fetching categories:", err);
+        console.error("Error fetching data:", err);
       } finally {
         setLoadingCategories(false);
       }
     };
-    fetchCategories();
+    fetchData();
   }, []);
 
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -166,6 +175,7 @@ export default function CreateProduct() {
         desc_en: descEn,
         desc_zh: descZh,
         createdAt: new Date().toISOString(),
+        supplierIds: selectedSupplierIds,
       };
       const response = await fetch("/api/products", {
         method: "POST",
@@ -270,6 +280,37 @@ export default function CreateProduct() {
               )}
             </div>
           )}
+        </div>
+
+        {/* Suppliers Section */}
+        <div className="bg-white rounded-lg shadow p-6 mb-6">
+          <h2 className="text-sm font-semibold text-gray-700 mb-4">🤝 ผู้ผลิตสินค้า (Suppliers)</h2>
+          <div className="space-y-3">
+            <label className="block text-xs font-medium text-gray-500 mb-1">เลือกผู้ผลิต (เลือกได้มากกว่า 1)</label>
+            {suppliers.length === 0 ? (
+              <p className="text-sm text-gray-500">ไม่มีข้อมูลผู้ผลิต</p>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                {suppliers.map((sup) => (
+                  <label key={sup.id} className="flex items-center gap-3 p-3 border rounded-lg hover:bg-gray-50 cursor-pointer transition-colors">
+                    <input
+                      type="checkbox"
+                      className="w-4 h-4 text-orange-600 rounded focus:ring-orange-500 border-gray-300"
+                      checked={selectedSupplierIds.includes(sup.id)}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedSupplierIds([...selectedSupplierIds, sup.id]);
+                        } else {
+                          setSelectedSupplierIds(selectedSupplierIds.filter(id => id !== sup.id));
+                        }
+                      }}
+                    />
+                    <span className="text-sm text-gray-800 font-medium">{sup.companyName}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Product Image */}

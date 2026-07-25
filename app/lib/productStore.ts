@@ -110,6 +110,7 @@ function rowToProduct(row: RowDataPacket): ProductData {
     desc_zh: row.desc_zh ?? "",
     createdAt: row.createdAt,
     isPublished: row.isPublished === undefined ? true : Boolean(row.isPublished),
+    pendingDeleteAt: row.pendingDeleteAt || null,
   };
 }
 
@@ -123,22 +124,34 @@ export async function addProduct(product: ProductData): Promise<ProductData> {
   const desc_th = sanitizeRichText(product.desc_th).substring(0, 10000);
   const desc_en = sanitizeRichText(product.desc_en).substring(0, 10000);
   const desc_zh = sanitizeRichText(product.desc_zh).substring(0, 10000);
-  await query(
-    "INSERT INTO products (id, categoryId, image, title_th, title_en, title_zh, desc_th, desc_en, desc_zh, createdAt, isPublished) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    [
-      product.id,
-      product.categoryId,
-      product.image,
-      title_th,
-      title_en,
-      title_zh,
-      desc_th,
-      desc_en,
-      desc_zh,
-      product.createdAt,
-      isPublished,
-    ]
-  );
+  await withTransaction(async (conn) => {
+    await conn.query(
+      "INSERT INTO products (id, categoryId, image, title_th, title_en, title_zh, desc_th, desc_en, desc_zh, createdAt, isPublished) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [
+        product.id,
+        product.categoryId,
+        product.image,
+        title_th,
+        title_en,
+        title_zh,
+        desc_th,
+        desc_en,
+        desc_zh,
+        product.createdAt,
+        isPublished,
+      ]
+    );
+
+    if (product.supplierIds && product.supplierIds.length > 0) {
+      for (const supplierId of product.supplierIds) {
+        await conn.query(
+          "INSERT INTO product_suppliers (productId, supplierId) VALUES (?, ?)",
+          [product.id, supplierId]
+        );
+      }
+    }
+  });
+
   return { ...product, title_th, title_en, title_zh, desc_th, desc_en, desc_zh, isPublished };
 }
 
@@ -148,7 +161,16 @@ export async function getProduct(id: string): Promise<ProductData | undefined> {
     [id]
   );
   if (rows.length === 0) return undefined;
-  return rowToProduct(rows[0]);
+  
+  const product = rowToProduct(rows[0]);
+  
+  const [supplierRows] = await query<RowDataPacket[]>(
+    "SELECT supplierId FROM product_suppliers WHERE productId = ?",
+    [id]
+  );
+  product.supplierIds = supplierRows.map((r: any) => r.supplierId);
+  
+  return product;
 }
 
 export async function getAllProducts(): Promise<ProductData[]> {
@@ -199,17 +221,41 @@ export async function updateProduct(
   if (updates.desc_th !== undefined) set("desc_th", sanitizeRichText(updates.desc_th).substring(0, 10000));
   if (updates.desc_en !== undefined) set("desc_en", sanitizeRichText(updates.desc_en).substring(0, 10000));
   if (updates.desc_zh !== undefined) set("desc_zh", sanitizeRichText(updates.desc_zh).substring(0, 10000));
-  if (updates.isPublished !== undefined) set("isPublished", updates.isPublished !== false);
-
-  if (sets.length > 0) {
-    // Snapshot the previous value first so an accidental overwrite is restorable
-    // (a failed snapshot aborts before we touch the row).
-    await saveRevision("product", id, existing);
-    await query(
-      `UPDATE products SET ${sets.join(", ")} WHERE id = ?`,
-      [...values, id]
-    );
+  
+  if (updates.isPublished !== undefined) {
+    set("isPublished", updates.isPublished !== false);
+    // If they explicitly publish it again, clear the pending delete status.
+    if (updates.isPublished === true) {
+      set("pendingDeleteAt", null);
+    }
   }
+  if (updates.pendingDeleteAt !== undefined) {
+    set("pendingDeleteAt", updates.pendingDeleteAt);
+  }
+
+  await withTransaction(async (conn) => {
+    if (sets.length > 0) {
+      // Snapshot the previous value first so an accidental overwrite is restorable
+      // (a failed snapshot aborts before we touch the row).
+      await saveRevision("product", id, existing);
+      await conn.query(
+        `UPDATE products SET ${sets.join(", ")} WHERE id = ?`,
+        [...values, id]
+      );
+    }
+    
+    if (updates.supplierIds !== undefined) {
+      await conn.query("DELETE FROM product_suppliers WHERE productId = ?", [id]);
+      if (updates.supplierIds.length > 0) {
+        for (const supplierId of updates.supplierIds) {
+          await conn.query(
+            "INSERT INTO product_suppliers (productId, supplierId) VALUES (?, ?)",
+            [id, supplierId]
+          );
+        }
+      }
+    }
+  });
 
   return getProduct(id);
 }

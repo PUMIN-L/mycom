@@ -25,7 +25,9 @@ export default function EditProduct({ params }: { params: Promise<{ id: string }
   const productId = resolvedParams.id;
 
   const [categories, setCategories] = useState<ProductCategory[]>([]);
+  const [suppliers, setSuppliers] = useState<any[]>([]);
   const [loadingCategories, setLoadingCategories] = useState(true);
+  const [selectedSupplierIds, setSelectedSupplierIds] = useState<string[]>([]);
   const [loadingProduct, setLoadingProduct] = useState(true);
 
   const [titleTh, setTitleTh] = useState("");
@@ -64,22 +66,29 @@ export default function EditProduct({ params }: { params: Promise<{ id: string }
     }
   }, [isLoggedIn, isLoading, router]);
 
-  // Fetch categories
+  // Fetch categories and suppliers
   useEffect(() => {
-    const fetchCategories = async () => {
+    const fetchData = async () => {
       try {
-        const res = await fetch("/api/products/categories");
-        if (res.ok) {
-          const data = await res.json();
+        const [catRes, supRes] = await Promise.all([
+          fetch("/api/products/categories"),
+          fetch("/api/suppliers")
+        ]);
+        if (catRes.ok) {
+          const data = await catRes.json();
           setCategories(data);
         }
+        if (supRes.ok) {
+          const supData = await supRes.json();
+          setSuppliers(supData);
+        }
       } catch (err) {
-        console.error("Error fetching categories:", err);
+        console.error("Error fetching data:", err);
       } finally {
         setLoadingCategories(false);
       }
     };
-    fetchCategories();
+    fetchData();
   }, []);
 
   // Fetch product data
@@ -101,6 +110,7 @@ export default function EditProduct({ params }: { params: Promise<{ id: string }
         setSelectedCategoryId(data.categoryId);
         setImageUrl(data.image || "");
         setImagePreview(data.image || "");
+        setSelectedSupplierIds(data.supplierIds || []);
       } catch (err) {
         console.error("Error fetching product:", err);
         showToast("ไม่พบข้อมูลสินค้า", "error");
@@ -198,6 +208,7 @@ export default function EditProduct({ params }: { params: Promise<{ id: string }
         desc_th: descTh,
         desc_en: descEn,
         desc_zh: descZh,
+        supplierIds: selectedSupplierIds,
       };
       
       const response = await fetch(`/api/products/${productId}`, {
@@ -213,7 +224,7 @@ export default function EditProduct({ params }: { params: Promise<{ id: string }
 
       showToast("บันทึกการแก้ไขสำเร็จ", "success");
       setTimeout(() => {
-        router.push("/catalog");
+        router.push("/#products");
       }, 1000);
     } catch (error: any) {
       console.error(error);
@@ -302,6 +313,37 @@ export default function EditProduct({ params }: { params: Promise<{ id: string }
               )}
             </div>
           )}
+        </div>
+
+        {/* Suppliers Section */}
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8 space-y-6 mb-6">
+          <h2 className="text-xl font-bold text-gray-800 border-b border-gray-100 pb-4">ผู้ผลิตสินค้า (Suppliers)</h2>
+          <div className="space-y-3">
+            <label className="block text-sm font-semibold text-gray-700">เลือกผู้ผลิต (เลือกได้มากกว่า 1)</label>
+            {suppliers.length === 0 ? (
+              <p className="text-sm text-gray-500">ไม่มีข้อมูลผู้ผลิต</p>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                {suppliers.map((sup) => (
+                  <label key={sup.id} className="flex items-center gap-3 p-3 border rounded-xl hover:bg-gray-50 cursor-pointer transition-colors">
+                    <input
+                      type="checkbox"
+                      className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500 border-gray-300"
+                      checked={selectedSupplierIds.includes(sup.id)}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedSupplierIds([...selectedSupplierIds, sup.id]);
+                        } else {
+                          setSelectedSupplierIds(selectedSupplierIds.filter(id => id !== sup.id));
+                        }
+                      }}
+                    />
+                    <span className="text-sm text-gray-800 font-medium">{sup.companyName}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Product Image */}

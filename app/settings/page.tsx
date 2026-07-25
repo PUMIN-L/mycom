@@ -19,6 +19,10 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
 
+  // OTP State
+  const [showOtpModal, setShowOtpModal] = useState(false);
+  const [otp, setOtp] = useState("");
+
   // Redirect if not logged in
   useEffect(() => {
     if (!isLoading && !isLoggedIn) {
@@ -54,27 +58,53 @@ export default function SettingsPage() {
     setTimeout(() => setToast(null), 3000);
   }
 
-  async function handleSave(e: React.FormEvent) {
+  async function handleRequestOtp(e: React.FormEvent) {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      const res = await fetch("/api/settings/contact-email/otp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ newEmail: contactEmail }),
+      });
+      if (res.ok) {
+        setShowOtpModal(true);
+        showToast("ระบบส่งรหัส OTP ไปยังอีเมลเดิมแล้ว", "success");
+      } else {
+        const data = await res.json().catch(() => null);
+        showToast(data?.error ?? "ไม่สามารถขอรหัส OTP ได้", "error");
+      }
+    } catch {
+      showToast("เกิดข้อผิดพลาด กรุณาลองใหม่", "error");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleVerifyOtp(e: React.FormEvent) {
     e.preventDefault();
     setSaving(true);
     try {
       const res = await fetch("/api/settings/contact-email", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: contactEmail }),
+        body: JSON.stringify({ email: contactEmail, otp }),
       });
       if (res.ok) {
         const data = await res.json().catch(() => null);
+        setShowOtpModal(false);
+        setOtp("");
+        setContactEmail(data.email ?? "");
         if (data?.changed && data?.notified) {
-          showToast("บันทึกแล้ว + ส่งอีเมลแจ้งเตือนไปยังอีเมลเก่าและใหม่แล้ว", "success");
+          showToast("เปลี่ยนอีเมลสำเร็จ + แจ้งเตือนอีเมลเก่าและใหม่แล้ว", "success");
         } else if (data?.changed && !data?.notified) {
-          showToast("บันทึกแล้ว (แต่ส่งอีเมลแจ้งเตือนไม่ได้ — ยังไม่ได้ตั้งค่า SMTP)", "error");
+          showToast("เปลี่ยนอีเมลสำเร็จ (แต่แจ้งเตือนไม่ได้ — ยังไม่ตั้งค่า SMTP)", "error");
         } else {
           showToast("บันทึกการตั้งค่าแล้ว", "success");
         }
       } else {
         const data = await res.json().catch(() => null);
-        showToast(data?.error ?? "บันทึกไม่สำเร็จ", "error");
+        showToast(data?.error ?? "รหัส OTP ไม่ถูกต้องหรือหมดอายุ", "error");
       }
     } catch {
       showToast("เกิดข้อผิดพลาด กรุณาลองใหม่", "error");
@@ -92,19 +122,19 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 py-12">
+    <div className="min-h-screen bg-gray-50 py-12 relative">
       {toast && <Toast message={toast.message} type={toast.type} />}
       <div className="max-w-2xl mx-auto px-4">
         <h1 className="text-4xl font-bold mb-2 text-gray-900">ตั้งค่าระบบ (CMS)</h1>
         <p className="text-gray-600 mb-8">การตั้งค่านี้เห็นได้เฉพาะผู้ดูแลระบบที่ login แล้วเท่านั้น</p>
 
-        <form onSubmit={handleSave} className="bg-white rounded-lg shadow p-6 space-y-4">
+        <form onSubmit={handleRequestOtp} className="bg-white rounded-lg shadow p-6 space-y-4 relative z-10">
           <div>
             <label className="block text-sm font-semibold mb-2 text-gray-700">
               อีเมลรับข้อความจากฟอร์มติดต่อ
             </label>
             <input
-              type="email"
+              type="text"
               required
               value={loading ? "" : contactEmail}
               placeholder={loading ? "กำลังโหลด..." : "you@example.com"}
@@ -113,7 +143,7 @@ export default function SettingsPage() {
               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 disabled:bg-gray-100"
             />
             <p className="mt-2 text-xs text-gray-500">
-              ข้อความที่ผู้เยี่ยมชมกรอกในหน้า &quot;ติดต่อเรา&quot; จะถูกส่งไปยังอีเมลนี้
+              * อีเมลปัจจุบันจะถูกซ่อนข้อมูลบางส่วน เพื่อความปลอดภัย หากต้องการเปลี่ยนให้พิมพ์อีเมลใหม่แล้วกดบันทึก (ระบบจะให้ยืนยันรหัสผ่านชั่วคราวทางอีเมลเดิม)
             </p>
             {loadFailed && (
               <button
@@ -127,10 +157,10 @@ export default function SettingsPage() {
           </div>
           <button
             type="submit"
-            disabled={saving || loading || loadFailed}
+            disabled={saving || loading || loadFailed || contactEmail.includes("***")}
             className="w-full px-6 py-3 bg-orange-500 text-white font-bold rounded-lg hover:bg-orange-600 transition disabled:opacity-50"
           >
-            {saving ? "กำลังบันทึก..." : "💾 บันทึกการตั้งค่า"}
+            {saving ? "กำลังดำเนินการ..." : "💾 บันทึกการตั้งค่า"}
           </button>
         </form>
 
@@ -146,6 +176,48 @@ export default function SettingsPage() {
           </Link>
         </div>
       </div>
+
+      {/* OTP Modal */}
+      {showOtpModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-sm animate-in fade-in zoom-in duration-200">
+            <h2 className="text-xl font-bold text-gray-900 mb-2">ยืนยันตัวตนด้วยรหัส OTP</h2>
+            <p className="text-sm text-gray-600 mb-4">
+              ระบบได้ส่งรหัสผ่านชั่วคราวไปยังอีเมลเดิมของคุณแล้ว กรุณานำมากรอกเพื่อยืนยันการเปลี่ยนอีเมล
+            </p>
+            <form onSubmit={handleVerifyOtp} className="space-y-4">
+              <div>
+                <input
+                  type="text"
+                  required
+                  maxLength={6}
+                  value={otp}
+                  onChange={(e) => setOtp(e.target.value.replace(/\D/g, ""))}
+                  placeholder="รหัสยืนยัน"
+                  className="w-full px-4 py-3 text-center text-2xl tracking-widest border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 font-mono"
+                />
+              </div>
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setShowOtpModal(false)}
+                  disabled={saving}
+                  className="flex-1 px-4 py-2 bg-gray-100 text-gray-700 font-semibold rounded-lg hover:bg-gray-200 transition disabled:opacity-50"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  type="submit"
+                  disabled={saving || otp.length !== 6}
+                  className="flex-1 px-4 py-2 bg-orange-500 text-white font-bold rounded-lg hover:bg-orange-600 transition disabled:opacity-50"
+                >
+                  {saving ? "กำลังยืนยัน..." : "ยืนยัน"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

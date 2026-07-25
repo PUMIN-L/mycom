@@ -435,33 +435,146 @@ export default function QuotationPage() {
   // on the server. html2canvas-pro (vs html2canvas) supports Tailwind v4's oklch
   // colors. The sheet is rasterized, then sliced across A4 pages if it's tall.
   async function generatePdf() {
-    const el = document.getElementById("quote-sheet");
-    if (!el) return;
+    const originalSheet = document.getElementById("quote-sheet");
+    if (!originalSheet) return;
+    
+    // We dynamically import libraries as they shouldn't run on the server.
     const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
       import("html2canvas-pro"),
       import("jspdf"),
     ]);
-    const canvas = await html2canvas(el, {
-      scale: 2, // sharper text/images
-      useCORS: true, // include Cloudinary/product images
-      backgroundColor: "#ffffff",
-    });
-    const imgData = canvas.toDataURL("image/jpeg", 0.95);
+
+    // Create an offscreen container to hold the paginated sheets
+    const container = document.createElement("div");
+    container.style.position = "absolute";
+    container.style.left = "-9999px";
+    container.style.top = "0";
+    container.style.width = originalSheet.style.width; 
+    document.body.appendChild(container);
+
+    const A4_HEIGHT_PX = originalSheet.offsetWidth * (297 / 210);
+    // Padding logic: keep a bit of space at the bottom (e.g., 14mm)
+    const paddingBottomPx = originalSheet.offsetWidth * (14 / 210);
+    const PAGE_MAX_HEIGHT = A4_HEIGHT_PX - paddingBottomPx;
+
+    const tbody = document.getElementById("quote-tbody");
+    const rows = Array.from(tbody?.querySelectorAll("tr") || []);
+    const rowHeights = rows.map((r) => (r as HTMLElement).offsetHeight);
+
+    const headerHeightFirstPage = document.getElementById("quote-header")?.offsetHeight || 0;
+    const customerInfoHeight = document.getElementById("quote-customer-info")?.offsetHeight || 0;
+    const headerHeightSubsequentPages = headerHeightFirstPage - customerInfoHeight;
+
+    const tableHeaderHeight = document.getElementById("quote-table")?.querySelector("thead")?.offsetHeight || 0;
+    const footerHeight = document.getElementById("quote-footer")?.offsetHeight || 0;
+    const signaturesHeight = document.getElementById("quote-signatures")?.offsetHeight || 0;
+    const extraFooterHeight = footerHeight + signaturesHeight + 80; // 80px extra margin/padding approximation
+
+    const pages: HTMLElement[] = [];
+    
+    // Helper to hide footer elements from a specific cloned page
+    const hideFooter = (clone: HTMLElement) => {
+      const f = clone.querySelector("#quote-footer") as HTMLElement;
+      const s = clone.querySelector("#quote-signatures") as HTMLElement;
+      if (f) f.style.display = "none";
+      if (s) s.style.display = "none";
+    };
+
+    const hideCustomerInfo = (clone: HTMLElement) => {
+      const c = clone.querySelector("#quote-customer-info") as HTMLElement;
+      if (c) c.style.display = "none";
+    };
+
+    let currentClone = originalSheet.cloneNode(true) as HTMLElement;
+    currentClone.style.height = "297mm";
+    currentClone.style.minHeight = "297mm";
+    currentClone.style.overflow = "hidden";
+    currentClone.style.backgroundColor = "white";
+    currentClone.id = "";
+    
+    let currentTbody = currentClone.querySelector("#quote-tbody") as HTMLElement;
+    currentTbody.innerHTML = ""; // Clear for row-by-row insertion
+    
+    // 12mm top padding approximation
+    const paddingTopPx = originalSheet.offsetWidth * (12 / 210);
+    let currentHeight = headerHeightFirstPage + tableHeaderHeight + paddingTopPx;
+
+    let i = 0;
+    while (i < rows.length) {
+      const rh = rowHeights[i];
+      if (currentHeight + rh > PAGE_MAX_HEIGHT && currentTbody.children.length > 0) {
+        // Break page
+        hideFooter(currentClone);
+        pages.push(currentClone);
+        
+        currentClone = originalSheet.cloneNode(true) as HTMLElement;
+        currentClone.style.height = "297mm";
+        currentClone.style.minHeight = "297mm";
+        currentClone.style.overflow = "hidden";
+        currentClone.style.backgroundColor = "white";
+        currentClone.id = "";
+        hideCustomerInfo(currentClone);
+        currentTbody = currentClone.querySelector("#quote-tbody") as HTMLElement;
+        currentTbody.innerHTML = "";
+        currentHeight = headerHeightSubsequentPages + tableHeaderHeight + paddingTopPx;
+      } else {
+        currentTbody.appendChild(rows[i].cloneNode(true));
+        currentHeight += rh;
+        i++;
+      }
+    }
+
+    // Check if footer fits on the last page
+    if (currentHeight + extraFooterHeight > PAGE_MAX_HEIGHT && currentTbody.children.length > 0) {
+      hideFooter(currentClone);
+      pages.push(currentClone);
+      
+      currentClone = originalSheet.cloneNode(true) as HTMLElement;
+      currentClone.style.height = "297mm";
+      currentClone.style.minHeight = "297mm";
+      currentClone.style.overflow = "hidden";
+      currentClone.style.backgroundColor = "white";
+      currentClone.id = "";
+      hideCustomerInfo(currentClone);
+      currentTbody = currentClone.querySelector("#quote-tbody") as HTMLElement;
+      currentTbody.innerHTML = "";
+      pages.push(currentClone);
+    } else {
+      pages.push(currentClone);
+    }
+
+    // Add page numbers if > 1 page
+    if (pages.length > 1) {
+      pages.forEach((page, idx) => {
+        const topRightDiv = page.querySelector(".text-right.shrink-0");
+        if (topRightDiv) {
+          const pageNum = document.createElement("div");
+          pageNum.className = "text-[11px] text-gray-500 mt-2 font-bold text-right";
+          pageNum.innerText = `หน้า ${idx + 1}/${pages.length}`;
+          topRightDiv.appendChild(pageNum);
+        }
+      });
+    }
+
+    for (const p of pages) container.appendChild(p);
+
     const pdf = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait" });
     const pageW = pdf.internal.pageSize.getWidth();
     const pageH = pdf.internal.pageSize.getHeight();
-    const imgH = (canvas.height * pageW) / canvas.width;
-    // Page count with a small tolerance: the sheet's minHeight is exactly one A4,
-    // so rounding used to spill a near-blank 2nd page. The tolerance only ever
-    // trims the very bottom (inside the sheet's 12mm bottom padding), never
-    // content, while genuine overflow still paginates.
-    const TOLERANCE_MM = 4;
-    const pageCount = Math.max(1, Math.ceil((imgH - TOLERANCE_MM) / pageH));
-    for (let i = 0; i < pageCount; i++) {
-      if (i > 0) pdf.addPage();
-      pdf.addImage(imgData, "JPEG", 0, -i * pageH, pageW, imgH);
+
+    for (let pIdx = 0; pIdx < pages.length; pIdx++) {
+      const canvas = await html2canvas(pages[pIdx], {
+        scale: 2, // sharper text/images
+        useCORS: true,
+        backgroundColor: "#ffffff",
+      });
+      const imgData = canvas.toDataURL("image/jpeg", 0.95);
+      if (pIdx > 0) pdf.addPage();
+      pdf.addImage(imgData, "JPEG", 0, 0, pageW, pageH);
     }
+
     pdf.save(`Quotation-${(q.docNo || "document").replace(/[^\w.-]/g, "_")}.pdf`);
+    document.body.removeChild(container);
   }
 
   // ── Download → save record → generate PDF → ask keep/delete ───────────────
@@ -1072,80 +1185,82 @@ export default function QuotationPage() {
             style={{ width: "210mm", minHeight: "297mm", padding: "12mm 14mm", fontSize: "13px", lineHeight: 1.55 }}
           >
             {/* Header */}
-            <div className="flex justify-between items-start gap-4 pb-3 border-b-2 border-gray-800">
-              <div className="flex items-start gap-3">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src="/images/profin-logo-3.png"
-                  alt="Profin Lab Scale"
-                  className="shrink-0 object-contain"
-                  style={{ width: "11mm", height: "auto" }}
-                />
-                <div>
-                  <div className="text-lg font-bold">{COMPANY.name}</div>
-                  <div className="text-xs text-gray-600">{COMPANY.nameEn}</div>
-                  <div className="text-xs mt-1 max-w-[95mm] whitespace-pre-line">{COMPANY.address}</div>
-                  <div className="text-xs mt-0.5">
-                    {q.companyPhone && <>โทร {q.companyPhone} </>}
-                    {q.companyEmail && <>อีเมล {q.companyEmail}</>}
+            <div id="quote-header">
+              <div className="flex justify-between items-start gap-4 pb-3 border-b-2 border-gray-800">
+                <div className="flex items-start gap-3">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src="/images/profin-logo-3.png"
+                    alt="Profin Lab Scale"
+                    className="shrink-0 object-contain"
+                    style={{ width: "11mm", height: "auto" }}
+                  />
+                  <div>
+                    <div className="text-lg font-bold">{COMPANY.name}</div>
+                    <div className="text-xs text-gray-600">{COMPANY.nameEn}</div>
+                    <div className="text-xs mt-1 max-w-[95mm] whitespace-pre-line">{COMPANY.address}</div>
+                    <div className="text-xs mt-0.5">
+                      {q.companyPhone && <>โทร {q.companyPhone} </>}
+                      {q.companyEmail && <>อีเมล {q.companyEmail}</>}
+                    </div>
+                    {q.companyTaxId && (
+                      <div className="text-xs">เลขประจำตัวผู้เสียภาษี {q.companyTaxId}</div>
+                    )}
                   </div>
-                  {q.companyTaxId && (
-                    <div className="text-xs">เลขประจำตัวผู้เสียภาษี {q.companyTaxId}</div>
-                  )}
+                </div>
+                <div className="text-right shrink-0">
+                  <div className="text-2xl font-bold tracking-wide">ใบเสนอราคา</div>
+                  <div className="text-sm text-gray-500 tracking-widest">QUOTATION</div>
                 </div>
               </div>
-              <div className="text-right shrink-0">
-                <div className="text-2xl font-bold tracking-wide">ใบเสนอราคา</div>
-                <div className="text-sm text-gray-500 tracking-widest">QUOTATION</div>
-              </div>
-            </div>
 
-            {/* Doc info + customer */}
-            <div className="flex justify-between gap-6 mt-3 text-[12.5px]">
-              <div className="flex-1">
-                <div className="font-bold text-gray-700 mb-1">เรียน (To)</div>
-                <div className="font-semibold">{q.customerContact || "-"}</div>
-                {q.customerCompany && <div>{q.customerCompany}</div>}
-                {q.customerAddress && <div className="whitespace-pre-line text-gray-700">{q.customerAddress}</div>}
-                {q.customerPhone && <div className="text-gray-700">โทร {formatPhone(q.customerPhone)}</div>}
-                {q.customerEmail && <div className="text-gray-700 break-all">อีเมล {q.customerEmail}</div>}
-              </div>
-              <table className="shrink-0 self-start text-[12.5px]">
-                <tbody>
-                  <tr>
-                    <td className="pr-3 py-0.5 font-bold text-gray-700 text-right">เลขที่ (No.)</td>
-                    <td className="py-0.5 text-right">{q.docNo || "-"}</td>
-                  </tr>
-                  <tr>
-                    <td className="pr-3 py-0.5 font-bold text-gray-700 text-right">วันที่ (Date)</td>
-                    <td className="py-0.5 text-right">{thaiDate(q.docDate)}</td>
-                  </tr>
-                  <tr>
-                    <td className="pr-3 py-0.5 font-bold text-gray-700 text-right">ยืนราคา (Valid)</td>
-                    <td className="py-0.5 text-right">{q.validDays} วัน</td>
-                  </tr>
-                  <tr>
-                    <td className="pr-3 py-0.5 font-bold text-gray-700 align-top text-right">พนักงานขาย</td>
-                    <td className="py-0.5 text-right">
-                      <div className="text-gray-900">{q.sellerName || "-"}</div>
-                    </td>
-                  </tr>
-                  {(q.sellerPhone || q.sellerEmail) && (
+              {/* Doc info + customer */}
+              <div id="quote-customer-info" className="flex justify-between gap-6 mt-3 text-[12.5px]">
+                <div className="flex-1">
+                  <div className="font-bold text-gray-700 mb-1">เรียน (To)</div>
+                  <div className="font-semibold">{q.customerContact || "-"}</div>
+                  {q.customerCompany && <div>{q.customerCompany}</div>}
+                  {q.customerAddress && <div className="whitespace-pre-line text-gray-700">{q.customerAddress}</div>}
+                  {q.customerPhone && <div className="text-gray-700">โทร {formatPhone(q.customerPhone)}</div>}
+                  {q.customerEmail && <div className="text-gray-700 break-all">อีเมล {q.customerEmail}</div>}
+                </div>
+                <table className="shrink-0 self-start text-[12.5px]">
+                  <tbody>
                     <tr>
-                      <td colSpan={2} className="py-0.5 text-right">
-                        <div className="text-[11.5px] text-gray-500 mt-0.5 flex flex-col items-end">
-                          {q.sellerPhone && <div>โทร: {formatPhone(q.sellerPhone)}</div>}
-                          {q.sellerEmail && <div className="break-all text-right">อีเมล: {q.sellerEmail}</div>}
-                        </div>
+                      <td className="pr-3 py-0.5 font-bold text-gray-700 text-right">เลขที่ (No.)</td>
+                      <td className="py-0.5 text-right">{q.docNo || "-"}</td>
+                    </tr>
+                    <tr>
+                      <td className="pr-3 py-0.5 font-bold text-gray-700 text-right">วันที่ (Date)</td>
+                      <td className="py-0.5 text-right">{thaiDate(q.docDate)}</td>
+                    </tr>
+                    <tr>
+                      <td className="pr-3 py-0.5 font-bold text-gray-700 text-right">ยืนราคา (Valid)</td>
+                      <td className="py-0.5 text-right">{q.validDays} วัน</td>
+                    </tr>
+                    <tr>
+                      <td className="pr-3 py-0.5 font-bold text-gray-700 align-top text-right">พนักงานขาย</td>
+                      <td className="py-0.5 text-right">
+                        <div className="text-gray-900">{q.sellerName || "-"}</div>
                       </td>
                     </tr>
-                  )}
-                </tbody>
-              </table>
+                    {(q.sellerPhone || q.sellerEmail) && (
+                      <tr>
+                        <td colSpan={2} className="py-0.5 text-right">
+                          <div className="text-[11.5px] text-gray-500 mt-0.5 flex flex-col items-end">
+                            {q.sellerPhone && <div>โทร: {formatPhone(q.sellerPhone)}</div>}
+                            {q.sellerEmail && <div className="break-all text-right">อีเมล: {q.sellerEmail}</div>}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
 
             {/* Items table */}
-            <table className="w-full mt-4 border-collapse text-[12.5px]">
+            <table id="quote-table" className="w-full mt-4 border-collapse text-[12.5px]">
               <thead>
                 <tr className="bg-gray-800 text-white">
                   <th className="border border-gray-800 px-2 py-1.5 w-[8mm]">ลำดับ</th>
@@ -1156,7 +1271,7 @@ export default function QuotationPage() {
                   <th className="border border-gray-800 px-2 py-1.5 w-[26mm]">จำนวนเงิน (บาท)</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody id="quote-tbody">
                 {q.items.length === 0 && (
                   <tr>
                     <td colSpan={6} className="border border-gray-300 px-2 py-6 text-center text-gray-400">
@@ -1165,7 +1280,7 @@ export default function QuotationPage() {
                   </tr>
                 )}
                 {q.items.map((it, idx) => (
-                  <tr key={it.id} className="align-top">
+                  <tr key={it.id} className="align-top" data-item-id={it.id}>
                     <td className="border border-gray-300 px-2 py-1.5 text-center">{idx + 1}</td>
                     <td className="border border-gray-300 px-2 py-1.5">
                       <div className="font-semibold">{it.name || "-"}</div>
@@ -1188,7 +1303,7 @@ export default function QuotationPage() {
             </table>
 
             {/* Totals */}
-            <div className="flex justify-between gap-6 mt-3">
+            <div id="quote-footer" className="flex justify-between gap-6 mt-3">
               <div className="flex-1 text-[12px]">
                 <div className="space-y-0.5 text-gray-700">
                   <div className="font-bold text-gray-800">เงื่อนไข</div>
@@ -1242,7 +1357,7 @@ export default function QuotationPage() {
             </div>
 
             {/* Signatures */}
-            <div className="grid grid-cols-3 gap-6 mt-10 text-center text-[12px]">
+            <div id="quote-signatures" className="grid grid-cols-3 gap-6 mt-10 text-center text-[12px]">
               {[
                 { title: "ผู้เสนอราคา", name: q.sellerName },
                 null,

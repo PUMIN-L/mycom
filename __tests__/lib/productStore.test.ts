@@ -48,7 +48,7 @@ const makeRow = (over: Record<string, unknown> = {}) => ({
 
 describe('productStore', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
   });
 
   // ── Categories ──────────────────────────────────────────────────────────────
@@ -208,7 +208,9 @@ describe('productStore', () => {
 
   describe('getProduct', () => {
     it('maps a found row (isPublished 1 -> true) and queries by id', async () => {
-      vi.mocked(query).mockResolvedValue([[makeRow()]] as any);
+      vi.mocked(query)
+        .mockResolvedValueOnce([[makeRow()]] as any)
+        .mockResolvedValueOnce([[]] as any);
 
       const product = await getProduct('p1');
 
@@ -224,27 +226,32 @@ describe('productStore', () => {
         desc_zh: 'desc zh',
         createdAt: '2026-07-17T00:00:00.000Z',
         isPublished: true,
+        supplierIds: [],
       });
       expect(vi.mocked(query).mock.calls[0][0]).toContain('WHERE id = ?');
       expect(vi.mocked(query).mock.calls[0][1]).toEqual(['p1']);
     });
 
     it('coerces isPublished 0 to false', async () => {
-      vi.mocked(query).mockResolvedValue([[makeRow({ isPublished: 0 })]] as any);
+      vi.mocked(query)
+        .mockResolvedValueOnce([[makeRow({ isPublished: 0 })]] as any)
+        .mockResolvedValueOnce([[]] as any);
       expect((await getProduct('p1'))!.isPublished).toBe(false);
     });
 
     it('defaults isPublished to true when the column is absent', async () => {
       const row = makeRow();
       delete (row as Record<string, unknown>).isPublished;
-      vi.mocked(query).mockResolvedValue([[row]] as any);
+      vi.mocked(query)
+        .mockResolvedValueOnce([[row]] as any)
+        .mockResolvedValueOnce([[]] as any);
       expect((await getProduct('p1'))!.isPublished).toBe(true);
     });
 
     it('falls back to empty strings for null descriptions', async () => {
-      vi.mocked(query).mockResolvedValue([
-        [makeRow({ desc_th: null, desc_en: null, desc_zh: null })],
-      ] as any);
+      vi.mocked(query)
+        .mockResolvedValueOnce([[makeRow({ desc_th: null, desc_en: null, desc_zh: null })]] as any)
+        .mockResolvedValueOnce([[]] as any);
 
       const product = await getProduct('p1');
       expect(product!.desc_th).toBe('');
@@ -315,12 +322,13 @@ describe('productStore', () => {
     };
 
     it('inserts all columns and returns the product with sanitized descriptions', async () => {
-      vi.mocked(query).mockResolvedValue([{ affectedRows: 1 }] as any);
+      const conn = { query: vi.fn().mockResolvedValue([{ affectedRows: 1 }] as any) };
+      vi.mocked(withTransaction).mockImplementation(async (fn: any) => fn(conn));
 
       const result = await addProduct(baseProduct);
 
-      expect(vi.mocked(query).mock.calls[0][0]).toContain('INSERT INTO products');
-      expect(vi.mocked(query).mock.calls[0][1]).toEqual([
+      expect(conn.query.mock.calls[0][0]).toContain('INSERT INTO products');
+      expect(conn.query.mock.calls[0][1]).toEqual([
         'new-1',
         3,
         '/img/new.png',
@@ -337,34 +345,38 @@ describe('productStore', () => {
     });
 
     it('coerces isPublished to false when explicitly false', async () => {
-      vi.mocked(query).mockResolvedValue([{ affectedRows: 1 }] as any);
+      const conn = { query: vi.fn().mockResolvedValue([{ affectedRows: 1 }] as any) };
+      vi.mocked(withTransaction).mockImplementation(async (fn: any) => fn(conn));
 
       const result = await addProduct({ ...baseProduct, isPublished: false });
 
       // 11th param is isPublished.
-      expect(vi.mocked(query).mock.calls[0][1]![10]).toBe(false);
+      expect(conn.query.mock.calls[0][1][10]).toBe(false);
       expect(result.isPublished).toBe(false);
     });
 
     it('defaults isPublished to true when undefined', async () => {
-      vi.mocked(query).mockResolvedValue([{ affectedRows: 1 }] as any);
+      const conn = { query: vi.fn().mockResolvedValue([{ affectedRows: 1 }] as any) };
+      vi.mocked(withTransaction).mockImplementation(async (fn: any) => fn(conn));
 
       const { isPublished, ...noFlag } = baseProduct;
       const result = await addProduct(noFlag as ProductData);
 
-      expect(vi.mocked(query).mock.calls[0][1]![10]).toBe(true);
+      // 11th param is isPublished.
+      expect(conn.query.mock.calls[0][1][10]).toBe(true);
       expect(result.isPublished).toBe(true);
     });
 
     it('sanitizes rich-text descriptions on write, stripping scripts', async () => {
-      vi.mocked(query).mockResolvedValue([{ affectedRows: 1 }] as any);
+      const conn = { query: vi.fn().mockResolvedValue([{ affectedRows: 1 }] as any) };
+      vi.mocked(withTransaction).mockImplementation(async (fn: any) => fn(conn));
 
       const result = await addProduct({
         ...baseProduct,
         desc_th: '<p>safe</p><script>alert(1)</script>',
       });
 
-      const storedDescTh = vi.mocked(query).mock.calls[0][1]![6] as string;
+      const storedDescTh = conn.query.mock.calls[0][1][6] as string;
       expect(storedDescTh).not.toContain('<script>');
       expect(storedDescTh).toContain('safe');
       expect(result.desc_th).not.toContain('<script>');
@@ -387,7 +399,9 @@ describe('productStore', () => {
 
   describe('updateProduct', () => {
     it('returns undefined and issues no UPDATE when the product does not exist', async () => {
-      vi.mocked(query).mockResolvedValue([[]] as any); // getProduct(existing) -> none
+      vi.mocked(query)
+        .mockResolvedValueOnce([[]] as any)
+        .mockResolvedValueOnce([[]] as any);
 
       const result = await updateProduct('missing', { title_en: 'x' });
 
@@ -399,13 +413,17 @@ describe('productStore', () => {
 
     it('updates only supplied columns and returns the re-read product', async () => {
       vi.mocked(query)
-        .mockResolvedValueOnce([[makeRow()]] as any) // existence check
-        .mockResolvedValueOnce([{ affectedRows: 1 }] as any) // UPDATE
-        .mockResolvedValueOnce([[makeRow({ title_en: 'Updated', isPublished: 0 })]] as any); // re-read
+        .mockResolvedValueOnce([[makeRow()]] as any)
+        .mockResolvedValueOnce([[]] as any)
+        .mockResolvedValueOnce([[makeRow({ title_en: 'Updated', isPublished: 0 })]] as any)
+        .mockResolvedValueOnce([[]] as any);
+
+      const conn = { query: vi.fn().mockResolvedValue([{ affectedRows: 1 }] as any) };
+      vi.mocked(withTransaction).mockImplementation(async (fn: any) => fn(conn));
 
       const result = await updateProduct('p1', { title_en: 'Updated', isPublished: false });
 
-      const updateCall = vi.mocked(query).mock.calls[1];
+      const updateCall = conn.query.mock.calls[0];
       expect(updateCall[0]).toBe(
         'UPDATE products SET title_en = ?, isPublished = ? WHERE id = ?'
       );
@@ -418,12 +436,16 @@ describe('productStore', () => {
     it('sanitizes description columns in the UPDATE', async () => {
       vi.mocked(query)
         .mockResolvedValueOnce([[makeRow()]] as any)
-        .mockResolvedValueOnce([{ affectedRows: 1 }] as any)
-        .mockResolvedValueOnce([[makeRow()]] as any);
+        .mockResolvedValueOnce([[]] as any)
+        .mockResolvedValueOnce([[makeRow()]] as any)
+        .mockResolvedValueOnce([[]] as any);
+
+      const conn = { query: vi.fn().mockResolvedValue([{ affectedRows: 1 }] as any) };
+      vi.mocked(withTransaction).mockImplementation(async (fn: any) => fn(conn));
 
       await updateProduct('p1', { desc_en: '<p>ok</p><script>evil()</script>' });
 
-      const updateCall = vi.mocked(query).mock.calls[1];
+      const updateCall = conn.query.mock.calls[0];
       expect(updateCall[0]).toBe('UPDATE products SET desc_en = ? WHERE id = ?');
       expect(updateCall[1]![0]).not.toContain('<script>');
       expect(updateCall[1]![0]).toContain('ok');
@@ -431,16 +453,18 @@ describe('productStore', () => {
 
     it('skips the UPDATE entirely when no fields are supplied', async () => {
       vi.mocked(query)
-        .mockResolvedValueOnce([[makeRow()]] as any) // existence check
-        .mockResolvedValueOnce([[makeRow()]] as any); // re-read
+        .mockResolvedValueOnce([[makeRow()]] as any)
+        .mockResolvedValueOnce([[]] as any)
+        .mockResolvedValueOnce([[makeRow()]] as any)
+        .mockResolvedValueOnce([[]] as any);
+
+      const conn = { query: vi.fn().mockResolvedValue([{ affectedRows: 1 }] as any) };
+      vi.mocked(withTransaction).mockImplementation(async (fn: any) => fn(conn));
 
       const result = await updateProduct('p1', {});
 
-      // Two SELECTs, no UPDATE.
-      expect(vi.mocked(query)).toHaveBeenCalledTimes(2);
-      expect(vi.mocked(query).mock.calls.every((c) => !/UPDATE/.test(c[0] as string))).toBe(
-        true
-      );
+      // Two SELECTs in getProduct calls
+      expect(conn.query).toHaveBeenCalledTimes(0);
       expect(result!.id).toBe('p1');
     });
   });

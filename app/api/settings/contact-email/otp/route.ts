@@ -1,0 +1,61 @@
+import { NextRequest, NextResponse } from "next/server";
+import { withRoute, requireAuth } from "../../../../lib/apiHelpers";
+import {
+  getContactEmail,
+  setSetting,
+} from "../../../../lib/settingsStore";
+import { isMailConfigured, sendOtpEmail } from "../../../../lib/mailer";
+
+// Rejects <>"',; too
+const EMAIL_RE = /^[^\s@<>"',;]+@[^\s@<>"',;]+\.[^\s@<>"',;]+$/;
+
+// Generate a random 6-digit OTP
+function generateOtp(): string {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+}
+
+export const POST = withRoute(
+  "ไม่สามารถส่งรหัส OTP ได้",
+  async (request: NextRequest) => {
+    await requireAuth();
+
+    if (!isMailConfigured()) {
+      return NextResponse.json(
+        { error: "ระบบอีเมลยังไม่ได้ตั้งค่า (SMTP_USER/PASS) จึงไม่สามารถส่ง OTP ได้" },
+        { status: 503 }
+      );
+    }
+
+    const { newEmail } = await request.json();
+    const value = String(newEmail ?? "").trim();
+    
+    if (!value || value.length > 320 || !EMAIL_RE.test(value)) {
+      return NextResponse.json(
+        { error: "รูปแบบอีเมลไม่ถูกต้อง" },
+        { status: 400 }
+      );
+    }
+
+    const currentEmail = await getContactEmail();
+    
+    if (value === currentEmail) {
+      return NextResponse.json(
+        { error: "อีเมลใหม่ซ้ำกับอีเมลปัจจุบัน" },
+        { status: 400 }
+      );
+    }
+
+    const otp = generateOtp();
+    const expiresAt = Date.now() + 15 * 60 * 1000; // 15 minutes
+
+    // Save to database
+    await setSetting("contact_email_otp", otp);
+    await setSetting("contact_email_otp_expires", expiresAt.toString());
+    await setSetting("contact_email_pending", value);
+
+    // Send the OTP to the CURRENT email
+    await sendOtpEmail(currentEmail, otp, value);
+
+    return NextResponse.json({ success: true, message: "ส่งรหัส OTP แล้ว" });
+  }
+);
