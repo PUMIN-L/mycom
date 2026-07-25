@@ -42,6 +42,7 @@ interface QuoteState {
   docNo: string;
   docDate: string; // yyyy-mm-dd (input[type=date])
   validDays: number; // ยืนราคา (วัน)
+  sellerId?: string;
   sellerName: string;
   sellerPhone: string;
   sellerEmail: string;

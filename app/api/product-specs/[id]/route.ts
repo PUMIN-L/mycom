@@ -4,10 +4,12 @@ import type { ResultSetHeader } from "mysql2";
 import { withRoute, requireAuth, ApiError } from "../../../lib/apiHelpers";
 import { sanitizePlainText } from "../../../lib/sanitizeHtml";
 
-export const PUT = withRoute("Failed to update spec", async (req: Request, { params }: { params: { id: string } }) => {
+type Ctx = { params: Promise<{ id: string }> };
+
+export const PUT = withRoute("Failed to update spec", async (req: Request, { params }: Ctx) => {
   await requireAuth();
   
-  const { id } = params;
+  const { id } = await params;
   const body = await req.json();
 
   if (!body.productId || typeof body.productId !== "string" || body.productId.trim() === "") {
@@ -36,10 +38,10 @@ export const PUT = withRoute("Failed to update spec", async (req: Request, { par
   return NextResponse.json({ data: { id, productId, name, detail } });
 });
 
-export const DELETE = withRoute("Failed to delete spec", async (req: Request, { params }: { params: { id: string } }) => {
+export const DELETE = withRoute("Failed to delete spec", async (req: Request, { params }: Ctx) => {
   await requireAuth();
   
-  const { id } = params;
+  const { id } = await params;
 
   const [result] = await query<ResultSetHeader>(
     "DELETE FROM product_specs WHERE id = ?",
