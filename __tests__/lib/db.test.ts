@@ -78,8 +78,8 @@ beforeEach(() => {
   // unset so these tests deterministically exercise the real bootstrap.
   delete process.env.VERCEL_ENV;
 
-  warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-  errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+  warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => { });
+  errorSpy = vi.spyOn(console, 'error').mockImplementation(() => { });
 });
 
 afterEach(() => {

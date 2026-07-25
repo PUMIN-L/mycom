@@ -1,0 +1,197 @@
+
+> mycc@0.1.0 test:run
+> vitest run
+
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.8 [39m[90m/Users/puminlomwong/dIt-e-learing-cms-web[39m
+
+(node:35593) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+ [32m✓[39m __tests__/lib/session.branches.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 135[2mms[22m[39m
+[90mstdout[2m | __tests__/lib/productStore.test.ts[2m > [22m[2mproductStore[2m > [22m[2mupdateProduct[2m > [22m[2mreturns undefined and issues no UPDATE when the product does not exist
+[22m[39mQCALLS missing: [ [ [32m'SELECT * FROM products WHERE id = ?'[39m, [ [32m'missing'[39m ] ] ]
+
+[90mstdout[2m | __tests__/lib/productStore.test.ts[2m > [22m[2mproductStore[2m > [22m[2mupdateProduct[2m > [22m[2mupdates only supplied columns and returns the re-read product
+[22m[39mQCALLS updated: [ [ [32m'SELECT * FROM products WHERE id = ?'[39m, [ [32m'p1'[39m ] ] ]
+CONNCALLS updated: []
+
+ [31m❯[39m __tests__/lib/productStore.test.ts [2m([22m[2m33 tests[22m[2m | [22m[31m1 failed[39m[2m)[22m[32m 32[2mms[22m[39m
+       [32m✓[39m returns the rows ordered by sortOrder[32m 2[2mms[22m[39m
+       [32m✓[39m returns an empty array when there are no categories[32m 1[2mms[22m[39m
+       [32m✓[39m allocates id = MAX(id)+1 and inserts it, returning the new category[32m 3[2mms[22m[39m
+       [32m✓[39m starts ids at 1 when the table is empty (MAX(id) is null)[32m 1[2mms[22m[39m
+       [32m✓[39m retries with a freshly-read max on a duplicate-key collision[32m 1[2mms[22m[39m
+       [32m✓[39m rethrows a non-duplicate error without retrying[32m 2[2mms[22m[39m
+       [32m✓[39m throws after exhausting all attempts on repeated duplicate-key errors[32m 1[2mms[22m[39m
+       [32m✓[39m returns true when a row was deleted[32m 1[2mms[22m[39m
+       [32m✓[39m returns false when no row matched[32m 0[2mms[22m[39m
+       [32m✓[39m returns true and passes params in [th, en, zh, id] order[32m 0[2mms[22m[39m
+       [32m✓[39m returns false when no row matched[32m 1[2mms[22m[39m
+       [32m✓[39m updates sortOrder = array index for each id inside the transaction[32m 0[2mms[22m[39m
+       [32m✓[39m returns true and issues no updates for an empty list[32m 0[2mms[22m[39m
+       [32m✓[39m returns false when the transaction fails (rolled back)[32m 2[2mms[22m[39m
+       [32m✓[39m maps a found row (isPublished 1 -> true) and queries by id[32m 1[2mms[22m[39m
+       [32m✓[39m coerces isPublished 0 to false[32m 0[2mms[22m[39m
+       [32m✓[39m defaults isPublished to true when the column is absent[32m 0[2mms[22m[39m
+       [32m✓[39m falls back to empty strings for null descriptions[32m 1[2mms[22m[39m
+       [32m✓[39m returns undefined when no row is found[32m 1[2mms[22m[39m
+       [32m✓[39m maps every row and orders by categoryId then createdAt[32m 2[2mms[22m[39m
+       [32m✓[39m returns an empty array when there are no products[32m 0[2mms[22m[39m
+       [32m✓[39m filters by categoryId and maps the rows[32m 0[2mms[22m[39m
+       [32m✓[39m returns an empty array when the category has no products[32m 0[2mms[22m[39m
+       [32m✓[39m inserts all columns and returns the product with sanitized descriptions[32m 1[2mms[22m[39m
+       [32m✓[39m coerces isPublished to false when explicitly false[32m 0[2mms[22m[39m
+       [32m✓[39m defaults isPublished to true when undefined[32m 0[2mms[22m[39m
+       [32m✓[39m sanitizes rich-text descriptions on write, stripping scripts[32m 2[2mms[22m[39m
+       [32m✓[39m returns true when a row was deleted[32m 1[2mms[22m[39m
+       [32m✓[39m returns false when no row matched[32m 0[2mms[22m[39m
+       [32m✓[39m returns undefined and issues no UPDATE when the product does not exist[32m 2[2mms[22m[39m
+[31m       [31m×[31m updates only supplied columns and returns the re-read product[39m[32m 3[2mms[22m[39m
+       [32m✓[39m sanitizes description columns in the UPDATE[32m 1[2mms[22m[39m
+       [32m✓[39m skips the UPDATE entirely when no fields are supplied[32m 0[2mms[22m[39m
+ [32m✓[39m __tests__/api/upload.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 32[2mms[22m[39m
+[90mstderr[2m | __tests__/api/contact.test.ts[2m > [22m[2mPOST /api/contact (public contact form)[2m > [22m[2mstill returns 200 (lead captured) when the email send throws
+[22m[39mcontact: lead saved but email delivery failed: Error: SMTP down
+    at [90m/Users/puminlomwong/dIt-e-learing-cms-web/[39m__tests__/api/contact.test.ts:109:55
+    at [90mfile:///Users/puminlomwong/dIt-e-learing-cms-web/[39mnode_modules/[4m@vitest/runner[24m/dist/chunk-artifact.js:302:11
+    at [90mfile:///Users/puminlomwong/dIt-e-learing-cms-web/[39mnode_modules/[4m@vitest/runner[24m/dist/chunk-artifact.js:1903:26
+    at [90mfile:///Users/puminlomwong/dIt-e-learing-cms-web/[39mnode_modules/[4m@vitest/runner[24m/dist/chunk-artifact.js:2326:20
+    at new Promise (<anonymous>)
+    at runWithCancel [90m(file:///Users/puminlomwong/dIt-e-learing-cms-web/[39mnode_modules/[4m@vitest/runner[24m/dist/chunk-artifact.js:2323:10[90m)[39m
+    at [90mfile:///Users/puminlomwong/dIt-e-learing-cms-web/[39mnode_modules/[4m@vitest/runner[24m/dist/chunk-artifact.js:2305:20
+    at new Promise (<anonymous>)
+    at runWithTimeout [90m(file:///Users/puminlomwong/dIt-e-learing-cms-web/[39mnode_modules/[4m@vitest/runner[24m/dist/chunk-artifact.js:2272:10[90m)[39m
+    at [90mfile:///Users/puminlomwong/dIt-e-learing-cms-web/[39mnode_modules/[4m@vitest/runner[24m/dist/chunk-artifact.js:2955:64
+
+[90mstderr[2m | __tests__/api/contact.test.ts[2m > [22m[2mPOST /api/contact (public contact form)[2m > [22m[2mstill returns 200 emailed:true when the send succeeds but the flag UPDATE fails
+[22m[39mcontact: email sent but marking emailedOk failed: Error: DB blip
+    at [90m/Users/puminlomwong/dIt-e-learing-cms-web/[39m__tests__/api/contact.test.ts:122:64
+    at [90mfile:///Users/puminlomwong/dIt-e-learing-cms-web/[39mnode_modules/[4m@vitest/runner[24m/dist/chunk-artifact.js:302:11
+    at [90mfile:///Users/puminlomwong/dIt-e-learing-cms-web/[39mnode_modules/[4m@vitest/runner[24m/dist/chunk-artifact.js:1903:26
+    at [90mfile:///Users/puminlomwong/dIt-e-learing-cms-web/[39mnode_modules/[4m@vitest/runner[24m/dist/chunk-artifact.js:2326:20
+    at new Promise (<anonymous>)
+    at runWithCancel [90m(file:///Users/puminlomwong/dIt-e-learing-cms-web/[39mnode_modules/[4m@vitest/runner[24m/dist/chunk-artifact.js:2323:10[90m)[39m
+    at [90mfile:///Users/puminlomwong/dIt-e-learing-cms-web/[39mnode_modules/[4m@vitest/runner[24m/dist/chunk-artifact.js:2305:20
+    at new Promise (<anonymous>)
+    at runWithTimeout [90m(file:///Users/puminlomwong/dIt-e-learing-cms-web/[39mnode_modules/[4m@vitest/runner[24m/dist/chunk-artifact.js:2272:10[90m)[39m
+    at [90mfile:///Users/puminlomwong/dIt-e-learing-cms-web/[39mnode_modules/[4m@vitest/runner[24m/dist/chunk-artifact.js:2955:64
+
+ [32m✓[39m __tests__/api/contact.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 32[2mms[22m[39m
+ [32m✓[39m __tests__/lib/session.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 18[2mms[22m[39m
+[90mstderr[2m | __tests__/api/documents.test.ts[2m > [22m[2mDocuments API Route[2m > [22m[2mGET /api/documents[2m > [22m[2msurfaces a store failure as a 500 (error path)
+[22m[39mFailed to fetch documents: Error: db down
+    at [90m/Users/puminlomwong/dIt-e-learing-cms-web/[39m__tests__/api/documents.test.ts:76:52
+    at [90mfile:///Users/puminlomwong/dIt-e-learing-cms-web/[39mnode_modules/[4m@vitest/runner[24m/dist/chunk-artifact.js:302:11
+    at [90mfile:///Users/puminlomwong/dIt-e-learing-cms-web/[39mnode_modules/[4m@vitest/runner[24m/dist/chunk-artifact.js:1903:26
+    at [90mfile:///Users/puminlomwong/dIt-e-learing-cms-web/[39mnode_modules/[4m@vitest/runner[24m/dist/chunk-artifact.js:2326:20
+    at new Promise (<anonymous>)
+    at runWithCancel [90m(file:///Users/puminlomwong/dIt-e-learing-cms-web/[39mnode_modules/[4m@vitest/runner[24m/dist/chunk-artifact.js:2323:10[90m)[39m
+    at [90mfile:///Users/puminlomwong/dIt-e-learing-cms-web/[39mnode_modules/[4m@vitest/runner[24m/dist/chunk-artifact.js:2305:20
+    at new Promise (<anonymous>)
+    at runWithTimeout [90m(file:///Users/puminlomwong/dIt-e-learing-cms-web/[39mnode_modules/[4m@vitest/runner[24m/dist/chunk-artifact.js:2272:10[90m)[39m
+    at [90mfile:///Users/puminlomwong/dIt-e-learing-cms-web/[39mnode_modules/[4m@vitest/runner[24m/dist/chunk-artifact.js:2955:64
+
+[90mstderr[2m | __tests__/api/documents.test.ts[2m > [22m[2mDocuments API Route[2m > [22m[2mGET /api/documents/proxy[2m > [22m[2m500s when the upstream fetch throws
+[22m[39mProxy error: Error: network
+    at [90m/Users/puminlomwong/dIt-e-learing-cms-web/[39m__tests__/api/documents.test.ts:287:35
+    at [90mfile:///Users/puminlomwong/dIt-e-learing-cms-web/[39mnode_modules/[4m@vitest/runner[24m/dist/chunk-artifact.js:302:11
+    at [90mfile:///Users/puminlomwong/dIt-e-learing-cms-web/[39mnode_modules/[4m@vitest/runner[24m/dist/chunk-artifact.js:1903:26
+    at [90mfile:///Users/puminlomwong/dIt-e-learing-cms-web/[39mnode_modules/[4m@vitest/runner[24m/dist/chunk-artifact.js:2326:20
+    at new Promise (<anonymous>)
+    at runWithCancel [90m(file:///Users/puminlomwong/dIt-e-learing-cms-web/[39mnode_modules/[4m@vitest/runner[24m/dist/chunk-artifact.js:2323:10[90m)[39m
+    at [90mfile:///Users/puminlomwong/dIt-e-learing-cms-web/[39mnode_modules/[4m@vitest/runner[24m/dist/chunk-artifact.js:2305:20
+    at new Promise (<anonymous>)
+    at runWithTimeout [90m(file:///Users/puminlomwong/dIt-e-learing-cms-web/[39mnode_modules/[4m@vitest/runner[24m/dist/chunk-artifact.js:2272:10[90m)[39m
+    at [90mfile:///Users/puminlomwong/dIt-e-learing-cms-web/[39mnode_modules/[4m@vitest/runner[24m/dist/chunk-artifact.js:2955:64
+
+ [32m✓[39m __tests__/api/documents.test.ts [2m([22m[2m20 tests[22m[2m)[22m[32m 24[2mms[22m[39m
+ [32m✓[39m __tests__/api/auth.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 28[2mms[22m[39m
+ [32m✓[39m __tests__/api/login-credentials.test.ts [2m([22m[2m2 tests[22m[2m)[22m[33m 726[2mms[22m[39m
+     [33m[2m✓[22m[39m accepts the correct password and creates a session [33m 302[2mms[22m[39m
+     [33m[2m✓[22m[39m rejects a wrong password with 401 and issues no session [33m 423[2mms[22m[39m
+ [32m✓[39m __tests__/api/products-categories.test.ts [2m([22m[2m14 tests[22m[2m)[22m[32m 25[2mms[22m[39m
+ [32m✓[39m __tests__/lib/contentStore.test.ts [2m([22m[2m23 tests[22m[2m)[22m[32m 14[2mms[22m[39m
+ [32m✓[39m __tests__/api/revisions.test.ts [2m([22m[2m14 tests[22m[2m)[22m[32m 35[2mms[22m[39m
+ [32m✓[39m __tests__/lib/db.test.ts [2m([22m[2m25 tests[22m[2m)[22m[33m 1197[2mms[22m[39m
+       [33m[2m✓[22m[39m gives up and rethrows after MAX_ATTEMPTS on a persistent transient error [33m 457[2mms[22m[39m
+ [32m✓[39m __tests__/components/ConfirmDialog.test.tsx [2m([22m[2m5 tests[22m[2m)[22m[32m 190[2mms[22m[39m
+ [32m✓[39m __tests__/api/products-id.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 50[2mms[22m[39m
+ [32m✓[39m __tests__/lib/cloudinaryHelper.test.ts [2m([22m[2m33 tests[22m[2m)[22m[32m 42[2mms[22m[39m
+ [32m✓[39m __tests__/components/Toast.test.tsx [2m([22m[2m2 tests[22m[2m)[22m[32m 42[2mms[22m[39m
+ [32m✓[39m __tests__/api/products.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 9[2mms[22m[39m
+ [32m✓[39m __tests__/api/contents.test.ts [2m([22m[2m17 tests[22m[2m)[22m[32m 20[2mms[22m[39m
+[90mstderr[2m | __tests__/lib/getProductsData.test.ts[2m > [22m[2mgetProductsData[2m > [22m[2mreturns empty arrays (never throws) when a store rejects
+[22m[39mError fetching products data: Error: db down
+    at [90m/Users/puminlomwong/dIt-e-learing-cms-web/[39m__tests__/lib/getProductsData.test.ts:51:51
+    at [90mfile:///Users/puminlomwong/dIt-e-learing-cms-web/[39mnode_modules/[4m@vitest/runner[24m/dist/chunk-artifact.js:302:11
+    at [90mfile:///Users/puminlomwong/dIt-e-learing-cms-web/[39mnode_modules/[4m@vitest/runner[24m/dist/chunk-artifact.js:1903:26
+    at [90mfile:///Users/puminlomwong/dIt-e-learing-cms-web/[39mnode_modules/[4m@vitest/runner[24m/dist/chunk-artifact.js:2326:20
+    at new Promise (<anonymous>)
+    at runWithCancel [90m(file:///Users/puminlomwong/dIt-e-learing-cms-web/[39mnode_modules/[4m@vitest/runner[24m/dist/chunk-artifact.js:2323:10[90m)[39m
+    at [90mfile:///Users/puminlomwong/dIt-e-learing-cms-web/[39mnode_modules/[4m@vitest/runner[24m/dist/chunk-artifact.js:2305:20
+    at new Promise (<anonymous>)
+    at runWithTimeout [90m(file:///Users/puminlomwong/dIt-e-learing-cms-web/[39mnode_modules/[4m@vitest/runner[24m/dist/chunk-artifact.js:2272:10[90m)[39m
+    at [90mfile:///Users/puminlomwong/dIt-e-learing-cms-web/[39mnode_modules/[4m@vitest/runner[24m/dist/chunk-artifact.js:2955:64
+
+ [32m✓[39m __tests__/lib/getProductsData.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 20[2mms[22m[39m
+[90mstderr[2m | __tests__/api/settings-contact-email.test.ts[2m > [22m[2mSettings contact-email API Route[2m > [22m[2mPUT /api/settings/contact-email[2m > [22m[2mstill saves (200) even if the notification email fails to send
+[22m[39mFailed to send recipient-change notice: Error: SMTP down
+    at [90m/Users/puminlomwong/dIt-e-learing-cms-web/[39m__tests__/api/settings-contact-email.test.ts:102:69
+    at [90mfile:///Users/puminlomwong/dIt-e-learing-cms-web/[39mnode_modules/[4m@vitest/runner[24m/dist/chunk-artifact.js:302:11
+    at [90mfile:///Users/puminlomwong/dIt-e-learing-cms-web/[39mnode_modules/[4m@vitest/runner[24m/dist/chunk-artifact.js:1903:26
+    at [90mfile:///Users/puminlomwong/dIt-e-learing-cms-web/[39mnode_modules/[4m@vitest/runner[24m/dist/chunk-artifact.js:2326:20
+    at new Promise (<anonymous>)
+    at runWithCancel [90m(file:///Users/puminlomwong/dIt-e-learing-cms-web/[39mnode_modules/[4m@vitest/runner[24m/dist/chunk-artifact.js:2323:10[90m)[39m
+    at [90mfile:///Users/puminlomwong/dIt-e-learing-cms-web/[39mnode_modules/[4m@vitest/runner[24m/dist/chunk-artifact.js:2305:20
+    at new Promise (<anonymous>)
+    at runWithTimeout [90m(file:///Users/puminlomwong/dIt-e-learing-cms-web/[39mnode_modules/[4m@vitest/runner[24m/dist/chunk-artifact.js:2272:10[90m)[39m
+    at [90mfile:///Users/puminlomwong/dIt-e-learing-cms-web/[39mnode_modules/[4m@vitest/runner[24m/dist/chunk-artifact.js:2955:64
+
+ [32m✓[39m __tests__/api/settings-contact-email.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 19[2mms[22m[39m
+ [32m✓[39m __tests__/lib/apiHelpers.test.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 15[2mms[22m[39m
+ [32m✓[39m __tests__/lib/documentStore.test.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 9[2mms[22m[39m
+ [32m✓[39m __tests__/lib/site.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 12[2mms[22m[39m
+ [32m✓[39m __tests__/api/quotations-id.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 31[2mms[22m[39m
+[90mstdout[2m | __tests__/api/quotations.test.ts[2m > [22m[2mQuotations API[2m > [22m[2mGET /api/quotations/cleanup (cron)[2m > [22m[2mpurges and returns counts when the Bearer secret matches
+[22m[39m[cron:quotations-cleanup] ok deleted=3 docNosPurged=5
+
+ [32m✓[39m __tests__/api/quotations.test.ts [2m([22m[2m12 tests[22m[2m)[22m[32m 11[2mms[22m[39m
+ [32m✓[39m __tests__/api/route-branches.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 29[2mms[22m[39m
+ [32m✓[39m __tests__/lib/revisionStore.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 13[2mms[22m[39m
+ [32m✓[39m __tests__/lib/mailer.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 9[2mms[22m[39m
+ [32m✓[39m __tests__/lib/pagination.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 12[2mms[22m[39m
+ [32m✓[39m __tests__/lib/contactMessageStore.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 15[2mms[22m[39m
+ [32m✓[39m __tests__/lib/quotationStore.test.ts [2m([22m[2m24 tests[22m[2m)[22m[32m 26[2mms[22m[39m
+ [32m✓[39m __tests__/lib/apiHelpers.branches.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 6[2mms[22m[39m
+ [32m✓[39m __tests__/lib/quotationTotals.test.ts [2m([22m[2m13 tests[22m[2m)[22m[32m 6[2mms[22m[39m
+ [32m✓[39m __tests__/components/Spinner.test.tsx [2m([22m[2m2 tests[22m[2m)[22m[32m 38[2mms[22m[39m
+ [32m✓[39m __tests__/lib/quotationNumber.test.ts [2m([22m[2m12 tests[22m[2m)[22m[32m 8[2mms[22m[39m
+ [32m✓[39m __tests__/lib/settingsStore.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 7[2mms[22m[39m
+ [32m✓[39m __tests__/lib/quotationSave.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 6[2mms[22m[39m
+ [32m✓[39m __tests__/api/health.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 46[2mms[22m[39m
+ [32m✓[39m __tests__/lib/contact.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 7[2mms[22m[39m
+ [32m✓[39m __tests__/lib/localize.branches.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 7[2mms[22m[39m
+ [32m✓[39m __tests__/api/contact-messages.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 12[2mms[22m[39m
+ [32m✓[39m __tests__/lib/sanitizeHtml.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 14[2mms[22m[39m
+ [32m✓[39m __tests__/lib/localize.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 3[2mms[22m[39m
+
+[31m⎯⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 1 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[41m[1m FAIL [22m[49m __tests__/lib/productStore.test.ts[2m > [22mproductStore[2m > [22mupdateProduct[2m > [22mupdates only supplied columns and returns the re-read product
+[31m[1mTypeError[22m: Cannot read properties of undefined (reading '0')[39m
+[36m [2m❯[22m __tests__/lib/productStore.test.ts:[2m431:14[22m[39m
+    [90m429|[39m
+    [90m430|[39m       [35mconst[39m updateCall [33m=[39m conn[33m.[39mquery[33m.[39mmock[33m.[39mcalls[[34m0[39m][33m;[39m
+    [90m431|[39m       [34mexpect[39m(updateCall[[34m0[39m])[33m.[39m[34mtoBe[39m(
+    [90m   |[39m              [31m^[39m
+    [90m432|[39m         'UPDATE products SET title_en = ?, isPublished = ? WHERE id = …
+    [90m433|[39m       )[33m;[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[2m | [22m[1m[32m42 passed[39m[22m[90m (43)[39m
+[2m      Tests [22m [1m[31m1 failed[39m[22m[2m | [22m[1m[32m440 passed[39m[22m[90m (441)[39m
+[2m   Start at [22m 19:27:29
+[2m   Duration [22m 4.91s[2m (transform 2.32s, setup 4.84s, import 5.32s, tests 3.03s, environment 4.67s)[22m
+

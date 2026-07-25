@@ -48,7 +48,7 @@ const makeRow = (over: Record<string, unknown> = {}) => ({
 
 describe('productStore', () => {
   beforeEach(() => {
-    vi.resetAllMocks();
+    vi.clearAllMocks();
   });
 
   // ── Categories ──────────────────────────────────────────────────────────────
@@ -196,7 +196,7 @@ describe('productStore', () => {
     });
 
     it('returns false when the transaction fails (rolled back)', async () => {
-      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => { });
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
       vi.mocked(withTransaction).mockRejectedValue(new Error('rollback'));
 
       expect(await reorderCategories([1, 2])).toBe(false);

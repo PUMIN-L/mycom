@@ -56,7 +56,7 @@ import {
 
 vi.mock('@/app/lib/quotationStore', () => ({
   saveQuotationAtomic: vi.fn(),
-  DocNoConflictError: class DocNoConflictError extends Error {},
+  DocNoConflictError: class DocNoConflictError extends Error { },
 }));
 import { saveQuotationAtomic } from '@/app/lib/quotationStore';
 
@@ -120,7 +120,7 @@ describe('DELETE /api/products/[id] — cascade branches', () => {
   });
 
   it('returns 500 when deleteProduct reports the row was not removed', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => { });
     vi.mocked(getProduct).mockResolvedValue({ id: 'p1', image: '' } as any);
     vi.mocked(getAllContents).mockResolvedValue([]);
     vi.mocked(deleteProduct).mockResolvedValue(false);
@@ -178,7 +178,7 @@ describe('category routes — invalid id + reorder failure', () => {
   });
 
   it('reorder → 500 when the store fails to persist the new order', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => { });
     vi.mocked(reorderCategories).mockResolvedValue(false);
     const res = await reorderRoute(req('PUT', { categoryIds: [3, 1, 2] }) as any);
     expect(res.status).toBe(500);
@@ -205,7 +205,7 @@ describe('POST /api/products — field validation branches', () => {
 
 describe('DELETE /api/contents/[id] — delete failure', () => {
   it('returns 500 when the content row could not be deleted', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => { });
     vi.mocked(getContent).mockResolvedValue({ id: 'c1', productId: null } as any);
     vi.mocked(collectContentImageUrls).mockReturnValue([]);
     vi.mocked(deleteContent).mockResolvedValue(false);

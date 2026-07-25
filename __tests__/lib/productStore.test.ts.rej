@@ -1,0 +1,8 @@
+@@ -406,6 +406,7 @@
+ 
+       expect(result).toBeUndefined();
+       // Only the existence SELECT ran; no UPDATE.
++      console.log("QCALLS:", vi.mocked(query).mock.calls);
+       expect(vi.mocked(query)).toHaveBeenCalledTimes(1); // the first call returns empty, getProduct returns early. Wait, if rows.length === 0, it doesn't make second query. So 1 call.
+       expect(vi.mocked(query).mock.calls[0][0]).toContain('SELECT * FROM products');
+     });
