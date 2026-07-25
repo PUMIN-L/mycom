@@ -248,6 +248,12 @@ export default function ShowcaseListClient({
                   📋 ใบที่บันทึกไว้
                 </Link>
                 <Link
+                  href="/customers"
+                  className="px-5 py-2.5 bg-white border border-gray-300 text-gray-700 font-semibold rounded-lg hover:bg-gray-50 transition shadow-sm"
+                >
+                  👥 จัดการลูกค้าและบริษัท
+                </Link>
+                <Link
                   href="/settings"
                   className="px-5 py-2.5 bg-white border border-gray-300 text-gray-700 font-semibold rounded-lg hover:bg-gray-50 transition shadow-sm"
                 >
