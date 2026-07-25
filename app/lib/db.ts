@@ -4,7 +4,7 @@ import type { QueryResult, FieldPacket, RowDataPacket } from "mysql2";
 
 // Bump whenever the schema below changes — a mismatch re-runs the (idempotent)
 // bootstrap; a match lets returning cold instances skip it in one SELECT.
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 
 type DbPool = ReturnType<typeof mysql.createPool>;
 
@@ -290,6 +290,22 @@ async function bootstrapSchemaOnce(): Promise<void> {
           createdAt VARCHAR(255) NOT NULL
         )
       `);
+      
+      try {
+        await connection.query(
+          `CREATE INDEX idx_customers_companyId ON customers (companyId)`
+        );
+      } catch (error) {
+        if (!isBenignSchemaError(error)) throw error;
+      }
+      
+      try {
+        await connection.query(
+          `ALTER TABLE customers ADD CONSTRAINT fk_customer_company FOREIGN KEY (companyId) REFERENCES companies(id) ON DELETE RESTRICT`
+        );
+      } catch (error) {
+        if (!isBenignSchemaError(error)) throw error;
+      }
 
       // ── Seed default admin user ────────────────────────────────────────────
       // Credentials come from the environment, never from source. If
@@ -505,6 +521,9 @@ const BENIGN_SCHEMA_ERROR_CODES = new Set([
   "ER_DUP_FIELDNAME", // column already exists
   "ER_DUP_KEYNAME", // index already exists
   "ER_PARSE_ERROR", // `IF NOT EXISTS` syntax unsupported on this engine
+  "ER_CANT_CREATE_TABLE", // usually foreign key already exists
+  "ER_FK_DUP_NAME", // foreign key already exists
+  "ER_DUP_KEY", // duplicate key/constraint
 ]);
 
 function isBenignSchemaError(error: unknown): boolean {

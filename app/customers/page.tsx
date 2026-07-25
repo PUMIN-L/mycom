@@ -92,8 +92,16 @@ function CustomersInner() {
 
   const handleSaveCompany = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!editingCompany?.name) {
+    if (!editingCompany?.name || editingCompany.name.trim() === "") {
       showToast("กรุณากรอกชื่อบริษัท", "error");
+      return;
+    }
+    if (editingCompany.name.length > 255) {
+      showToast("ชื่อบริษัทต้องไม่เกิน 255 ตัวอักษร", "error");
+      return;
+    }
+    if ((editingCompany.note || "").length > 2000) {
+      showToast("หมายเหตุต้องไม่เกิน 2000 ตัวอักษร", "error");
       return;
     }
 
@@ -135,8 +143,16 @@ function CustomersInner() {
 
   const handleSaveCustomer = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!editingCustomer?.name || !editingCustomer?.companyId) {
+    if (!editingCustomer?.name || editingCustomer.name.trim() === "" || !editingCustomer?.companyId) {
       showToast("กรุณากรอกข้อมูลให้ครบถ้วน", "error");
+      return;
+    }
+    if (editingCustomer.name.length > 255) {
+      showToast("ชื่อลูกค้าต้องไม่เกิน 255 ตัวอักษร", "error");
+      return;
+    }
+    if ((editingCustomer.note || "").length > 2000) {
+      showToast("หมายเหตุต้องไม่เกิน 2000 ตัวอักษร", "error");
       return;
     }
 

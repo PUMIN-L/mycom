@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { query } from "../../../lib/db";
 import { getSession } from "../../../lib/session";
+import { stripHtml } from "../../../lib/stripHtml";
 
 export async function PUT(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -12,21 +13,32 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
     const { id } = await params;
     const data = await request.json();
 
-    if (!data.companyId) {
+    if (!data.companyId || typeof data.companyId !== "string" || data.companyId.trim() === "") {
       return NextResponse.json({ error: "companyId is required" }, { status: 400 });
     }
+
+    if (!data.name || typeof data.name !== "string" || data.name.trim() === "") {
+      return NextResponse.json({ error: "Name is required" }, { status: 400 });
+    }
+
+    const companyId = stripHtml(data.companyId).substring(0, 255);
+    const name = stripHtml(data.name).substring(0, 255);
+    const department = stripHtml(data.department || "").substring(0, 255);
+    const phone = stripHtml(data.phone || "").substring(0, 255);
+    const email = stripHtml(data.email || "").substring(0, 255);
+    const note = stripHtml(data.note || "").substring(0, 2000);
 
     await query(
       `UPDATE customers SET 
         companyId = ?, name = ?, department = ?, phone = ?, email = ?, note = ?
        WHERE id = ?`,
       [
-        data.companyId,
-        data.name,
-        data.department || "",
-        data.phone || "",
-        data.email || "",
-        data.note || "",
+        companyId,
+        name,
+        department,
+        phone,
+        email,
+        note,
         id,
       ]
     );
