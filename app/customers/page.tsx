@@ -48,6 +48,9 @@ function CustomersInner() {
   const [viewingCompany, setViewingCompany] = useState<Company | null>(null);
   const [viewingCustomer, setViewingCustomer] = useState<Customer | null>(null);
 
+  const [deleteConfirmCompany, setDeleteConfirmCompany] = useState<Company | null>(null);
+  const [deleteConfirmCustomer, setDeleteConfirmCustomer] = useState<Customer | null>(null);
+
   const [companySubmitAttempted, setCompanySubmitAttempted] = useState(false);
   const [customerSubmitAttempted, setCustomerSubmitAttempted] = useState(false);
 
@@ -114,15 +117,16 @@ function CustomersInner() {
     }
   };
 
-  const handleDeleteCompany = async (id: string) => {
-    if (!confirm("คุณแน่ใจหรือไม่ที่จะลบบริษัทนี้?")) return;
+  const executeDeleteCompany = async () => {
+    if (!deleteConfirmCompany) return;
     try {
-      const res = await fetch(`/api/companies/${id}`, { method: "DELETE" });
+      const res = await fetch(`/api/companies/${deleteConfirmCompany.id}`, { method: "DELETE" });
       if (!res.ok) {
         const errorData = await res.json();
         throw new Error(errorData.error || "Failed to delete");
       }
       showToast("ลบบริษัทสำเร็จ", "success");
+      setDeleteConfirmCompany(null);
       fetchData();
     } catch (err: any) {
       showToast(err.message || "เกิดข้อผิดพลาดในการลบ", "error");
@@ -156,12 +160,13 @@ function CustomersInner() {
     }
   };
 
-  const handleDeleteCustomer = async (id: string) => {
-    if (!confirm("คุณแน่ใจหรือไม่ที่จะลบลูกค้ารายนี้?")) return;
+  const executeDeleteCustomer = async () => {
+    if (!deleteConfirmCustomer) return;
     try {
-      const res = await fetch(`/api/customers/${id}`, { method: "DELETE" });
+      const res = await fetch(`/api/customers/${deleteConfirmCustomer.id}`, { method: "DELETE" });
       if (!res.ok) throw new Error("Failed to delete");
       showToast("ลบลูกค้าสำเร็จ", "success");
+      setDeleteConfirmCustomer(null);
       fetchData();
     } catch (err) {
       showToast("เกิดข้อผิดพลาดในการลบ", "error");
@@ -286,7 +291,7 @@ function CustomersInner() {
                         <td className="px-6 py-5 text-right space-x-3">
                           <button onClick={(e) => { e.stopPropagation(); setViewingCompany(c); }} className="text-gray-400 hover:text-gray-800 font-medium text-sm transition-colors">ดูข้อมูล</button>
                           <button onClick={(e) => { e.stopPropagation(); setEditingCompany(c); setCompanySubmitAttempted(false); setIsCompanyModalOpen(true); }} className="text-blue-500 hover:text-blue-700 font-medium text-sm transition-colors">แก้ไข</button>
-                          <button onClick={(e) => { e.stopPropagation(); handleDeleteCompany(c.id); }} className="text-red-500 hover:text-red-700 font-medium text-sm transition-colors">ลบ</button>
+                          <button onClick={(e) => { e.stopPropagation(); setDeleteConfirmCompany(c); }} className="text-red-500 hover:text-red-700 font-medium text-sm transition-colors">ลบ</button>
                         </td>
                       </tr>
                     ))}
@@ -366,7 +371,7 @@ function CustomersInner() {
                         <td className="px-6 py-5 text-right space-x-3">
                           <button onClick={(e) => { e.stopPropagation(); setViewingCustomer(c); }} className="text-gray-400 hover:text-gray-800 font-medium text-sm transition-colors">ดูข้อมูล</button>
                           <button onClick={(e) => { e.stopPropagation(); setEditingCustomer(c); setCustomerSubmitAttempted(false); setIsCustomerModalOpen(true); }} className="text-blue-500 hover:text-blue-700 font-medium text-sm transition-colors">แก้ไข</button>
-                          <button onClick={(e) => { e.stopPropagation(); handleDeleteCustomer(c.id); }} className="text-red-500 hover:text-red-700 font-medium text-sm transition-colors">ลบ</button>
+                          <button onClick={(e) => { e.stopPropagation(); setDeleteConfirmCustomer(c); }} className="text-red-500 hover:text-red-700 font-medium text-sm transition-colors">ลบ</button>
                         </td>
                       </tr>
                     ))}
@@ -634,6 +639,42 @@ function CustomersInner() {
             <div className="px-8 py-5 border-t border-gray-100 bg-gray-50/50 flex justify-end gap-3 z-10">
               <button type="button" onClick={() => setIsCustomerModalOpen(false)} className="px-6 py-2.5 font-semibold text-gray-600 bg-white border border-gray-200 rounded-xl hover:bg-gray-50 transition-all shadow-sm">ยกเลิก</button>
               <button type="submit" form="customer-form" className="px-6 py-2.5 bg-orange-500 text-white font-semibold rounded-xl hover:bg-orange-600 transition-all shadow-sm hover:shadow-md">บันทึกข้อมูล</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Company Confirmation Modal */}
+      {deleteConfirmCompany && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-gray-900/40 backdrop-blur-sm" onClick={() => setDeleteConfirmCompany(null)}></div>
+          <div className="relative bg-white rounded-3xl shadow-2xl max-w-sm w-full p-6 text-center transform transition-all scale-100 opacity-100">
+            <div className="w-16 h-16 bg-red-100 text-red-500 rounded-full flex items-center justify-center mx-auto mb-4">
+              <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+            </div>
+            <h3 className="text-xl font-bold text-gray-900 mb-2">ยืนยันการลบบริษัท</h3>
+            <p className="text-gray-500 mb-6">คุณแน่ใจหรือไม่ที่จะลบ <strong>{deleteConfirmCompany.name}</strong>? การลบนี้จะนำลูกค้าที่สังกัดบริษัทนี้ออกไปด้วย และไม่สามารถกู้คืนได้</p>
+            <div className="flex gap-3 justify-center">
+              <button onClick={() => setDeleteConfirmCompany(null)} className="px-5 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-800 font-semibold rounded-xl transition-colors">ยกเลิก</button>
+              <button onClick={executeDeleteCompany} className="px-5 py-2.5 bg-red-500 hover:bg-red-600 text-white font-semibold rounded-xl transition-colors shadow-sm hover:shadow-md">ลบข้อมูล</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Customer Confirmation Modal */}
+      {deleteConfirmCustomer && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-gray-900/40 backdrop-blur-sm" onClick={() => setDeleteConfirmCustomer(null)}></div>
+          <div className="relative bg-white rounded-3xl shadow-2xl max-w-sm w-full p-6 text-center transform transition-all scale-100 opacity-100">
+            <div className="w-16 h-16 bg-red-100 text-red-500 rounded-full flex items-center justify-center mx-auto mb-4">
+              <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+            </div>
+            <h3 className="text-xl font-bold text-gray-900 mb-2">ยืนยันการลบลูกค้า</h3>
+            <p className="text-gray-500 mb-6">คุณแน่ใจหรือไม่ที่จะลบ <strong>{deleteConfirmCustomer.name}</strong>? ข้อมูลจะถูกลบอย่างถาวรและไม่สามารถกู้คืนได้</p>
+            <div className="flex gap-3 justify-center">
+              <button onClick={() => setDeleteConfirmCustomer(null)} className="px-5 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-800 font-semibold rounded-xl transition-colors">ยกเลิก</button>
+              <button onClick={executeDeleteCustomer} className="px-5 py-2.5 bg-red-500 hover:bg-red-600 text-white font-semibold rounded-xl transition-colors shadow-sm hover:shadow-md">ลบข้อมูล</button>
             </div>
           </div>
         </div>
