@@ -649,15 +649,36 @@ function CustomersInner() {
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-gray-900/40 backdrop-blur-sm" onClick={() => setDeleteConfirmCompany(null)}></div>
           <div className="relative bg-white rounded-3xl shadow-2xl max-w-sm w-full p-6 text-center transform transition-all scale-100 opacity-100">
-            <div className="w-16 h-16 bg-red-100 text-red-500 rounded-full flex items-center justify-center mx-auto mb-4">
-              <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
-            </div>
-            <h3 className="text-xl font-bold text-gray-900 mb-2">ยืนยันการลบบริษัท</h3>
-            <p className="text-gray-500 mb-6">คุณแน่ใจหรือไม่ที่จะลบ <strong>{deleteConfirmCompany.name}</strong>? การลบนี้จะนำลูกค้าที่สังกัดบริษัทนี้ออกไปด้วย และไม่สามารถกู้คืนได้</p>
-            <div className="flex gap-3 justify-center">
-              <button onClick={() => setDeleteConfirmCompany(null)} className="px-5 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-800 font-semibold rounded-xl transition-colors">ยกเลิก</button>
-              <button onClick={executeDeleteCompany} className="px-5 py-2.5 bg-red-500 hover:bg-red-600 text-white font-semibold rounded-xl transition-colors shadow-sm hover:shadow-md">ลบข้อมูล</button>
-            </div>
+            {(() => {
+              const linkedCustomers = customers.filter(c => c.companyId === deleteConfirmCompany.id);
+              if (linkedCustomers.length > 0) {
+                return (
+                  <>
+                    <div className="w-16 h-16 bg-orange-100 text-orange-500 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                    </div>
+                    <h3 className="text-xl font-bold text-gray-900 mb-2">ไม่สามารถลบบริษัทได้</h3>
+                    <p className="text-gray-500 mb-6">บริษัท <strong>{deleteConfirmCompany.name}</strong> ยังมีลูกค้าระบุสังกัดอยู่จำนวน {linkedCustomers.length} ราย กรุณาลบหรือย้ายสังกัดลูกค้าก่อนทำการลบบริษัท</p>
+                    <div className="flex justify-center">
+                      <button onClick={() => setDeleteConfirmCompany(null)} className="px-5 py-2.5 bg-gray-900 hover:bg-gray-800 text-white font-semibold rounded-xl transition-colors shadow-sm w-full">ตกลง</button>
+                    </div>
+                  </>
+                );
+              }
+              return (
+                <>
+                  <div className="w-16 h-16 bg-red-100 text-red-500 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                  </div>
+                  <h3 className="text-xl font-bold text-gray-900 mb-2">ยืนยันการลบบริษัท</h3>
+                  <p className="text-gray-500 mb-6">คุณแน่ใจหรือไม่ที่จะลบ <strong>{deleteConfirmCompany.name}</strong>? การลบนี้ไม่สามารถกู้คืนได้</p>
+                  <div className="flex gap-3 justify-center">
+                    <button onClick={() => setDeleteConfirmCompany(null)} className="px-5 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-800 font-semibold rounded-xl transition-colors flex-1">ยกเลิก</button>
+                    <button onClick={executeDeleteCompany} className="px-5 py-2.5 bg-red-500 hover:bg-red-600 text-white font-semibold rounded-xl transition-colors shadow-sm hover:shadow-md flex-1">ลบข้อมูล</button>
+                  </div>
+                </>
+              );
+            })()}
           </div>
         </div>
       )}
