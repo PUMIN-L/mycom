@@ -569,12 +569,12 @@ function CustomersInner() {
 
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-2">เบอร์โทรศัพท์</label>
-                  <input type="tel" pattern="[0-9]*" className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none transition-all" value={editingCompany?.phone || ""} onChange={e => setEditingCompany({...editingCompany, phone: e.target.value.replace(/\D/g, "")})} />
+                  <input type="tel" pattern="[0-9]*" className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none transition-all" value={editingCompany?.phone || ""} onChange={e => setEditingCompany({...editingCompany, phone: e.target.value.replace(/\D/g, "")})} />
                 </div>
                 
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-2">หมายเหตุ</label>
-                  <textarea rows={3} className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none transition-all resize-none" placeholder="ข้อมูลเพิ่มเติม..." value={editingCompany?.note || ""} onChange={e => setEditingCompany({...editingCompany, note: e.target.value})}></textarea>
+                  <textarea rows={2} className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none transition-all resize-none" placeholder="ข้อมูลเพิ่มเติม..." value={editingCompany?.note || ""} onChange={e => setEditingCompany({...editingCompany, note: e.target.value})}></textarea>
                 </div>
               </form>
             </div>
@@ -592,41 +592,41 @@ function CustomersInner() {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-gray-900/40 backdrop-blur-sm" onClick={() => setIsCustomerModalOpen(false)}></div>
           <div className="relative bg-white rounded-3xl shadow-2xl max-w-xl w-full flex flex-col overflow-hidden">
-            <div className="px-8 py-6 border-b border-gray-100 flex justify-between items-center bg-white z-10">
+            <div className="px-8 py-5 border-b border-gray-100 flex justify-between items-center bg-white z-10">
               <h2 className="text-2xl font-bold text-gray-800">{editingCustomer?.id ? "แก้ไขข้อมูลลูกค้า" : "เพิ่มลูกค้าใหม่"}</h2>
               <button onClick={() => setIsCustomerModalOpen(false)} className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full transition-colors">
                 <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
               </button>
             </div>
             
-            <div className="overflow-y-auto flex-1 p-8">
-              <form id="customer-form" onSubmit={handleSaveCustomer} onInvalid={() => setCustomerSubmitAttempted(true)} className="space-y-5">
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">ชื่อ-นามสกุล <span className="text-red-500">*</span></label>
-                  <input required type="text" className={`w-full bg-gray-50 border rounded-xl px-4 py-3 outline-none transition-all focus:bg-white focus:ring-2 ${customerSubmitAttempted ? 'invalid:border-red-500 invalid:ring-red-500 invalid:bg-red-50 border-gray-200 focus:border-transparent focus:ring-orange-500 focus:invalid:border-red-500 focus:invalid:ring-red-500' : 'border-gray-200 focus:border-transparent focus:ring-orange-500'}`} placeholder="สมหญิง ใจดี" value={editingCustomer?.name || ""} onChange={e => setEditingCustomer({...editingCustomer, name: e.target.value})} />
+            <div className="overflow-y-auto flex-1 px-8 py-6">
+              <form id="customer-form" onSubmit={handleSaveCustomer} onInvalid={() => setCustomerSubmitAttempted(true)} className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                <div className="md:col-span-2">
+                  <label className="block text-sm font-semibold text-gray-700 mb-1.5">ชื่อ-นามสกุล <span className="text-red-500">*</span></label>
+                  <input required type="text" className={`w-full bg-gray-50 border rounded-xl px-4 py-2.5 outline-none transition-all focus:bg-white focus:ring-2 ${customerSubmitAttempted ? 'invalid:border-red-500 invalid:ring-red-500 invalid:bg-red-50 border-gray-200 focus:border-transparent focus:ring-orange-500 focus:invalid:border-red-500 focus:invalid:ring-red-500' : 'border-gray-200 focus:border-transparent focus:ring-orange-500'}`} placeholder="สมหญิง ใจดี" value={editingCustomer?.name || ""} onChange={e => setEditingCustomer({...editingCustomer, name: e.target.value})} />
                 </div>
                 <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">สังกัดบริษัท <span className="text-red-500">*</span></label>
-                  <select required className={`w-full bg-gray-50 border rounded-xl px-4 py-3 outline-none transition-all appearance-none focus:bg-white focus:ring-2 ${customerSubmitAttempted ? 'invalid:border-red-500 invalid:ring-red-500 invalid:bg-red-50 border-gray-200 focus:border-transparent focus:ring-orange-500 focus:invalid:border-red-500 focus:invalid:ring-red-500' : 'border-gray-200 focus:border-transparent focus:ring-orange-500'}`} style={{ backgroundImage: 'url("data:image/svg+xml,%3csvg xmlns=%27http://www.w3.org/2000/svg%27 fill=%27none%27 viewBox=%270 0 20 20%27%3e%3cpath stroke=%27%236b7280%27 stroke-linecap=%27round%27 stroke-linejoin=%27round%27 stroke-width=%271.5%27 d=%27M6 8l4 4 4-4%27/%3e%3c/svg%3e")', backgroundPosition: 'right 0.5rem center', backgroundRepeat: 'no-repeat', backgroundSize: '1.5em 1.5em', paddingRight: '2.5rem' }} value={editingCustomer?.companyId || ""} onChange={e => setEditingCustomer({...editingCustomer, companyId: e.target.value})}>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1.5">สังกัดบริษัท <span className="text-red-500">*</span></label>
+                  <select required className={`w-full bg-gray-50 border rounded-xl px-4 py-2.5 outline-none transition-all appearance-none focus:bg-white focus:ring-2 ${customerSubmitAttempted ? 'invalid:border-red-500 invalid:ring-red-500 invalid:bg-red-50 border-gray-200 focus:border-transparent focus:ring-orange-500 focus:invalid:border-red-500 focus:invalid:ring-red-500' : 'border-gray-200 focus:border-transparent focus:ring-orange-500'}`} style={{ backgroundImage: 'url("data:image/svg+xml,%3csvg xmlns=%27http://www.w3.org/2000/svg%27 fill=%27none%27 viewBox=%270 0 20 20%27%3e%3cpath stroke=%27%236b7280%27 stroke-linecap=%27round%27 stroke-linejoin=%27round%27 stroke-width=%271.5%27 d=%27M6 8l4 4 4-4%27/%3e%3c/svg%3e")', backgroundPosition: 'right 0.5rem center', backgroundRepeat: 'no-repeat', backgroundSize: '1.5em 1.5em', paddingRight: '2.5rem' }} value={editingCustomer?.companyId || ""} onChange={e => setEditingCustomer({...editingCustomer, companyId: e.target.value})}>
                     <option value="" disabled>-- เลือกบริษัท --</option>
                     {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">แผนก</label>
-                  <input type="text" className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 focus:bg-white focus:ring-2 focus:ring-orange-500 outline-none transition-all" placeholder="เช่น บัญชี, การตลาด" value={editingCustomer?.department || ""} onChange={e => setEditingCustomer({...editingCustomer, department: e.target.value})} />
+                  <label className="block text-sm font-semibold text-gray-700 mb-1.5">แผนก</label>
+                  <input type="text" className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 focus:bg-white focus:ring-2 focus:ring-orange-500 outline-none transition-all" placeholder="เช่น บัญชี, การตลาด" value={editingCustomer?.department || ""} onChange={e => setEditingCustomer({...editingCustomer, department: e.target.value})} />
                 </div>
                 <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">เบอร์โทรศัพท์</label>
-                  <input type="tel" pattern="[0-9]*" className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 focus:bg-white focus:ring-2 focus:ring-orange-500 outline-none transition-all" placeholder="08XXXXXXXX" value={editingCustomer?.phone || ""} onChange={e => setEditingCustomer({...editingCustomer, phone: e.target.value.replace(/\D/g, "")})} />
+                  <label className="block text-sm font-semibold text-gray-700 mb-1.5">เบอร์โทรศัพท์</label>
+                  <input type="tel" pattern="[0-9]*" className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 focus:bg-white focus:ring-2 focus:ring-orange-500 outline-none transition-all" placeholder="08XXXXXXXX" value={editingCustomer?.phone || ""} onChange={e => setEditingCustomer({...editingCustomer, phone: e.target.value.replace(/\D/g, "")})} />
                 </div>
                 <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">อีเมล</label>
-                  <input type="email" className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 focus:bg-white focus:ring-2 focus:ring-orange-500 outline-none transition-all" placeholder="example@email.com" value={editingCustomer?.email || ""} onChange={e => setEditingCustomer({...editingCustomer, email: e.target.value})} />
+                  <label className="block text-sm font-semibold text-gray-700 mb-1.5">อีเมล</label>
+                  <input type="email" className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 focus:bg-white focus:ring-2 focus:ring-orange-500 outline-none transition-all" placeholder="example@email.com" value={editingCustomer?.email || ""} onChange={e => setEditingCustomer({...editingCustomer, email: e.target.value})} />
                 </div>
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">หมายเหตุ</label>
-                  <textarea rows={3} className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 focus:bg-white focus:ring-2 focus:ring-orange-500 outline-none transition-all resize-none" placeholder="ข้อมูลเพิ่มเติม..." value={editingCustomer?.note || ""} onChange={e => setEditingCustomer({...editingCustomer, note: e.target.value})}></textarea>
+                <div className="md:col-span-2">
+                  <label className="block text-sm font-semibold text-gray-700 mb-1.5">หมายเหตุ</label>
+                  <textarea rows={2} className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 focus:bg-white focus:ring-2 focus:ring-orange-500 outline-none transition-all resize-none" placeholder="ข้อมูลเพิ่มเติม..." value={editingCustomer?.note || ""} onChange={e => setEditingCustomer({...editingCustomer, note: e.target.value})}></textarea>
                 </div>
               </form>
             </div>
