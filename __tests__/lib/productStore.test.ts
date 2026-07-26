@@ -226,6 +226,7 @@ describe('productStore', () => {
         desc_zh: 'desc zh',
         createdAt: '2026-07-17T00:00:00.000Z',
         isPublished: true,
+        sortOrder: 0,
         pendingDeleteAt: null,
         supplierIds: [],
       });
@@ -279,7 +280,7 @@ describe('productStore', () => {
       expect(products[0].isPublished).toBe(true);
       expect(products[1].isPublished).toBe(false);
       expect(vi.mocked(query).mock.calls[0][0]).toContain(
-        'ORDER BY categoryId ASC, createdAt ASC'
+        'ORDER BY categoryId ASC, sortOrder ASC, createdAt ASC'
       );
     });
 
@@ -341,6 +342,7 @@ describe('productStore', () => {
         'plain zh',
         '2026-07-17T10:00:00.000Z',
         true,
+        0,
       ]);
       expect(result).toEqual({ ...baseProduct, isPublished: true });
     });

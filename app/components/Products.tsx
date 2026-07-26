@@ -56,6 +56,7 @@ export default function Products({ dataPromise }: ProductsProps) {
 
   const [selectedCategory, setSelectedCategory] = useState(-1);
   const [currentPage, setCurrentPage] = useState(1);
+  const [viewMode, setViewMode] = useState<"grid" | "table">("grid");
 
   // Restore the saved list position on mount (e.g. after Back from a detail
   // page). Read in an effect (not initial state) to keep SSR/hydration matching.
@@ -112,6 +113,9 @@ export default function Products({ dataPromise }: ProductsProps) {
 
   const [pendingDeleteProd, setPendingDeleteProd] = useState<string | null>(null);
   const [deletingProd, setDeletingProd] = useState(false);
+  const [draggedProdId, setDraggedProdId] = useState<string | null>(null);
+  const [dragOverProdId, setDragOverProdId] = useState<string | null>(null);
+  const dragEndTimeRef = useRef<number>(0);
 
   const [pendingPublishToggle, setPendingPublishToggle] = useState<string | null>(null);
   const [publishConfirmText, setPublishConfirmText] = useState("");
@@ -264,6 +268,63 @@ export default function Products({ dataPromise }: ProductsProps) {
     } catch (err) {
       console.error(err);
       showToast("ไม่สามารถบันทึกตำแหน่งใหม่ได้", "error");
+    }
+  };
+
+  const canDrag = isLoggedIn && searchProduct.trim() === "";
+
+  const handleProdDragStart = (e: React.DragEvent, id: string) => {
+    if (!canDrag) return;
+    setDraggedProdId(id);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleProdDragEnter = (e: React.DragEvent, id: string) => {
+    if (!canDrag) return;
+    e.preventDefault();
+    setDragOverProdId(id);
+  };
+
+  const handleProdDrop = async (e: React.DragEvent, targetId: string) => {
+    if (!canDrag || !draggedProdId || draggedProdId === targetId) {
+      setDragOverProdId(null);
+      return;
+    }
+    e.preventDefault();
+    setDragOverProdId(null);
+
+    const sourceIdx = products.findIndex(p => p.id === draggedProdId);
+    const targetIdx = products.findIndex(p => p.id === targetId);
+
+    if (sourceIdx === -1 || targetIdx === -1) return;
+
+    const newProducts = [...products];
+    const [draggedItem] = newProducts.splice(sourceIdx, 1);
+    newProducts.splice(targetIdx, 0, draggedItem);
+
+    setProducts(newProducts);
+    setDraggedProdId(null);
+
+    try {
+      const res = await fetch("/api/products/reorder", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ productIds: newProducts.map(p => p.id) })
+      });
+      if (!res.ok) throw new Error("Failed to save reorder");
+      
+      // Re-fetch the full list (including unpublished) from the admin API
+      // to ensure state is perfectly synced with the DB.
+      const freshRes = await fetch("/api/products");
+      if (freshRes.ok) {
+        const all: ProductData[] = await freshRes.json();
+        setProducts(all);
+      }
+      
+      router.refresh();
+    } catch (err) {
+      console.error(err);
+      showToast("ไม่สามารถบันทึกลำดับสินค้าได้", "error");
     }
   };
 
@@ -679,7 +740,8 @@ export default function Products({ dataPromise }: ProductsProps) {
               <div className="text-gray-500 text-sm font-medium whitespace-nowrap flex-shrink-0">
                 พบสินค้า <span className="text-[var(--accent)] font-bold">{filteredItems.length}</span> รายการ
               </div>
-              <div className="relative w-full flex-1 ml-0 sm:ml-4">
+              <div className="flex items-center w-full flex-1 gap-2 sm:ml-4">
+                <div className="relative w-full flex-1">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -700,17 +762,52 @@ export default function Products({ dataPromise }: ProductsProps) {
                   }}
                   className="w-full pl-9 pr-4 py-2 bg-white border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 transition-all shadow-sm"
                 />
+                </div>
+                {isLoggedIn && (
+                  <div className="flex items-center bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm flex-shrink-0 p-0.5">
+                    <button
+                      onClick={() => setViewMode("grid")}
+                      className={`p-2 rounded-lg transition-colors ${viewMode === "grid" ? "bg-orange-50 text-orange-600" : "text-gray-400 hover:text-gray-600"}`}
+                      aria-label="Grid View"
+                      title="Grid View"
+                    >
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" /></svg>
+                    </button>
+                    <button
+                      onClick={() => setViewMode("table")}
+                      className={`p-2 rounded-lg transition-colors ${viewMode === "table" ? "bg-orange-50 text-orange-600" : "text-gray-400 hover:text-gray-600"}`}
+                      aria-label="Table View"
+                      title="Table View"
+                    >
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" /></svg>
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 lg:gap-8 content-start">
+            {viewMode === "grid" ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 lg:gap-8 content-start">
               {paginatedItems.map((item, i) => {
                 return (
                   <Link
                     key={`${selectedCategory}-${item.id}`}
                     href={`/showcase/product/${item.id}`}
-                    onClick={() => setLoadingId(item.id)}
-                    className={`group flex flex-col rounded-2xl border overflow-hidden transition-all duration-300 ${loadingId === item.id ? "cursor-wait opacity-80 scale-[0.98]" : "cursor-pointer"} ${item.isPublished === false ? "opacity-75 bg-gray-50 border-gray-200 grayscale-[0.5]" : "bg-white border-gray-100 hover:border-gray-200 hover:shadow-xl hover:shadow-black/[0.04]"}`}
+                    draggable={canDrag}
+                    onDragStart={(e) => handleProdDragStart(e, item.id)}
+                    onDragEnter={(e) => handleProdDragEnter(e, item.id)}
+                    onDragOver={(e) => {
+                      if (!canDrag) return;
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = 'move';
+                    }}
+                    onDrop={(e) => handleProdDrop(e, item.id)}
+                    onDragEnd={() => { dragEndTimeRef.current = Date.now(); setDraggedProdId(null); setDragOverProdId(null); }}
+                    onClick={(e) => {
+                      if (Date.now() - dragEndTimeRef.current < 200) { e.preventDefault(); return; }
+                      setLoadingId(item.id);
+                    }}
+                    className={`group flex flex-col rounded-2xl border overflow-hidden transition-all duration-300 ${loadingId === item.id ? "cursor-wait opacity-80 scale-[0.98]" : "cursor-pointer"} ${item.isPublished === false ? "opacity-75 bg-gray-50 border-gray-200 grayscale-[0.5]" : "bg-white border-gray-100 hover:border-gray-200 hover:shadow-xl hover:shadow-black/[0.04]"} ${dragOverProdId === item.id ? "border-orange-400 shadow-lg scale-[1.02]" : ""} ${draggedProdId === item.id ? "opacity-30 scale-95" : ""}`}
                     style={{ animationDelay: `${i * 100}ms` }}
                   >
                     <div className={`relative aspect-[4/3] sm:aspect-square overflow-hidden border-b border-gray-50 ${item.isPublished === false ? "bg-gray-100" : "bg-white"}`}>
@@ -829,7 +926,117 @@ export default function Products({ dataPromise }: ProductsProps) {
                   </Link>
                 );
               })}
-            </div>
+              </div>
+            ) : (
+              <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-x-auto">
+                <table className="w-full text-left border-collapse whitespace-nowrap min-w-[700px]">
+                  <thead>
+                    <tr className="bg-gray-50 border-b border-gray-100 text-gray-500 text-sm">
+                      <th className="py-3 px-4 w-12 text-center"></th>
+                      <th className="py-3 px-4 w-16">รูปภาพ</th>
+                      <th className="py-3 px-4">ชื่อสินค้า</th>
+                      <th className="py-3 px-4">หมวดหมู่</th>
+                      <th className="py-3 px-4 w-28">สถานะ</th>
+                      <th className="py-3 px-4 w-28 text-right">จัดการ</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {paginatedItems.map((item) => {
+                      const cat = allCategories.find(c => c.id === item.categoryId);
+                      return (
+                        <tr
+                          key={item.id}
+                          draggable={canDrag}
+                          onDragStart={(e) => handleProdDragStart(e, item.id)}
+                          onDragEnter={(e) => handleProdDragEnter(e, item.id)}
+                          onDragOver={(e) => {
+                            if (!canDrag) return;
+                            e.preventDefault();
+                            e.dataTransfer.dropEffect = 'move';
+                          }}
+                          onDrop={(e) => handleProdDrop(e, item.id)}
+                          onDragEnd={() => { dragEndTimeRef.current = Date.now(); setDraggedProdId(null); setDragOverProdId(null); }}
+                          onClick={(e) => {
+                            if (Date.now() - dragEndTimeRef.current < 200) { e.preventDefault(); return; }
+                            setLoadingId(item.id);
+                            router.push(`/edit-product/${item.id}`);
+                          }}
+                          className={`cursor-pointer hover:bg-gray-50/50 transition-colors border-b border-gray-50 last:border-0 ${dragOverProdId === item.id ? (draggedProdId && products.findIndex(p => p.id === draggedProdId) < products.findIndex(p => p.id === item.id) ? "border-b-2 border-b-orange-400" : "border-t-2 border-t-orange-400") : ""} ${draggedProdId === item.id ? "opacity-30 bg-gray-50" : ""} ${loadingId === item.id ? "opacity-50" : ""}`}
+                        >
+                          <td className="py-3 px-4 text-center">
+                            {isLoggedIn && (
+                              <svg className="w-5 h-5 text-gray-300 cursor-grab active:cursor-grabbing inline-block hover:text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8h16M4 16h16" /></svg>
+                            )}
+                          </td>
+                          <td className="py-2 px-4">
+                            <div className="relative w-12 h-12 rounded bg-gray-50 overflow-hidden border border-gray-100 flex-shrink-0">
+                              <Image src={item.image} alt={stripHtml(getTitle(item))} fill sizes="48px" className={`object-contain p-1 ${item.isPublished === false ? "grayscale opacity-70" : ""}`} />
+                            </div>
+                          </td>
+                          <td className="py-3 px-4 min-w-[200px] whitespace-normal">
+                            <div className={`font-bold line-clamp-2 ${item.isPublished === false ? "text-gray-400" : "text-gray-800"}`} dangerouslySetInnerHTML={{ __html: getTitle(item) }} />
+                            {item.pendingDeleteAt && (
+                              <span className="inline-block mt-1 px-2 py-0.5 bg-red-100 text-red-600 text-[10px] font-bold rounded-full">รอยืนยันการลบ</span>
+                            )}
+                          </td>
+                          <td className="py-3 px-4 text-sm text-gray-500 max-w-[150px] truncate">
+                            {cat ? <span dangerouslySetInnerHTML={{ __html: getCatName(cat) }} /> : "Unknown"}
+                          </td>
+                          <td className="py-3 px-4">
+                            {item.isPublished !== false ? (
+                              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-green-50 text-green-600 text-xs font-semibold">
+                                <span className="w-1.5 h-1.5 rounded-full bg-green-500"></span> เผยแพร่
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-gray-100 text-gray-500 text-xs font-semibold">
+                                <span className="w-1.5 h-1.5 rounded-full bg-gray-400"></span> ซ่อน
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-3 px-4 text-right">
+                             <div className="flex items-center justify-end gap-1">
+                                {isLoggedIn && (
+                                  <>
+                                    <button
+                                      onClick={(e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        handleTogglePublish(item.id, item.isPublished !== false);
+                                      }}
+                                      disabled={publishTogglingId === item.id}
+                                      className={`p-1.5 rounded-lg transition-colors ${item.isPublished !== false ? "text-green-600 hover:bg-green-50" : "text-gray-400 hover:bg-gray-100"}`}
+                                      title={item.isPublished !== false ? "ซ่อนสินค้า" : "เผยแพร่สินค้า"}
+                                    >
+                                      {publishTogglingId === item.id ? (
+                                        <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
+                                      ) : item.isPublished !== false ? (
+                                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
+                                      ) : (
+                                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" /></svg>
+                                      )}
+                                    </button>
+                                    <button
+                                      onClick={(e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        setPendingDeleteProd(item.id);
+                                      }}
+                                      className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                                      title="ลบสินค้า"
+                                    >
+                                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                                    </button>
+                                  </>
+                                )}
+                             </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
 
             {filteredItems.length === 0 && (
               <div className="flex flex-col items-center justify-center py-32 text-center animate-fade-in">

@@ -110,6 +110,7 @@ function rowToProduct(row: RowDataPacket): ProductData {
     desc_zh: row.desc_zh ?? "",
     createdAt: row.createdAt,
     isPublished: row.isPublished === undefined ? true : Boolean(row.isPublished),
+    sortOrder: row.sortOrder ?? 0,
     pendingDeleteAt: row.pendingDeleteAt || null,
   };
 }
@@ -126,7 +127,7 @@ export async function addProduct(product: ProductData): Promise<ProductData> {
   const desc_zh = sanitizeRichText(product.desc_zh).substring(0, 10000);
   await withTransaction(async (conn) => {
     await conn.query(
-      "INSERT INTO products (id, categoryId, image, title_th, title_en, title_zh, desc_th, desc_en, desc_zh, createdAt, isPublished) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO products (id, categoryId, image, title_th, title_en, title_zh, desc_th, desc_en, desc_zh, createdAt, isPublished, sortOrder) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       [
         product.id,
         product.categoryId,
@@ -139,6 +140,7 @@ export async function addProduct(product: ProductData): Promise<ProductData> {
         desc_zh,
         product.createdAt,
         isPublished,
+        product.sortOrder ?? 0,
       ]
     );
 
@@ -175,14 +177,14 @@ export async function getProduct(id: string): Promise<ProductData | undefined> {
 
 export async function getAllProducts(): Promise<ProductData[]> {
   const [rows] = await query<RowDataPacket[]>(
-    "SELECT * FROM products ORDER BY categoryId ASC, createdAt ASC"
+    "SELECT * FROM products ORDER BY categoryId ASC, sortOrder ASC, createdAt ASC"
   );
   return rows.map(rowToProduct);
 }
 
 export async function getProductsByCategory(categoryId: number): Promise<ProductData[]> {
   const [rows] = await query<RowDataPacket[]>(
-    "SELECT * FROM products WHERE categoryId = ? ORDER BY createdAt ASC",
+    "SELECT * FROM products WHERE categoryId = ? ORDER BY sortOrder ASC, createdAt ASC",
     [categoryId]
   );
   return rows.map(rowToProduct);
@@ -258,4 +260,32 @@ export async function updateProduct(
   });
 
   return getProduct(id);
+}
+
+export async function reorderProducts(productIds: string[]): Promise<boolean> {
+  if (!productIds || productIds.length === 0) return true;
+
+  try {
+    let caseSql = "CASE id ";
+    const params: any[] = [];
+    const ids: string[] = [];
+
+    productIds.forEach((id, index) => {
+      caseSql += "WHEN ? THEN ? ";
+      params.push(id, index);
+      ids.push(id);
+    });
+    caseSql += "END";
+
+    const placeholders = ids.map(() => "?").join(",");
+    params.push(...ids);
+
+    const sql = `UPDATE products SET sortOrder = ${caseSql} WHERE id IN (${placeholders})`;
+
+    await query(sql, params);
+    return true;
+  } catch (error) {
+    console.error("Failed to reorder products:", error);
+    return false;
+  }
 }

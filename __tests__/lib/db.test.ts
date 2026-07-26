@@ -42,7 +42,7 @@ process.env.DB_NAME = 'testdb';
 
 // A version SELECT result that MATCHES SCHEMA_VERSION (3) → bootstrap fast-path,
 // i.e. skip the whole CREATE TABLE / seed block.
-const SCHEMA_MATCH: [Array<{ value: string }>, unknown[]] = [[{ value: '13' }], []];
+const SCHEMA_MATCH: [Array<{ value: string }>, unknown[]] = [[{ value: '14' }], []];
 // An empty result → no schema_version row / no admin row → full bootstrap.
 const EMPTY: [unknown[], unknown[]] = [[], []];
 
@@ -141,7 +141,7 @@ describe('db.ts', () => {
       // Schema version is recorded so future cold instances take the fast-path.
       expect(mockConnection.query).toHaveBeenCalledWith(
         expect.stringContaining("INSERT INTO settings"),
-        ['13'],
+        ['14'],
       );
       expect(mockConnection.release).toHaveBeenCalledTimes(1);
     });

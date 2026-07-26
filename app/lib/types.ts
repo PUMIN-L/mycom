@@ -28,6 +28,7 @@ export interface ProductData {
   desc_zh: string;
   createdAt: string;
   isPublished?: boolean;
+  sortOrder?: number;
   pendingDeleteAt?: string | null;
   supplierIds?: string[];
 }

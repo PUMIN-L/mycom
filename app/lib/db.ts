@@ -4,7 +4,7 @@ import type { QueryResult, FieldPacket, RowDataPacket } from "mysql2";
 
 // Bump whenever the schema below changes — a mismatch re-runs the (idempotent)
 // bootstrap; a match lets returning cold instances skip it in one SELECT.
-const SCHEMA_VERSION = 13;
+const SCHEMA_VERSION = 14;
 
 type DbPool = ReturnType<typeof mysql.createPool>;
 
@@ -64,23 +64,23 @@ async function bootstrapSchemaOnce(): Promise<void> {
   }
   const connection = await pool.getConnection();
   try {
-      // Fast path: skip the whole bootstrap when the schema is already at the
-      // current version. Collapses ~37 sequential round trips + a bcrypt hash
-      // into ONE SELECT on returning cold instances (Vercel runs this per cold
-      // start). All bootstrap statements are idempotent, so re-running after a
-      // SCHEMA_VERSION bump is safe.
-      try {
-        const [verRows] = await connection.query<RowDataPacket[]>(
-          "SELECT value FROM settings WHERE name = 'schema_version' LIMIT 1"
-        );
-        if (verRows.length > 0 && Number(verRows[0].value) >= SCHEMA_VERSION) {
-          return;
-        }
-      } catch {
-        // `settings` doesn't exist yet (fresh DB) — fall through to full bootstrap.
+    // Fast path: skip the whole bootstrap when the schema is already at the
+    // current version. Collapses ~37 sequential round trips + a bcrypt hash
+    // into ONE SELECT on returning cold instances (Vercel runs this per cold
+    // start). All bootstrap statements are idempotent, so re-running after a
+    // SCHEMA_VERSION bump is safe.
+    try {
+      const [verRows] = await connection.query<RowDataPacket[]>(
+        "SELECT value FROM settings WHERE name = 'schema_version' LIMIT 1"
+      );
+      if (verRows.length > 0 && Number(verRows[0].value) >= SCHEMA_VERSION) {
+        return;
       }
+    } catch {
+      // `settings` doesn't exist yet (fresh DB) — fall through to full bootstrap.
+    }
 
-      await connection.query(`
+    await connection.query(`
         CREATE TABLE IF NOT EXISTS contents (
           id VARCHAR(255) PRIMARY KEY,
           title VARCHAR(255) NOT NULL,
@@ -89,33 +89,33 @@ async function bootstrapSchemaOnce(): Promise<void> {
           productId VARCHAR(255) NULL
         )
       `);
-      // Migration: add productId if it doesn't exist (for existing tables)
-      try {
-        await connection.query(
-          `ALTER TABLE contents ADD COLUMN IF NOT EXISTS productId VARCHAR(255) NULL`
-        );
-      } catch (error) {
-        if (!isBenignSchemaError(error)) throw error;
-      }
-      
-      try {
-        await connection.query(
-          `CREATE INDEX idx_contents_productId ON contents (productId)`
-        );
-      } catch (error) {
-        if (!isBenignSchemaError(error)) throw error;
-      }
+    // Migration: add productId if it doesn't exist (for existing tables)
+    try {
+      await connection.query(
+        `ALTER TABLE contents ADD COLUMN IF NOT EXISTS productId VARCHAR(255) NULL`
+      );
+    } catch (error) {
+      if (!isBenignSchemaError(error)) throw error;
+    }
 
-      try {
-        await connection.query(
-          `ALTER TABLE contents ADD CONSTRAINT fk_content_product FOREIGN KEY (productId) REFERENCES products(id) ON DELETE CASCADE`
-        );
-      } catch (error) {
-        if (!isBenignSchemaError(error)) throw error;
-      }
+    try {
+      await connection.query(
+        `CREATE INDEX idx_contents_productId ON contents (productId)`
+      );
+    } catch (error) {
+      if (!isBenignSchemaError(error)) throw error;
+    }
 
-      // ── Product Specs table ────────────────────────────────────────────────
-      await connection.query(`
+    try {
+      await connection.query(
+        `ALTER TABLE contents ADD CONSTRAINT fk_content_product FOREIGN KEY (productId) REFERENCES products(id) ON DELETE CASCADE`
+      );
+    } catch (error) {
+      if (!isBenignSchemaError(error)) throw error;
+    }
+
+    // ── Product Specs table ────────────────────────────────────────────────
+    await connection.query(`
         CREATE TABLE IF NOT EXISTS product_specs (
           id VARCHAR(255) PRIMARY KEY,
           productId VARCHAR(255) NOT NULL,
@@ -126,8 +126,8 @@ async function bootstrapSchemaOnce(): Promise<void> {
         )
       `);
 
-      // ── Users table ────────────────────────────────────────────────────────
-      await connection.query(`
+    // ── Users table ────────────────────────────────────────────────────────
+    await connection.query(`
         CREATE TABLE IF NOT EXISTS users (
           id VARCHAR(255) PRIMARY KEY,
           username VARCHAR(255) NOT NULL UNIQUE,
@@ -136,8 +136,8 @@ async function bootstrapSchemaOnce(): Promise<void> {
         )
       `);
 
-      // ── Documents table ────────────────────────────────────────────────────
-      await connection.query(`
+    // ── Documents table ────────────────────────────────────────────────────
+    await connection.query(`
         CREATE TABLE IF NOT EXISTS documents (
           id VARCHAR(255) PRIMARY KEY,
           title VARCHAR(255) NOT NULL,
@@ -149,18 +149,18 @@ async function bootstrapSchemaOnce(): Promise<void> {
         )
       `);
 
-      // ── Settings table (key-value store for CMS-configurable options) ─────
-      await connection.query(`
+    // ── Settings table (key-value store for CMS-configurable options) ─────
+    await connection.query(`
         CREATE TABLE IF NOT EXISTS settings (
           name VARCHAR(191) PRIMARY KEY,
           value TEXT NOT NULL
         )
       `);
 
-      // ── Contact messages (persisted leads from the public contact form) ───
-      // Stored independently of the email send so a failed SMTP delivery never
-      // drops the lead; `emailedOk` records whether the notification went out.
-      await connection.query(`
+    // ── Contact messages (persisted leads from the public contact form) ───
+    // Stored independently of the email send so a failed SMTP delivery never
+    // drops the lead; `emailedOk` records whether the notification went out.
+    await connection.query(`
         CREATE TABLE IF NOT EXISTS contact_messages (
           id VARCHAR(255) PRIMARY KEY,
           name VARCHAR(255) NOT NULL,
@@ -171,19 +171,19 @@ async function bootstrapSchemaOnce(): Promise<void> {
           createdAt VARCHAR(255) NOT NULL
         )
       `);
-      try {
-        await connection.query(
-          `CREATE INDEX idx_contact_messages_createdAt ON contact_messages (createdAt)`
-        );
-      } catch (error) {
-        // Only "index already exists" is benign here — rethrow anything real.
-        if (!isBenignSchemaError(error)) throw error;
-      }
+    try {
+      await connection.query(
+        `CREATE INDEX idx_contact_messages_createdAt ON contact_messages (createdAt)`
+      );
+    } catch (error) {
+      // Only "index already exists" is benign here — rethrow anything real.
+      if (!isBenignSchemaError(error)) throw error;
+    }
 
-      // ── Revisions (edit history for products / contents / documents) ──────
-      // A snapshot of the PREVIOUS value is written before every update so an
-      // accidental overwrite can be restored. Generic across entity types.
-      await connection.query(`
+    // ── Revisions (edit history for products / contents / documents) ──────
+    // A snapshot of the PREVIOUS value is written before every update so an
+    // accidental overwrite can be restored. Generic across entity types.
+    await connection.query(`
         CREATE TABLE IF NOT EXISTS revisions (
           id VARCHAR(255) PRIMARY KEY,
           entityType VARCHAR(32) NOT NULL,
@@ -192,19 +192,19 @@ async function bootstrapSchemaOnce(): Promise<void> {
           createdAt VARCHAR(255) NOT NULL
         )
       `);
-      try {
-        await connection.query(
-          `CREATE INDEX idx_revisions_entity ON revisions (entityType, entityId, createdAt)`
-        );
-      } catch (error) {
-        // Only "index already exists" is benign here — rethrow anything real.
-        if (!isBenignSchemaError(error)) throw error;
-      }
+    try {
+      await connection.query(
+        `CREATE INDEX idx_revisions_entity ON revisions (entityType, entityId, createdAt)`
+      );
+    } catch (error) {
+      // Only "index already exists" is benign here — rethrow anything real.
+      if (!isBenignSchemaError(error)) throw error;
+    }
 
-      // ── Quotations table (saved quotations; auto-purged after 30 days) ────
-      // `uploadedImages` = only images uploaded FOR this quote (deletable);
-      // catalog/product images are never stored here, so they survive deletes.
-      await connection.query(`
+    // ── Quotations table (saved quotations; auto-purged after 30 days) ────
+    // `uploadedImages` = only images uploaded FOR this quote (deletable);
+    // catalog/product images are never stored here, so they survive deletes.
+    await connection.query(`
         CREATE TABLE IF NOT EXISTS quotations (
           id VARCHAR(255) PRIMARY KEY,
           docNo VARCHAR(255),
@@ -213,20 +213,20 @@ async function bootstrapSchemaOnce(): Promise<void> {
           createdAt VARCHAR(255) NOT NULL
         )
       `);
-      try {
-        await connection.query(
-          `CREATE INDEX idx_quotations_createdAt ON quotations (createdAt)`
-        );
-      } catch (error) {
-        // Only "index already exists" is benign here — rethrow anything real.
-        if (!isBenignSchemaError(error)) throw error;
-      }
+    try {
+      await connection.query(
+        `CREATE INDEX idx_quotations_createdAt ON quotations (createdAt)`
+      );
+    } catch (error) {
+      // Only "index already exists" is benign here — rethrow anything real.
+      if (!isBenignSchemaError(error)) throw error;
+    }
 
-      // ── Used quotation numbers ledger ─────────────────────────────────────
-      // Records every issued quotation docNo so a number can't be reused even
-      // after its quotation is deleted. docNo starts with the date, so numbers
-      // roll over daily; this ledger is purged after ~2 days by the cleanup cron.
-      await connection.query(`
+    // ── Used quotation numbers ledger ─────────────────────────────────────
+    // Records every issued quotation docNo so a number can't be reused even
+    // after its quotation is deleted. docNo starts with the date, so numbers
+    // roll over daily; this ledger is purged after ~2 days by the cleanup cron.
+    await connection.query(`
         CREATE TABLE IF NOT EXISTS used_docnos (
           docNo VARCHAR(255) PRIMARY KEY,
           quotationId VARCHAR(255) NOT NULL,
@@ -234,9 +234,9 @@ async function bootstrapSchemaOnce(): Promise<void> {
         )
       `);
 
-      // ── Product categories table ──────────────────────────────────────────
+    // ── Product categories table ──────────────────────────────────────────
 
-      await connection.query(`
+    await connection.query(`
         CREATE TABLE IF NOT EXISTS product_categories (
           id INT PRIMARY KEY,
           name_th VARCHAR(255) NOT NULL,
@@ -246,8 +246,8 @@ async function bootstrapSchemaOnce(): Promise<void> {
         )
       `);
 
-      // ── Products table ──────────────────────────────────────────────────────
-      await connection.query(`
+    // ── Products table ──────────────────────────────────────────────────────
+    await connection.query(`
         CREATE TABLE IF NOT EXISTS products (
           id VARCHAR(255) PRIMARY KEY,
           categoryId INT NOT NULL,
@@ -259,64 +259,73 @@ async function bootstrapSchemaOnce(): Promise<void> {
           desc_en TEXT,
           desc_zh TEXT,
           createdAt VARCHAR(255) NOT NULL,
-          isPublished BOOLEAN DEFAULT TRUE
+          isPublished BOOLEAN DEFAULT TRUE,
+          sortOrder INT DEFAULT 0
         )
       `);
-      
-      try {
-        await connection.query(
-          `ALTER TABLE products ADD COLUMN IF NOT EXISTS isPublished BOOLEAN DEFAULT TRUE`
-        );
-      } catch (error) {
-        // Swallow only "already exists" / "syntax unsupported"; rethrow a REAL
-        // failure (lock timeout, permission) so it isn't silently skipped and
-        // the schema_version below is never stamped over a broken migration.
-        if (!isBenignSchemaError(error)) throw error;
-      }
-      
-      try {
-        await connection.query(
-          `ALTER TABLE products ADD COLUMN IF NOT EXISTS pendingDeleteAt VARCHAR(255) NULL`
-        );
-      } catch (error) {
-        if (!isBenignSchemaError(error)) throw error;
-      }
-      
-      try {
-        await connection.query(
-          `CREATE INDEX idx_products_pendingDelete ON products (pendingDeleteAt)`
-        );
-      } catch (error) {
-        if (!isBenignSchemaError(error)) throw error;
-      }
-      
-      try {
-        await connection.query(
-          `CREATE INDEX idx_products_category_created ON products (categoryId, createdAt)`
-        );
-      } catch (error) {
-        // Only "index already exists" is benign here — rethrow anything real.
-        if (!isBenignSchemaError(error)) throw error;
-      }
-      
-      try {
-        await connection.query(
-          `CREATE INDEX idx_products_categoryId ON products (categoryId)`
-        );
-      } catch (error) {
-        if (!isBenignSchemaError(error)) throw error;
-      }
 
-      try {
-        await connection.query(
-          `ALTER TABLE products ADD CONSTRAINT fk_product_category FOREIGN KEY (categoryId) REFERENCES product_categories(id) ON DELETE RESTRICT`
-        );
-      } catch (error) {
-        if (!isBenignSchemaError(error)) throw error;
-      }
+    try {
+      await connection.query(
+        `ALTER TABLE products ADD COLUMN IF NOT EXISTS isPublished BOOLEAN DEFAULT TRUE`
+      );
+    } catch (error) {
+      // Swallow only "already exists" / "syntax unsupported"; rethrow a REAL
+      // failure (lock timeout, permission) so it isn't silently skipped and
+      // the schema_version below is never stamped over a broken migration.
+      if (!isBenignSchemaError(error)) throw error;
+    }
 
-      // ── Companies table ──────────────────────────────────────────────────────
-      await connection.query(`
+    try {
+      await connection.query(
+        `ALTER TABLE products ADD COLUMN IF NOT EXISTS sortOrder INT DEFAULT 0`
+      );
+    } catch (error) {
+      if (!isBenignSchemaError(error)) throw error;
+    }
+
+    try {
+      await connection.query(
+        `ALTER TABLE products ADD COLUMN IF NOT EXISTS pendingDeleteAt VARCHAR(255) NULL`
+      );
+    } catch (error) {
+      if (!isBenignSchemaError(error)) throw error;
+    }
+
+    try {
+      await connection.query(
+        `CREATE INDEX idx_products_pendingDelete ON products (pendingDeleteAt)`
+      );
+    } catch (error) {
+      if (!isBenignSchemaError(error)) throw error;
+    }
+
+    try {
+      await connection.query(
+        `CREATE INDEX idx_products_category_created ON products (categoryId, createdAt)`
+      );
+    } catch (error) {
+      // Only "index already exists" is benign here — rethrow anything real.
+      if (!isBenignSchemaError(error)) throw error;
+    }
+
+    try {
+      await connection.query(
+        `CREATE INDEX idx_products_categoryId ON products (categoryId)`
+      );
+    } catch (error) {
+      if (!isBenignSchemaError(error)) throw error;
+    }
+
+    try {
+      await connection.query(
+        `ALTER TABLE products ADD CONSTRAINT fk_product_category FOREIGN KEY (categoryId) REFERENCES product_categories(id) ON DELETE RESTRICT`
+      );
+    } catch (error) {
+      if (!isBenignSchemaError(error)) throw error;
+    }
+
+    // ── Companies table ──────────────────────────────────────────────────────
+    await connection.query(`
         CREATE TABLE IF NOT EXISTS companies (
           id VARCHAR(255) PRIMARY KEY,
           name VARCHAR(255) NOT NULL,
@@ -334,8 +343,8 @@ async function bootstrapSchemaOnce(): Promise<void> {
         )
       `);
 
-      // ── Customers table ──────────────────────────────────────────────────────
-      await connection.query(`
+    // ── Customers table ──────────────────────────────────────────────────────
+    await connection.query(`
         CREATE TABLE IF NOT EXISTS customers (
           id VARCHAR(255) PRIMARY KEY,
           companyId VARCHAR(255) NOT NULL,
@@ -347,25 +356,25 @@ async function bootstrapSchemaOnce(): Promise<void> {
           createdAt VARCHAR(255) NOT NULL
         )
       `);
-      
-      try {
-        await connection.query(
-          `CREATE INDEX idx_customers_companyId ON customers (companyId)`
-        );
-      } catch (error) {
-        if (!isBenignSchemaError(error)) throw error;
-      }
-      
-      try {
-        await connection.query(
-          `ALTER TABLE customers ADD CONSTRAINT fk_customer_company FOREIGN KEY (companyId) REFERENCES companies(id) ON DELETE RESTRICT`
-        );
-      } catch (error) {
-        if (!isBenignSchemaError(error)) throw error;
-      }
 
-      // ── Salespeople table ────────────────────────────────────────────────────
-      await connection.query(`
+    try {
+      await connection.query(
+        `CREATE INDEX idx_customers_companyId ON customers (companyId)`
+      );
+    } catch (error) {
+      if (!isBenignSchemaError(error)) throw error;
+    }
+
+    try {
+      await connection.query(
+        `ALTER TABLE customers ADD CONSTRAINT fk_customer_company FOREIGN KEY (companyId) REFERENCES companies(id) ON DELETE RESTRICT`
+      );
+    } catch (error) {
+      if (!isBenignSchemaError(error)) throw error;
+    }
+
+    // ── Salespeople table ────────────────────────────────────────────────────
+    await connection.query(`
         CREATE TABLE IF NOT EXISTS salespeople (
           id VARCHAR(255) PRIMARY KEY,
           name VARCHAR(255) NOT NULL,
@@ -376,8 +385,8 @@ async function bootstrapSchemaOnce(): Promise<void> {
         )
       `);
 
-      // ── Suppliers table ──────────────────────────────────────────────────────
-      await connection.query(`
+    // ── Suppliers table ──────────────────────────────────────────────────────
+    await connection.query(`
         CREATE TABLE IF NOT EXISTS suppliers (
           id VARCHAR(255) PRIMARY KEY,
           companyName VARCHAR(255) NOT NULL,
@@ -388,112 +397,112 @@ async function bootstrapSchemaOnce(): Promise<void> {
         )
       `);
 
-      // ── Product-Suppliers junction table ─────────────────────────────────────
-      await connection.query(`
+    // ── Product-Suppliers junction table ─────────────────────────────────────
+    await connection.query(`
         CREATE TABLE IF NOT EXISTS product_suppliers (
           productId VARCHAR(255) NOT NULL,
           supplierId VARCHAR(255) NOT NULL,
           PRIMARY KEY (productId, supplierId)
         )
       `);
-      
-      try {
-        await connection.query(
-          `ALTER TABLE product_suppliers ADD CONSTRAINT fk_ps_product FOREIGN KEY (productId) REFERENCES products(id) ON DELETE CASCADE`
-        );
-      } catch (error) {
-        if (!isBenignSchemaError(error)) throw error;
-      }
-      
-      try {
-        await connection.query(
-          `ALTER TABLE product_suppliers ADD CONSTRAINT fk_ps_supplier FOREIGN KEY (supplierId) REFERENCES suppliers(id) ON DELETE CASCADE`
-        );
-      } catch (error) {
-        if (!isBenignSchemaError(error)) throw error;
-      }
 
-      // ── Seed default admin user ────────────────────────────────────────────
-      // Credentials come from the environment, never from source. If
-      // ADMIN_PASSWORD is unset we skip the seed instead of creating a weak
-      // default account. ADMIN_USERNAME defaults to "admin".
-      const adminPassword = process.env.ADMIN_PASSWORD;
-      if (adminPassword) {
-        // Only hash + insert when the admin row is absent — bcrypt(cost 12) is
-        // ~250ms of CPU, wasted on every run where the account already exists.
-        const [adminRows] = await connection.query<RowDataPacket[]>(
-          "SELECT id FROM users WHERE id = 'admin-001' LIMIT 1"
-        );
-        if (adminRows.length === 0) {
-          const adminUsername = process.env.ADMIN_USERNAME || "admin";
-          const passwordHash = await bcrypt.hash(adminPassword, 12);
-          await connection.query(
-            "INSERT IGNORE INTO users (id, username, passwordHash, createdAt) VALUES (?, ?, ?, ?)",
-            ["admin-001", adminUsername, passwordHash, new Date().toISOString()]
-          );
-        }
-      } else {
-        console.warn(
-          "ADMIN_PASSWORD not set — skipping admin user seed. Set ADMIN_PASSWORD to create/seed the admin account."
-        );
-      }
-
-      // ── Seed product categories ────────────────────────────────────────────
-      const seedCategories = [
-        { id: 0, th: "เครื่องมือวัดขนาด", en: "Measuring Tools", zh: "测量工具" },
-        { id: 1, th: "ตู้อบความร้อน", en: "Heating Ovens", zh: "加热箱" },
-        { id: 2, th: "เครื่องทดสอบวัสดุ", en: "Material Testers", zh: "材料测试仪" },
-        { id: 3, th: "เครื่องวัดสี", en: "Color Meters", zh: "色差仪" },
-        { id: 4, th: "เครื่องชั่งดิจิตอล", en: "Digital Balances", zh: "数显台秤" },
-        { id: 5, th: "เครื่องชั่งความละเอียดสูง", en: "Precision Balances", zh: "精密天平" },
-        { id: 6, th: "เครื่องมือทดสอบอื่นๆ", en: "Other Testers", zh: "其他测试仪" },
-      ];
-      for (const cat of seedCategories) {
-        await connection.query(
-          "INSERT IGNORE INTO product_categories (id, name_th, name_en, name_zh, sortOrder) VALUES (?, ?, ?, ?, ?)",
-          [cat.id, cat.th, cat.en, cat.zh, cat.id]
-        );
-      }
-
-      // ── Seed products ──────────────────────────────────────────────────────
-      const seedProducts = [
-        { id: "digital-caliper", categoryId: 0, image: "/images/digital-caliper.png", title_th: "เวอร์เนียร์ดิจิตอล", title_en: "Digital Caliper", title_zh: "数显卡尺", desc_th: "เครื่องมือวัดขนาดภายนอก ภายใน และความลึกแบบดิจิตอลความแม่นยำสูง", desc_en: "High-precision digital tool for measuring internal, external, and depth dimensions.", desc_zh: "高精度数显工具，用于测量内外径及深度尺寸。" },
-        { id: "micrometer", categoryId: 0, image: "/images/micrometer.png", title_th: "ไมโครมิเตอร์", title_en: "Micrometer", title_zh: "千分尺", desc_th: "เครื่องมือวัดขนาดที่มีความละเอียดสูงพิเศษ สำหรับงานวิศวกรรมที่ต้องการความแม่นยำ", desc_en: "Ultra-high resolution measuring tool for precision engineering tasks.", desc_zh: "超高分辨率测量工具，适用于精密工程任务。" },
-        { id: "dial-gauge", categoryId: 0, image: "/images/dial-gauge.png", title_th: "ไดอัลเกจ", title_en: "Dial Gauge", title_zh: "百分表", desc_th: "เครื่องมือวัดความคลาดเคลื่อนของตำแหน่งและระนาบ", desc_en: "Instrument for measuring position and flatness deviations.", desc_zh: "用于测量位置和平面度偏差的仪器。" },
-        { id: "industrial-hot-air-oven", categoryId: 1, image: "/images/industrial-oven.png", title_th: "ตู้อบลมร้อนอุตสาหกรรม", title_en: "Industrial Hot Air Oven", title_zh: "工业热风烘箱", desc_th: "ตู้อบความร้อนสูงสำหรับการแปรรูปและทดสอบวัสดุในอุตสาหกรรม", desc_en: "High-temperature oven for material processing and industrial testing.", desc_zh: "用于材料处理和工业测试的高温烘箱。" },
-        { id: "laboratory-drying-oven", categoryId: 1, image: "/images/hot-air-oven.png", title_th: "ตู้อบแห้งในห้องปฏิบัติการ", title_en: "Laboratory Drying Oven", title_zh: "实验室干燥箱", desc_th: "ตู้อบสำหรับงานวิเคราะห์และอบแห้งเครื่องแก้วในห้องแล็บ", desc_en: "Oven for analytical tasks and drying glassware in laboratories.", desc_zh: "用于实验室分析任务和玻璃器皿干燥的烘箱。" },
-        { id: "vacuum-drying-oven", categoryId: 1, image: "/images/industrial-oven.png", title_th: "ตู้อบสุญญากาศ", title_en: "Vacuum Drying Oven", title_zh: "真空干燥箱", desc_th: "ตู้อบความร้อนในสภาวะสุญญากาศ ป้องกันการเกิดปฏิกิริยาออกซิเดชัน", desc_en: "Heat treatment in vacuum conditions to prevent oxidation.", desc_zh: "真空条件下的热处理，防止氧化。" },
-        { id: "cof-tester", categoryId: 2, image: "/images/cof-tester.png", title_th: "เครื่องวัดค่า COF", title_en: "COF Tester", title_zh: "摩擦系数测试仪", desc_th: "วัดค่าสัมประสิทธิ์แรงเสียดทานของฟิล์มและบรรจุภัณฑ์", desc_en: "Measure coefficient of friction for films and packaging.", desc_zh: "测量薄膜和包装材料的摩擦系数。" },
-        { id: "viscometer", categoryId: 2, image: "/images/viscometer.png", title_th: "เครื่องวัดความหนืด", title_en: "Viscometer", title_zh: "粘度计", desc_th: "วัดค่าความหนืดของของเหลว สี หมึก กาว และอื่นๆ", desc_en: "Measure viscosity of liquids, paints, inks, and adhesives.", desc_zh: "测量液体、油漆、油墨和粘合剂的粘度。" },
-        { id: "film-thickness-gauge", categoryId: 2, image: "/images/film-tester.png", title_th: "เครื่องวัดความหนาฟิล์ม", title_en: "Film Thickness Gauge", title_zh: "薄膜测厚仪", desc_th: "วัดความหนาของแผ่นฟิล์มและพลาสติกแบบละเอียด", desc_en: "Precise measurement of film and plastic sheet thickness.", desc_zh: "精确测量薄膜和塑料片的厚度。" },
-        { id: "portable-colorimeter", categoryId: 3, image: "/images/colorimeter.png", title_th: "เครื่องวัดสี", title_en: "Portable Colorimeter", title_zh: "便携式色差仪", desc_th: "เครื่องวัดสีแบบพกพา แม่นยำสูง สำหรับงานควบคุมคุณภาพ", desc_en: "High-precision portable color meter for quality control.", desc_zh: "高精度便携式色差仪，用于质量控制。" },
-        { id: "spectrophotometer", categoryId: 3, image: "/images/colorimeter.png", title_th: "สเปกโตรโฟโตมิเตอร์", title_en: "Spectrophotometer", title_zh: "分光光度计", desc_th: "วิเคราะห์ค่าสีเชิงลึกและวัดค่าการสะท้อนแสง", desc_en: "In-depth color analysis and light reflectance measurement.", desc_zh: "深入的颜色分析和光反射率测量。" },
-        { id: "gloss-meter", categoryId: 3, image: "/images/colorimeter.png", title_th: "เครื่องวัดความเงา", title_en: "Gloss Meter", title_zh: "光泽度计", desc_th: "วัดค่าความเงาของพื้นผิววัสดุหลายมุมมอง", desc_en: "Measure surface gloss of materials from multiple angles.", desc_zh: "从多个角度测量材料的表面光泽度。" },
-        { id: "digital-bench-scale", categoryId: 4, image: "/images/bench-scale.png", title_th: "เครื่องชั่งตั้งโต๊ะดิจิตอล", title_en: "Digital Bench Scale", title_zh: "数显台秤", desc_th: "เครื่องชั่งตั้งโต๊ะความแม่นยำสูงสำหรับงานทั่วไป", desc_en: "High-precision bench scale for general purposes.", desc_zh: "用于通用目的的高精度台秤。" },
-        { id: "counting-scale", categoryId: 4, image: "/images/bench-scale.png", title_th: "เครื่องชั่งนับจำนวน", title_en: "Counting Scale", title_zh: "计数秤", desc_th: "ฟังก์ชันนับจำนวนชิ้นงานความแม่นยำสูง", desc_en: "High-precision piece counting function.", desc_zh: "高精度的零件计数功能。" },
-        { id: "waterproof-table-scale", categoryId: 4, image: "/images/bench-scale.png", title_th: "เครื่องชั่งกันน้ำ", title_en: "Waterproof Table Scale", title_zh: "防水桌秤", desc_th: "ทนทานต่อความชื้นและน้ำ เหมาะสำหรับอุตสาหกรรมอาหาร", desc_en: "Moisture and water resistant, ideal for food industry.", desc_zh: "防潮防水，是食品行业的理想选择。" },
-        { id: "analytical-balance", categoryId: 5, image: "/images/analytical-balance.png", title_th: "เครื่องชั่งวิเคราะห์", title_en: "Analytical Balance", title_zh: "分析天平", desc_th: "ความละเอียดสูงพิเศษ 4-5 ตำแหน่ง สำหรับงานแล็บ", desc_en: "Ultra-high resolution (4-5 digits) for laboratory work.", desc_zh: "超高分辨率（4-5位），用于实验室工作。" },
-        { id: "precision-balance", categoryId: 5, image: "/images/precision-balance.png", title_th: "เครื่องชั่งความแม่นยำสูง", title_en: "Precision Balance", title_zh: "精密天平", desc_th: "ชั่งน้ำหนักได้รวดเร็วและแม่นยำ พร้อมระบบกันลม", desc_en: "Fast and accurate weighing with windshield system.", desc_zh: "配备防风罩系统的快速准确称重。" },
-        { id: "durometer", categoryId: 6, image: "/images/hardness-tester.png", title_th: "เครื่องวัดความแข็ง", title_en: "Durometer", title_zh: "邵氏硬度计", desc_th: "วัดความแข็งของโลหะ พลาสติก และยาง", desc_en: "Measure hardness of metals, plastics, and rubber.", desc_zh: "测量金属、塑料和橡胶的硬度值。" },
-        { id: "leak-tester", categoryId: 6, image: "/images/leak-tester.png", title_th: "เครื่องทดสอบการรั่วซึม", title_en: "Leak Tester", title_zh: "泄漏测试仪", desc_th: "ตรวจสอบความสมบูรณ์ของบรรจุภัณฑ์", desc_en: "Check the integrity of packaging.", desc_zh: "检查包装的完整性。" },
-      ];
-      const now = new Date().toISOString();
-      for (const p of seedProducts) {
-        await connection.query(
-          "INSERT IGNORE INTO products (id, categoryId, image, title_th, title_en, title_zh, desc_th, desc_en, desc_zh, createdAt, isPublished) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-          [p.id, p.categoryId, p.image, p.title_th, p.title_en, p.title_zh, p.desc_th, p.desc_en, p.desc_zh, now, true]
-        );
-      }
-
-      // Record the schema version so future cold instances take the fast path.
+    try {
       await connection.query(
-        "INSERT INTO settings (name, value) VALUES ('schema_version', ?) ON DUPLICATE KEY UPDATE value = VALUES(value)",
-        [String(SCHEMA_VERSION)]
+        `ALTER TABLE product_suppliers ADD CONSTRAINT fk_ps_product FOREIGN KEY (productId) REFERENCES products(id) ON DELETE CASCADE`
       );
-
-    } finally {
-      connection.release();
+    } catch (error) {
+      if (!isBenignSchemaError(error)) throw error;
     }
+
+    try {
+      await connection.query(
+        `ALTER TABLE product_suppliers ADD CONSTRAINT fk_ps_supplier FOREIGN KEY (supplierId) REFERENCES suppliers(id) ON DELETE CASCADE`
+      );
+    } catch (error) {
+      if (!isBenignSchemaError(error)) throw error;
+    }
+
+    // ── Seed default admin user ────────────────────────────────────────────
+    // Credentials come from the environment, never from source. If
+    // ADMIN_PASSWORD is unset we skip the seed instead of creating a weak
+    // default account. ADMIN_USERNAME defaults to "admin".
+    const adminPassword = process.env.ADMIN_PASSWORD;
+    if (adminPassword) {
+      // Only hash + insert when the admin row is absent — bcrypt(cost 12) is
+      // ~250ms of CPU, wasted on every run where the account already exists.
+      const [adminRows] = await connection.query<RowDataPacket[]>(
+        "SELECT id FROM users WHERE id = 'admin-001' LIMIT 1"
+      );
+      if (adminRows.length === 0) {
+        const adminUsername = process.env.ADMIN_USERNAME || "admin";
+        const passwordHash = await bcrypt.hash(adminPassword, 12);
+        await connection.query(
+          "INSERT IGNORE INTO users (id, username, passwordHash, createdAt) VALUES (?, ?, ?, ?)",
+          ["admin-001", adminUsername, passwordHash, new Date().toISOString()]
+        );
+      }
+    } else {
+      console.warn(
+        "ADMIN_PASSWORD not set — skipping admin user seed. Set ADMIN_PASSWORD to create/seed the admin account."
+      );
+    }
+
+    // ── Seed product categories ────────────────────────────────────────────
+    // const seedCategories = [
+    //   { id: 0, th: "เครื่องมือวัดขนาด", en: "Measuring Tools", zh: "测量工具" },
+    //   { id: 1, th: "ตู้อบความร้อน", en: "Heating Ovens", zh: "加热箱" },
+    //   { id: 2, th: "เครื่องทดสอบวัสดุ", en: "Material Testers", zh: "材料测试仪" },
+    //   { id: 3, th: "เครื่องวัดสี", en: "Color Meters", zh: "色差仪" },
+    //   { id: 4, th: "เครื่องชั่งดิจิตอล", en: "Digital Balances", zh: "数显台秤" },
+    //   { id: 5, th: "เครื่องชั่งความละเอียดสูง", en: "Precision Balances", zh: "精密天平" },
+    //   { id: 6, th: "เครื่องมือทดสอบอื่นๆ", en: "Other Testers", zh: "其他测试仪" },
+    // ];
+    // for (const cat of seedCategories) {
+    //   await connection.query(
+    //     "INSERT IGNORE INTO product_categories (id, name_th, name_en, name_zh, sortOrder) VALUES (?, ?, ?, ?, ?)",
+    //     [cat.id, cat.th, cat.en, cat.zh, cat.id]
+    //   );
+    // }
+
+    // ── Seed products ──────────────────────────────────────────────────────
+    // const seedProducts = [
+    //   { id: "digital-caliper", categoryId: 0, image: "/images/digital-caliper.png", title_th: "เวอร์เนียร์ดิจิตอล", title_en: "Digital Caliper", title_zh: "数显卡尺", desc_th: "เครื่องมือวัดขนาดภายนอก ภายใน และความลึกแบบดิจิตอลความแม่นยำสูง", desc_en: "High-precision digital tool for measuring internal, external, and depth dimensions.", desc_zh: "高精度数显工具，用于测量内外径及深度尺寸。" },
+    //   { id: "micrometer", categoryId: 0, image: "/images/micrometer.png", title_th: "ไมโครมิเตอร์", title_en: "Micrometer", title_zh: "千分尺", desc_th: "เครื่องมือวัดขนาดที่มีความละเอียดสูงพิเศษ สำหรับงานวิศวกรรมที่ต้องการความแม่นยำ", desc_en: "Ultra-high resolution measuring tool for precision engineering tasks.", desc_zh: "超高分辨率测量工具，适用于精密工程任务。" },
+    //   { id: "dial-gauge", categoryId: 0, image: "/images/dial-gauge.png", title_th: "ไดอัลเกจ", title_en: "Dial Gauge", title_zh: "百分表", desc_th: "เครื่องมือวัดความคลาดเคลื่อนของตำแหน่งและระนาบ", desc_en: "Instrument for measuring position and flatness deviations.", desc_zh: "用于测量位置和平面度偏差的仪器。" },
+    //   { id: "industrial-hot-air-oven", categoryId: 1, image: "/images/industrial-oven.png", title_th: "ตู้อบลมร้อนอุตสาหกรรม", title_en: "Industrial Hot Air Oven", title_zh: "工业热风烘箱", desc_th: "ตู้อบความร้อนสูงสำหรับการแปรรูปและทดสอบวัสดุในอุตสาหกรรม", desc_en: "High-temperature oven for material processing and industrial testing.", desc_zh: "用于材料处理和工业测试的高温烘箱。" },
+    //   { id: "laboratory-drying-oven", categoryId: 1, image: "/images/hot-air-oven.png", title_th: "ตู้อบแห้งในห้องปฏิบัติการ", title_en: "Laboratory Drying Oven", title_zh: "实验室干燥箱", desc_th: "ตู้อบสำหรับงานวิเคราะห์และอบแห้งเครื่องแก้วในห้องแล็บ", desc_en: "Oven for analytical tasks and drying glassware in laboratories.", desc_zh: "用于实验室分析任务和玻璃器皿干燥的烘箱。" },
+    //   { id: "vacuum-drying-oven", categoryId: 1, image: "/images/industrial-oven.png", title_th: "ตู้อบสุญญากาศ", title_en: "Vacuum Drying Oven", title_zh: "真空干燥箱", desc_th: "ตู้อบความร้อนในสภาวะสุญญากาศ ป้องกันการเกิดปฏิกิริยาออกซิเดชัน", desc_en: "Heat treatment in vacuum conditions to prevent oxidation.", desc_zh: "真空条件下的热处理，防止氧化。" },
+    //   { id: "cof-tester", categoryId: 2, image: "/images/cof-tester.png", title_th: "เครื่องวัดค่า COF", title_en: "COF Tester", title_zh: "摩擦系数测试仪", desc_th: "วัดค่าสัมประสิทธิ์แรงเสียดทานของฟิล์มและบรรจุภัณฑ์", desc_en: "Measure coefficient of friction for films and packaging.", desc_zh: "测量薄膜和包装材料的摩擦系数。" },
+    //   { id: "viscometer", categoryId: 2, image: "/images/viscometer.png", title_th: "เครื่องวัดความหนืด", title_en: "Viscometer", title_zh: "粘度计", desc_th: "วัดค่าความหนืดของของเหลว สี หมึก กาว และอื่นๆ", desc_en: "Measure viscosity of liquids, paints, inks, and adhesives.", desc_zh: "测量液体、油漆、油墨和粘合剂的粘度。" },
+    //   { id: "film-thickness-gauge", categoryId: 2, image: "/images/film-tester.png", title_th: "เครื่องวัดความหนาฟิล์ม", title_en: "Film Thickness Gauge", title_zh: "薄膜测厚仪", desc_th: "วัดความหนาของแผ่นฟิล์มและพลาสติกแบบละเอียด", desc_en: "Precise measurement of film and plastic sheet thickness.", desc_zh: "精确测量薄膜和塑料片的厚度。" },
+    //   { id: "portable-colorimeter", categoryId: 3, image: "/images/colorimeter.png", title_th: "เครื่องวัดสี", title_en: "Portable Colorimeter", title_zh: "便携式色差仪", desc_th: "เครื่องวัดสีแบบพกพา แม่นยำสูง สำหรับงานควบคุมคุณภาพ", desc_en: "High-precision portable color meter for quality control.", desc_zh: "高精度便携式色差仪，用于质量控制。" },
+    //   { id: "spectrophotometer", categoryId: 3, image: "/images/colorimeter.png", title_th: "สเปกโตรโฟโตมิเตอร์", title_en: "Spectrophotometer", title_zh: "分光光度计", desc_th: "วิเคราะห์ค่าสีเชิงลึกและวัดค่าการสะท้อนแสง", desc_en: "In-depth color analysis and light reflectance measurement.", desc_zh: "深入的颜色分析和光反射率测量。" },
+    //   { id: "gloss-meter", categoryId: 3, image: "/images/colorimeter.png", title_th: "เครื่องวัดความเงา", title_en: "Gloss Meter", title_zh: "光泽度计", desc_th: "วัดค่าความเงาของพื้นผิววัสดุหลายมุมมอง", desc_en: "Measure surface gloss of materials from multiple angles.", desc_zh: "从多个角度测量材料的表面光泽度。" },
+    //   { id: "digital-bench-scale", categoryId: 4, image: "/images/bench-scale.png", title_th: "เครื่องชั่งตั้งโต๊ะดิจิตอล", title_en: "Digital Bench Scale", title_zh: "数显台秤", desc_th: "เครื่องชั่งตั้งโต๊ะความแม่นยำสูงสำหรับงานทั่วไป", desc_en: "High-precision bench scale for general purposes.", desc_zh: "用于通用目的的高精度台秤。" },
+    //   { id: "counting-scale", categoryId: 4, image: "/images/bench-scale.png", title_th: "เครื่องชั่งนับจำนวน", title_en: "Counting Scale", title_zh: "计数秤", desc_th: "ฟังก์ชันนับจำนวนชิ้นงานความแม่นยำสูง", desc_en: "High-precision piece counting function.", desc_zh: "高精度的零件计数功能。" },
+    //   { id: "waterproof-table-scale", categoryId: 4, image: "/images/bench-scale.png", title_th: "เครื่องชั่งกันน้ำ", title_en: "Waterproof Table Scale", title_zh: "防水桌秤", desc_th: "ทนทานต่อความชื้นและน้ำ เหมาะสำหรับอุตสาหกรรมอาหาร", desc_en: "Moisture and water resistant, ideal for food industry.", desc_zh: "防潮防水，是食品行业的理想选择。" },
+    //   { id: "analytical-balance", categoryId: 5, image: "/images/analytical-balance.png", title_th: "เครื่องชั่งวิเคราะห์", title_en: "Analytical Balance", title_zh: "分析天平", desc_th: "ความละเอียดสูงพิเศษ 4-5 ตำแหน่ง สำหรับงานแล็บ", desc_en: "Ultra-high resolution (4-5 digits) for laboratory work.", desc_zh: "超高分辨率（4-5位），用于实验室工作。" },
+    //   { id: "precision-balance", categoryId: 5, image: "/images/precision-balance.png", title_th: "เครื่องชั่งความแม่นยำสูง", title_en: "Precision Balance", title_zh: "精密天平", desc_th: "ชั่งน้ำหนักได้รวดเร็วและแม่นยำ พร้อมระบบกันลม", desc_en: "Fast and accurate weighing with windshield system.", desc_zh: "配备防风罩系统的快速准确称重。" },
+    //   { id: "durometer", categoryId: 6, image: "/images/hardness-tester.png", title_th: "เครื่องวัดความแข็ง", title_en: "Durometer", title_zh: "邵氏硬度计", desc_th: "วัดความแข็งของโลหะ พลาสติก และยาง", desc_en: "Measure hardness of metals, plastics, and rubber.", desc_zh: "测量金属、塑料和橡胶的硬度值。" },
+    //   { id: "leak-tester", categoryId: 6, image: "/images/leak-tester.png", title_th: "เครื่องทดสอบการรั่วซึม", title_en: "Leak Tester", title_zh: "泄漏测试仪", desc_th: "ตรวจสอบความสมบูรณ์ของบรรจุภัณฑ์", desc_en: "Check the integrity of packaging.", desc_zh: "检查包装的完整性。" },
+    // ];
+    // const now = new Date().toISOString();
+    // for (const p of seedProducts) {
+    //   await connection.query(
+    //     "INSERT IGNORE INTO products (id, categoryId, image, title_th, title_en, title_zh, desc_th, desc_en, desc_zh, createdAt, isPublished) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    //     [p.id, p.categoryId, p.image, p.title_th, p.title_en, p.title_zh, p.desc_th, p.desc_en, p.desc_zh, now, true]
+    //   );
+    // }
+
+    // Record the schema version so future cold instances take the fast path.
+    await connection.query(
+      "INSERT INTO settings (name, value) VALUES ('schema_version', ?) ON DUPLICATE KEY UPDATE value = VALUES(value)",
+      [String(SCHEMA_VERSION)]
+    );
+
+  } finally {
+    connection.release();
+  }
 }
 
 // Bootstrap runs once per process — often on a serverless cold start, where the
