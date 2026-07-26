@@ -50,6 +50,8 @@ const SortInput = ({
     const num = parseInt(val);
     if (!isNaN(num) && num !== initialValue) {
       onConfirm(num);
+    } else {
+      setVal(initialValue.toString());
     }
     setIsEditing(false);
   };
