@@ -5,6 +5,7 @@ import { useAuth } from "../context/AuthContext";
 import RichTextEditor from "../components/RichTextEditor";
 import Toast from "../components/Toast";
 import ErrorModal from "../components/ErrorModal";
+import MultiSelectDropdown from "../components/MultiSelectDropdown";
 import { stripHtml } from "../lib/stripHtml";
 
 interface ProductCategory {
@@ -290,25 +291,15 @@ export default function CreateProduct() {
             {suppliers.length === 0 ? (
               <p className="text-sm text-gray-500">ไม่มีข้อมูลผู้ผลิต</p>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                {suppliers.map((sup) => (
-                  <label key={sup.id} className="flex items-center gap-3 p-3 border rounded-lg hover:bg-gray-50 cursor-pointer transition-colors">
-                    <input
-                      type="checkbox"
-                      className="w-4 h-4 text-orange-600 rounded focus:ring-orange-500 border-gray-300"
-                      checked={selectedSupplierIds.includes(sup.id)}
-                      onChange={(e) => {
-                        if (e.target.checked) {
-                          setSelectedSupplierIds([...selectedSupplierIds, sup.id]);
-                        } else {
-                          setSelectedSupplierIds(selectedSupplierIds.filter(id => id !== sup.id));
-                        }
-                      }}
-                    />
-                    <span className="text-sm text-gray-800 font-medium">{sup.companyName}</span>
-                  </label>
-                ))}
-              </div>
+              <MultiSelectDropdown
+                options={suppliers.map(sup => ({
+                  value: sup.id,
+                  label: sup.companyName
+                }))}
+                values={selectedSupplierIds}
+                onChange={setSelectedSupplierIds}
+                placeholder="เลือกผู้ผลิตสินค้า..."
+              />
             )}
           </div>
         </div>

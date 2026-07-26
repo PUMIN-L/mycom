@@ -26,3 +26,15 @@ The following pages are strictly for admin/management use and **MUST NOT** be ac
 - `/customers`
 - `/product-specs`
 - `/settings`
+
+## 5. Multi-Select Checkboxes (Long Lists)
+When displaying a large list of multiple selectable items (like Suppliers or Categories):
+- **Do NOT** use a massive grid of checkboxes which takes up vertical space and looks cluttered.
+- **Always** use the custom `MultiSelectDropdown` component (`app/components/MultiSelectDropdown.tsx`).
+- It renders a clean searchable dropdown and displays selected items as inline tags (chips).
+
+## 6. Drag & Drop Pagination Workarounds
+When implementing sortable lists (Drag & Drop) on pages that have **Pagination**:
+- Drag and Drop can only reorder items visible on the *current page*.
+- To allow users to move items across different pages, you **MUST** provide a "Manual Input Sort" feature.
+- Example: In table views, provide a number input field next to the drag handle that allows the user to type the destination index, complete with ✅/❌ Confirm/Cancel buttons for state safety.
