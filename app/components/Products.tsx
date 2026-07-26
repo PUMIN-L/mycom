@@ -29,6 +29,76 @@ interface ProductsProps {
 // product detail via Back restores it (state alone resets on remount).
 const LIST_POS_KEY = "products-list-pos";
 
+const SortInput = ({ 
+  initialValue, 
+  max, 
+  onConfirm 
+}: { 
+  initialValue: number; 
+  max: number; 
+  onConfirm: (val: number) => void;
+}) => {
+  const [val, setVal] = useState<string>(initialValue.toString());
+  const [isEditing, setIsEditing] = useState(false);
+
+  useEffect(() => {
+    setVal(initialValue.toString());
+    setIsEditing(false);
+  }, [initialValue]);
+
+  const handleConfirm = () => {
+    const num = parseInt(val);
+    if (!isNaN(num) && num !== initialValue) {
+      onConfirm(num);
+    }
+    setIsEditing(false);
+  };
+
+  const handleCancel = () => {
+    setVal(initialValue.toString());
+    setIsEditing(false);
+  };
+
+  return (
+    <div className="flex items-center gap-1.5" onClick={e => e.stopPropagation()}>
+      <input
+        type="number"
+        min="1"
+        max={max}
+        value={val}
+        onChange={e => {
+          setVal(e.target.value);
+          setIsEditing(true);
+        }}
+        onKeyDown={e => {
+          if (e.key === 'Enter') handleConfirm();
+          if (e.key === 'Escape') handleCancel();
+        }}
+        className="w-14 text-center text-xs border border-gray-200 rounded p-1.5 focus:outline-none focus:border-orange-500 focus:ring-1 focus:ring-orange-500 transition-colors"
+        title="พิมพ์ลำดับที่ต้องการ"
+      />
+      {isEditing && val !== initialValue.toString() && (
+        <div className="flex items-center gap-1">
+          <button 
+            onClick={(e) => { e.stopPropagation(); handleConfirm(); }} 
+            className="w-6 h-6 flex items-center justify-center bg-green-500 text-white rounded hover:bg-green-600 transition-colors shadow-sm"
+            title="ยืนยัน"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>
+          </button>
+          <button 
+            onClick={(e) => { e.stopPropagation(); handleCancel(); }} 
+            className="w-6 h-6 flex items-center justify-center bg-red-500 text-white rounded hover:bg-red-600 transition-colors shadow-sm"
+            title="ยกเลิก"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M6 18L18 6M6 6l12 12" /></svg>
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
+
 export default function Products({ dataPromise }: ProductsProps) {
   const t = useT();
   const { lang } = useLanguage();
@@ -1014,27 +1084,11 @@ export default function Products({ dataPromise }: ProductsProps) {
                               <div className="flex items-center justify-center gap-2">
                                 <svg className="w-5 h-5 text-gray-300 cursor-grab active:cursor-grabbing inline-block hover:text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8h16M4 16h16" /></svg>
                                 {canDrag && (
-                                  <input
-                                    key={`sort-${item.id}-${filteredItems.findIndex(p => p.id === item.id)}`}
-                                    type="number"
-                                    min="1"
+                                  <SortInput
+                                    key={item.id}
+                                    initialValue={filteredItems.findIndex(p => p.id === item.id) + 1}
                                     max={filteredItems.length}
-                                    defaultValue={filteredItems.findIndex(p => p.id === item.id) + 1}
-                                    onBlur={(e) => {
-                                      const val = parseInt(e.target.value);
-                                      if (!isNaN(val)) {
-                                        handleManualSort(item.id, val);
-                                      }
-                                    }}
-                                    onKeyDown={(e) => {
-                                      if (e.key === 'Enter') {
-                                        e.preventDefault();
-                                        (e.target as HTMLInputElement).blur();
-                                      }
-                                    }}
-                                    onClick={(e) => e.stopPropagation()}
-                                    className="w-14 text-center text-xs border border-gray-200 rounded p-1.5 focus:outline-none focus:border-orange-500 focus:ring-1 focus:ring-orange-500 transition-colors"
-                                    title="พิมพ์ลำดับที่ต้องการแล้วกด Enter"
+                                    onConfirm={(val) => handleManualSort(item.id, val)}
                                   />
                                 )}
                               </div>
