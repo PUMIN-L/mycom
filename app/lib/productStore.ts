@@ -76,18 +76,26 @@ export async function updateCategory(
 }
 
 export async function reorderCategories(categoryIds: number[]): Promise<boolean> {
-  // Apply the new sortOrder for every category atomically. A partial failure
-  // (e.g. a transient error mid-way) must not leave the ordering half-applied,
-  // so run all the UPDATEs inside one transaction that rolls back on error.
+  if (!categoryIds || categoryIds.length === 0) return true;
+
   try {
-    await withTransaction(async (conn) => {
-      for (let index = 0; index < categoryIds.length; index++) {
-        await conn.query(
-          "UPDATE product_categories SET sortOrder = ? WHERE id = ?",
-          [index, categoryIds[index]]
-        );
-      }
+    let caseSql = "CASE id ";
+    const params: any[] = [];
+    const ids: number[] = [];
+
+    categoryIds.forEach((id, index) => {
+      caseSql += "WHEN ? THEN ? ";
+      params.push(id, index);
+      ids.push(id);
     });
+    caseSql += "END";
+
+    const placeholders = ids.map(() => "?").join(",");
+    params.push(...ids);
+
+    const sql = `UPDATE product_categories SET sortOrder = ${caseSql} WHERE id IN (${placeholders})`;
+
+    await query(sql, params);
     return true;
   } catch (error) {
     console.error("Failed to reorder categories:", error);

@@ -179,6 +179,7 @@ export default function Products({ dataPromise }: ProductsProps) {
       if (selectedCategory === id) {
         setSelectedCategory(-1);
       }
+      router.refresh();
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       showToast("ไม่สามารถลบหมวดหมู่ได้: " + message, "error");
@@ -219,6 +220,7 @@ export default function Products({ dataPromise }: ProductsProps) {
       ));
       setEditingCatId(null);
       showToast("อัปเดตชื่อหมวดหมู่เรียบร้อยแล้ว", "success");
+      router.refresh();
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       showToast("ไม่สามารถอัปเดตหมวดหมู่ได้: " + message, "error");
@@ -265,8 +267,10 @@ export default function Products({ dataPromise }: ProductsProps) {
         body: JSON.stringify({ categoryIds: newCategories.map(c => c.id) })
       });
       if (!res.ok) throw new Error("Failed to save reorder");
+      router.refresh();
     } catch (err) {
       console.error(err);
+      setCategories(categories); // Rollback optimistic UI
       showToast("ไม่สามารถบันทึกตำแหน่งใหม่ได้", "error");
     }
   };
@@ -324,6 +328,48 @@ export default function Products({ dataPromise }: ProductsProps) {
       router.refresh();
     } catch (err) {
       console.error(err);
+      setProducts(products); // Rollback optimistic UI
+      showToast("ไม่สามารถบันทึกลำดับสินค้าได้", "error");
+    }
+  };
+
+  const handleManualSort = async (itemId: string, newPosition: number) => {
+    if (!canDrag) return;
+    
+    const validTargetIndex = Math.max(0, Math.min(newPosition - 1, filteredItems.length - 1));
+    const targetItem = filteredItems[validTargetIndex];
+    if (!targetItem || targetItem.id === itemId) return;
+
+    const sourceIdx = products.findIndex(p => p.id === itemId);
+    const targetIdx = products.findIndex(p => p.id === targetItem.id);
+
+    if (sourceIdx === -1 || targetIdx === -1) return;
+
+    const newProducts = [...products];
+    const [draggedItem] = newProducts.splice(sourceIdx, 1);
+    newProducts.splice(targetIdx, 0, draggedItem);
+
+    setProducts(newProducts);
+
+    try {
+      const res = await fetch("/api/products/reorder", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ productIds: newProducts.map(p => p.id) })
+      });
+      if (!res.ok) throw new Error("Failed to save reorder");
+      
+      const freshRes = await fetch("/api/products");
+      if (freshRes.ok) {
+        const all: ProductData[] = await freshRes.json();
+        setProducts(all);
+      }
+      
+      router.refresh();
+      showToast("จัดเรียงลำดับสำเร็จ", "success");
+    } catch (err) {
+      console.error(err);
+      setProducts(products); // Rollback
       showToast("ไม่สามารถบันทึกลำดับสินค้าได้", "error");
     }
   };
@@ -963,9 +1009,35 @@ export default function Products({ dataPromise }: ProductsProps) {
                           }}
                           className={`cursor-pointer hover:bg-gray-50/50 transition-colors border-b border-gray-50 last:border-0 ${dragOverProdId === item.id ? (draggedProdId && products.findIndex(p => p.id === draggedProdId) < products.findIndex(p => p.id === item.id) ? "border-b-2 border-b-orange-400" : "border-t-2 border-t-orange-400") : ""} ${draggedProdId === item.id ? "opacity-30 bg-gray-50" : ""} ${loadingId === item.id ? "opacity-50" : ""}`}
                         >
-                          <td className="py-3 px-4 text-center">
+                          <td className="py-3 px-4 text-center whitespace-nowrap">
                             {isLoggedIn && (
-                              <svg className="w-5 h-5 text-gray-300 cursor-grab active:cursor-grabbing inline-block hover:text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8h16M4 16h16" /></svg>
+                              <div className="flex items-center justify-center gap-2">
+                                <svg className="w-5 h-5 text-gray-300 cursor-grab active:cursor-grabbing inline-block hover:text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8h16M4 16h16" /></svg>
+                                {canDrag && (
+                                  <input
+                                    key={`sort-${item.id}-${filteredItems.findIndex(p => p.id === item.id)}`}
+                                    type="number"
+                                    min="1"
+                                    max={filteredItems.length}
+                                    defaultValue={filteredItems.findIndex(p => p.id === item.id) + 1}
+                                    onBlur={(e) => {
+                                      const val = parseInt(e.target.value);
+                                      if (!isNaN(val)) {
+                                        handleManualSort(item.id, val);
+                                      }
+                                    }}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') {
+                                        e.preventDefault();
+                                        (e.target as HTMLInputElement).blur();
+                                      }
+                                    }}
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="w-14 text-center text-xs border border-gray-200 rounded p-1.5 focus:outline-none focus:border-orange-500 focus:ring-1 focus:ring-orange-500 transition-colors"
+                                    title="พิมพ์ลำดับที่ต้องการแล้วกด Enter"
+                                  />
+                                )}
+                              </div>
                             )}
                           </td>
                           <td className="py-2 px-4">

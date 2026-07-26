@@ -173,31 +173,28 @@ describe('productStore', () => {
   });
 
   describe('reorderCategories', () => {
-    it('updates sortOrder = array index for each id inside the transaction', async () => {
-      const conn = { query: vi.fn().mockResolvedValue(undefined) };
-      vi.mocked(withTransaction).mockImplementation(async (fn: any) => fn(conn));
+    it('updates sortOrder using a single CASE WHEN query', async () => {
+      vi.mocked(query).mockResolvedValue(undefined as any);
 
       const result = await reorderCategories([10, 20, 30]);
 
       expect(result).toBe(true);
-      expect(conn.query).toHaveBeenCalledTimes(3);
-      // sortOrder is the position in the array, applied in order.
-      expect(conn.query.mock.calls[0][1]).toEqual([0, 10]);
-      expect(conn.query.mock.calls[1][1]).toEqual([1, 20]);
-      expect(conn.query.mock.calls[2][1]).toEqual([2, 30]);
+      expect(query).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(query).mock.calls[0][0]).toContain('CASE id');
+      // [10, 0, 20, 1, 30, 2, 10, 20, 30]
+      expect(vi.mocked(query).mock.calls[0][1]).toEqual([10, 0, 20, 1, 30, 2, 10, 20, 30]);
     });
 
     it('returns true and issues no updates for an empty list', async () => {
-      const conn = { query: vi.fn().mockResolvedValue(undefined) };
-      vi.mocked(withTransaction).mockImplementation(async (fn: any) => fn(conn));
+      vi.mocked(query).mockClear();
 
       expect(await reorderCategories([])).toBe(true);
-      expect(conn.query).not.toHaveBeenCalled();
+      expect(query).not.toHaveBeenCalled();
     });
 
-    it('returns false when the transaction fails (rolled back)', async () => {
+    it('returns false when the query fails', async () => {
       const errSpy = vi.spyOn(console, 'error').mockImplementation(() => { });
-      vi.mocked(withTransaction).mockRejectedValue(new Error('rollback'));
+      vi.mocked(query).mockRejectedValue(new Error('query failed'));
 
       expect(await reorderCategories([1, 2])).toBe(false);
       errSpy.mockRestore();
