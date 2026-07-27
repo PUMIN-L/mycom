@@ -1019,9 +1019,11 @@ export default function Products({ dataPromise }: ProductsProps) {
                           keeping it in the (crawlable) markup helps those searches. */}
                       {lang !== "en" && item.title_en && item.title_en !== getTitle(item) && (
                         <div 
-                          className="text-xs font-medium text-gray-400 mb-2 line-clamp-1 [&_p]:inline [&_p]:m-0"
-                          dangerouslySetInnerHTML={{ __html: item.title_en }}
-                        />
+                          className="text-xs font-medium text-gray-400 mb-2 line-clamp-1"
+                          title={stripHtml(item.title_en)}
+                        >
+                          {stripHtml(item.title_en)}
+                        </div>
                       )}
                       <div
                         className="text-gray-500 leading-relaxed font-light text-sm line-clamp-2 mb-6 [&_p]:inline [&_p]:m-0"
