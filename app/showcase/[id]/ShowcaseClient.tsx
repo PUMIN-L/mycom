@@ -836,7 +836,7 @@ export default function ShowcaseClient({
                     </div>
                   ) : (
                     <div
-                      className="w-full break-words"
+                      className="w-full break-words [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:mb-1 [&_ul]:my-2 [&_ol]:my-2"
                       style={{
                         fontSize: `${block.fontSize}px`,
                         fontWeight: block.fontWeight as any,
@@ -902,7 +902,7 @@ export default function ShowcaseClient({
                         </div>
                       ) : (
                         <div
-                          className="w-full break-words"
+                          className="w-full break-words [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:mb-1 [&_ul]:my-2 [&_ol]:my-2"
                           style={{
                             fontSize: `${block.fontSize}px`,
                             fontWeight: block.fontWeight as any,
