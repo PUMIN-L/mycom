@@ -10,6 +10,7 @@ import {
   deleteCloudinaryImages,
   collectContentImageUrls,
 } from "../../../lib/cloudinaryHelper";
+import { safeDeleteCloudinaryImages } from "../../../lib/imageUsageHelper";
 import { requireAuth, withRoute, ApiError } from "../../../lib/apiHelpers";
 
 type Ctx = { params: Promise<{ id: string }> };
@@ -80,7 +81,7 @@ export const DELETE = withRoute(
     }
 
     if (imageUrls.length > 0) {
-      await deleteCloudinaryImages(imageUrls);
+      await safeDeleteCloudinaryImages(imageUrls, { type: 'content', id });
     }
 
     return NextResponse.json({ success: true, deletedImages: imageUrls.length });

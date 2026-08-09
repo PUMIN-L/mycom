@@ -5,6 +5,7 @@ import {
   deleteCloudinaryImages,
   collectContentImageUrls,
 } from "./cloudinaryHelper";
+import { safeDeleteCloudinaryImage, safeDeleteCloudinaryImages } from "./imageUsageHelper";
 import { query } from "./db";
 import type { RowDataPacket } from "mysql2";
 import type { ProductData } from "./types";
@@ -24,7 +25,7 @@ export async function hardDeleteProduct(id: string): Promise<boolean> {
   for (const content of linkedContents) {
     const imageUrls = collectContentImageUrls(content);
     if (imageUrls.length > 0) {
-      await deleteCloudinaryImages(imageUrls);
+      await safeDeleteCloudinaryImages(imageUrls, { type: 'product', id });
     }
     await deleteContent(content.id);
   }
@@ -35,7 +36,7 @@ export async function hardDeleteProduct(id: string): Promise<boolean> {
 
   // 3. Delete the product's own image if it lives on Cloudinary
   if (product.image && product.image.includes("cloudinary.com")) {
-    await deleteCloudinaryImage(product.image);
+    await safeDeleteCloudinaryImage(product.image, { type: 'product', id });
   }
 
   return true;

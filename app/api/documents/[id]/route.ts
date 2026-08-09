@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth, withRoute } from "../../../lib/apiHelpers";
 import { getDocument, deleteDocument, updateDocument } from "../../../lib/documentStore";
 import { deleteCloudinaryImage } from "../../../lib/cloudinaryHelper";
+import { safeDeleteCloudinaryImage } from "../../../lib/imageUsageHelper";
 
 export const dynamic = "force-dynamic";
 
@@ -16,12 +17,12 @@ export const DELETE = withRoute(
       return NextResponse.json({ error: "Document not found" }, { status: 404 });
     }
 
-    // Delete files from cloudinary
+    // Delete files from cloudinary (only if not used by others)
     if (doc.pdfUrl) {
-      await deleteCloudinaryImage(doc.pdfUrl);
+      await safeDeleteCloudinaryImage(doc.pdfUrl, { type: 'document', id });
     }
     if (doc.coverUrl) {
-      await deleteCloudinaryImage(doc.coverUrl);
+      await safeDeleteCloudinaryImage(doc.coverUrl, { type: 'document', id });
     }
     
     // Delete from database

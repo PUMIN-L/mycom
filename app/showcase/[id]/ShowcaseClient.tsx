@@ -70,11 +70,11 @@ interface ShowcaseClientProps {
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
-async function deleteImageFromCloudinary(imageUrl: string) {
+async function deleteImageFromCloudinary(imageUrl: string, contentId?: string) {
   await fetch("/api/upload/delete", {
     method: "DELETE",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ imageUrl }),
+    body: JSON.stringify({ imageUrl, contentId }),
   });
 }
 
@@ -92,6 +92,7 @@ function GalleryViewer({
   uploadingBlockId: string | null;
   setGalleryUploadingId: (id: string) => void;
   galleryInputRef: React.RefObject<HTMLInputElement | null>;
+  contentId: string;
 }) {
   const [localIndex, setLocalIndex] = useState(block.selectedImageIndex || 0);
   const activeIndex = isEditing ? (block.selectedImageIndex || 0) : localIndex;
@@ -154,7 +155,7 @@ function GalleryViewer({
                     if (newIndex >= newUrls.length) newIndex = Math.max(0, newUrls.length - 1);
                     updateBlock(block.id, { imageUrls: newUrls, selectedImageIndex: newIndex });
                     try {
-                      await deleteImageFromCloudinary(url);
+                      await deleteImageFromCloudinary(url, contentId);
                     } catch (err) { }
                   }}
                   className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition-opacity shadow-sm font-bold"
@@ -308,13 +309,13 @@ export default function ShowcaseClient({
 
       // If it's an image → delete from Cloudinary
       if (block.type === "image" && block.imageUrl) {
-        await deleteImageFromCloudinary(block.imageUrl);
+        await deleteImageFromCloudinary(block.imageUrl, content.id);
       }
 
       if (block.type === "gallery" && block.imageUrls) {
         for (const url of block.imageUrls) {
           try {
-            await deleteImageFromCloudinary(url);
+            await deleteImageFromCloudinary(url, content.id);
           } catch (err) { console.error("Error deleting gallery image", err); }
         }
       }
@@ -390,7 +391,7 @@ export default function ShowcaseClient({
       // Find old block to delete its Cloudinary image
       const oldBlock = editBlocksRef.current.find((b) => b.id === blockId);
       if (oldBlock?.imageUrl) {
-        await deleteImageFromCloudinary(oldBlock.imageUrl);
+        await deleteImageFromCloudinary(oldBlock.imageUrl, content.id);
       }
 
       // Upload new image
@@ -824,6 +825,7 @@ export default function ShowcaseClient({
                     uploadingBlockId={uploadingBlockId}
                     setGalleryUploadingId={setGalleryUploadingId}
                     galleryInputRef={galleryInputRef}
+                    contentId={content.id}
                   />
                 ) : block.type === "text" ? (
                   isEditing ? (

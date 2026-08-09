@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { deleteCloudinaryImage } from "../../../lib/cloudinaryHelper";
+import { safeDeleteCloudinaryImage } from "../../../lib/imageUsageHelper";
 import { requireAuth, withRoute } from "../../../lib/apiHelpers";
 
 /**
@@ -14,12 +15,13 @@ export const DELETE = withRoute(
   async (request: NextRequest) => {
     await requireAuth();
 
-    const { imageUrl } = await request.json();
+    const { imageUrl, contentId } = await request.json();
     if (!imageUrl) {
       return NextResponse.json({ error: "imageUrl is required" }, { status: 400 });
     }
 
-    const ok = await deleteCloudinaryImage(imageUrl);
+    const excludeSource = contentId ? { type: "content" as const, id: contentId } : undefined;
+    const ok = await safeDeleteCloudinaryImage(imageUrl, excludeSource);
     return NextResponse.json({ success: ok });
   }
 );
