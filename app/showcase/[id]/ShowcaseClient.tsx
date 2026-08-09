@@ -85,6 +85,7 @@ function GalleryViewer({
   uploadingBlockId,
   setGalleryUploadingId,
   galleryInputRef,
+  contentId,
 }: {
   block: ContentBlock;
   isEditing: boolean;
