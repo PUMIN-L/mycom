@@ -7,9 +7,12 @@ import { DELETE } from '@/app/api/upload/delete/route';
 // Both routes go through cloudinaryHelper — keep Cloudinary inert.
 vi.mock('@/app/lib/cloudinaryHelper', () => ({
   uploadImage: vi.fn(),
-  deleteCloudinaryImage: vi.fn(),
 }));
-import { uploadImage, deleteCloudinaryImage } from '@/app/lib/cloudinaryHelper';
+vi.mock('@/app/lib/imageUsageHelper', () => ({
+  safeDeleteCloudinaryImage: vi.fn(),
+}));
+import { uploadImage } from '@/app/lib/cloudinaryHelper';
+import { safeDeleteCloudinaryImage } from '@/app/lib/imageUsageHelper';
 
 // Drive the REAL requireAuth by controlling getSession (null = anonymous).
 vi.mock('@/app/lib/session', () => ({ getSession: vi.fn() }));
@@ -132,7 +135,7 @@ describe('Upload API Route', () => {
       const res = await DELETE(deleteRequest({ imageUrl: 'https://res.cloudinary.com/x.png' }));
       expect(res.status).toBe(401);
       expect((await res.json()).error).toBe('Unauthorized');
-      expect(deleteCloudinaryImage).not.toHaveBeenCalled();
+      expect(safeDeleteCloudinaryImage).not.toHaveBeenCalled();
     });
 
     it('400s when imageUrl is missing', async () => {
@@ -141,23 +144,23 @@ describe('Upload API Route', () => {
       const res = await DELETE(deleteRequest({}));
       expect(res.status).toBe(400);
       expect((await res.json()).error).toBe('imageUrl is required');
-      expect(deleteCloudinaryImage).not.toHaveBeenCalled();
+      expect(safeDeleteCloudinaryImage).not.toHaveBeenCalled();
     });
 
     it('deletes the asset and returns success:true', async () => {
       vi.mocked(getSession).mockResolvedValue(adminSession);
-      vi.mocked(deleteCloudinaryImage).mockResolvedValue(true);
+      vi.mocked(safeDeleteCloudinaryImage).mockResolvedValue(true);
       const imageUrl = 'https://res.cloudinary.com/demo/image/upload/v1/pic.png';
 
       const res = await DELETE(deleteRequest({ imageUrl }));
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual({ success: true });
-      expect(deleteCloudinaryImage).toHaveBeenCalledWith(imageUrl);
+      expect(safeDeleteCloudinaryImage).toHaveBeenCalledWith(imageUrl, undefined);
     });
 
     it('returns success:false when the url is not a deletable Cloudinary asset', async () => {
       vi.mocked(getSession).mockResolvedValue(adminSession);
-      vi.mocked(deleteCloudinaryImage).mockResolvedValue(false); // e.g. unparseable url
+      vi.mocked(safeDeleteCloudinaryImage).mockResolvedValue(false); // e.g. unparseable url
 
       const res = await DELETE(deleteRequest({ imageUrl: 'https://example.com/not-cloudinary.png' }));
       expect(res.status).toBe(200);

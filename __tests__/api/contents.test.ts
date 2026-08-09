@@ -30,12 +30,12 @@ import {
 // DELETE cascades to Cloudinary image cleanup — mock it so no network happens.
 vi.mock('@/app/lib/cloudinaryHelper', () => ({
   collectContentImageUrls: vi.fn(),
-  deleteCloudinaryImages: vi.fn(),
 }));
-import {
-  collectContentImageUrls,
-  deleteCloudinaryImages,
-} from '@/app/lib/cloudinaryHelper';
+vi.mock('@/app/lib/imageUsageHelper', () => ({
+  safeDeleteCloudinaryImages: vi.fn(),
+}));
+import { collectContentImageUrls } from '@/app/lib/cloudinaryHelper';
+import { safeDeleteCloudinaryImages } from '@/app/lib/imageUsageHelper';
 
 vi.mock('next/cache', () => ({ revalidateTag: vi.fn() }));
 
@@ -216,10 +216,10 @@ describe('Contents API Routes', () => {
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual({ success: true, deletedImages: 2 });
       expect(deleteContent).toHaveBeenCalledWith('c-1');
-      expect(deleteCloudinaryImages).toHaveBeenCalledWith([
+      expect(safeDeleteCloudinaryImages).toHaveBeenCalledWith([
         'https://img/a.png',
         'https://img/b.png',
-      ]);
+      ], { type: 'content', id: 'c-1' });
     });
 
     it('skips Cloudinary cleanup when there are no images', async () => {
@@ -233,7 +233,7 @@ describe('Contents API Routes', () => {
       });
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual({ success: true, deletedImages: 0 });
-      expect(deleteCloudinaryImages).not.toHaveBeenCalled();
+      expect(safeDeleteCloudinaryImages).not.toHaveBeenCalled();
     });
   });
 

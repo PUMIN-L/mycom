@@ -25,7 +25,10 @@ import {
 vi.mock('@/app/lib/cloudinaryHelper', () => ({
   deleteCloudinaryImage: vi.fn(),
 }));
-import { deleteCloudinaryImage } from '@/app/lib/cloudinaryHelper';
+vi.mock('@/app/lib/imageUsageHelper', () => ({
+  safeDeleteCloudinaryImage: vi.fn(),
+}));
+import { safeDeleteCloudinaryImage } from '@/app/lib/imageUsageHelper';
 
 // Neither documents handler imports next/cache, but honor the shared mock list.
 vi.mock('next/cache', () => ({ revalidateTag: vi.fn() }));
@@ -130,7 +133,7 @@ describe('Documents API Route', () => {
       expect(res.status).toBe(401);
       expect((await res.json()).error).toBe('Unauthorized');
       expect(deleteDocument).not.toHaveBeenCalled();
-      expect(deleteCloudinaryImage).not.toHaveBeenCalled();
+      expect(safeDeleteCloudinaryImage).not.toHaveBeenCalled();
     });
 
     it('returns 404 when the document does not exist', async () => {
@@ -141,22 +144,22 @@ describe('Documents API Route', () => {
       expect(res.status).toBe(404);
       expect((await res.json()).error).toBe('Document not found');
       expect(deleteDocument).not.toHaveBeenCalled();
-      expect(deleteCloudinaryImage).not.toHaveBeenCalled();
+      expect(safeDeleteCloudinaryImage).not.toHaveBeenCalled();
     });
 
     it('purges both Cloudinary assets, deletes the row, and returns success', async () => {
       vi.mocked(getSession).mockResolvedValue(adminSession);
       vi.mocked(getDocument).mockResolvedValue(validDoc as any);
-      vi.mocked(deleteCloudinaryImage).mockResolvedValue(true);
+      vi.mocked(safeDeleteCloudinaryImage).mockResolvedValue(true);
       vi.mocked(deleteDocument).mockResolvedValue(undefined as any);
 
       const res = await DELETE(mutatingRequest('DELETE'), ctx('doc-1'));
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual({ success: true });
 
-      expect(deleteCloudinaryImage).toHaveBeenCalledWith(validDoc.pdfUrl);
-      expect(deleteCloudinaryImage).toHaveBeenCalledWith(validDoc.coverUrl);
-      expect(deleteCloudinaryImage).toHaveBeenCalledTimes(2);
+      expect(safeDeleteCloudinaryImage).toHaveBeenCalledWith(validDoc.pdfUrl, { type: 'document', id: 'doc-1' });
+      expect(safeDeleteCloudinaryImage).toHaveBeenCalledWith(validDoc.coverUrl, { type: 'document', id: 'doc-1' });
+      expect(safeDeleteCloudinaryImage).toHaveBeenCalledTimes(2);
       expect(deleteDocument).toHaveBeenCalledWith('doc-1');
     });
   });
