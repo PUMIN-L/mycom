@@ -39,7 +39,10 @@ export default function SettingsPage() {
   const [scanned, setScanned] = useState(false);
   const [selectedOrphans, setSelectedOrphans] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState(false);
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showDeleteOtpModal, setShowDeleteOtpModal] = useState(false);
+  const [deleteOtp, setDeleteOtp] = useState("");
+  const [sendingOtp, setSendingOtp] = useState(false);
+  const [otpSent, setOtpSent] = useState(false);
 
   const handleScan = async () => {
     setScanning(true);
@@ -78,22 +81,51 @@ export default function SettingsPage() {
     }
   };
 
+  const handleRequestDeleteOtp = async () => {
+    setSendingOtp(true);
+    try {
+      const res = await fetch("/api/cloudinary/orphans/otp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ imageCount: selectedOrphans.size }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        showToast(data?.error ?? "ไม่สามารถส่งรหัสยืนยันได้", "error");
+        return;
+      }
+      setOtpSent(true);
+      showToast("ส่งรหัสยืนยันไปทางอีเมลแล้ว", "success");
+    } catch {
+      showToast("เกิดข้อผิดพลาด กรุณาลองใหม่", "error");
+    } finally {
+      setSendingOtp(false);
+    }
+  };
+
   const handleDeleteOrphans = async () => {
-    setShowDeleteConfirm(false);
+    if (deleteOtp.length !== 5) {
+      showToast("กรุณากรอกรหัสยืนยัน 5 หลัก", "error");
+      return;
+    }
     setDeleting(true);
     try {
       const res = await fetch("/api/cloudinary/orphans", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          otp: deleteOtp,
           items: Array.from(selectedOrphans).map((pid) => {
             const orphan = orphans.find((o) => o.publicId === pid);
             return { publicId: pid, resourceType: orphan?.resourceType ?? "image" };
           }),
         }),
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        showToast(data?.error ?? "ลบไม่สำเร็จ", "error");
+        return;
+      }
       showToast(
         `ลบสำเร็จ ${data.deleted} รูป${data.skipped ? ` (ข้าม ${data.skipped} รูปที่ยังใช้อยู่)` : ""}`,
         data.failed ? "error" : "success"
@@ -102,6 +134,9 @@ export default function SettingsPage() {
       setOrphans((prev) => prev.filter((o) => !selectedOrphans.has(o.publicId)));
       setOrphanStats((prev) => prev ? { ...prev, orphanCount: prev.orphanCount - data.deleted } : null);
       setSelectedOrphans(new Set());
+      setShowDeleteOtpModal(false);
+      setDeleteOtp("");
+      setOtpSent(false);
     } catch {
       showToast("ลบไม่สำเร็จ กรุณาลองใหม่", "error");
     } finally {
@@ -335,7 +370,7 @@ export default function SettingsPage() {
                 </label>
                 {selectedOrphans.size > 0 && (
                   <button
-                    onClick={() => setShowDeleteConfirm(true)}
+                    onClick={() => setShowDeleteOtpModal(true)}
                     disabled={deleting}
                     className="px-4 py-2 bg-red-600 text-white text-sm font-bold rounded-lg hover:bg-red-700 transition disabled:opacity-50 flex items-center gap-1"
                   >
@@ -456,31 +491,92 @@ export default function SettingsPage() {
         </div>
       )}
 
-      {/* Delete Orphans Confirmation Modal */}
-      {showDeleteConfirm && (
+      {/* Delete Orphans OTP Modal */}
+      {showDeleteOtpModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
           <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-sm animate-in fade-in zoom-in duration-200">
             <h2 className="text-xl font-bold text-gray-900 mb-2">⚠️ ยืนยันการลบ</h2>
-            <p className="text-sm text-gray-600 mb-4">
-              คุณต้องการลบ <strong>{selectedOrphans.size} รูป</strong> ออกจาก Cloudinary หรือไม่?
-              การกระทำนี้ไม่สามารถย้อนกลับได้
+            <p className="text-sm text-gray-600 mb-1">
+              คุณต้องการลบ <strong>{selectedOrphans.size} รูป</strong> ออกจาก Cloudinary
             </p>
-            <div className="flex gap-3">
+            <p className="text-sm text-gray-500 mb-4">
+              การกระทำนี้ไม่สามารถย้อนกลับได้ ระบบจะส่งรหัสยืนยัน 5 หลักไปทางอีเมลที่ตั้งค่าไว้
+            </p>
+
+            {!otpSent ? (
               <button
                 type="button"
-                onClick={() => setShowDeleteConfirm(false)}
-                className="flex-1 px-4 py-2 bg-gray-100 text-gray-700 font-semibold rounded-lg hover:bg-gray-200 transition"
+                onClick={handleRequestDeleteOtp}
+                disabled={sendingOtp}
+                className="w-full px-4 py-3 bg-orange-500 text-white font-bold rounded-lg hover:bg-orange-600 transition disabled:opacity-50 flex items-center justify-center gap-2 mb-3"
               >
-                ยกเลิก
+                {sendingOtp ? (
+                  <>
+                    <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                    กำลังส่งรหัส...
+                  </>
+                ) : (
+                  "📧 ส่งรหัสยืนยันทางอีเมล"
+                )}
               </button>
-              <button
-                type="button"
-                onClick={handleDeleteOrphans}
-                className="flex-1 px-4 py-2 bg-red-600 text-white font-bold rounded-lg hover:bg-red-700 transition"
-              >
-                🗑️ ลบเลย
-              </button>
-            </div>
+            ) : (
+              <div className="space-y-3 mb-3">
+                <div className="p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-800">
+                  ✉️ ส่งรหัสยืนยันไปทางอีเมลแล้ว กรุณาตรวจสอบกล่องขาเข้าของคุณ (รหัสมีอายุ 10 นาที)
+                </div>
+                <input
+                  type="text"
+                  required
+                  maxLength={5}
+                  value={deleteOtp}
+                  onChange={(e) => setDeleteOtp(e.target.value.replace(/\D/g, ""))}
+                  placeholder="รหัสยืนยัน 5 หลัก"
+                  className="w-full px-4 py-3 text-center text-2xl tracking-widest border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 font-mono"
+                />
+                <button
+                  type="button"
+                  onClick={handleDeleteOrphans}
+                  disabled={deleting || deleteOtp.length !== 5}
+                  className="w-full px-4 py-3 bg-red-600 text-white font-bold rounded-lg hover:bg-red-700 transition disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {deleting ? (
+                    <>
+                      <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                      </svg>
+                      กำลังลบ...
+                    </>
+                  ) : (
+                    `🗑️ ยืนยันและลบ ${selectedOrphans.size} รูป`
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleRequestDeleteOtp}
+                  disabled={sendingOtp}
+                  className="w-full text-sm text-orange-600 hover:text-orange-700 font-semibold"
+                >
+                  {sendingOtp ? "กำลังส่ง..." : "↻ ส่งรหัสใหม่"}
+                </button>
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={() => {
+                setShowDeleteOtpModal(false);
+                setDeleteOtp("");
+                setOtpSent(false);
+              }}
+              disabled={deleting}
+              className="w-full px-4 py-2 bg-gray-100 text-gray-700 font-semibold rounded-lg hover:bg-gray-200 transition disabled:opacity-50"
+            >
+              ยกเลิก
+            </button>
           </div>
         </div>
       )}

@@ -95,3 +95,18 @@ export async function sendOtpEmail(
     text: `มีการขอเปลี่ยนอีเมลรับข้อความ (Contact Email) เป็นอีเมลใหม่: ${newEmail}\n\nหากคุณเป็นผู้ดำเนินการ กรุณานำรหัสผ่านชั่วคราวด้านล่างนี้ไปกรอกในหน้าต่างตั้งค่า:\n\nรหัสยืนยัน: ${otp}\n\n(รหัสนี้มีอายุ 15 นาที)\n\nหากคุณไม่ได้เป็นผู้ดำเนินการ กรุณาเพิกเฉยต่ออีเมลฉบับนี้ และตรวจสอบความปลอดภัยของรหัสผ่านผู้ดูแลระบบของคุณทันที`,
   });
 }
+
+/** Send a 5-digit OTP to `to` to authorize deleting orphaned Cloudinary images. */
+export async function sendOrphanDeleteOtpEmail(
+  to: string,
+  otp: string,
+  imageCount: number
+): Promise<void> {
+  const transport = createTransport();
+  await transport.sendMail({
+    from: { name: "ระบบเว็บไซต์ (Profin Lab Scale)", address: process.env.SMTP_USER ?? "" },
+    to: { name: "", address: to },
+    subject: `[รหัสยืนยัน] ลบรูปภาพที่ไม่ได้ใช้งานจาก Cloudinary`,
+    text: `มีการขอลบรูปภาพที่ไม่ได้ใช้งานจำนวน ${imageCount} รูป ออกจาก Cloudinary\n\nหากคุณเป็นผู้ดำเนินการ กรุณานำรหัสยืนยันด้านล่างนี้ไปกรอก:\n\nรหัสยืนยัน: ${otp}\n\n(รหัสนี้มีอายุ 10 นาที)\n\nหากคุณไม่ได้เป็นผู้ดำเนินการ กรุณาเพิกเฉยต่ออีเมลฉบับนี้ และตรวจสอบความปลอดภัยของบัญชีผู้ดูแลระบบทันที`,
+  });
+}

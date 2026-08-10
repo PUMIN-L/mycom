@@ -5,6 +5,7 @@ import {
   extractPublicId,
 } from "../../../lib/cloudinaryHelper";
 import { getAllUsedImageUrls } from "../../../lib/imageUsageHelper";
+import { getSetting, setSetting } from "../../../lib/settingsStore";
 
 /**
  * GET /api/cloudinary/orphans  (admin only)
@@ -60,8 +61,9 @@ export const GET = withRoute(
  * DELETE /api/cloudinary/orphans  (admin only)
  *
  * Deletes selected orphaned assets from Cloudinary.
- * Body: { items: { publicId: string; resourceType: string }[] }
+ * Body: { items: { publicId: string; resourceType: string }[], otp: string }
  *
+ * Requires a valid 5-digit OTP sent via POST /api/cloudinary/orphans/otp.
  * Each asset is double-checked against the DB before deletion as a safety net.
  */
 export const DELETE = withRoute(
@@ -69,7 +71,42 @@ export const DELETE = withRoute(
   async (request: NextRequest) => {
     await requireAuth();
 
-    const { items } = await request.json();
+    const { items, otp } = await request.json();
+
+    // ── OTP Verification ──────────────────────────────────────────────────
+    if (!otp || typeof otp !== "string" || otp.length !== 5) {
+      return NextResponse.json(
+        { error: "กรุณากรอกรหัสยืนยัน 5 หลัก" },
+        { status: 400 }
+      );
+    }
+
+    const savedOtp = await getSetting("orphan_delete_otp");
+    const expiresAtStr = await getSetting("orphan_delete_otp_expires");
+    const expiresAt = expiresAtStr ? parseInt(expiresAtStr, 10) : 0;
+
+    if (!savedOtp || otp !== savedOtp) {
+      return NextResponse.json(
+        { error: "รหัสยืนยันไม่ถูกต้อง" },
+        { status: 403 }
+      );
+    }
+
+    if (Date.now() > expiresAt) {
+      // Clear expired OTP
+      await setSetting("orphan_delete_otp", "");
+      await setSetting("orphan_delete_otp_expires", "0");
+      return NextResponse.json(
+        { error: "รหัสยืนยันหมดอายุแล้ว กรุณาขอรหัสใหม่" },
+        { status: 403 }
+      );
+    }
+
+    // OTP is valid — clear it so it can't be reused
+    await setSetting("orphan_delete_otp", "");
+    await setSetting("orphan_delete_otp_expires", "0");
+
+    // ── Deletion ──────────────────────────────────────────────────────────
     if (!Array.isArray(items) || items.length === 0) {
       return NextResponse.json(
         { error: "items array is required" },
