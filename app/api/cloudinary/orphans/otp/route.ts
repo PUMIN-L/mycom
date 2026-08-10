@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth, withRoute } from "../../../../lib/apiHelpers";
-import { getContactEmail } from "../../../../lib/settingsStore";
-import { setSetting, getSetting } from "../../../../lib/settingsStore";
+import { getContactEmail, setSetting } from "../../../../lib/settingsStore";
 import { isMailConfigured, sendOrphanDeleteOtpEmail } from "../../../../lib/mailer";
 
 // Generate a random 5-digit OTP
