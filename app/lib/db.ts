@@ -4,7 +4,7 @@ import type { QueryResult, FieldPacket, RowDataPacket } from "mysql2";
 
 // Bump whenever the schema below changes — a mismatch re-runs the (idempotent)
 // bootstrap; a match lets returning cold instances skip it in one SELECT.
-const SCHEMA_VERSION = 15;
+const SCHEMA_VERSION = 16;
 
 type DbPool = ReturnType<typeof mysql.createPool>;
 
@@ -433,11 +433,18 @@ async function bootstrapSchemaOnce(): Promise<void> {
           paymentMethod VARCHAR(50) DEFAULT NULL,
           paymentDate VARCHAR(20) DEFAULT NULL,
           paymentRef VARCHAR(255) DEFAULT NULL,
-          createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+          createdAt VARCHAR(255) NOT NULL,
           INDEX idx_billing_docType (docType),
           INDEX idx_billing_docNo (docNo)
         )
       `);
+    try {
+      await connection.query(
+        `CREATE INDEX idx_billing_createdAt ON billing_documents (createdAt)`
+      );
+    } catch (error) {
+      if (!isBenignSchemaError(error)) throw error;
+    }
 
     // ── Seed default admin user ────────────────────────────────────────────
     // Credentials come from the environment, never from source. If
