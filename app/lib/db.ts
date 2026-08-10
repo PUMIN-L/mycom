@@ -4,7 +4,7 @@ import type { QueryResult, FieldPacket, RowDataPacket } from "mysql2";
 
 // Bump whenever the schema below changes — a mismatch re-runs the (idempotent)
 // bootstrap; a match lets returning cold instances skip it in one SELECT.
-const SCHEMA_VERSION = 14;
+const SCHEMA_VERSION = 15;
 
 type DbPool = ReturnType<typeof mysql.createPool>;
 
@@ -421,6 +421,23 @@ async function bootstrapSchemaOnce(): Promise<void> {
     } catch (error) {
       if (!isBenignSchemaError(error)) throw error;
     }
+
+    // ── Billing documents (Invoice / Billing Note / Receipt) ────────────────
+    await connection.query(`
+        CREATE TABLE IF NOT EXISTS billing_documents (
+          id VARCHAR(36) PRIMARY KEY,
+          docType VARCHAR(20) NOT NULL DEFAULT 'invoice',
+          docNo VARCHAR(255) NOT NULL DEFAULT '',
+          linkedQuotationId VARCHAR(36) DEFAULT NULL,
+          data JSON NOT NULL,
+          paymentMethod VARCHAR(50) DEFAULT NULL,
+          paymentDate VARCHAR(20) DEFAULT NULL,
+          paymentRef VARCHAR(255) DEFAULT NULL,
+          createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+          INDEX idx_billing_docType (docType),
+          INDEX idx_billing_docNo (docNo)
+        )
+      `);
 
     // ── Seed default admin user ────────────────────────────────────────────
     // Credentials come from the environment, never from source. If

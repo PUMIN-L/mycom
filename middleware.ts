@@ -49,6 +49,8 @@ export const config = {
     '/product-specs',
     '/product-specs/:path*',
     '/suppliers',
-    '/suppliers/:path*'
+    '/suppliers/:path*',
+    '/billing',
+    '/billing/:path*'
   ],
 };

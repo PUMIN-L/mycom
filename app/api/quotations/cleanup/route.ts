@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withRoute } from "../../../lib/apiHelpers";
 import { purgeExpiredQuotations, purgeOldDocNos } from "../../../lib/quotationStore";
+import { purgeExpiredBillingDocuments } from "../../../lib/billingStore";
 
 // GET /api/quotations/cleanup — invoked daily by Vercel Cron (see vercel.json)
 // to delete quotations older than 30 days plus their uploaded Cloudinary images.
@@ -24,12 +25,13 @@ export const GET = withRoute(
     }
     try {
       const deleted = await purgeExpiredQuotations(RETENTION_DAYS);
+      const billingDeleted = await purgeExpiredBillingDocuments(RETENTION_DAYS);
       const docNosPurged = await purgeOldDocNos(DOCNO_RETENTION_DAYS);
       // Structured success line so a MISSING nightly run is detectable in logs.
       console.log(
-        `[cron:quotations-cleanup] ok deleted=${deleted} docNosPurged=${docNosPurged}`
+        `[cron:quotations-cleanup] ok deleted=${deleted} billingDeleted=${billingDeleted} docNosPurged=${docNosPurged}`
       );
-      return NextResponse.json({ ok: true, deleted, docNosPurged });
+      return NextResponse.json({ ok: true, deleted, billingDeleted, docNosPurged });
     } catch (err) {
       // Log then rethrow so withRoute returns 500 → Vercel marks the cron run
       // FAILED instead of the failure disappearing silently. (Note: withRoute

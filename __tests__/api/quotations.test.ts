@@ -30,6 +30,11 @@ import {
   purgeOldDocNos,
 } from '@/app/lib/quotationStore';
 
+vi.mock('@/app/lib/billingStore', () => ({
+  purgeExpiredBillingDocuments: vi.fn(),
+}));
+import { purgeExpiredBillingDocuments } from '@/app/lib/billingStore';
+
 // Drive the REAL requireAuth/withRoute by controlling getSession (null = anon).
 vi.mock('@/app/lib/session', () => ({ getSession: vi.fn() }));
 import { getSession } from '@/app/lib/session';
@@ -168,11 +173,13 @@ describe('Quotations API', () => {
 
     it('purges and returns counts when the Bearer secret matches', async () => {
       vi.mocked(purgeExpiredQuotations).mockResolvedValue(3);
+      vi.mocked(purgeExpiredBillingDocuments).mockResolvedValue(1);
       vi.mocked(purgeOldDocNos).mockResolvedValue(5);
       const res = await cleanupGET(cleanupReq('Bearer cron-test-secret'));
       expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ ok: true, deleted: 3, docNosPurged: 5 });
+      expect(await res.json()).toEqual({ ok: true, deleted: 3, billingDeleted: 1, docNosPurged: 5 });
       expect(purgeExpiredQuotations).toHaveBeenCalledWith(30);
+      expect(purgeExpiredBillingDocuments).toHaveBeenCalledWith(30);
       expect(purgeOldDocNos).toHaveBeenCalledWith(2);
     });
   });
