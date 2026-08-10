@@ -130,3 +130,52 @@ export function getPdfCoverUrl(pdfUrl: string): string {
   // Or simply changing the extension to .jpg:
   return pdfUrl.replace(/\.pdf$/i, ".jpg");
 }
+
+// ── Orphan scanning ──────────────────────────────────────────────────────────
+
+export interface CloudinaryAsset {
+  publicId: string;
+  secureUrl: string;
+  format: string;
+  bytes: number;
+  resourceType: string;
+  createdAt: string;
+}
+
+/**
+ * List ALL assets in a Cloudinary folder by paginating through the Admin API.
+ * Scans both `image` and `raw` resource types so PDFs are included.
+ */
+export async function listAllCloudinaryAssets(
+  folder = "samples/mycom"
+): Promise<CloudinaryAsset[]> {
+  const assets: CloudinaryAsset[] = [];
+
+  for (const resourceType of ["image", "raw"] as const) {
+    let nextCursor: string | undefined;
+    do {
+      const result: any = await cloudinary.api.resources({
+        type: "upload",
+        prefix: folder,
+        resource_type: resourceType,
+        max_results: 500,
+        ...(nextCursor ? { next_cursor: nextCursor } : {}),
+      });
+
+      for (const r of result.resources ?? []) {
+        assets.push({
+          publicId: r.public_id,
+          secureUrl: r.secure_url,
+          format: r.format ?? "",
+          bytes: r.bytes ?? 0,
+          resourceType: r.resource_type ?? resourceType,
+          createdAt: r.created_at ?? "",
+        });
+      }
+
+      nextCursor = result.next_cursor;
+    } while (nextCursor);
+  }
+
+  return assets;
+}

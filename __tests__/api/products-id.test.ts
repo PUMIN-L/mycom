@@ -24,6 +24,11 @@ vi.mock('@/app/lib/cloudinaryHelper', () => ({
   collectContentImageUrls: vi.fn(() => []),
 }));
 
+vi.mock('@/app/lib/imageUsageHelper', () => ({
+  safeDeleteCloudinaryImage: vi.fn().mockResolvedValue(true),
+}));
+import { safeDeleteCloudinaryImage } from '@/app/lib/imageUsageHelper';
+
 vi.mock('next/cache', () => ({ revalidateTag: vi.fn() }));
 import { revalidateTag } from 'next/cache';
 
@@ -119,7 +124,9 @@ describe('Products [id] API Route', () => {
 
     it('updates the product, revalidates cache, and returns 200', async () => {
       vi.mocked(getSession).mockResolvedValue(adminSession);
-      const updated = { id: '1', title_en: 'Updated', isPublished: true };
+      const existing = { id: '1', title_en: 'Old', image: 'https://res.cloudinary.com/demo/image/upload/v1/old.jpg', isPublished: true };
+      const updated = { id: '1', title_en: 'Updated', image: 'https://res.cloudinary.com/demo/image/upload/v1/old.jpg', isPublished: true };
+      vi.mocked(getProduct).mockResolvedValue(existing as any);
       vi.mocked(updateProduct).mockResolvedValue(updated as any);
 
       const res = await PUT(mutatingRequest('PUT', body), ctx('1'));
@@ -127,6 +134,40 @@ describe('Products [id] API Route', () => {
       expect(await res.json()).toEqual(updated);
       expect(updateProduct).toHaveBeenCalledWith('1', body);
       expect(revalidateTag).toHaveBeenCalledWith('products', { expire: 0 });
+    });
+
+    it('deletes the old Cloudinary image when the image is replaced', async () => {
+      vi.mocked(getSession).mockResolvedValue(adminSession);
+      const oldUrl = 'https://res.cloudinary.com/demo/image/upload/v1/old.jpg';
+      const newUrl = 'https://res.cloudinary.com/demo/image/upload/v1/new.jpg';
+      vi.mocked(getProduct).mockResolvedValue({ id: '1', image: oldUrl } as any);
+      vi.mocked(updateProduct).mockResolvedValue({ id: '1', image: newUrl } as any);
+
+      const res = await PUT(mutatingRequest('PUT', { image: newUrl }), ctx('1'));
+      expect(res.status).toBe(200);
+      // Wait for the fire-and-forget promise to settle
+      await vi.waitFor(() => {
+        expect(safeDeleteCloudinaryImage).toHaveBeenCalledWith(oldUrl, { type: 'product', id: '1' });
+      });
+    });
+
+    it('does NOT delete when the image is unchanged', async () => {
+      vi.mocked(getSession).mockResolvedValue(adminSession);
+      const sameUrl = 'https://res.cloudinary.com/demo/image/upload/v1/same.jpg';
+      vi.mocked(getProduct).mockResolvedValue({ id: '1', image: sameUrl } as any);
+      vi.mocked(updateProduct).mockResolvedValue({ id: '1', image: sameUrl } as any);
+
+      await PUT(mutatingRequest('PUT', { title_en: 'No image change' }), ctx('1'));
+      expect(safeDeleteCloudinaryImage).not.toHaveBeenCalled();
+    });
+
+    it('does NOT delete when the old image is not on Cloudinary', async () => {
+      vi.mocked(getSession).mockResolvedValue(adminSession);
+      vi.mocked(getProduct).mockResolvedValue({ id: '1', image: 'https://example.com/local.png' } as any);
+      vi.mocked(updateProduct).mockResolvedValue({ id: '1', image: 'https://res.cloudinary.com/demo/image/upload/v1/new.jpg' } as any);
+
+      await PUT(mutatingRequest('PUT', { image: 'https://res.cloudinary.com/demo/image/upload/v1/new.jpg' }), ctx('1'));
+      expect(safeDeleteCloudinaryImage).not.toHaveBeenCalled();
     });
   });
 

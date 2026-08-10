@@ -5,6 +5,15 @@ import Link from "next/link";
 import { useAuth } from "../context/AuthContext";
 import Toast from "../components/Toast";
 
+interface OrphanAsset {
+  publicId: string;
+  secureUrl: string;
+  format: string;
+  bytes: number;
+  resourceType: string;
+  createdAt: string;
+}
+
 // Admin settings (CMS). Client-side redirect gates the UI like the create
 // pages; the real protection is requireAuth() on /api/settings/* server-side.
 export default function SettingsPage() {
@@ -22,6 +31,89 @@ export default function SettingsPage() {
   // OTP State
   const [showOtpModal, setShowOtpModal] = useState(false);
   const [otp, setOtp] = useState("");
+
+  // Orphan Scanner State
+  const [orphans, setOrphans] = useState<OrphanAsset[]>([]);
+  const [orphanStats, setOrphanStats] = useState<{ total: number; inUse: number; orphanCount: number } | null>(null);
+  const [scanning, setScanning] = useState(false);
+  const [scanned, setScanned] = useState(false);
+  const [selectedOrphans, setSelectedOrphans] = useState<Set<string>>(new Set());
+  const [deleting, setDeleting] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+
+  const handleScan = async () => {
+    setScanning(true);
+    setScanned(false);
+    setOrphans([]);
+    setOrphanStats(null);
+    setSelectedOrphans(new Set());
+    try {
+      const res = await fetch("/api/cloudinary/orphans");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setOrphans(data.orphans ?? []);
+      setOrphanStats({ total: data.total, inUse: data.inUse, orphanCount: data.orphanCount });
+      setScanned(true);
+    } catch {
+      showToast("สแกนไม่สำเร็จ กรุณาลองใหม่", "error");
+    } finally {
+      setScanning(false);
+    }
+  };
+
+  const toggleOrphanSelection = (publicId: string) => {
+    setSelectedOrphans((prev) => {
+      const next = new Set(prev);
+      if (next.has(publicId)) next.delete(publicId);
+      else next.add(publicId);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedOrphans.size === orphans.length) {
+      setSelectedOrphans(new Set());
+    } else {
+      setSelectedOrphans(new Set(orphans.map((o) => o.publicId)));
+    }
+  };
+
+  const handleDeleteOrphans = async () => {
+    setShowDeleteConfirm(false);
+    setDeleting(true);
+    try {
+      const res = await fetch("/api/cloudinary/orphans", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          items: Array.from(selectedOrphans).map((pid) => {
+            const orphan = orphans.find((o) => o.publicId === pid);
+            return { publicId: pid, resourceType: orphan?.resourceType ?? "image" };
+          }),
+        }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      showToast(
+        `ลบสำเร็จ ${data.deleted} รูป${data.skipped ? ` (ข้าม ${data.skipped} รูปที่ยังใช้อยู่)` : ""}`,
+        data.failed ? "error" : "success"
+      );
+      // Remove deleted items from the list
+      setOrphans((prev) => prev.filter((o) => !selectedOrphans.has(o.publicId)));
+      setOrphanStats((prev) => prev ? { ...prev, orphanCount: prev.orphanCount - data.deleted } : null);
+      setSelectedOrphans(new Set());
+    } catch {
+      showToast("ลบไม่สำเร็จ กรุณาลองใหม่", "error");
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const formatBytes = (bytes: number) => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
 
   // Redirect if not logged in
   useEffect(() => {
@@ -170,6 +262,151 @@ export default function SettingsPage() {
           ของเซิร์ฟเวอร์ก่อน ระบบจึงจะส่งเมลได้จริง (ตรวจสอบได้ที่ <code className="font-mono">/api/health</code>)
         </div>
 
+        {/* Cloudinary Orphan Scanner */}
+        <div className="mt-8 bg-white rounded-lg shadow p-6 space-y-4">
+          <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+            🧹 Cloudinary — รูปภาพที่ไม่ได้ใช้งาน
+          </h2>
+          <p className="text-sm text-gray-600">
+            สแกนหารูปภาพใน Cloudinary ที่ไม่ได้ถูกใช้โดยสินค้า, เอกสาร, หรือเนื้อหาใดๆ ในระบบ
+          </p>
+
+          <button
+            onClick={handleScan}
+            disabled={scanning}
+            className="w-full px-6 py-3 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 transition disabled:opacity-50 flex items-center justify-center gap-2"
+          >
+            {scanning ? (
+              <>
+                <svg className="animate-spin h-5 w-5 text-white" viewBox="0 0 24 24" fill="none">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                </svg>
+                กำลังสแกน Cloudinary...
+              </>
+            ) : (
+              "🔍 สแกนหารูปที่ไม่ได้ใช้"
+            )}
+          </button>
+
+          {/* Stats */}
+          {orphanStats && scanned && (
+            <div className="grid grid-cols-3 gap-3 text-center">
+              <div className="p-3 bg-gray-50 rounded-lg">
+                <div className="text-2xl font-bold text-gray-800">{orphanStats.total}</div>
+                <div className="text-xs text-gray-500">ทั้งหมดใน Cloudinary</div>
+              </div>
+              <div className="p-3 bg-green-50 rounded-lg">
+                <div className="text-2xl font-bold text-green-700">{orphanStats.inUse}</div>
+                <div className="text-xs text-green-600">ใช้งานอยู่</div>
+              </div>
+              <div className="p-3 bg-red-50 rounded-lg">
+                <div className="text-2xl font-bold text-red-700">{orphanStats.orphanCount}</div>
+                <div className="text-xs text-red-600">ไม่ได้ใช้งาน</div>
+              </div>
+            </div>
+          )}
+
+          {/* No orphans */}
+          {scanned && orphans.length === 0 && (
+            <div className="p-6 text-center bg-green-50 border border-green-200 rounded-lg">
+              <span className="text-2xl">✅</span>
+              <p className="mt-2 font-semibold text-green-800">ไม่พบรูปภาพที่ไม่ได้ใช้งาน</p>
+              <p className="text-sm text-green-600">Cloudinary สะอาดดี!</p>
+            </div>
+          )}
+
+          {/* Orphan list */}
+          {orphans.length > 0 && (
+            <div className="space-y-3">
+              {/* Toolbar */}
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <label className="flex items-center gap-2 text-sm font-medium text-gray-700 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={selectedOrphans.size === orphans.length && orphans.length > 0}
+                    onChange={toggleSelectAll}
+                    className="w-4 h-4 rounded border-gray-300 text-red-600 focus:ring-red-500"
+                  />
+                  เลือกทั้งหมด ({orphans.length} รูป
+                  {orphans.length > 0 && (
+                    <> — {formatBytes(orphans.reduce((s, o) => s + o.bytes, 0))}</>  
+                  )})
+                </label>
+                {selectedOrphans.size > 0 && (
+                  <button
+                    onClick={() => setShowDeleteConfirm(true)}
+                    disabled={deleting}
+                    className="px-4 py-2 bg-red-600 text-white text-sm font-bold rounded-lg hover:bg-red-700 transition disabled:opacity-50 flex items-center gap-1"
+                  >
+                    {deleting ? (
+                      <>
+                        <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                        </svg>
+                        กำลังลบ...
+                      </>
+                    ) : (
+                      `🗑️ ลบรูปที่เลือก (${selectedOrphans.size})`
+                    )}
+                  </button>
+                )}
+              </div>
+
+              {/* Grid */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 max-h-[500px] overflow-y-auto pr-1">
+                {orphans.map((orphan) => (
+                  <div
+                    key={orphan.publicId}
+                    onClick={() => toggleOrphanSelection(orphan.publicId)}
+                    className={`relative rounded-lg border-2 overflow-hidden cursor-pointer transition-all ${
+                      selectedOrphans.has(orphan.publicId)
+                        ? "border-red-500 ring-2 ring-red-200"
+                        : "border-gray-200 hover:border-gray-400"
+                    }`}
+                  >
+                    {/* Checkbox */}
+                    <div className="absolute top-2 left-2 z-10">
+                      <input
+                        type="checkbox"
+                        checked={selectedOrphans.has(orphan.publicId)}
+                        onChange={() => toggleOrphanSelection(orphan.publicId)}
+                        onClick={(e) => e.stopPropagation()}
+                        className="w-4 h-4 rounded border-gray-300 text-red-600 focus:ring-red-500"
+                      />
+                    </div>
+
+                    {/* Thumbnail */}
+                    {orphan.resourceType === "image" ? (
+                      <img
+                        src={orphan.secureUrl}
+                        alt={orphan.publicId.split("/").pop() || ""}
+                        className="w-full h-28 object-cover bg-gray-100"
+                        loading="lazy"
+                      />
+                    ) : (
+                      <div className="w-full h-28 bg-gray-100 flex items-center justify-center">
+                        <span className="text-3xl">📄</span>
+                      </div>
+                    )}
+
+                    {/* Info */}
+                    <div className="p-2 bg-white">
+                      <p className="text-xs text-gray-600 truncate" title={orphan.publicId}>
+                        {orphan.publicId.split("/").pop()}
+                      </p>
+                      <p className="text-xs text-gray-400">
+                        {formatBytes(orphan.bytes)} · {orphan.format || orphan.resourceType}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
         <div className="mt-6 text-center">
           <Link href="/" className="text-gray-600 hover:text-gray-900">
             ← กลับหน้าหลัก
@@ -215,6 +452,35 @@ export default function SettingsPage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Orphans Confirmation Modal */}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-sm animate-in fade-in zoom-in duration-200">
+            <h2 className="text-xl font-bold text-gray-900 mb-2">⚠️ ยืนยันการลบ</h2>
+            <p className="text-sm text-gray-600 mb-4">
+              คุณต้องการลบ <strong>{selectedOrphans.size} รูป</strong> ออกจาก Cloudinary หรือไม่?
+              การกระทำนี้ไม่สามารถย้อนกลับได้
+            </p>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => setShowDeleteConfirm(false)}
+                className="flex-1 px-4 py-2 bg-gray-100 text-gray-700 font-semibold rounded-lg hover:bg-gray-200 transition"
+              >
+                ยกเลิก
+              </button>
+              <button
+                type="button"
+                onClick={handleDeleteOrphans}
+                className="flex-1 px-4 py-2 bg-red-600 text-white font-bold rounded-lg hover:bg-red-700 transition"
+              >
+                🗑️ ลบเลย
+              </button>
+            </div>
           </div>
         </div>
       )}

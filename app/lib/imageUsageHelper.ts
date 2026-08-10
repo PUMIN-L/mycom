@@ -88,3 +88,71 @@ export async function safeDeleteCloudinaryImages(
     await safeDeleteCloudinaryImage(url, excludeSource);
   }
 }
+
+// ── Orphan scanning ──────────────────────────────────────────────────────────
+
+/**
+ * Collect every Cloudinary URL currently referenced anywhere in the database
+ * (products, documents, contents). Returns a Set for O(1) lookup.
+ */
+export async function getAllUsedImageUrls(): Promise<Set<string>> {
+  const urls = new Set<string>();
+
+  // 1. Product thumbnails
+  const [productRows] = await query<RowDataPacket[]>(
+    "SELECT image FROM products WHERE image IS NOT NULL AND image != ''"
+  );
+  for (const row of productRows) {
+    if (row.image && row.image.includes("cloudinary.com")) urls.add(row.image);
+  }
+
+  // 2. Document PDFs + covers
+  const [docRows] = await query<RowDataPacket[]>(
+    "SELECT pdfUrl, coverUrl FROM documents"
+  );
+  for (const row of docRows) {
+    if (row.pdfUrl && row.pdfUrl.includes("cloudinary.com")) urls.add(row.pdfUrl);
+    if (row.coverUrl && row.coverUrl.includes("cloudinary.com")) urls.add(row.coverUrl);
+  }
+
+  // 3. Content block images (imageUrl + imageUrls[] inside JSON blocks)
+  const [contentRows] = await query<RowDataPacket[]>(
+    "SELECT blocks FROM contents WHERE blocks IS NOT NULL"
+  );
+  for (const row of contentRows) {
+    let blocks: any[] = [];
+    if (typeof row.blocks === "string") {
+      try { blocks = JSON.parse(row.blocks); } catch { /* skip malformed */ }
+    } else if (Array.isArray(row.blocks)) {
+      blocks = row.blocks;
+    }
+    for (const b of blocks) {
+      if (typeof b.imageUrl === "string" && b.imageUrl.includes("cloudinary.com")) {
+        urls.add(b.imageUrl);
+      }
+      if (Array.isArray(b.imageUrls)) {
+        for (const u of b.imageUrls) {
+          if (typeof u === "string" && u.includes("cloudinary.com")) urls.add(u);
+        }
+      }
+    }
+  }
+
+  // 4. Quotation uploaded images
+  const [quotRows] = await query<RowDataPacket[]>(
+    "SELECT uploadedImages FROM quotations WHERE uploadedImages IS NOT NULL"
+  );
+  for (const row of quotRows) {
+    let imgs: unknown[] = [];
+    if (typeof row.uploadedImages === "string") {
+      try { imgs = JSON.parse(row.uploadedImages); } catch { /* skip malformed */ }
+    } else if (Array.isArray(row.uploadedImages)) {
+      imgs = row.uploadedImages;
+    }
+    for (const u of imgs) {
+      if (typeof u === "string" && u.includes("cloudinary.com")) urls.add(u);
+    }
+  }
+
+  return urls;
+}

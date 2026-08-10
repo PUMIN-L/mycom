@@ -7,6 +7,7 @@ import {
   collectContentImageUrls,
 } from "../../../lib/cloudinaryHelper";
 import { requireAuth, withRoute, ApiError } from "../../../lib/apiHelpers";
+import { safeDeleteCloudinaryImage } from "../../../lib/imageUsageHelper";
 import { getAllContents, deleteContent } from "../../../lib/contentStore";
 import { getSession } from "../../../lib/session";
 
@@ -40,9 +41,28 @@ export const PUT = withRoute(
     await requireAuth();
     const { id } = await params;
     const body = await request.json();
+
+    // Snapshot the old image URL BEFORE updating so we can clean up Cloudinary
+    // if the image changed.
+    const existing = await getProduct(id);
+    const oldImageUrl = existing?.image;
+
     const updated = await updateProduct(id, body);
     if (!updated) {
       return NextResponse.json({ error: "Product not found" }, { status: 404 });
+    }
+
+    // If the image was replaced, delete the old one from Cloudinary (fire-and-forget
+    // so we don't delay the response). safeDeleteCloudinaryImage checks that the
+    // image isn't referenced by any other product/content before actually deleting.
+    if (
+      oldImageUrl &&
+      oldImageUrl !== updated.image &&
+      oldImageUrl.includes("cloudinary.com")
+    ) {
+      safeDeleteCloudinaryImage(oldImageUrl, { type: "product", id }).catch(
+        (err) => console.error("[PUT /products] Failed to delete old image:", err)
+      );
     }
     
     // Invalidate product cache
