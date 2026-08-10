@@ -614,154 +614,248 @@ export default function BillingPage() {
         <div className="flex-1 flex justify-center">
           <div
             id="billing-sheet"
-            className="bg-white shadow-xl rounded-lg"
+            className="bg-white shadow-lg border border-gray-200 rounded-sm mx-auto text-gray-900"
             style={{
               width: "210mm",
               minHeight: "297mm",
-              padding: "14mm 16mm",
-              fontFamily: "'Sarabun', sans-serif",
+              padding: "12mm 14mm",
               fontSize: "13px",
-              lineHeight: "1.5",
-              color: "#1a1a1a",
+              lineHeight: "1.55",
             }}
           >
-            {/* Header */}
-            <div className="flex justify-between items-start mb-4">
-              <div>
-                <div className="text-lg font-bold">{COMPANY.name}</div>
-                <div className="text-xs text-gray-500">{COMPANY.nameEn}</div>
-                <div className="text-xs text-gray-600 whitespace-pre-line mt-1">{COMPANY.address}</div>
-                {b.companyPhone && <div className="text-xs text-gray-600">โทร: {b.companyPhone}</div>}
-                {b.companyEmail && <div className="text-xs text-gray-600">Email: {b.companyEmail}</div>}
-                {b.companyTaxId && <div className="text-xs text-gray-600">เลขผู้เสียภาษี: {b.companyTaxId}</div>}
+            {/* ── Accent color strip at top ── */}
+            <div
+              className="rounded-t-sm"
+              style={{
+                height: "4px",
+                marginTop: "-12mm",
+                marginLeft: "-14mm",
+                marginRight: "-14mm",
+                marginBottom: "10mm",
+                background: b.docType === "invoice"
+                  ? "linear-gradient(90deg, #1e40af, #3b82f6)"
+                  : b.docType === "billing_note"
+                    ? "linear-gradient(90deg, #6b21a8, #a855f7)"
+                    : "linear-gradient(90deg, #15803d, #22c55e)",
+              }}
+            />
+
+            {/* ── Header ── */}
+            <div className="flex justify-between items-start gap-4 pb-3" style={{ borderBottom: "2.5px solid #1f2937" }}>
+              <div className="flex items-start gap-3">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src="/images/profin-logo-3.png"
+                  alt="Profin Lab Scale"
+                  className="shrink-0 object-contain"
+                  style={{ width: "11mm", height: "auto" }}
+                />
+                <div>
+                  <div className="text-lg font-bold">{COMPANY.name}</div>
+                  <div className="text-xs text-gray-600">{COMPANY.nameEn}</div>
+                  <div className="text-xs mt-1 max-w-[95mm] whitespace-pre-line">{COMPANY.address}</div>
+                  <div className="text-xs mt-0.5">
+                    {b.companyPhone && <>โทร {b.companyPhone} </>}
+                    {b.companyEmail && <>อีเมล {b.companyEmail}</>}
+                  </div>
+                  {b.companyTaxId && (
+                    <div className="text-xs">เลขประจำตัวผู้เสียภาษี {b.companyTaxId}</div>
+                  )}
+                </div>
               </div>
               <div className="text-right shrink-0">
-                <div className="text-2xl font-bold text-orange-600">{label.th}</div>
-                <div className="text-sm font-bold text-gray-500">{label.en}</div>
-                <div className="text-sm mt-2">เลขที่: <strong>{b.docNo || "-"}</strong></div>
-                <div className="text-sm">วันที่: {thaiDate(b.docDate)}</div>
-                {b.linkedQuotationDocNo && (
-                  <div className="text-xs text-gray-500 mt-1">อ้างอิง: {b.linkedQuotationDocNo}</div>
-                )}
+                <div
+                  className="text-2xl font-bold tracking-wide"
+                  style={{
+                    color: b.docType === "invoice"
+                      ? "#1e40af"
+                      : b.docType === "billing_note"
+                        ? "#6b21a8"
+                        : "#15803d",
+                  }}
+                >
+                  {label.th}
+                </div>
+                <div className="text-sm text-gray-500 tracking-widest">{label.en}</div>
               </div>
             </div>
 
-            {/* Customer Info */}
-            <div className="border border-gray-300 rounded-lg p-3 mb-4 text-sm">
-              <div className="font-bold text-gray-700 mb-1">ลูกค้า / Customer</div>
-              {b.customerCompany && <div>บริษัท: {b.customerCompany}</div>}
-              {b.customerContact && <div>ผู้ติดต่อ: {b.customerContact}</div>}
-              {b.customerAddress && <div>ที่อยู่: {b.customerAddress}</div>}
-              {b.customerPhone && <div>โทร: {b.customerPhone}</div>}
-              {b.customerEmail && <div>Email: {b.customerEmail}</div>}
+            {/* ── Doc info + Customer ── */}
+            <div className="flex justify-between gap-6 mt-3 text-[12.5px]">
+              <div className="flex-1">
+                <div className="font-bold text-gray-700 mb-1">ลูกค้า (To)</div>
+                <div className="font-semibold">{b.customerCompany || "-"}</div>
+                {b.customerContact && <div>ผู้ติดต่อ: {b.customerContact}</div>}
+                {b.customerAddress && <div className="whitespace-pre-line text-gray-700">ที่อยู่: {b.customerAddress}</div>}
+                {b.customerPhone && <div className="text-gray-700">โทร {b.customerPhone}</div>}
+                {b.customerEmail && <div className="text-gray-700 break-all">อีเมล {b.customerEmail}</div>}
+              </div>
+              <table className="shrink-0 self-start text-[12.5px]">
+                <tbody>
+                  <tr>
+                    <td className="pr-3 py-0.5 font-bold text-gray-700 text-right">เลขที่ (No.)</td>
+                    <td className="py-0.5 text-right font-semibold">{b.docNo || "-"}</td>
+                  </tr>
+                  <tr>
+                    <td className="pr-3 py-0.5 font-bold text-gray-700 text-right">วันที่ (Date)</td>
+                    <td className="py-0.5 text-right">{thaiDate(b.docDate)}</td>
+                  </tr>
+                  {b.linkedQuotationDocNo && (
+                    <tr>
+                      <td className="pr-3 py-0.5 font-bold text-gray-700 text-right">อ้างอิง (Ref.)</td>
+                      <td className="py-0.5 text-right">{b.linkedQuotationDocNo}</td>
+                    </tr>
+                  )}
+                  {b.sellerName && (
+                    <tr>
+                      <td className="pr-3 py-0.5 font-bold text-gray-700 align-top text-right">พนักงานขาย</td>
+                      <td className="py-0.5 text-right">{b.sellerName}</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
             </div>
 
-            {/* Items Table */}
-            <table className="w-full border-collapse mb-4">
+            {/* ── Items Table ── */}
+            <table className="w-full mt-4 border-collapse text-[12.5px]">
               <thead>
-                <tr className="bg-gray-100">
-                  <th className="border border-gray-300 px-2 py-2 text-center text-xs w-10">ลำดับ</th>
-                  <th className="border border-gray-300 px-2 py-2 text-left text-xs">รายการ</th>
-                  <th className="border border-gray-300 px-2 py-2 text-center text-xs w-16">จำนวน</th>
-                  <th className="border border-gray-300 px-2 py-2 text-center text-xs w-16">หน่วย</th>
-                  <th className="border border-gray-300 px-2 py-2 text-right text-xs w-24">ราคาต่อหน่วย</th>
-                  <th className="border border-gray-300 px-2 py-2 text-right text-xs w-24">จำนวนเงิน</th>
+                <tr
+                  className="text-white"
+                  style={{
+                    backgroundColor: b.docType === "invoice"
+                      ? "#1e3a5f"
+                      : b.docType === "billing_note"
+                        ? "#3b1f6e"
+                        : "#1a4731",
+                  }}
+                >
+                  <th className="border px-2 py-1.5 w-[8mm]" style={{ borderColor: "rgba(255,255,255,0.15)" }}>ลำดับ</th>
+                  <th className="border px-2 py-1.5 text-left" style={{ borderColor: "rgba(255,255,255,0.15)" }}>รายการ</th>
+                  <th className="border px-2 py-1.5 w-[14mm]" style={{ borderColor: "rgba(255,255,255,0.15)" }}>จำนวน</th>
+                  <th className="border px-2 py-1.5 w-[14mm]" style={{ borderColor: "rgba(255,255,255,0.15)" }}>หน่วย</th>
+                  <th className="border px-2 py-1.5 w-[24mm]" style={{ borderColor: "rgba(255,255,255,0.15)" }}>ราคา/หน่วย</th>
+                  <th className="border px-2 py-1.5 w-[26mm]" style={{ borderColor: "rgba(255,255,255,0.15)" }}>จำนวนเงิน (บาท)</th>
                 </tr>
               </thead>
               <tbody>
                 {b.items.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="border border-gray-300 px-4 py-6 text-center text-gray-400 text-sm">
-                      ยังไม่มีรายการ — เชื่อมกับใบเสนอราคาเพื่อนำเข้า
+                    <td colSpan={6} className="border border-gray-300 px-2 py-6 text-center text-gray-400">
+                      — ยังไม่มีรายการ — เชื่อมกับใบเสนอราคาเพื่อนำเข้า
                     </td>
                   </tr>
                 ) : (
                   b.items.map((item, idx) => (
-                    <tr key={item.id}>
-                      <td className="border border-gray-300 px-2 py-2 text-center text-xs">{idx + 1}</td>
-                      <td className="border border-gray-300 px-2 py-2 text-xs">
+                    <tr key={item.id} className="align-top">
+                      <td className="border border-gray-300 px-2 py-1.5 text-center">{idx + 1}</td>
+                      <td className="border border-gray-300 px-2 py-1.5">
                         <div className="font-semibold">{item.name || "-"}</div>
                         {item.description && (
-                          <div className="text-gray-500 text-[11px]">{item.description}</div>
+                          <div className="mt-1 text-gray-600 whitespace-pre-line text-[11.5px]">{item.description}</div>
                         )}
                       </td>
-                      <td className="border border-gray-300 px-2 py-2 text-center text-xs">{item.qty}</td>
-                      <td className="border border-gray-300 px-2 py-2 text-center text-xs">{item.unit}</td>
-                      <td className="border border-gray-300 px-2 py-2 text-right text-xs">{fmt(item.unitPrice)}</td>
-                      <td className="border border-gray-300 px-2 py-2 text-right text-xs">{fmt(item.qty * item.unitPrice)}</td>
+                      <td className="border border-gray-300 px-2 py-1.5 text-center">{item.qty}</td>
+                      <td className="border border-gray-300 px-2 py-1.5 text-center">{item.unit}</td>
+                      <td className="border border-gray-300 px-2 py-1.5 text-right">{fmt(item.unitPrice)}</td>
+                      <td className="border border-gray-300 px-2 py-1.5 text-right">{fmt(item.qty * item.unitPrice)}</td>
                     </tr>
                   ))
                 )}
               </tbody>
             </table>
 
-            {/* Totals */}
-            <div className="flex justify-end mb-4">
-              <div className="w-64 space-y-1 text-sm">
-                <div className="flex justify-between">
-                  <span>รวมเป็นเงิน</span>
-                  <span>{fmt(subtotal)}</span>
-                </div>
-                {discountValue > 0 && (
-                  <div className="flex justify-between text-red-600">
-                    <span>ส่วนลด</span>
-                    <span>-{fmt(discountValue)}</span>
+            {/* ── Totals + Note / Payment ── */}
+            <div className="flex justify-between gap-6 mt-3">
+              {/* Left side: payment (receipt) or note */}
+              <div className="flex-1 text-[12px]">
+                {b.docType === "receipt" && (
+                  <div className="mb-3">
+                    <div className="font-bold text-gray-800 mb-1">การชำระเงิน / Payment</div>
+                    <div className="space-y-0.5 text-gray-700">
+                      <div>• ช่องทาง: {b.paymentMethod || "-"}</div>
+                      <div>• วันที่ชำระ: {b.paymentDate ? thaiDate(b.paymentDate) : "-"}</div>
+                      {b.paymentRef && <div>• เลขอ้างอิง: {b.paymentRef}</div>}
+                    </div>
                   </div>
                 )}
-                <div className="flex justify-between">
-                  <span>หลังหักส่วนลด</span>
-                  <span>{fmt(afterDiscount)}</span>
-                </div>
-                {b.vatEnabled && (
-                  <div className="flex justify-between">
-                    <span>VAT 7%</span>
-                    <span>{fmt(vat)}</span>
+                {b.note && (
+                  <div className="space-y-0.5 text-gray-700">
+                    <div className="font-bold text-gray-800">หมายเหตุ</div>
+                    <div className="whitespace-pre-line">{b.note}</div>
                   </div>
                 )}
-                <div className="flex justify-between font-bold text-base border-t border-gray-400 pt-1">
-                  <span>ยอดรวมสุทธิ</span>
-                  <span>{fmt(grandTotal)}</span>
-                </div>
               </div>
+
+              {/* Right side: totals table */}
+              <table className="shrink-0 self-start w-[70mm] text-[12.5px]">
+                <tbody>
+                  <tr>
+                    <td className="py-1 pr-2">รวมเป็นเงิน</td>
+                    <td className="py-1 text-right">{fmt(subtotal)}</td>
+                  </tr>
+                  {discountValue > 0 && (
+                    <>
+                      <tr>
+                        <td className="py-1 pr-2">
+                          ส่วนลด{b.discountType === "percent" ? ` ${b.discount}%` : ""}
+                        </td>
+                        <td className="py-1 text-right">-{fmt(discountValue)}</td>
+                      </tr>
+                      <tr>
+                        <td className="py-1 pr-2">ยอดหลังหักส่วนลด</td>
+                        <td className="py-1 text-right">{fmt(afterDiscount)}</td>
+                      </tr>
+                    </>
+                  )}
+                  {b.vatEnabled && (
+                    <tr>
+                      <td className="py-1 pr-2">ภาษีมูลค่าเพิ่ม 7%</td>
+                      <td className="py-1 text-right">{fmt(vat)}</td>
+                    </tr>
+                  )}
+                  <tr
+                    className="font-bold text-[14px]"
+                    style={{
+                      borderTop: `2.5px solid ${
+                        b.docType === "invoice"
+                          ? "#1e3a5f"
+                          : b.docType === "billing_note"
+                            ? "#3b1f6e"
+                            : "#1a4731"
+                      }`,
+                    }}
+                  >
+                    <td className="py-1.5 pr-2">จำนวนเงินรวมทั้งสิ้น</td>
+                    <td className="py-1.5 text-right">{fmt(grandTotal)}</td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
 
-            {/* Payment Info (Receipt only) */}
-            {b.docType === "receipt" && (
-              <div className="border border-gray-300 rounded-lg p-3 mb-4 text-sm">
-                <div className="font-bold text-gray-700 mb-1">การชำระเงิน / Payment</div>
-                <div>ช่องทาง: {b.paymentMethod || "-"}</div>
-                <div>วันที่ชำระ: {b.paymentDate ? thaiDate(b.paymentDate) : "-"}</div>
-                {b.paymentRef && <div>เลขอ้างอิง: {b.paymentRef}</div>}
-              </div>
-            )}
-
-            {/* Note */}
-            {b.note && (
-              <div className="text-xs text-gray-600 mb-4">
-                <span className="font-semibold">หมายเหตุ:</span> {b.note}
-              </div>
-            )}
-
-            {/* Signatures */}
-            <div className="flex justify-between mt-8 pt-4">
-              <div className="text-center w-40">
-                <div className="border-b border-gray-400 mb-1 h-12" />
-                <div className="text-xs text-gray-600">
-                  {b.docType === "invoice" && "ผู้แจ้งหนี้"}
-                  {b.docType === "billing_note" && "ผู้วางบิล"}
-                  {b.docType === "receipt" && "ผู้รับเงิน"}
-                </div>
-                <div className="text-xs text-gray-500">วันที่ ........./........../.........</div>
-              </div>
-              <div className="text-center w-40">
-                <div className="border-b border-gray-400 mb-1 h-12" />
-                <div className="text-xs text-gray-600">
-                  {b.docType === "invoice" && "ผู้รับแจ้ง"}
-                  {b.docType === "billing_note" && "ผู้รับบิล"}
-                  {b.docType === "receipt" && "ผู้จ่ายเงิน"}
-                </div>
-                <div className="text-xs text-gray-500">วันที่ ........./........../.........</div>
-              </div>
+            {/* ── Signatures ── */}
+            <div className="grid grid-cols-3 gap-6 mt-10 text-center text-[12px]">
+              {[
+                {
+                  title: b.docType === "invoice" ? "ผู้แจ้งหนี้" : b.docType === "billing_note" ? "ผู้วางบิล" : "ผู้รับเงิน",
+                  name: b.sellerName,
+                },
+                null,
+                {
+                  title: b.docType === "invoice" ? "ผู้รับแจ้ง" : b.docType === "billing_note" ? "ผู้รับบิล" : "ผู้จ่ายเงิน",
+                  name: "",
+                },
+              ].map((s, idx) =>
+                s ? (
+                  <div key={s.title}>
+                    <div className="border-b border-gray-400 h-12 mb-2" />
+                    <div className="min-h-[18px] mt-2 text-gray-800">{s.name}</div>
+                    <div className="font-bold mt-2">{s.title}</div>
+                    <div className="text-gray-500 mt-2">วันที่ ______ / ______ / ______</div>
+                  </div>
+                ) : (
+                  <div key={`empty-${idx}`} />
+                )
+              )}
             </div>
           </div>
         </div>
