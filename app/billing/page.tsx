@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "../context/AuthContext";
@@ -138,6 +138,8 @@ export default function BillingPage() {
   const [saving, setSaving] = useState(false);
   const [loadingQuotation, setLoadingQuotation] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
+  // A brand-new doc (not reopened) — eligible to auto-advance its docNo.
+  const isFreshRef = useRef(true);
 
   useEffect(() => {
     if (!isLoading && !isLoggedIn) router.replace("/login");
@@ -175,6 +177,7 @@ export default function BillingPage() {
   useEffect(() => {
     const reopenId = new URLSearchParams(window.location.search).get("id");
     if (reopenId) {
+      isFreshRef.current = false; // reopening — don't overwrite docNo
       fetch(`/api/billing/${reopenId}`)
         .then((r) => (r.ok ? r.json() : null))
         .then((doc) => {
@@ -196,9 +199,10 @@ export default function BillingPage() {
     }
   }, []);
 
-  // Auto-generate docNo when type or date changes
+  // Auto-generate docNo when type or date changes — ONLY for fresh (new) documents.
+  // Reopened docs keep their saved docNo.
   useEffect(() => {
-    if (!b.docDate) return;
+    if (!isFreshRef.current || !b.docDate) return;
     const next = nextBillingDocNo(
       b.docType,
       b.docDate,
@@ -380,7 +384,6 @@ export default function BillingPage() {
   }
 
   const label = BILLING_LABELS[b.docType];
-  const prefix = BILLING_PREFIX[b.docType];
 
   return (
     <div className="min-h-screen bg-gray-100 quote-form">
@@ -566,15 +569,12 @@ export default function BillingPage() {
               <h2 className="font-bold text-gray-800">💳 ข้อมูลการชำระเงิน</h2>
               <div>
                 <label className="block text-xs font-semibold text-gray-500 mb-1">ช่องทางชำระเงิน</label>
-                <select
+                <SearchableDropdown
                   value={b.paymentMethod}
-                  onChange={(e) => set("paymentMethod", e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                >
-                  {PAYMENT_METHODS.map((m) => (
-                    <option key={m} value={m}>{m}</option>
-                  ))}
-                </select>
+                  onChange={(val) => set("paymentMethod", val)}
+                  options={PAYMENT_METHODS.map((m) => ({ value: m, label: m }))}
+                  placeholder="เลือกช่องทาง..."
+                />
               </div>
               <div>
                 <label className="block text-xs font-semibold text-gray-500 mb-1">วันที่ชำระเงิน</label>
