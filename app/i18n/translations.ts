@@ -137,6 +137,7 @@ export const translations = {
     form: {
       name: { th: "ชื่อ-นามสกุล", en: "Full Name", zh: "姓名" },
       email: { th: "อีเมล", en: "Email", zh: "电子邮件" },
+      phone: { th: "เบอร์โทร", en: "Phone Number", zh: "电话号码" },
       subject: { th: "หัวข้อ", en: "Subject", zh: "主题" },
       message: { th: "ข้อความ", en: "Message", zh: "留言内容" },
       send: { th: "ส่งข้อความ", en: "Send Message", zh: "发送消息" },

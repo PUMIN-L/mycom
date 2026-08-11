@@ -8,6 +8,7 @@ export interface ContactMessageRecord {
   id: string;
   name: string;
   email: string;
+  phone: string;
   subject: string;
   message: string;
   emailedOk: boolean;
@@ -19,6 +20,7 @@ function rowToMessage(r: RowDataPacket): ContactMessageRecord {
     id: r.id,
     name: r.name,
     email: r.email,
+    phone: r.phone ?? "",
     subject: r.subject ?? "",
     message: r.message,
     emailedOk: Boolean(r.emailedOk),
@@ -31,12 +33,13 @@ export async function saveContactMessage(
 ): Promise<void> {
   await query(
     `INSERT INTO contact_messages
-       (id, name, email, subject, message, emailedOk, createdAt)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+       (id, name, email, phone, subject, message, emailedOk, createdAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       msg.id,
       msg.name,
       msg.email,
+      msg.phone,
       msg.subject,
       msg.message,
       msg.emailedOk ? 1 : 0,

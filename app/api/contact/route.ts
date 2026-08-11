@@ -32,7 +32,7 @@ function prune(now: number) {
 }
 
 // Field caps — generous for real messages, tight enough to stop abuse.
-const MAX_LEN = { name: 200, email: 320, subject: 300, message: 5000 } as const;
+const MAX_LEN = { name: 200, email: 320, phone: 50, subject: 300, message: 5000 } as const;
 // Also rejects <>"',; — characters meaningful inside RFC 5322 address lists —
 // as defense-in-depth against header address injection (mailer.ts).
 const EMAIL_RE = /^[^\s@<>"',;]+@[^\s@<>"',;]+\.[^\s@<>"',;]+$/;
@@ -63,10 +63,11 @@ export const POST = withRoute(
     const body = await request.json();
     const name = String(body.name ?? "").trim();
     const email = String(body.email ?? "").trim();
+    const phone = String(body.phone ?? "").trim();
     const subject = String(body.subject ?? "").trim();
     const message = String(body.message ?? "").trim();
 
-    if (!name || !email || !subject || !message) {
+    if (!name || !email || !phone || !subject || !message) {
       return NextResponse.json(
         { error: "กรุณากรอกข้อมูลให้ครบทุกช่อง" },
         { status: 400 }
@@ -75,6 +76,7 @@ export const POST = withRoute(
     if (
       name.length > MAX_LEN.name ||
       email.length > MAX_LEN.email ||
+      phone.length > MAX_LEN.phone ||
       subject.length > MAX_LEN.subject ||
       message.length > MAX_LEN.message
     ) {
@@ -102,6 +104,7 @@ export const POST = withRoute(
       id,
       name,
       email,
+      phone,
       subject,
       message,
       createdAt,
@@ -115,7 +118,7 @@ export const POST = withRoute(
     const to = await getContactEmail();
     let emailed = false;
     try {
-      await sendContactEmail(to, { name, email, subject, message });
+      await sendContactEmail(to, { name, email, phone, subject, message });
       emailed = true;
     } catch (err) {
       console.error("contact: lead saved but email delivery failed:", err);

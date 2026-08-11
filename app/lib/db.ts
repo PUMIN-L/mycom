@@ -3,8 +3,8 @@ import bcrypt from "bcryptjs";
 import type { QueryResult, FieldPacket, RowDataPacket } from "mysql2";
 
 // Bump whenever the schema below changes — a mismatch re-runs the (idempotent)
-// bootstrap; a match lets returning cold instances skip it in one SELECT.
-const SCHEMA_VERSION = 16;
+// bump; a match lets returning cold instances skip it in one SELECT.
+const SCHEMA_VERSION = 17;
 
 type DbPool = ReturnType<typeof mysql.createPool>;
 
@@ -165,12 +165,20 @@ async function bootstrapSchemaOnce(): Promise<void> {
           id VARCHAR(255) PRIMARY KEY,
           name VARCHAR(255) NOT NULL,
           email VARCHAR(320) NOT NULL,
+          phone VARCHAR(255),
           subject VARCHAR(300),
           message TEXT NOT NULL,
           emailedOk BOOLEAN DEFAULT FALSE,
           createdAt VARCHAR(255) NOT NULL
         )
       `);
+    try {
+      await connection.query(
+        `ALTER TABLE contact_messages ADD COLUMN IF NOT EXISTS phone VARCHAR(255) NULL`
+      );
+    } catch (error) {
+      if (!isBenignSchemaError(error)) throw error;
+    }
     try {
       await connection.query(
         `CREATE INDEX idx_contact_messages_createdAt ON contact_messages (createdAt)`

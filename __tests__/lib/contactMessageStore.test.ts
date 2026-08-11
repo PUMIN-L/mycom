@@ -15,6 +15,7 @@ const lead = {
   id: 'm1',
   name: 'A',
   email: 'a@x.com',
+  phone: '0812345678',
   subject: 'S',
   message: 'M',
   createdAt: '2026-01-01',
@@ -26,13 +27,13 @@ describe('contactMessageStore', () => {
     await saveContactMessage(lead);
     const [sql, params] = vi.mocked(query).mock.calls[0];
     expect(sql).toContain('INSERT INTO contact_messages');
-    expect(params).toEqual(['m1', 'A', 'a@x.com', 'S', 'M', 0, '2026-01-01']);
+    expect(params).toEqual(['m1', 'A', 'a@x.com', '0812345678', 'S', 'M', 0, '2026-01-01']);
   });
 
   it('saveContactMessage stores emailedOk=1 when true', async () => {
     vi.mocked(query).mockResolvedValue([{ affectedRows: 1 }] as any);
     await saveContactMessage({ ...lead, emailedOk: true });
-    expect(vi.mocked(query).mock.calls[0][1]![5]).toBe(1);
+    expect(vi.mocked(query).mock.calls[0][1]![6]).toBe(1);
   });
 
   it('markContactMessageEmailed flips the flag', async () => {
@@ -51,11 +52,11 @@ describe('contactMessageStore', () => {
 
   it('listContactMessages maps rows (emailedOk→boolean, null subject→"") newest-first', async () => {
     vi.mocked(query).mockResolvedValue([
-      [{ id: 'm1', name: 'A', email: 'a@x.com', subject: null, message: 'M', emailedOk: 1, createdAt: 't' }],
+      [{ id: 'm1', name: 'A', email: 'a@x.com', phone: null, subject: null, message: 'M', emailedOk: 1, createdAt: 't' }],
     ] as any);
     const rows = await listContactMessages();
     expect(rows).toEqual([
-      { id: 'm1', name: 'A', email: 'a@x.com', subject: '', message: 'M', emailedOk: true, createdAt: 't' },
+      { id: 'm1', name: 'A', email: 'a@x.com', phone: '', subject: '', message: 'M', emailedOk: true, createdAt: 't' },
     ]);
     expect(vi.mocked(query).mock.calls[0][0]).toContain('ORDER BY createdAt DESC');
   });

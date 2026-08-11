@@ -26,6 +26,7 @@ import { saveContactMessage, markContactMessageEmailed } from '@/app/lib/contact
 const valid = {
   name: 'John Visitor',
   email: 'john@example.com',
+  phone: '0812345678',
   subject: 'Question about pricing',
   message: 'Hello, I would like a quote please.',
 };
@@ -100,6 +101,7 @@ describe('POST /api/contact (public contact form)', () => {
     expect(sendContactEmail).toHaveBeenCalledWith('admin@shop.test', {
       name: valid.name,
       email: valid.email,
+      phone: valid.phone,
       subject: valid.subject,
       message: valid.message,
     });

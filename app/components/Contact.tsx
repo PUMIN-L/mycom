@@ -10,6 +10,7 @@ export default function Contact() {
   const [formState, setFormState] = useState({
     name: "",
     email: "",
+    phone: "",
     subject: "",
     message: "",
   });
@@ -58,7 +59,7 @@ export default function Contact() {
         return;
       }
       setStatus("sent");
-      setFormState({ name: "", email: "", subject: "", message: "" });
+      setFormState({ name: "", email: "", phone: "", subject: "", message: "" });
       scheduleStatusReset(3000);
     } catch {
       setErrorKey("error");
@@ -182,6 +183,18 @@ export default function Contact() {
                   required
                   value={formState.email}
                   onChange={(e) => setFormState({ ...formState, email: e.target.value })}
+                  className="w-full bg-transparent border-b border-gray-200 py-3 text-lg text-[var(--brand-navy)] focus:outline-none focus:border-[var(--accent)] transition-colors"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-bold uppercase tracking-widest text-gray-400">
+                  {t(translations.contact.form.phone)}
+                </label>
+                <input
+                  type="tel"
+                  required
+                  value={formState.phone}
+                  onChange={(e) => setFormState({ ...formState, phone: e.target.value })}
                   className="w-full bg-transparent border-b border-gray-200 py-3 text-lg text-[var(--brand-navy)] focus:outline-none focus:border-[var(--accent)] transition-colors"
                 />
               </div>

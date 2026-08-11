@@ -29,6 +29,7 @@ function createTransport() {
 export interface ContactMessage {
   name: string;
   email: string;
+  phone: string;
   subject: string;
   message: string;
 }
@@ -58,12 +59,70 @@ export async function sendContactRecipientChangedEmail(
   });
 }
 
+function escapeHtml(unsafe: string | undefined | null): string {
+  return String(unsafe ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
 /** Send a contact-form submission to `to`. Throws on SMTP failure. */
 export async function sendContactEmail(
   to: string,
   msg: ContactMessage
 ): Promise<void> {
   const transport = createTransport();
+
+  const safeName = escapeHtml(msg.name);
+  const safeEmail = escapeHtml(msg.email);
+  const safePhone = escapeHtml(msg.phone);
+  const safeSubject = escapeHtml(msg.subject);
+  const safeMessage = escapeHtml(msg.message);
+
+  const html = `
+<div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 0 auto; color: #333; line-height: 1.6;">
+  <div style="background-color: #0f172a; padding: 25px 20px; text-align: center; border-radius: 8px 8px 0 0;">
+    <h2 style="color: #ffffff; margin: 0; font-size: 22px; font-weight: 600;">การติดต่อใหม่จากเว็บไซต์</h2>
+  </div>
+  <div style="padding: 30px; background-color: #ffffff; border: 1px solid #e2e8f0; border-top: none; border-radius: 0 0 8px 8px;">
+    <p style="font-size: 16px; margin-top: 0; margin-bottom: 25px; color: #475569;">
+      คุณได้รับข้อความใหม่จากฟอร์ม <strong>"ติดต่อเรา"</strong> โดยมีรายละเอียดดังนี้:
+    </p>
+    
+    <table style="width: 100%; border-collapse: collapse; margin-bottom: 30px; font-size: 15px;">
+      <tr>
+        <td style="padding: 12px 0; border-bottom: 1px solid #f1f5f9; width: 35%; font-weight: 600; color: #64748b;">ชื่อ-นามสกุล:</td>
+        <td style="padding: 12px 0; border-bottom: 1px solid #f1f5f9; color: #0f172a; font-weight: 500;">${safeName}</td>
+      </tr>
+      <tr>
+        <td style="padding: 12px 0; border-bottom: 1px solid #f1f5f9; font-weight: 600; color: #64748b;">อีเมล:</td>
+        <td style="padding: 12px 0; border-bottom: 1px solid #f1f5f9;"><a href="mailto:${safeEmail}" style="color: #2563eb; text-decoration: none; font-weight: 500;">${safeEmail}</a></td>
+      </tr>
+      <tr>
+        <td style="padding: 12px 0; border-bottom: 1px solid #f1f5f9; font-weight: 600; color: #64748b;">เบอร์โทร:</td>
+        <td style="padding: 12px 0; border-bottom: 1px solid #f1f5f9; color: #0f172a; font-weight: 500;">${safePhone}</td>
+      </tr>
+      <tr>
+        <td style="padding: 12px 0; border-bottom: 1px solid #f1f5f9; font-weight: 600; color: #64748b;">หัวข้อ:</td>
+        <td style="padding: 12px 0; border-bottom: 1px solid #f1f5f9; color: #0f172a; font-weight: 500;">${safeSubject}</td>
+      </tr>
+    </table>
+    
+    <div style="background-color: #f8fafc; padding: 20px; border: 1px solid #e2e8f0; border-radius: 6px;">
+      <h3 style="margin-top: 0; color: #64748b; font-size: 14px; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid #e2e8f0; padding-bottom: 12px; margin-bottom: 15px;">ข้อความ</h3>
+      <p style="white-space: pre-wrap; margin: 0; color: #334155; font-size: 15px;">${safeMessage}</p>
+    </div>
+  </div>
+  
+  <div style="text-align: center; margin-top: 25px; font-size: 13px; color: #94a3b8;">
+    อีเมลฉบับนี้ถูกส่งอัตโนมัติจากระบบเว็บไซต์ <strong>Profin Lab Scale</strong><br/>
+    <span style="font-size: 12px; margin-top: 5px; display: inline-block;">หากต้องการติดต่อลูกค้า สามารถกด Reply อีเมลฉบับนี้ได้เลย</span>
+  </div>
+</div>
+  `.trim();
+
   await transport.sendMail({
     // SECURITY: pass structured {name, address} objects, never hand-built
     // `"name" <addr>` strings — nodemailer re-parses raw strings BEFORE
@@ -77,7 +136,8 @@ export async function sendContactEmail(
     to,
     replyTo: { name: msg.name, address: msg.email }, // admin can hit Reply to answer the visitor
     subject: `[ติดต่อจากเว็บไซต์] ${msg.subject}`,
-    text: `ชื่อ: ${msg.name}\nอีเมล: ${msg.email}\nหัวข้อ: ${msg.subject}\n\n${msg.message}`,
+    text: `ชื่อ: ${msg.name}\nอีเมล: ${msg.email}\nเบอร์โทร: ${msg.phone}\nหัวข้อ: ${msg.subject}\n\n${msg.message}`,
+    html,
   });
 }
 
