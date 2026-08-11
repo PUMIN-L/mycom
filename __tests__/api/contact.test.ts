@@ -87,6 +87,13 @@ describe('POST /api/contact (public contact form)', () => {
     expect(sendContactEmail).not.toHaveBeenCalled();
   });
 
+  it('returns 400 when the phone format is invalid', async () => {
+    const res = await POST(makeReq({ ...valid, phone: '081234abc' }, '203.0.113.55'));
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe('invalid_phone');
+    expect(sendContactEmail).not.toHaveBeenCalled();
+  });
+
   it('persists the lead, sends to the CMS-resolved recipient, and returns 200', async () => {
     const res = await POST(makeReq(valid, '203.0.113.6'));
     expect(res.status).toBe(200);

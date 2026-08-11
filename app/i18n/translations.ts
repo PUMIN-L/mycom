@@ -152,6 +152,11 @@ export const translations = {
         en: "Failed to send. Please try again.",
         zh: "发送失败，请重试。",
       },
+      errorPhone: {
+        th: "รูปแบบเบอร์โทรไม่ถูกต้อง (ต้องเป็นตัวเลข 9-10 หลัก)",
+        en: "Invalid phone number (must be 9-10 digits).",
+        zh: "电话号码格式无效（必须为 9-10 位数字）。",
+      },
       errorRateLimit: {
         th: "ส่งข้อความบ่อยเกินไป กรุณารอสักครู่แล้วลองใหม่",
         en: "Too many messages. Please wait a moment and try again.",

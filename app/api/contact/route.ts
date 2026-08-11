@@ -88,6 +88,12 @@ export const POST = withRoute(
         { status: 400 }
       );
     }
+    if (!/^\d{9,10}$/.test(phone)) {
+      return NextResponse.json(
+        { error: "invalid_phone" },
+        { status: 400 }
+      );
+    }
 
     // Count the attempt before sending so failures still consume quota.
     rateLimitMap.set(ip, {

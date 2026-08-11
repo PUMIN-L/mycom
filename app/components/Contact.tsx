@@ -17,7 +17,7 @@ export default function Contact() {
   const [status, setStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
   // Which localized error to show — mapped from the response status so EN/ZH
   // visitors don't see the API's Thai-only error strings.
-  const [errorKey, setErrorKey] = useState<"error" | "errorRateLimit" | "errorUnavailable">("error");
+  const [errorKey, setErrorKey] = useState<"error" | "errorRateLimit" | "errorUnavailable" | "errorPhone">("error");
 
   // Status-reset timer. Cleared before each submit (and on unmount) so a stale
   // timer from a previous attempt can't flip "sending" back to "idle" mid-flight
@@ -47,13 +47,17 @@ export default function Contact() {
         body: JSON.stringify(formState),
       });
       if (!res.ok) {
-        setErrorKey(
-          res.status === 429
-            ? "errorRateLimit"
-            : res.status === 503
-              ? "errorUnavailable"
-              : "error"
-        );
+        let errKey: typeof errorKey = "error";
+        if (res.status === 429) errKey = "errorRateLimit";
+        else if (res.status === 503) errKey = "errorUnavailable";
+        else {
+          try {
+            const data = await res.json();
+            if (data.error === "invalid_phone") errKey = "errorPhone";
+          } catch (e) {}
+        }
+        
+        setErrorKey(errKey);
         setStatus("error");
         scheduleStatusReset(5000);
         return;
