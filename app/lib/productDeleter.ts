@@ -1,9 +1,8 @@
-import { getProduct, deleteProduct, getAllProducts } from "./productStore";
+import { getProduct, deleteProduct } from "./productStore";
 import { getAllContents, deleteContent } from "./contentStore";
 import { collectContentImageUrls } from "./cloudinaryHelper";
 import { query } from "./db";
 import type { RowDataPacket } from "mysql2";
-import type { ProductData } from "./types";
 
 /**
  * Perform a hard delete on a product.

@@ -71,13 +71,7 @@ interface ShowcaseClientProps {
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
-async function deleteImageFromCloudinary(imageUrl: string, contentId?: string) {
-  await fetch("/api/upload/delete", {
-    method: "DELETE",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ imageUrl, contentId }),
-  });
-}
+
 
 function GalleryViewer({
   block,

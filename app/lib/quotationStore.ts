@@ -1,6 +1,5 @@
 import { query, withTransaction } from "./db";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
-import { deleteCloudinaryImages } from "./cloudinaryHelper";
 import { computeQuoteTotals } from "./quotationTotals";
 
 // Persisted quotations. `data` is the opaque client QuoteState (stored as JSON).

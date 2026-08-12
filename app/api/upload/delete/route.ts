@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { deleteCloudinaryImage } from "../../../lib/cloudinaryHelper";
 import { safeDeleteCloudinaryImage } from "../../../lib/imageUsageHelper";
 import { requireAuth, withRoute } from "../../../lib/apiHelpers";
 
