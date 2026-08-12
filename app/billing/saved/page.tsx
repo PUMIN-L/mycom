@@ -8,9 +8,11 @@ import Toast from "../../components/Toast";
 import { BILLING_LABELS } from "../../lib/billingNumber";
 import type { BillingDocType } from "../../lib/billingNumber";
 
+type CombinedDocType = BillingDocType | "quotation";
+
 interface BillingSummary {
   id: string;
-  docType: BillingDocType;
+  docType: CombinedDocType;
   docNo: string;
   createdAt: string;
   customer: string;
@@ -27,11 +29,12 @@ function daysLeft(createdAt: string): number {
   return Math.max(0, Math.ceil(30 - elapsedDays));
 }
 
-const TAB_OPTIONS: { value: BillingDocType | "all"; label: string }[] = [
+const TAB_OPTIONS: { value: CombinedDocType | "all"; label: string }[] = [
   { value: "all", label: "ทั้งหมด" },
   { value: "invoice", label: "🧾 ใบแจ้งหนี้" },
   { value: "billing_note", label: "📋 ใบวางบิล" },
   { value: "receipt", label: "🧾 ใบเสร็จ" },
+  { value: "quotation", label: "📋 ใบเสนอราคา" },
 ];
 
 export default function SavedBillingPage() {
@@ -40,7 +43,7 @@ export default function SavedBillingPage() {
   const [items, setItems] = useState<BillingSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadFailed, setLoadFailed] = useState(false);
-  const [filter, setFilter] = useState<BillingDocType | "all">("all");
+  const [filter, setFilter] = useState<CombinedDocType | "all">("all");
   const [pendingDelete, setPendingDelete] = useState<BillingSummary | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
@@ -53,9 +56,23 @@ export default function SavedBillingPage() {
     setLoading(true);
     setLoadFailed(false);
     try {
-      const res = await fetch("/api/billing");
-      if (!res.ok) throw new Error();
-      setItems(await res.json());
+      const [billingRes, quoteRes] = await Promise.all([
+        fetch("/api/billing"),
+        fetch("/api/quotations")
+      ]);
+      if (!billingRes.ok || !quoteRes.ok) throw new Error();
+      
+      const billings: BillingSummary[] = await billingRes.json();
+      const quotes: BillingSummary[] = (await quoteRes.json()).map((q: any) => ({
+        ...q,
+        docType: "quotation"
+      }));
+
+      const combined = [...billings, ...quotes].sort((a, b) => 
+        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      );
+      
+      setItems(combined);
     } catch {
       setLoadFailed(true);
     } finally {
@@ -76,7 +93,11 @@ export default function SavedBillingPage() {
     if (!pendingDelete) return;
     setDeleting(true);
     try {
-      const res = await fetch(`/api/billing/${pendingDelete.id}`, { method: "DELETE" });
+      const endpoint = pendingDelete.docType === "quotation"
+        ? `/api/quotations/${pendingDelete.id}`
+        : `/api/billing/${pendingDelete.id}`;
+
+      const res = await fetch(endpoint, { method: "DELETE" });
       if (res.ok) {
         setItems((prev) => prev.filter((x) => x.id !== pendingDelete.id));
         showToast("ลบเอกสารแล้ว", "success");
@@ -110,7 +131,7 @@ export default function SavedBillingPage() {
         <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
           <h1 className="text-xl font-bold text-gray-900">📋 เอกสารที่บันทึกไว้</h1>
           <div className="flex items-center gap-2 flex-wrap">
-            <Link href="/" className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition">
+            <Link href="/showcase" className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition">
               🏠 หน้าแรก
             </Link>
             <Link
@@ -138,13 +159,6 @@ export default function SavedBillingPage() {
             >
               {tab.label}
             </button>
-          ))}
-          <Link
-            href="/quotation/saved"
-            className="px-4 py-2 rounded-lg text-sm font-semibold transition bg-white border border-gray-300 text-gray-600 hover:bg-gray-50 flex items-center"
-          >
-            📋 ใบเสนอราคา
-          </Link>
         </div>
 
         {/* Table */}
@@ -210,15 +224,19 @@ export default function SavedBillingPage() {
                     <tr
                       key={item.id}
                       className="border-b hover:bg-gray-50/50 cursor-pointer transition"
-                      onClick={() => router.push(`/billing?id=${item.id}`)}
+                      onClick={() => {
+                        if (item.docType === "quotation") router.push(`/quotation?id=${item.id}`);
+                        else router.push(`/billing?id=${item.id}`);
+                      }}
                     >
                       <td className="px-4 py-3">
                         <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold ${
+                          item.docType === "quotation" ? "bg-orange-100 text-orange-700" :
                           item.docType === "invoice" ? "bg-blue-100 text-blue-700" :
                           item.docType === "billing_note" ? "bg-purple-100 text-purple-700" :
                           "bg-green-100 text-green-700"
                         }`}>
-                          {BILLING_LABELS[item.docType].th}
+                          {item.docType === "quotation" ? "ใบเสนอราคา" : BILLING_LABELS[item.docType].th}
                         </span>
                       </td>
                       <td className="px-4 py-3 font-mono text-sm font-semibold text-gray-800">{item.docNo || "-"}</td>
