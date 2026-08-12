@@ -5,6 +5,7 @@ import { useAuth } from "../context/AuthContext";
 import ConfirmDialog from "../components/ConfirmDialog";
 import Toast from "../components/Toast";
 import ErrorModal from "../components/ErrorModal";
+import ImageDeleteConfirmDialog, { type OrphanedImage } from "../components/ImageDeleteConfirmDialog";
 
 import type { DocumentData } from "../lib/types";
 import { stripHtml } from "../lib/stripHtml";
@@ -22,6 +23,7 @@ export default function DocumentListClient({
   // Document delete state
   const [pendingDeleteDoc, setPendingDeleteDoc] = useState<DocumentData | null>(null);
   const [deletingDocId, setDeletingDocId] = useState<string | null>(null);
+  const [orphanedImages, setOrphanedImages] = useState<OrphanedImage[]>([]);
 
   // Document upload state
   const [showUploadModal, setShowUploadModal] = useState(false);
@@ -187,8 +189,16 @@ export default function DocumentListClient({
     try {
       const res = await fetch(`/api/documents/${item.id}`, { method: "DELETE" });
       if (res.ok) {
+        const data = await res.json();
         setDocuments((prev) => prev.filter((d) => d.id !== item.id));
         showToast("ลบเอกสารสำเร็จ", "success");
+        // Show image deletion confirmation dialog
+        if (data.orphanedImages?.length > 0) {
+          setOrphanedImages(data.orphanedImages.map((url: string) => ({
+            url,
+            reason: `ลบเอกสาร "${stripHtml(item.title).substring(0, 50)}"`
+          })));
+        }
       } else {
         showToast("เกิดข้อผิดพลาดในการลบเอกสาร", "error");
       }
@@ -492,6 +502,14 @@ export default function DocumentListClient({
         message={errorModal.message}
         onClose={() => setErrorModal({ ...errorModal, isOpen: false })}
       />
+
+      {/* Image deletion confirmation dialog */}
+      {orphanedImages.length > 0 && (
+        <ImageDeleteConfirmDialog
+          images={orphanedImages}
+          onComplete={() => setOrphanedImages([])}
+        />
+      )}
     </div>
   );
 }

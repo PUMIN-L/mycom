@@ -50,12 +50,14 @@ async function getReferencedImageUrls(): Promise<Set<string>> {
   return urls;
 }
 
-/** Drop any URL still referenced by the catalog before we destroy it. */
+/** 
+ * Previously deleted orphaned images. Now a no-op: images from quotation
+ * cleanup will be picked up by the Orphan Scanner for manual review.
+ * Cron jobs have no UI to show a confirmation dialog.
+ */
 async function deleteQuoteImagesSafely(images: string[]): Promise<void> {
   if (images.length === 0) return;
-  const inUse = await getReferencedImageUrls();
-  const safeToDelete = images.filter((u) => !inUse.has(u));
-  if (safeToDelete.length > 0) await deleteCloudinaryImages(safeToDelete);
+  console.log(`[quotationStore] Skipping auto-delete of ${images.length} images (manual confirmation required). URLs: ${images.join(", ")}`);
 }
 
 function rowToQuotation(row: RowDataPacket): QuotationRecord {

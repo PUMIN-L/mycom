@@ -6,11 +6,7 @@ import {
   updateContent,
   getContentByProductId,
 } from "../../../lib/contentStore";
-import {
-  deleteCloudinaryImages,
-  collectContentImageUrls,
-} from "../../../lib/cloudinaryHelper";
-import { safeDeleteCloudinaryImages } from "../../../lib/imageUsageHelper";
+import { collectContentImageUrls } from "../../../lib/cloudinaryHelper";
 import { requireAuth, withRoute, ApiError } from "../../../lib/apiHelpers";
 
 type Ctx = { params: Promise<{ id: string }> };
@@ -61,7 +57,7 @@ export const PUT = withRoute(
   }
 );
 
-// DELETE — delete content + its Cloudinary images (login required)
+// DELETE — delete content; return orphaned image URLs for client-side confirmation (login required)
 export const DELETE = withRoute(
   "Failed to delete content",
   async (_request: NextRequest, { params }: Ctx) => {
@@ -80,10 +76,10 @@ export const DELETE = withRoute(
       throw new ApiError(500, "Failed to delete content");
     }
 
-    if (imageUrls.length > 0) {
-      await safeDeleteCloudinaryImages(imageUrls, { type: 'content', id });
-    }
+    // Return orphaned images for the client to confirm deletion one-by-one.
+    // We no longer auto-delete from Cloudinary.
+    const orphanedImages = imageUrls.filter((u) => u.includes("cloudinary.com"));
 
-    return NextResponse.json({ success: true, deletedImages: imageUrls.length });
+    return NextResponse.json({ success: true, deletedImages: imageUrls.length, orphanedImages });
   }
 );

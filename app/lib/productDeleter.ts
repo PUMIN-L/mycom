@@ -1,45 +1,44 @@
 import { getProduct, deleteProduct, getAllProducts } from "./productStore";
 import { getAllContents, deleteContent } from "./contentStore";
-import {
-  deleteCloudinaryImage,
-  deleteCloudinaryImages,
-  collectContentImageUrls,
-} from "./cloudinaryHelper";
-import { safeDeleteCloudinaryImage, safeDeleteCloudinaryImages } from "./imageUsageHelper";
+import { collectContentImageUrls } from "./cloudinaryHelper";
 import { query } from "./db";
 import type { RowDataPacket } from "mysql2";
 import type { ProductData } from "./types";
 
 /**
  * Perform a hard delete on a product.
- * This deletes all associated showcase contents, their images from Cloudinary,
- * the product's own image, and finally the product record itself.
+ * This deletes all associated showcase contents and the product record itself.
+ * Returns an array of Cloudinary image URLs that are no longer referenced
+ * (the caller should show a confirmation dialog before deleting them).
+ * Returns null if the product was not found.
  */
-export async function hardDeleteProduct(id: string): Promise<boolean> {
+export async function hardDeleteProduct(id: string): Promise<string[] | null> {
   const product = await getProduct(id);
-  if (!product) return false;
+  if (!product) return null;
 
-  // 1. Delete linked contents first (and their images)
+  const orphanedImages: string[] = [];
+
+  // 1. Delete linked contents first (collect their images)
   const allContents = await getAllContents();
   const linkedContents = allContents.filter((c) => c.productId === id);
   for (const content of linkedContents) {
     const imageUrls = collectContentImageUrls(content);
-    if (imageUrls.length > 0) {
-      await safeDeleteCloudinaryImages(imageUrls, { type: 'product', id });
+    for (const url of imageUrls) {
+      if (url.includes("cloudinary.com")) orphanedImages.push(url);
     }
     await deleteContent(content.id);
   }
 
   // 2. Delete the product from the DB
   const deleted = await deleteProduct(id);
-  if (!deleted) return false;
+  if (!deleted) return null;
 
-  // 3. Delete the product's own image if it lives on Cloudinary
+  // 3. Collect the product's own image (don't delete from Cloudinary)
   if (product.image && product.image.includes("cloudinary.com")) {
-    await safeDeleteCloudinaryImage(product.image, { type: 'product', id });
+    orphanedImages.push(product.image);
   }
 
-  return true;
+  return orphanedImages;
 }
 
 let isCleaningUp = false;
@@ -70,9 +69,11 @@ export async function cleanupExpiredProducts(): Promise<void> {
 
     console.log(`[Cleanup] Found ${rows.length} products to hard delete.`);
     for (const row of rows) {
-      const success = await hardDeleteProduct(row.id);
-      if (success) {
-        console.log(`[Cleanup] Hard deleted product: ${row.id}`);
+      const orphanedImages = await hardDeleteProduct(row.id);
+      if (orphanedImages) {
+        // Images are NOT auto-deleted — they'll appear in the Orphan Scanner
+        // for manual review. Log them for auditability.
+        console.log(`[Cleanup] Hard deleted product: ${row.id}, orphaned images: ${orphanedImages.length}`);
       } else {
         console.error(`[Cleanup] Failed to hard delete product: ${row.id}`);
       }

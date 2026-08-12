@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth, withRoute } from "../../../lib/apiHelpers";
 import { getDocument, deleteDocument, updateDocument } from "../../../lib/documentStore";
-import { deleteCloudinaryImage } from "../../../lib/cloudinaryHelper";
-import { safeDeleteCloudinaryImage } from "../../../lib/imageUsageHelper";
 
 export const dynamic = "force-dynamic";
 
@@ -17,18 +15,20 @@ export const DELETE = withRoute(
       return NextResponse.json({ error: "Document not found" }, { status: 404 });
     }
 
-    // Delete files from cloudinary (only if not used by others)
-    if (doc.pdfUrl) {
-      await safeDeleteCloudinaryImage(doc.pdfUrl, { type: 'document', id });
+    // Collect Cloudinary URLs for client-side deletion confirmation.
+    // We no longer auto-delete from Cloudinary.
+    const orphanedImages: string[] = [];
+    if (doc.pdfUrl && doc.pdfUrl.includes("cloudinary.com")) {
+      orphanedImages.push(doc.pdfUrl);
     }
-    if (doc.coverUrl) {
-      await safeDeleteCloudinaryImage(doc.coverUrl, { type: 'document', id });
+    if (doc.coverUrl && doc.coverUrl.includes("cloudinary.com")) {
+      orphanedImages.push(doc.coverUrl);
     }
     
     // Delete from database
     await deleteDocument(id);
 
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true, orphanedImages });
   }
 );
 

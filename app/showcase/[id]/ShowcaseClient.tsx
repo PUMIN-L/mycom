@@ -11,6 +11,7 @@ import ConfirmDialog from "../../components/ConfirmDialog";
 import Toast from "../../components/Toast";
 import RichTextEditor from "../../components/RichTextEditor";
 import BlockRangeControl from "../../components/BlockRangeControl";
+import ImageDeleteConfirmDialog, { type OrphanedImage } from "../../components/ImageDeleteConfirmDialog";
 import { stripHtml } from "../../lib/stripHtml";
 
 interface ContentBlock {
@@ -86,6 +87,7 @@ function GalleryViewer({
   setGalleryUploadingId,
   galleryInputRef,
   contentId,
+  onImageOrphaned,
 }: {
   block: ContentBlock;
   isEditing: boolean;
@@ -94,6 +96,7 @@ function GalleryViewer({
   setGalleryUploadingId: (id: string) => void;
   galleryInputRef: React.RefObject<HTMLInputElement | null>;
   contentId: string;
+  onImageOrphaned?: (url: string, reason: string) => void;
 }) {
   const [localIndex, setLocalIndex] = useState(block.selectedImageIndex || 0);
   const activeIndex = isEditing ? (block.selectedImageIndex || 0) : localIndex;
@@ -155,9 +158,10 @@ function GalleryViewer({
                     let newIndex = activeIndex;
                     if (newIndex >= newUrls.length) newIndex = Math.max(0, newUrls.length - 1);
                     updateBlock(block.id, { imageUrls: newUrls, selectedImageIndex: newIndex });
-                    try {
-                      await deleteImageFromCloudinary(url, contentId);
-                    } catch (err) { }
+                    // Queue for confirmation dialog instead of auto-deleting
+                    if (url.includes("cloudinary.com") && onImageOrphaned) {
+                      onImageOrphaned(url, "ลบรูปจากแกลเลอรี");
+                    }
                   }}
                   className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition-opacity shadow-sm font-bold"
                 >
@@ -231,6 +235,7 @@ export default function ShowcaseClient({
   // Delete content confirm
   const [showDeleteContentConfirm, setShowDeleteContentConfirm] = useState(false);
   const [deletingContent, setDeletingContent] = useState(false);
+  const [orphanedImages, setOrphanedImages] = useState<OrphanedImage[]>([]);
 
   // Delete block confirm
   const [pendingDeleteBlock, setPendingDeleteBlock] = useState<ContentBlock | null>(null);
@@ -285,8 +290,18 @@ export default function ShowcaseClient({
     try {
       const res = await fetch(`/api/contents/${content.id}`, { method: "DELETE" });
       if (res.ok) {
-        showToast("ลบ content สำเร็จ (รวมถึงรูปใน Cloudinary)", "success");
-        setTimeout(() => router.push("/showcase"), 1200);
+        const data = await res.json();
+        // Show image deletion confirmation dialog if there are orphaned images
+        if (data.orphanedImages?.length > 0) {
+          setOrphanedImages(data.orphanedImages.map((url: string) => ({
+            url,
+            reason: "ลบ content"
+          })));
+          showToast("ลบ content สำเร็จ", "success");
+        } else {
+          showToast("ลบ content สำเร็จ", "success");
+          setTimeout(() => router.push("/showcase"), 1200);
+        }
       } else {
         showToast("เกิดข้อผิดพลาดในการลบ", "error");
       }
@@ -308,25 +323,26 @@ export default function ShowcaseClient({
       const newBlocks = editBlocksRef.current.filter((b) => b.id !== block.id);
       setEditBlocks(newBlocks);
 
-      // If it's an image → delete from Cloudinary
+      // Collect images for confirmation dialog instead of auto-deleting
+      const blockOrphanedImages: OrphanedImage[] = [];
       if (block.type === "image" && block.imageUrl) {
-        await deleteImageFromCloudinary(block.imageUrl, content.id);
+        blockOrphanedImages.push({ url: block.imageUrl, reason: "ลบบล็อกรูปภาพ" });
       }
-
       if (block.type === "gallery" && block.imageUrls) {
         for (const url of block.imageUrls) {
-          try {
-            await deleteImageFromCloudinary(url, content.id);
-          } catch (err) { console.error("Error deleting gallery image", err); }
+          blockOrphanedImages.push({ url, reason: "ลบบล็อกแกลเลอรี" });
         }
       }
 
       // Persist update to DB
       await saveBlocks(newBlocks);
-      showToast(
-        block.type === "image" ? "ลบรูปภาพและรูปใน Cloudinary แล้ว" : "ลบข้อความแล้ว",
-        "success"
-      );
+
+      if (blockOrphanedImages.length > 0) {
+        setOrphanedImages(blockOrphanedImages);
+        showToast("ลบบล็อกแล้ว — กรุณายืนยันการลบรูปจาก Cloudinary", "success");
+      } else {
+        showToast("ลบข้อความแล้ว", "success");
+      }
     } catch {
       showToast("เกิดข้อผิดพลาดในการลบบล็อก", "error");
     } finally {
@@ -389,11 +405,9 @@ export default function ShowcaseClient({
   async function handleReplaceImage(blockId: string, file: File) {
     setUploadingBlockId(blockId);
     try {
-      // Find old block to delete its Cloudinary image
+      // Collect old image for confirmation dialog (don't auto-delete)
       const oldBlock = editBlocksRef.current.find((b) => b.id === blockId);
-      if (oldBlock?.imageUrl) {
-        await deleteImageFromCloudinary(oldBlock.imageUrl, content.id);
-      }
+      const oldImageUrl = oldBlock?.imageUrl;
 
       // Upload new image
       const formData = new FormData();
@@ -413,6 +427,11 @@ export default function ShowcaseClient({
       setEditBlocks(newBlocks);
       await saveBlocks(newBlocks);
       showToast("เปลี่ยนรูปสำเร็จ", "success");
+
+      // Show confirmation dialog for old image
+      if (oldImageUrl && oldImageUrl.includes("cloudinary.com")) {
+        setOrphanedImages([{ url: oldImageUrl, reason: "เปลี่ยนรูปในบล็อก" }]);
+      }
     } catch {
       showToast("เกิดข้อผิดพลาดในการเปลี่ยนรูป", "error");
     } finally {
@@ -827,6 +846,9 @@ export default function ShowcaseClient({
                     setGalleryUploadingId={setGalleryUploadingId}
                     galleryInputRef={galleryInputRef}
                     contentId={content.id}
+                    onImageOrphaned={(url, reason) => {
+                      setOrphanedImages((prev) => [...prev, { url, reason }]);
+                    }}
                   />
                 ) : block.type === "text" ? (
                   isEditing ? (
@@ -1124,6 +1146,17 @@ export default function ShowcaseClient({
       `}</style>
       </div>
       <Footer />
+
+      {/* Image deletion confirmation dialog */}
+      {orphanedImages.length > 0 && (
+        <ImageDeleteConfirmDialog
+          images={orphanedImages}
+          onComplete={() => {
+            setOrphanedImages([]);
+            setTimeout(() => router.push("/showcase"), 500);
+          }}
+        />
+      )}
     </>
   );
 }

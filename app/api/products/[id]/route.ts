@@ -1,14 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { revalidateTag } from "next/cache";
 import { getProduct, deleteProduct, updateProduct } from "../../../lib/productStore";
-import {
-  deleteCloudinaryImage,
-  deleteCloudinaryImages,
-  collectContentImageUrls,
-} from "../../../lib/cloudinaryHelper";
 import { requireAuth, withRoute, ApiError } from "../../../lib/apiHelpers";
-import { safeDeleteCloudinaryImage } from "../../../lib/imageUsageHelper";
-import { getAllContents, deleteContent } from "../../../lib/contentStore";
 import { getSession } from "../../../lib/session";
 
 type Ctx = { params: Promise<{ id: string }> };
@@ -42,8 +35,8 @@ export const PUT = withRoute(
     const { id } = await params;
     const body = await request.json();
 
-    // Snapshot the old image URL BEFORE updating so we can clean up Cloudinary
-    // if the image changed.
+    // Snapshot the old image URL BEFORE updating so we can tell the client
+    // which image was replaced (they'll confirm deletion via a dialog).
     const existing = await getProduct(id);
     const oldImageUrl = existing?.image;
 
@@ -52,25 +45,23 @@ export const PUT = withRoute(
       return NextResponse.json({ error: "Product not found" }, { status: 404 });
     }
 
-    // If the image was replaced by a NEW valid URL, delete the old one from
-    // Cloudinary (fire-and-forget so we don't delay the response).
-    // IMPORTANT: Only delete when `updated.image` is a real URL — if the client
-    // accidentally sends `image: ""` we must NOT destroy the original asset.
+    // Collect images that are no longer referenced so the client can show a
+    // confirmation dialog. We never auto-delete from Cloudinary — the admin
+    // must confirm each image deletion manually.
+    const orphanedImages: string[] = [];
     if (
       oldImageUrl &&
       updated.image &&
       oldImageUrl !== updated.image &&
       oldImageUrl.includes("cloudinary.com")
     ) {
-      safeDeleteCloudinaryImage(oldImageUrl, { type: "product", id }).catch(
-        (err) => console.error("[PUT /products] Failed to delete old image:", err)
-      );
+      orphanedImages.push(oldImageUrl);
     }
     
     // Invalidate product cache
     revalidateTag("products", { expire: 0 });
     
-    return NextResponse.json(updated);
+    return NextResponse.json({ ...updated, orphanedImages });
   }
 );
 
@@ -88,13 +79,13 @@ export const DELETE = withRoute(
     if (product.pendingDeleteAt) {
       // It's already in pending delete status, so this is a force hard-delete
       const { hardDeleteProduct } = await import("../../../lib/productDeleter");
-      const success = await hardDeleteProduct(id);
-      if (!success) {
+      const orphanedImages = await hardDeleteProduct(id);
+      if (!orphanedImages) {
         throw new ApiError(500, "Failed to hard delete product");
       }
       
       revalidateTag("products", { expire: 0 });
-      return NextResponse.json({ success: true, hardDeleted: true });
+      return NextResponse.json({ success: true, hardDeleted: true, orphanedImages });
     } else {
       // Soft delete: Mark as pending delete and unpublish
       const updated = await updateProduct(id, {

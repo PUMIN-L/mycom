@@ -147,19 +147,19 @@ describe('Documents API Route', () => {
       expect(safeDeleteCloudinaryImage).not.toHaveBeenCalled();
     });
 
-    it('purges both Cloudinary assets, deletes the row, and returns success', async () => {
+    it('returns orphanedImages URLs, deletes the row, and returns success', async () => {
       vi.mocked(getSession).mockResolvedValue(adminSession);
       vi.mocked(getDocument).mockResolvedValue(validDoc as any);
-      vi.mocked(safeDeleteCloudinaryImage).mockResolvedValue(true);
       vi.mocked(deleteDocument).mockResolvedValue(undefined as any);
 
       const res = await DELETE(mutatingRequest('DELETE'), ctx('doc-1'));
       expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ success: true });
+      const json = await res.json();
+      expect(json.success).toBe(true);
+      expect(json.orphanedImages).toEqual([validDoc.pdfUrl, validDoc.coverUrl]);
 
-      expect(safeDeleteCloudinaryImage).toHaveBeenCalledWith(validDoc.pdfUrl, { type: 'document', id: 'doc-1' });
-      expect(safeDeleteCloudinaryImage).toHaveBeenCalledWith(validDoc.coverUrl, { type: 'document', id: 'doc-1' });
-      expect(safeDeleteCloudinaryImage).toHaveBeenCalledTimes(2);
+      // Should NOT auto-delete from Cloudinary
+      expect(safeDeleteCloudinaryImage).not.toHaveBeenCalled();
       expect(deleteDocument).toHaveBeenCalledWith('doc-1');
     });
   });

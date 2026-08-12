@@ -14,6 +14,7 @@ import type { ProductCategory, ProductData } from "../lib/types";
 import { pageList } from "../lib/pagination";
 import RichTextEditor from "./RichTextEditor";
 import { stripHtml } from "../lib/stripHtml";
+import ImageDeleteConfirmDialog, { type OrphanedImage } from "./ImageDeleteConfirmDialog";
 
 interface ProductsProps {
   // Promise created on the server and passed down so the data is fetched during
@@ -185,6 +186,7 @@ export default function Products({ dataPromise }: ProductsProps) {
 
   const [pendingDeleteProd, setPendingDeleteProd] = useState<string | null>(null);
   const [deletingProd, setDeletingProd] = useState(false);
+  const [orphanedImages, setOrphanedImages] = useState<OrphanedImage[]>([]);
   const [draggedProdId, setDraggedProdId] = useState<string | null>(null);
   const [dragOverProdId, setDragOverProdId] = useState<string | null>(null);
   const dragEndTimeRef = useRef<number>(0);
@@ -460,6 +462,13 @@ export default function Products({ dataPromise }: ProductsProps) {
       if (data.hardDeleted) {
         setProducts(products.filter(p => p.id !== id));
         showToast("ลบสินค้าถาวรเรียบร้อยแล้ว", "success");
+        // Show image deletion confirmation dialog if there are orphaned images
+        if (data.orphanedImages?.length > 0) {
+          setOrphanedImages(data.orphanedImages.map((url: string) => ({
+            url,
+            reason: "ลบสินค้าถาวร"
+          })));
+        }
       } else {
         setProducts(products.map(p => 
           p.id === id ? { ...p, isPublished: false, pendingDeleteAt: data.pendingDeleteAt } : p
@@ -620,6 +629,7 @@ export default function Products({ dataPromise }: ProductsProps) {
   );
 
   return (
+    <>
     <section id="products" className="py-24 md:py-32 lg:py-10 bg-[var(--bg-secondary)] relative overflow-hidden">
       {toast && <Toast message={toast.message} type={toast.type} />}
       {/* Decorative background element */}
@@ -1254,5 +1264,14 @@ export default function Products({ dataPromise }: ProductsProps) {
         </div>
       </div>
     </section>
+
+    {/* Image deletion confirmation dialog */}
+    {orphanedImages.length > 0 && (
+      <ImageDeleteConfirmDialog
+        images={orphanedImages}
+        onComplete={() => setOrphanedImages([])}
+      />
+    )}
+    </>
   );
 }

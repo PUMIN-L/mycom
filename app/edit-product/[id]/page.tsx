@@ -7,6 +7,7 @@ import Toast from "../../components/Toast";
 import ErrorModal from "../../components/ErrorModal";
 import MultiSelectDropdown from "../../components/MultiSelectDropdown";
 import SearchableDropdown from "../../components/SearchableDropdown";
+import ImageDeleteConfirmDialog, { type OrphanedImage } from "../../components/ImageDeleteConfirmDialog";
 import { stripHtml } from "../../lib/stripHtml";
 
 interface ProductCategory {
@@ -54,6 +55,7 @@ export default function EditProduct({ params }: { params: Promise<{ id: string }
     isOpen: false,
     message: ""
   });
+  const [orphanedImages, setOrphanedImages] = useState<OrphanedImage[]>([]);
 
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   function showToast(message: string, type: "success" | "error") {
@@ -237,9 +239,19 @@ export default function EditProduct({ params }: { params: Promise<{ id: string }
       }
 
       showToast("บันทึกการแก้ไขสำเร็จ", "success");
-      setTimeout(() => {
-        router.push("/#products");
-      }, 1000);
+
+      // Check if the server returned orphaned images (old image that was replaced)
+      const resData = await response.json();
+      if (resData.orphanedImages?.length > 0) {
+        setOrphanedImages(resData.orphanedImages.map((url: string) => ({
+          url,
+          reason: "เปลี่ยนรูปสินค้า"
+        })));
+      } else {
+        setTimeout(() => {
+          router.push("/#products");
+        }, 1000);
+      }
     } catch (error: any) {
       console.error(error);
       setErrorModal({ isOpen: true, message: error.message || "เกิดข้อผิดพลาดในการบันทึกข้อมูล กรุณาลองใหม่อีกครั้ง" });
@@ -551,6 +563,17 @@ export default function EditProduct({ params }: { params: Promise<{ id: string }
         message={errorModal.message}
         onClose={() => setErrorModal({ ...errorModal, isOpen: false })}
       />
+
+      {/* Image deletion confirmation dialog */}
+      {orphanedImages.length > 0 && (
+        <ImageDeleteConfirmDialog
+          images={orphanedImages}
+          onComplete={() => {
+            setOrphanedImages([]);
+            setTimeout(() => router.push("/#products"), 500);
+          }}
+        />
+      )}
     </div>
   );
 }

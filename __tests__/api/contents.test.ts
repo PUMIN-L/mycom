@@ -204,25 +204,29 @@ describe('Contents API Routes', () => {
       expect(deleteContent).not.toHaveBeenCalled();
     });
 
-    it('deletes the content and its Cloudinary images (200)', async () => {
+    it('deletes the content and returns orphanedImages for client confirmation (200)', async () => {
       vi.mocked(getSession).mockResolvedValue(adminSession);
       vi.mocked(getContent).mockResolvedValue(sampleContent);
-      vi.mocked(collectContentImageUrls).mockReturnValue(['https://img/a.png', 'https://img/b.png']);
+      vi.mocked(collectContentImageUrls).mockReturnValue(['https://res.cloudinary.com/img/a.png', 'https://res.cloudinary.com/img/b.png']);
       vi.mocked(deleteContent).mockResolvedValue(true);
 
       const res = await deleteById(mutatingRequest('DELETE'), {
         params: Promise.resolve({ id: 'c-1' }),
       });
       expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ success: true, deletedImages: 2 });
+      const json = await res.json();
+      expect(json.success).toBe(true);
+      expect(json.deletedImages).toBe(2);
+      expect(json.orphanedImages).toEqual([
+        'https://res.cloudinary.com/img/a.png',
+        'https://res.cloudinary.com/img/b.png',
+      ]);
       expect(deleteContent).toHaveBeenCalledWith('c-1');
-      expect(safeDeleteCloudinaryImages).toHaveBeenCalledWith([
-        'https://img/a.png',
-        'https://img/b.png',
-      ], { type: 'content', id: 'c-1' });
+      // Should NOT auto-delete from Cloudinary
+      expect(safeDeleteCloudinaryImages).not.toHaveBeenCalled();
     });
 
-    it('skips Cloudinary cleanup when there are no images', async () => {
+    it('returns empty orphanedImages when there are no images', async () => {
       vi.mocked(getSession).mockResolvedValue(adminSession);
       vi.mocked(getContent).mockResolvedValue(sampleContent);
       vi.mocked(collectContentImageUrls).mockReturnValue([]);
@@ -232,7 +236,10 @@ describe('Contents API Routes', () => {
         params: Promise.resolve({ id: 'c-1' }),
       });
       expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ success: true, deletedImages: 0 });
+      const json = await res.json();
+      expect(json.success).toBe(true);
+      expect(json.deletedImages).toBe(0);
+      expect(json.orphanedImages).toEqual([]);
       expect(safeDeleteCloudinaryImages).not.toHaveBeenCalled();
     });
   });

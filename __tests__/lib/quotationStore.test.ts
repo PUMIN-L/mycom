@@ -284,7 +284,7 @@ describe('deleteQuotation', () => {
     expect(deleteCallIndex()).toBe(-1);
   });
 
-  it('deletes orphaned uploaded images then the row, and returns true', async () => {
+  it('deletes the quotation row and logs orphaned images (no auto-delete)', async () => {
     mockQueryRouter({
       quotationById: [
         {
@@ -302,8 +302,8 @@ describe('deleteQuotation', () => {
 
     const ok = await deleteQuotation('q1');
     expect(ok).toBe(true);
-    expect(deleteCloudinaryImages).toHaveBeenCalledTimes(1);
-    expect(deleteCloudinaryImages).toHaveBeenCalledWith([cld('a'), cld('b')]);
+    // No Cloudinary auto-deletion — deferred to Orphan Scanner
+    expect(deleteCloudinaryImages).not.toHaveBeenCalled();
     // Row DELETE issued with the id.
     const di = deleteCallIndex();
     expect(di).toBeGreaterThanOrEqual(0);
@@ -351,7 +351,9 @@ describe('deleteQuotation', () => {
   });
 
   // ── THE SAFETY INVARIANT ──────────────────────────────────────────────────
-  it('excludes a product-referenced URL from deletion (safety invariant), deletes only orphans, images BEFORE row', async () => {
+  // Now a no-op: deleteQuoteImagesSafely logs instead of deleting.
+  // Images from quotation cleanup will be picked up by the Orphan Scanner.
+  it('does NOT auto-delete images (deferred to manual Orphan Scanner)', async () => {
     const shared = cld('shared-with-product');
     const orphan = cld('orphan');
     mockQueryRouter({
@@ -364,24 +366,17 @@ describe('deleteQuotation', () => {
           createdAt: 'x',
         },
       ],
-      // One real product image + a null image (exercises the `if (p.image)` skip).
       products: [{ image: shared }, { image: null }],
       contents: [],
       deleteResult: { affectedRows: 1 },
     });
 
     expect(await deleteQuotation('q1')).toBe(true);
-    // Only the truly-orphaned URL is destroyed — the shared product image is spared.
-    expect(deleteCloudinaryImages).toHaveBeenCalledTimes(1);
-    expect(deleteCloudinaryImages).toHaveBeenCalledWith([orphan]);
-
-    // Images must be purged BEFORE the row is deleted.
-    const imagesOrder = vi.mocked(deleteCloudinaryImages).mock.invocationCallOrder[0];
-    const rowOrder = vi.mocked(query).mock.invocationCallOrder[deleteCallIndex()];
-    expect(imagesOrder).toBeLessThan(rowOrder);
+    // No Cloudinary auto-deletion — images are left for the Orphan Scanner
+    expect(deleteCloudinaryImages).not.toHaveBeenCalled();
   });
 
-  it('excludes content-referenced URLs (block imageUrl AND imageUrls[]) from deletion', async () => {
+  it('does NOT auto-delete content-referenced images (deferred to manual Orphan Scanner)', async () => {
     const single = cld('content-single');
     const inArray = cld('content-array');
     const orphan = cld('content-orphan');
@@ -396,14 +391,13 @@ describe('deleteQuotation', () => {
         },
       ],
       products: [],
-      // blocks arrive as a JSON string; parseJson must decode it.
       contents: [
         {
           blocks: JSON.stringify([
-            { imageUrl: single }, // string imageUrl → referenced
-            { imageUrl: 123 }, // non-string → ignored by the type guard
-            { imageUrls: [inArray, 999] }, // array; only the string is referenced
-            { type: 'text' }, // no images at all
+            { imageUrl: single },
+            { imageUrl: 123 },
+            { imageUrls: [inArray, 999] },
+            { type: 'text' },
           ]),
         },
       ],
@@ -411,7 +405,8 @@ describe('deleteQuotation', () => {
     });
 
     expect(await deleteQuotation('q1')).toBe(true);
-    expect(deleteCloudinaryImages).toHaveBeenCalledWith([orphan]);
+    // No Cloudinary auto-deletion
+    expect(deleteCloudinaryImages).not.toHaveBeenCalled();
   });
 });
 
@@ -425,11 +420,11 @@ describe('purgeExpiredQuotations', () => {
     expect(query).toHaveBeenCalledTimes(1); // only the SELECT ran
   });
 
-  it('computes cutoff, safe-deletes orphan images across rows, deletes rows, returns count', async () => {
+  it('computes cutoff, deletes rows, returns count (images left for Orphan Scanner)', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-07-19T00:00:00.000Z'));
     try {
-      const shared = cld('shared'); // referenced by a product → must survive
+      const shared = cld('shared');
       mockQueryRouter({
         quotationsExpired: [
           { id: 'q1', uploadedImages: JSON.stringify([cld('a'), shared]) },
@@ -453,19 +448,13 @@ describe('purgeExpiredQuotations', () => {
         .mock.calls.find((c) => /uploadedImages FROM quotations/.test(String(c[0])));
       expect(selectCall![1]).toEqual([cutoff]);
 
-      // Safety invariant honoured across the flat-mapped image list.
-      expect(deleteCloudinaryImages).toHaveBeenCalledTimes(1);
-      expect(deleteCloudinaryImages).toHaveBeenCalledWith([cld('a'), cld('b')]);
+      // No Cloudinary auto-deletion — deferred to Orphan Scanner
+      expect(deleteCloudinaryImages).not.toHaveBeenCalled();
 
       // Rows deleted by the same cutoff.
       const di = deleteCallIndex();
       expect(String(callAt(di)[0])).toContain('DELETE FROM quotations WHERE createdAt < ?');
       expect(callAt(di)[1]).toEqual([cutoff]);
-
-      // Images purged before the rows.
-      const imagesOrder = vi.mocked(deleteCloudinaryImages).mock.invocationCallOrder[0];
-      const rowOrder = vi.mocked(query).mock.invocationCallOrder[di];
-      expect(imagesOrder).toBeLessThan(rowOrder);
     } finally {
       vi.useRealTimers();
     }

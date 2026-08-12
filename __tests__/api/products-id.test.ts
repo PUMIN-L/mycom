@@ -122,7 +122,7 @@ describe('Products [id] API Route', () => {
       expect(revalidateTag).not.toHaveBeenCalled();
     });
 
-    it('updates the product, revalidates cache, and returns 200', async () => {
+    it('updates the product, revalidates cache, and returns 200 with orphanedImages', async () => {
       vi.mocked(getSession).mockResolvedValue(adminSession);
       const existing = { id: '1', title_en: 'Old', image: 'https://res.cloudinary.com/demo/image/upload/v1/old.jpg', isPublished: true };
       const updated = { id: '1', title_en: 'Updated', image: 'https://res.cloudinary.com/demo/image/upload/v1/old.jpg', isPublished: true };
@@ -131,12 +131,14 @@ describe('Products [id] API Route', () => {
 
       const res = await PUT(mutatingRequest('PUT', body), ctx('1'));
       expect(res.status).toBe(200);
-      expect(await res.json()).toEqual(updated);
+      const json = await res.json();
+      expect(json.title_en).toBe('Updated');
+      expect(json.orphanedImages).toEqual([]);  // same image → no orphans
       expect(updateProduct).toHaveBeenCalledWith('1', body);
       expect(revalidateTag).toHaveBeenCalledWith('products', { expire: 0 });
     });
 
-    it('deletes the old Cloudinary image when the image is replaced', async () => {
+    it('returns orphanedImages with old URL when the image is replaced', async () => {
       vi.mocked(getSession).mockResolvedValue(adminSession);
       const oldUrl = 'https://res.cloudinary.com/demo/image/upload/v1/old.jpg';
       const newUrl = 'https://res.cloudinary.com/demo/image/upload/v1/new.jpg';
@@ -145,10 +147,11 @@ describe('Products [id] API Route', () => {
 
       const res = await PUT(mutatingRequest('PUT', { image: newUrl }), ctx('1'));
       expect(res.status).toBe(200);
-      // Wait for the fire-and-forget promise to settle
-      await vi.waitFor(() => {
-        expect(safeDeleteCloudinaryImage).toHaveBeenCalledWith(oldUrl, { type: 'product', id: '1' });
-      });
+      const json = await res.json();
+      // The old URL should be in orphanedImages for client-side confirmation
+      expect(json.orphanedImages).toEqual([oldUrl]);
+      // Should NOT auto-delete from Cloudinary
+      expect(safeDeleteCloudinaryImage).not.toHaveBeenCalled();
     });
 
     it('does NOT delete when the image is unchanged', async () => {
@@ -206,7 +209,10 @@ describe('Products [id] API Route', () => {
 
       const res = await DELETE(mutatingRequest('DELETE'), ctx('1'));
       expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ success: true, hardDeleted: true });
+      const json = await res.json();
+      expect(json.success).toBe(true);
+      expect(json.hardDeleted).toBe(true);
+      expect(json.orphanedImages).toEqual([]);  // non-Cloudinary image → no orphans
       expect(deleteProduct).toHaveBeenCalledWith('1');
       expect(revalidateTag).toHaveBeenCalledWith('products', { expire: 0 });
     });
