@@ -51,7 +51,6 @@ export const PUT = withRoute(
     const orphanedImages: string[] = [];
     if (
       oldImageUrl &&
-      updated.image &&
       oldImageUrl !== updated.image &&
       oldImageUrl.includes("cloudinary.com")
     ) {
