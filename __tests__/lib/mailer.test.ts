@@ -66,6 +66,7 @@ describe('mailer', () => {
   describe('sendContactEmail', () => {
     const msg: ContactMessage = {
       name: 'สมชาย',
+      phone: '0812345678',
       email: 'visitor@example.com',
       subject: 'สอบถามสินค้า',
       message: 'รายละเอียดข้อความจากผู้ใช้',

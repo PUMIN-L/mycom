@@ -4,7 +4,7 @@ import type { QueryResult, FieldPacket, RowDataPacket } from "mysql2";
 
 // Bump whenever the schema below changes — a mismatch re-runs the (idempotent)
 // bump; a match lets returning cold instances skip it in one SELECT.
-const SCHEMA_VERSION = 17;
+const SCHEMA_VERSION = 18;
 
 type DbPool = ReturnType<typeof mysql.createPool>;
 
@@ -268,7 +268,9 @@ async function bootstrapSchemaOnce(): Promise<void> {
           desc_zh TEXT,
           createdAt VARCHAR(255) NOT NULL,
           isPublished BOOLEAN DEFAULT TRUE,
-          sortOrder INT DEFAULT 0
+          sortOrder INT DEFAULT 0,
+          bestSellerRank INT NULL DEFAULT NULL,
+          showBestSellerBadge BOOLEAN DEFAULT TRUE
         )
       `);
 
@@ -286,6 +288,22 @@ async function bootstrapSchemaOnce(): Promise<void> {
     try {
       await connection.query(
         `ALTER TABLE products ADD COLUMN IF NOT EXISTS sortOrder INT DEFAULT 0`
+      );
+    } catch (error) {
+      if (!isBenignSchemaError(error)) throw error;
+    }
+
+    try {
+      await connection.query(
+        `ALTER TABLE products ADD COLUMN IF NOT EXISTS bestSellerRank INT NULL DEFAULT NULL`
+      );
+    } catch (error) {
+      if (!isBenignSchemaError(error)) throw error;
+    }
+
+    try {
+      await connection.query(
+        `ALTER TABLE products ADD COLUMN IF NOT EXISTS showBestSellerBadge BOOLEAN DEFAULT TRUE`
       );
     } catch (error) {
       if (!isBenignSchemaError(error)) throw error;

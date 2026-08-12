@@ -119,6 +119,8 @@ function rowToProduct(row: RowDataPacket): ProductData {
     createdAt: row.createdAt,
     isPublished: row.isPublished === undefined ? true : Boolean(row.isPublished),
     sortOrder: row.sortOrder ?? 0,
+    bestSellerRank: row.bestSellerRank ?? null,
+    showBestSellerBadge: row.showBestSellerBadge === undefined ? true : Boolean(row.showBestSellerBadge),
     pendingDeleteAt: row.pendingDeleteAt || null,
   };
 }
@@ -135,7 +137,7 @@ export async function addProduct(product: ProductData): Promise<ProductData> {
   const desc_zh = sanitizeRichText(product.desc_zh).substring(0, 10000);
   await withTransaction(async (conn) => {
     await conn.query(
-      "INSERT INTO products (id, categoryId, image, title_th, title_en, title_zh, desc_th, desc_en, desc_zh, createdAt, isPublished, sortOrder) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO products (id, categoryId, image, title_th, title_en, title_zh, desc_th, desc_en, desc_zh, createdAt, isPublished, sortOrder, bestSellerRank, showBestSellerBadge) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       [
         product.id,
         product.categoryId,
@@ -149,6 +151,8 @@ export async function addProduct(product: ProductData): Promise<ProductData> {
         product.createdAt,
         isPublished,
         product.sortOrder ?? 0,
+        product.bestSellerRank ?? null,
+        product.showBestSellerBadge !== false,
       ]
     );
 
@@ -231,6 +235,13 @@ export async function updateProduct(
   if (updates.desc_th !== undefined) set("desc_th", sanitizeRichText(updates.desc_th).substring(0, 10000));
   if (updates.desc_en !== undefined) set("desc_en", sanitizeRichText(updates.desc_en).substring(0, 10000));
   if (updates.desc_zh !== undefined) set("desc_zh", sanitizeRichText(updates.desc_zh).substring(0, 10000));
+  
+  if (updates.bestSellerRank !== undefined) {
+    set("bestSellerRank", updates.bestSellerRank);
+  }
+  if (updates.showBestSellerBadge !== undefined) {
+    set("showBestSellerBadge", updates.showBestSellerBadge !== false);
+  }
   
   if (updates.isPublished !== undefined) {
     set("isPublished", updates.isPublished !== false);

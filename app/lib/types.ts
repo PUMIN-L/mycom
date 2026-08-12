@@ -29,6 +29,8 @@ export interface ProductData {
   createdAt: string;
   isPublished?: boolean;
   sortOrder?: number;
+  bestSellerRank?: number | null;
+  showBestSellerBadge?: boolean;
   pendingDeleteAt?: string | null;
   supplierIds?: string[];
 }

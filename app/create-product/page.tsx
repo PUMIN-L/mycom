@@ -36,6 +36,8 @@ export default function CreateProduct() {
   const [newCatTh, setNewCatTh] = useState("");
   const [newCatEn, setNewCatEn] = useState("");
   const [newCatZh, setNewCatZh] = useState("");
+  const [bestSellerRank, setBestSellerRank] = useState<number | "">("");
+  const [showBestSellerBadge, setShowBestSellerBadge] = useState<boolean>(true);
   const [imageUrl, setImageUrl] = useState("");
   const [imagePreview, setImagePreview] = useState("");
   const [isUploading, setIsUploading] = useState(false);
@@ -174,9 +176,10 @@ export default function CreateProduct() {
         title_zh: titleZh || titleEn || titleTh,
         desc_th: descTh,
         desc_en: descEn,
-        desc_zh: descZh,
         createdAt: new Date().toISOString(),
         supplierIds: selectedSupplierIds,
+        bestSellerRank: bestSellerRank === "" ? null : Number(bestSellerRank),
+        showBestSellerBadge: showBestSellerBadge,
       };
       const response = await fetch("/api/products", {
         method: "POST",
@@ -358,6 +361,40 @@ export default function CreateProduct() {
               onChange={handleImageUpload}
               className="hidden"
             />
+          </div>
+        </div>
+
+        {/* Best Seller Inputs */}
+        <div className="bg-white rounded-lg shadow p-6 mb-6">
+          <label className="block text-sm font-semibold mb-4 text-gray-700">
+            🌟 สินค้าขายดี (Best Seller)
+          </label>
+          <div className="flex flex-col sm:flex-row gap-6 sm:items-center">
+            <div className="flex flex-col gap-1">
+              <label className="text-sm font-medium text-gray-700">อันดับ Best Seller</label>
+              <input
+                type="number"
+                min="1"
+                placeholder="ไม่มีลำดับ"
+                value={bestSellerRank === "" ? "" : bestSellerRank}
+                onChange={(e) => setBestSellerRank(e.target.value === "" ? "" : Number(e.target.value))}
+                className="w-32 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500"
+              />
+              <span className="text-xs text-gray-400">เว้นว่างหากไม่ใช่สินค้าขายดี</span>
+            </div>
+            
+            <div className="flex items-center gap-2 mt-2 sm:mt-0 pt-2 sm:pt-4">
+              <input
+                type="checkbox"
+                id="showBadge"
+                checked={showBestSellerBadge}
+                onChange={(e) => setShowBestSellerBadge(e.target.checked)}
+                className="w-5 h-5 text-orange-500 border-gray-300 rounded focus:ring-orange-500"
+              />
+              <label htmlFor="showBadge" className="text-sm font-medium text-gray-700 cursor-pointer select-none">
+                แสดงป้าย Best Seller 🌟
+              </label>
+            </div>
           </div>
         </div>
 

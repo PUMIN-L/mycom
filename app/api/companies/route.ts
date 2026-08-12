@@ -1,36 +1,29 @@
 import { NextResponse } from "next/server";
 import { query } from "../../lib/db";
-import { getSession } from "../../lib/session";
 import { sanitizePlainText } from "../../lib/sanitizeHtml";
+import { withRoute, requireAuth, jsonError } from "../../lib/apiHelpers";
 
-export async function GET(request: Request) {
-  try {
-    const session = await getSession();
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+export const GET = withRoute(
+  "Failed to load companies",
+  async () => {
+    await requireAuth();
 
     const [rows] = await query("SELECT * FROM companies ORDER BY createdAt DESC");
     return NextResponse.json(rows);
-  } catch (error: any) {
-    console.error("GET /api/companies error:", error);
-    return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
   }
-}
+);
 
-export async function POST(request: Request) {
-  try {
-    const session = await getSession();
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+export const POST = withRoute(
+  "Failed to create company",
+  async (request: Request) => {
+    await requireAuth();
 
     const data = await request.json();
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
 
     if (!data.name || typeof data.name !== "string" || data.name.trim() === "") {
-      return NextResponse.json({ error: "Name is required" }, { status: 400 });
+      return jsonError("Name is required", 400);
     }
 
     const name = sanitizePlainText(data.name).substring(0, 255);
@@ -66,8 +59,5 @@ export async function POST(request: Request) {
     );
 
     return NextResponse.json({ id });
-  } catch (error: any) {
-    console.error("POST /api/companies error:", error);
-    return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
   }
-}
+);

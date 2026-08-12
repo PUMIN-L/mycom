@@ -554,6 +554,23 @@ export default function Products({ dataPromise }: ProductsProps) {
     return matchesCategory && matchesSearch;
   });
 
+  if (selectedCategory === -1) {
+    filteredItems.sort((a, b) => {
+      // Both have a rank: sort by rank ascending
+      if (a.bestSellerRank != null && b.bestSellerRank != null) {
+        return a.bestSellerRank - b.bestSellerRank;
+      }
+      // Only 'a' has a rank: it goes first
+      if (a.bestSellerRank != null) return -1;
+      // Only 'b' has a rank: it goes first
+      if (b.bestSellerRank != null) return 1;
+      
+      // Neither have a rank: preserve existing sortOrder/category ordering
+      // Note: Array.prototype.sort is stable in modern JS, but if we want to be safe:
+      return 0;
+    });
+  }
+
   // When an admin is logged in, the SSR/ISR payload only contains published
   // products (unpublished ones are filtered server-side so they never leak to
   // anonymous visitors). Re-fetch the full list from the authenticated API so
@@ -945,6 +962,14 @@ export default function Products({ dataPromise }: ProductsProps) {
                           </span>
                         </div>
                       )}
+                      
+                      {!item.pendingDeleteAt && item.bestSellerRank != null && item.showBestSellerBadge !== false && (
+                        <div className="absolute top-4 left-4 z-20">
+                          <span className="px-3 py-1 bg-gradient-to-r from-orange-400 to-yellow-500 text-white text-xs font-bold rounded-full shadow-lg shadow-orange-500/30 flex items-center gap-1 border border-white/20">
+                            Best Seller 🌟
+                          </span>
+                        </div>
+                      )}
 
                       {/* Admin Actions */}
                       {isLoggedIn && (
@@ -1107,6 +1132,9 @@ export default function Products({ dataPromise }: ProductsProps) {
                             <div className={`font-bold line-clamp-2 ${item.isPublished === false ? "text-gray-400" : "text-gray-800"}`} dangerouslySetInnerHTML={{ __html: getTitle(item) }} />
                             {item.pendingDeleteAt && (
                               <span className="inline-block mt-1 px-2 py-0.5 bg-red-100 text-red-600 text-[10px] font-bold rounded-full">รอยืนยันการลบ</span>
+                            )}
+                            {!item.pendingDeleteAt && item.bestSellerRank != null && item.showBestSellerBadge !== false && (
+                              <span className="inline-block mt-1 ml-1 px-2 py-0.5 bg-gradient-to-r from-orange-400 to-yellow-500 text-white text-[10px] font-bold rounded-full shadow-sm">Best Seller 🌟</span>
                             )}
                           </td>
                           <td className="py-3 px-4 text-sm text-gray-500 max-w-[150px] truncate">

@@ -159,6 +159,7 @@ export default function SavedBillingPage() {
             >
               {tab.label}
             </button>
+          ))}
         </div>
 
         {/* Table */}

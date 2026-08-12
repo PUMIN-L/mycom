@@ -53,6 +53,8 @@ export const POST = withRoute(
       desc_zh: data.desc_zh ?? "",
       createdAt: new Date().toISOString(),
       isPublished: data.isPublished !== false,
+      bestSellerRank: data.bestSellerRank ?? null,
+      showBestSellerBadge: data.showBestSellerBadge !== false,
     };
     const newProduct = await addProduct(product);
 

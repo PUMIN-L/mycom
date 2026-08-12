@@ -1,24 +1,22 @@
 import { NextResponse } from "next/server";
 import { query } from "../../../lib/db";
-import { getSession } from "../../../lib/session";
 import { sanitizePlainText } from "../../../lib/sanitizeHtml";
+import { withRoute, requireAuth, jsonError } from "../../../lib/apiHelpers";
 
-export async function PUT(request: Request, { params }: { params: Promise<{ id: string }> }) {
-  try {
-    const session = await getSession();
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+export const PUT = withRoute(
+  "Failed to update customer",
+  async (request: Request, { params }: { params: Promise<{ id: string }> }) => {
+    await requireAuth();
 
     const { id } = await params;
     const data = await request.json();
 
     if (!data.companyId || typeof data.companyId !== "string" || data.companyId.trim() === "") {
-      return NextResponse.json({ error: "companyId is required" }, { status: 400 });
+      return jsonError("companyId is required", 400);
     }
 
     if (!data.name || typeof data.name !== "string" || data.name.trim() === "") {
-      return NextResponse.json({ error: "Name is required" }, { status: 400 });
+      return jsonError("Name is required", 400);
     }
 
     const companyId = sanitizePlainText(data.companyId).substring(0, 255);
@@ -44,25 +42,17 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
     );
 
     return NextResponse.json({ success: true });
-  } catch (error: any) {
-    console.error("PUT /api/customers/[id] error:", error);
-    return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
   }
-}
+);
 
-export async function DELETE(request: Request, { params }: { params: Promise<{ id: string }> }) {
-  try {
-    const session = await getSession();
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+export const DELETE = withRoute(
+  "Failed to delete customer",
+  async (request: Request, { params }: { params: Promise<{ id: string }> }) => {
+    await requireAuth();
 
     const { id } = await params;
 
     await query("DELETE FROM customers WHERE id = ?", [id]);
     return NextResponse.json({ success: true });
-  } catch (error: any) {
-    console.error("DELETE /api/customers/[id] error:", error);
-    return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
   }
-}
+);
