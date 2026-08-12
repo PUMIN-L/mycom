@@ -52,11 +52,13 @@ export const PUT = withRoute(
       return NextResponse.json({ error: "Product not found" }, { status: 404 });
     }
 
-    // If the image was replaced, delete the old one from Cloudinary (fire-and-forget
-    // so we don't delay the response). safeDeleteCloudinaryImage checks that the
-    // image isn't referenced by any other product/content before actually deleting.
+    // If the image was replaced by a NEW valid URL, delete the old one from
+    // Cloudinary (fire-and-forget so we don't delay the response).
+    // IMPORTANT: Only delete when `updated.image` is a real URL — if the client
+    // accidentally sends `image: ""` we must NOT destroy the original asset.
     if (
       oldImageUrl &&
+      updated.image &&
       oldImageUrl !== updated.image &&
       oldImageUrl.includes("cloudinary.com")
     ) {

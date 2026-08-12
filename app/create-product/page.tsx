@@ -183,6 +183,7 @@ export default function CreateProduct() {
         title_zh: titleZh || titleEn || titleTh,
         desc_th: descTh,
         desc_en: descEn,
+        desc_zh: descZh,
         createdAt: new Date().toISOString(),
         supplierIds: selectedSupplierIds,
         bestSellerRank: bestSellerRank === "" ? null : Number(bestSellerRank),
