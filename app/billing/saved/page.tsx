@@ -109,7 +109,10 @@ export default function SavedBillingPage() {
       <div className="sticky top-0 z-20 bg-white border-b border-gray-200 shadow-sm">
         <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
           <h1 className="text-xl font-bold text-gray-900">📋 เอกสารที่บันทึกไว้</h1>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Link href="/" className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition">
+              🏠 หน้าแรก
+            </Link>
             <Link
               href="/billing"
               className="px-4 py-2 rounded-lg bg-orange-500 text-white text-sm font-bold hover:bg-orange-600 transition"
@@ -120,7 +123,7 @@ export default function SavedBillingPage() {
               href="/quotation/saved"
               className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition"
             >
-              ใบเสนอราคา
+              📋 ใบเสนอราคาที่บันทึกไว้
             </Link>
           </div>
         </div>
