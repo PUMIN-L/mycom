@@ -792,6 +792,9 @@ export default function QuotationPage() {
         <div className="max-w-[1400px] mx-auto px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
           <h1 className="text-xl font-bold text-gray-900">🧾 สร้างใบเสนอราคา</h1>
           <div className="flex items-center gap-2 flex-wrap">
+            <Link href="/" className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition">
+              🏠 หน้าแรก
+            </Link>
             <Link href="/showcase" className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition">
               ← กลับ
             </Link>
