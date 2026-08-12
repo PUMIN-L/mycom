@@ -224,6 +224,8 @@ describe('productStore', () => {
         createdAt: '2026-07-17T00:00:00.000Z',
         isPublished: true,
         sortOrder: 0,
+        bestSellerRank: null,
+        showBestSellerBadge: true,
         pendingDeleteAt: null,
         supplierIds: [],
       });
@@ -340,6 +342,8 @@ describe('productStore', () => {
         '2026-07-17T10:00:00.000Z',
         true,
         0,
+        null,
+        true,
       ]);
       expect(result).toEqual({ ...baseProduct, isPublished: true });
     });

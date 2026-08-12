@@ -42,7 +42,7 @@ process.env.DB_NAME = 'testdb';
 
 // A version SELECT result that MATCHES SCHEMA_VERSION (3) → bootstrap fast-path,
 // i.e. skip the whole CREATE TABLE / seed block.
-const SCHEMA_MATCH: [Array<{ value: string }>, unknown[]] = [[{ value: '17' }], []];
+const SCHEMA_MATCH: [Array<{ value: string }>, unknown[]] = [[{ value: '18' }], []];
 // An empty result → no schema_version row / no admin row → full bootstrap.
 const EMPTY: [unknown[], unknown[]] = [[], []];
 
@@ -138,10 +138,10 @@ describe('db.ts', () => {
         expect.stringContaining('INSERT IGNORE INTO users'),
         expect.arrayContaining(['admin-001', 'root', 'hashed-pw']),
       );
-      // Schema version is recorded so future cold instances take the fast-path.
+      // Schema version is recorded so future cold instances take the fast path
       expect(mockConnection.query).toHaveBeenCalledWith(
         expect.stringContaining("INSERT INTO settings"),
-        ['17'],
+        ['18'],
       );
       expect(mockConnection.release).toHaveBeenCalledTimes(1);
     });
