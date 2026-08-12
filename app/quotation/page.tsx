@@ -387,7 +387,7 @@ export default function QuotationPage() {
     if (p) {
       setItem(itemId, {
         productId: p.id,
-        name: stripHtml(p.title_th || p.title_en),
+        name: stripHtml(p.title_th || p.title_en).replace(/🐧/g, "").trim(),
         description: "",
         imageUrl: p.image,
         imageUploaded: false,
@@ -1017,7 +1017,7 @@ export default function QuotationPage() {
                   onChange={(val) => applyProduct(it.id, val)}
                   options={products.map((p) => ({
                     value: p.id,
-                    label: stripHtml(p.title_th || p.title_en)
+                    label: stripHtml(p.title_th || p.title_en).replace(/🐧/g, "").trim()
                   }))}
                 />
                 {it.productId && dbProductSpecs.filter(s => s.productId === it.productId).length > 0 && (
