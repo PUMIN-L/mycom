@@ -274,10 +274,10 @@ describe('listQuotations', () => {
 });
 
 describe('deleteQuotation', () => {
-  it('returns false and touches nothing else when the quotation does not exist', async () => {
+  it('returns null and touches nothing else when the quotation does not exist', async () => {
     mockQueryRouter({ quotationById: [] });
-    const ok = await deleteQuotation('nope');
-    expect(ok).toBe(false);
+    const result = await deleteQuotation('nope');
+    expect(result).toBeNull();
     expect(deleteCloudinaryImages).not.toHaveBeenCalled();
     // Only the getQuotation SELECT ran; no DELETE issued.
     expect(query).toHaveBeenCalledTimes(1);
@@ -300,8 +300,9 @@ describe('deleteQuotation', () => {
       deleteResult: { affectedRows: 1 },
     });
 
-    const ok = await deleteQuotation('q1');
-    expect(ok).toBe(true);
+    const result = await deleteQuotation('q1');
+    expect(result).not.toBeNull();
+    expect(result!.orphanedImages).toEqual([cld('a'), cld('b')]);
     // No Cloudinary auto-deletion — deferred to Orphan Scanner
     expect(deleteCloudinaryImages).not.toHaveBeenCalled();
     // Row DELETE issued with the id.
@@ -319,8 +320,9 @@ describe('deleteQuotation', () => {
       deleteResult: { affectedRows: 1 },
     });
 
-    const ok = await deleteQuotation('q1');
-    expect(ok).toBe(true);
+    const result = await deleteQuotation('q1');
+    expect(result).not.toBeNull();
+    expect(result!.orphanedImages).toEqual([]);  // no Cloudinary URLs
     expect(deleteCloudinaryImages).not.toHaveBeenCalled();
     // No products/contents lookup happened (deleteQuoteImagesSafely returned early).
     expect(vi.mocked(query).mock.calls.some((c) => /FROM products/.test(String(c[0])))).toBe(false);
@@ -345,7 +347,9 @@ describe('deleteQuotation', () => {
       deleteResult: { affectedRows: 1 },
     });
 
-    expect(await deleteQuotation('q1')).toBe(true);
+    const result = await deleteQuotation('q1');
+    expect(result).not.toBeNull();
+    expect(result!.orphanedImages).toEqual([cld('shared')]);  // Cloudinary image returned
     expect(deleteCloudinaryImages).not.toHaveBeenCalled();
     expect(deleteCallIndex()).toBeGreaterThanOrEqual(0);
   });
@@ -371,7 +375,9 @@ describe('deleteQuotation', () => {
       deleteResult: { affectedRows: 1 },
     });
 
-    expect(await deleteQuotation('q1')).toBe(true);
+    const result = await deleteQuotation('q1');
+    expect(result).not.toBeNull();
+    expect(result!.orphanedImages).toEqual([cld('shared-with-product'), cld('orphan')]);
     // No Cloudinary auto-deletion — images are left for the Orphan Scanner
     expect(deleteCloudinaryImages).not.toHaveBeenCalled();
   });
@@ -404,7 +410,7 @@ describe('deleteQuotation', () => {
       deleteResult: { affectedRows: 1 },
     });
 
-    expect(await deleteQuotation('q1')).toBe(true);
+    expect(await deleteQuotation('q1')).not.toBeNull();
     // No Cloudinary auto-deletion
     expect(deleteCloudinaryImages).not.toHaveBeenCalled();
   });

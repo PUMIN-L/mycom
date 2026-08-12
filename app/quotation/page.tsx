@@ -9,6 +9,7 @@ import { computeQuoteTotals } from "../lib/quotationTotals";
 import { stripHtml } from "../lib/stripHtml";
 import SearchableDropdown from "../components/SearchableDropdown";
 import ConfirmDialog from "../components/ConfirmDialog";
+import ImageDeleteConfirmDialog, { type OrphanedImage } from "../components/ImageDeleteConfirmDialog";
 
 // ── ใบเสนอราคา (Quotation builder) ──────────────────────────────────────────
 // Admin-only tool: fill the form on the left, see a live A4 sheet on the right,
@@ -213,6 +214,7 @@ export default function QuotationPage() {
   const [generating, setGenerating] = useState(false); // building the PDF
   const [savePrompt, setSavePrompt] = useState(false); // "keep 30d or delete now?" after download
   const [deletingQuote, setDeletingQuote] = useState(false);
+  const [orphanedImages, setOrphanedImages] = useState<OrphanedImage[]>([]);
   const [savingQuote, setSavingQuote] = useState(false); // "เซฟ" (save without printing)
   const [showResetConfirm, setShowResetConfirm] = useState(false); // reset form modal
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
@@ -716,10 +718,8 @@ export default function QuotationPage() {
     try {
       const res = await fetch(`/api/quotations/${q.id}`, { method: "DELETE" });
       if (res.ok) {
-        // The uploaded images are now gone from Cloudinary — detach from the
-        // deleted record (new id) and strip those dead image refs so a later
-        // re-download can't recreate a record pointing at destroyed assets.
-        // Catalog images (imageUploaded:false) stay.
+        const data = await res.json();
+        // Strip dead image refs from local state.
         setQ((prev) => ({
           ...prev,
           id: crypto.randomUUID(),
@@ -727,7 +727,14 @@ export default function QuotationPage() {
             it.imageUploaded ? { ...it, imageUrl: "", imageUploaded: false } : it
           ),
         }));
-        showToast("ลบใบเสนอราคาและรูปที่อัปโหลดออกจากคลาวด์แล้ว", "success");
+        showToast("ลบใบเสนอราคาแล้ว", "success");
+        // Show image deletion confirmation dialog
+        if (data.orphanedImages?.length > 0) {
+          setOrphanedImages(data.orphanedImages.map((url: string) => ({
+            url,
+            reason: "ลบใบเสนอราคา"
+          })));
+        }
       } else {
         showToast("ลบไม่สำเร็จ", "error");
       }
@@ -752,6 +759,7 @@ export default function QuotationPage() {
   const labelCls = "block text-xs font-semibold text-gray-600 mb-1";
 
   return (
+    <>
     <div className="min-h-screen bg-gray-100">
       {toast && <Toast message={toast.message} type={toast.type} />}
 
@@ -1419,5 +1427,13 @@ export default function QuotationPage() {
         </div>
       </div>
     </div>
+
+    {orphanedImages.length > 0 && (
+      <ImageDeleteConfirmDialog
+        images={orphanedImages}
+        onComplete={() => setOrphanedImages([])}
+      />
+    )}
+    </>
   );
 }

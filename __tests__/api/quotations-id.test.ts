@@ -74,24 +74,23 @@ describe('Quotation [id] API', () => {
       expect(deleteQuotation).not.toHaveBeenCalled();
     });
 
-    it('returns 200 { success: true } when the quotation is deleted', async () => {
+    it('returns 200 with orphanedImages when the quotation is deleted', async () => {
       vi.mocked(getSession).mockResolvedValue(adminSession);
-      vi.mocked(deleteQuotation).mockResolvedValue(true);
+      vi.mocked(deleteQuotation).mockResolvedValue({ orphanedImages: ['https://res.cloudinary.com/demo/image/upload/v1/img.jpg'] });
       const res = await DELETE(deleteReq(), ctx('q1'));
       expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ success: true });
+      const json = await res.json();
+      expect(json.success).toBe(true);
+      expect(json.orphanedImages).toEqual(['https://res.cloudinary.com/demo/image/upload/v1/img.jpg']);
       expect(deleteQuotation).toHaveBeenCalledWith('q1');
     });
 
-    // NOTE: the route does NOT 404 on a missing id — deleteQuotation returns
-    // false and the handler still responds 200 { success: false }. Documenting
-    // ACTUAL behavior (see gap report; assignment expected 404).
-    it('returns 200 { success: false } when the quotation did not exist', async () => {
+    it('returns 404 when the quotation did not exist', async () => {
       vi.mocked(getSession).mockResolvedValue(adminSession);
-      vi.mocked(deleteQuotation).mockResolvedValue(false);
+      vi.mocked(deleteQuotation).mockResolvedValue(null);
       const res = await DELETE(deleteReq(), ctx('missing'));
-      expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ success: false });
+      expect(res.status).toBe(404);
+      expect((await res.json()).success).toBe(false);
     });
   });
 });

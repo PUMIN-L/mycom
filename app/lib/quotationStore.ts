@@ -237,16 +237,19 @@ export async function listQuotations(): Promise<QuotationSummary[]> {
 }
 
 /**
- * Delete a quotation and its uploaded images from Cloudinary. Catalog images
- * are never in `uploadedImages`, so product photos are unaffected.
- * Returns false if the quotation didn't exist.
+ * Delete a quotation. Returns the list of uploaded image URLs that are now
+ * orphaned (the caller/UI should show a confirmation dialog before deleting
+ * them from Cloudinary). Returns null if the quotation didn't exist.
  */
-export async function deleteQuotation(id: string): Promise<boolean> {
+export async function deleteQuotation(id: string): Promise<{ orphanedImages: string[] } | null> {
   const rec = await getQuotation(id);
-  if (!rec) return false;
+  if (!rec) return null;
+  // No auto-delete — just log. Images are returned for client-side confirmation.
   await deleteQuoteImagesSafely(rec.uploadedImages);
   await query("DELETE FROM quotations WHERE id = ?", [id]);
-  return true;
+  // Filter to only Cloudinary URLs
+  const orphanedImages = rec.uploadedImages.filter((u) => u.includes("cloudinary.com"));
+  return { orphanedImages };
 }
 
 /**

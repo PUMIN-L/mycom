@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useAuth } from "../../context/AuthContext";
 import ConfirmDialog from "../../components/ConfirmDialog";
 import Toast from "../../components/Toast";
+import ImageDeleteConfirmDialog, { type OrphanedImage } from "../../components/ImageDeleteConfirmDialog";
 import { BILLING_LABELS } from "../../lib/billingNumber";
 import type { BillingDocType } from "../../lib/billingNumber";
 
@@ -47,6 +48,7 @@ export default function SavedBillingPage() {
   const [pendingDelete, setPendingDelete] = useState<BillingSummary | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
+  const [orphanedImages, setOrphanedImages] = useState<OrphanedImage[]>([]);
 
   useEffect(() => {
     if (!isLoading && !isLoggedIn) router.replace("/login");
@@ -99,8 +101,15 @@ export default function SavedBillingPage() {
 
       const res = await fetch(endpoint, { method: "DELETE" });
       if (res.ok) {
+        const data = await res.json();
         setItems((prev) => prev.filter((x) => x.id !== pendingDelete.id));
         showToast("ลบเอกสารแล้ว", "success");
+        if (data.orphanedImages?.length > 0) {
+          setOrphanedImages(data.orphanedImages.map((url: string) => ({
+            url,
+            reason: "ลบเอกสาร"
+          })));
+        }
       } else {
         showToast("ลบไม่สำเร็จ", "error");
       }
@@ -123,6 +132,7 @@ export default function SavedBillingPage() {
   }
 
   return (
+    <>
     <div className="min-h-screen bg-gray-50">
       {toast && <Toast message={toast.message} type={toast.type} />}
 
@@ -290,5 +300,13 @@ export default function SavedBillingPage() {
         />
       )}
     </div>
+
+    {orphanedImages.length > 0 && (
+      <ImageDeleteConfirmDialog
+        images={orphanedImages}
+        onComplete={() => setOrphanedImages([])}
+      />
+    )}
+    </>
   );
 }

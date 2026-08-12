@@ -18,14 +18,17 @@ export const GET = withRoute(
   }
 );
 
-// DELETE /api/quotations/[id] (login required) — remove the quotation and the
-// images uploaded for it from Cloudinary. Catalog/product images are untouched.
+// DELETE /api/quotations/[id] (login required) — remove the quotation.
+// Returns orphanedImages for client-side deletion confirmation.
 export const DELETE = withRoute(
   "ลบใบเสนอราคาไม่สำเร็จ",
   async (_request: NextRequest, { params }: Ctx) => {
     await requireAuth();
     const { id } = await params;
-    const ok = await deleteQuotation(id);
-    return NextResponse.json({ success: ok });
+    const result = await deleteQuotation(id);
+    if (!result) {
+      return NextResponse.json({ success: false }, { status: 404 });
+    }
+    return NextResponse.json({ success: true, orphanedImages: result.orphanedImages });
   }
 );
