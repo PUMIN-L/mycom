@@ -254,7 +254,21 @@ export default function QuotationPage() {
         .then((r) => (r.ok ? r.json() : null))
         .then((rec) => {
           if (rec?.data && Array.isArray(rec.data.items)) {
-            setQ(migrateQuoteState({ ...emptyState(), ...rec.data, id: rec.id || reopenId }));
+            const isClone = new URLSearchParams(window.location.search).get("action") === "clone";
+            let migrated = migrateQuoteState({ ...emptyState(), ...rec.data, id: rec.id || reopenId });
+            
+            if (isClone) {
+              const vMatch = migrated.docNo.match(/-V(\d+)$/);
+              if (vMatch) {
+                const nextV = parseInt(vMatch[1], 10) + 1;
+                migrated.docNo = migrated.docNo.replace(/-V\d+$/, `-V${nextV}`);
+              } else {
+                migrated.docNo = migrated.docNo + "-V1";
+              }
+              migrated.id = crypto.randomUUID();
+            }
+            
+            setQ(migrated);
           } else {
             showToast("ไม่พบใบเสนอราคานี้ — เริ่มใบใหม่แทน", "error");
             seedFresh();

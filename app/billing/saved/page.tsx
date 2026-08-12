@@ -248,12 +248,24 @@ export default function SavedBillingPage() {
                         </span>
                       </td>
                       <td className="px-4 py-3 text-right">
-                        <button
-                          onClick={(e) => { e.stopPropagation(); setPendingDelete(item); }}
-                          className="text-xs text-red-500 hover:text-red-700 font-semibold"
-                        >
-                          🗑️ ลบ
-                        </button>
+                        <div className="flex items-center justify-end gap-3">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (item.docType === "quotation") router.push(`/quotation?id=${item.id}&action=clone`);
+                              else router.push(`/billing?id=${item.id}&action=clone`);
+                            }}
+                            className="text-xs text-blue-500 hover:text-blue-700 font-semibold flex items-center gap-1"
+                          >
+                            <span>✏️</span> แก้ไข (New Ver.)
+                          </button>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setPendingDelete(item); }}
+                            className="text-xs text-red-500 hover:text-red-700 font-semibold flex items-center gap-1"
+                          >
+                            <span>🗑️</span> ลบ
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
