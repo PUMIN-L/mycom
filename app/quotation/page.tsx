@@ -252,20 +252,43 @@ export default function QuotationPage() {
       // regardless of the client auth-context loading state.
       fetch(`/api/quotations/${encodeURIComponent(reopenId)}`)
         .then((r) => (r.ok ? r.json() : null))
-        .then((rec) => {
+        .then(async (rec) => {
           if (rec?.data && Array.isArray(rec.data.items)) {
             const isClone = new URLSearchParams(window.location.search).get("action") === "clone";
             let migrated = migrateQuoteState({ ...emptyState(), ...rec.data, id: rec.id || reopenId });
             
             if (isClone) {
-              const vMatch = migrated.docNo.match(/-V(\d+)$/);
-              if (vMatch) {
-                const nextV = parseInt(vMatch[1], 10) + 1;
-                migrated.docNo = migrated.docNo.replace(/-V\d+$/, `-V${nextV}`);
-              } else {
-                migrated.docNo = migrated.docNo + "-V1";
+              const baseDocNo = migrated.docNo.replace(/-V\d+$/, "");
+              
+              // Fetch docs directly to avoid race condition with existingDocs state
+              let maxV = 0;
+              try {
+                const res = await fetch("/api/quotations/docnos");
+                const list = await res.json();
+                const docs = Array.isArray(list) ? list : [];
+                docs.forEach(d => {
+                  if (d.docNo && d.docNo.startsWith(baseDocNo)) {
+                    const match = d.docNo.match(/-V(\d+)$/);
+                    if (match) {
+                      const v = parseInt(match[1], 10);
+                      if (v > maxV) maxV = v;
+                    } else if (d.docNo === baseDocNo) {
+                      if (maxV === 0) maxV = 0;
+                    }
+                  }
+                });
+              } catch (e) {
+                // If fetch fails, fallback to simple increment
+                const vMatch = migrated.docNo.match(/-V(\d+)$/);
+                if (vMatch) maxV = parseInt(vMatch[1], 10);
               }
-              migrated.id = crypto.randomUUID();
+              
+              migrated.docNo = `${baseDocNo}-V${maxV + 1}`;
+              
+              // safe fallback for crypto.randomUUID
+              migrated.id = typeof crypto !== 'undefined' && crypto.randomUUID 
+                ? crypto.randomUUID() 
+                : Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
             }
             
             setQ(migrated);

@@ -226,7 +226,7 @@ function summarize(data: QuoteDataLite): { customer: string; total: number } {
 
 export async function listQuotations(): Promise<QuotationSummary[]> {
   const [rows] = await query<RowDataPacket[]>(
-    "SELECT id, docNo, data, createdAt FROM quotations ORDER BY createdAt DESC"
+    "SELECT id, docNo, data, createdAt FROM quotations ORDER BY createdAt DESC LIMIT 200"
   );
   return rows.map((r) => {
     const { customer, total } = summarize(parseJson<QuoteDataLite>(r.data, {}));

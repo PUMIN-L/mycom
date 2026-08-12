@@ -64,6 +64,7 @@ export const POST = withRoute(
     const name = String(body.name ?? "").trim();
     const email = String(body.email ?? "").trim();
     const phone = String(body.phone ?? "").trim();
+    const normalizedPhone = phone.replace(/[^\d]/g, "");
     const subject = String(body.subject ?? "").trim();
     const message = String(body.message ?? "").trim();
 
@@ -88,7 +89,7 @@ export const POST = withRoute(
         { status: 400 }
       );
     }
-    if (!/^\d{9,10}$/.test(phone)) {
+    if (!/^\d{9,10}$/.test(normalizedPhone)) {
       return NextResponse.json(
         { error: "invalid_phone" },
         { status: 400 }

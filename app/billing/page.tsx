@@ -165,7 +165,7 @@ export default function BillingPage() {
       .catch(() => {});
 
     // Load existing docNos for duplicate check
-    fetch("/api/quotations/docnos")
+    fetch("/api/billing")
       .then((r) => (r.ok ? r.json() : []))
       .then((list) =>
         setExistingDocs(Array.isArray(list) ? list.map((x: any) => ({ docNo: x.docNo })) : [])
@@ -180,21 +180,44 @@ export default function BillingPage() {
       isFreshRef.current = false; // reopening — don't overwrite docNo
       fetch(`/api/billing/${reopenId}`)
         .then((r) => (r.ok ? r.json() : null))
-        .then((doc) => {
+        .then(async (doc) => {
           if (doc?.data) {
             const isClone = new URLSearchParams(window.location.search).get("action") === "clone";
             let newDocNo = doc.docNo || "";
             let newId = doc.id;
             
             if (isClone) {
-              const vMatch = newDocNo.match(/-V(\d+)$/);
-              if (vMatch) {
-                const nextV = parseInt(vMatch[1], 10) + 1;
-                newDocNo = newDocNo.replace(/-V\d+$/, `-V${nextV}`);
-              } else {
-                newDocNo = newDocNo + "-V1";
+              const baseDocNo = newDocNo.replace(/-V\d+$/, "");
+              
+              // Fetch docs directly to avoid race condition with existingDocs state
+              let maxV = 0;
+              try {
+                const res = await fetch("/api/billing");
+                const list = await res.json();
+                const docs = Array.isArray(list) ? list : [];
+                docs.forEach(d => {
+                  if (d.docNo && d.docNo.startsWith(baseDocNo)) {
+                    const match = d.docNo.match(/-V(\d+)$/);
+                    if (match) {
+                      const v = parseInt(match[1], 10);
+                      if (v > maxV) maxV = v;
+                    } else if (d.docNo === baseDocNo) {
+                      if (maxV === 0) maxV = 0;
+                    }
+                  }
+                });
+              } catch (e) {
+                // If fetch fails, fallback to simple increment
+                const vMatch = newDocNo.match(/-V(\d+)$/);
+                if (vMatch) maxV = parseInt(vMatch[1], 10);
               }
-              newId = crypto.randomUUID();
+              
+              newDocNo = `${baseDocNo}-V${maxV + 1}`;
+              
+              // safe fallback for crypto.randomUUID
+              newId = typeof crypto !== 'undefined' && crypto.randomUUID 
+                ? crypto.randomUUID() 
+                : Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
             }
 
             setB({

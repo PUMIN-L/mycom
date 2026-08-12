@@ -149,7 +149,7 @@ export async function listBillingDocuments(
     sql += " WHERE docType = ?";
     params.push(docType);
   }
-  sql += " ORDER BY createdAt DESC";
+  sql += " ORDER BY createdAt DESC LIMIT 200";
 
   const [rows] = await query<RowDataPacket[]>(sql, params);
   return rows.map((r) => {
