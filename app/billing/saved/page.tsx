@@ -119,12 +119,6 @@ export default function SavedBillingPage() {
             >
               + สร้างเอกสารใหม่
             </Link>
-            <Link
-              href="/quotation/saved"
-              className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition"
-            >
-              📋 ใบเสนอราคาที่บันทึกไว้
-            </Link>
           </div>
         </div>
       </div>
@@ -145,6 +139,12 @@ export default function SavedBillingPage() {
               {tab.label}
             </button>
           ))}
+          <Link
+            href="/quotation/saved"
+            className="px-4 py-2 rounded-lg text-sm font-semibold transition bg-white border border-gray-300 text-gray-600 hover:bg-gray-50 flex items-center"
+          >
+            📋 ใบเสนอราคา
+          </Link>
         </div>
 
         {/* Table */}
