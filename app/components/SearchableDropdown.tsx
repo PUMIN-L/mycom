@@ -5,6 +5,7 @@ export interface SearchableDropdownOption {
   value: string;
   label: string;
   subLabel?: string;
+  disabled?: boolean;
 }
 
 interface SearchableDropdownProps {
@@ -102,19 +103,22 @@ export default function SearchableDropdown({
                 <button
                   key={opt.value}
                   type="button"
+                  disabled={opt.disabled}
                   className={`w-full text-left px-3 py-2 text-sm rounded-lg transition flex flex-col ${
+                    opt.disabled ? "opacity-50 cursor-not-allowed bg-gray-50" :
                     selectedOption?.value === opt.value
                       ? "bg-orange-50 text-orange-700"
                       : "hover:bg-gray-50 text-gray-700"
                   }`}
                   onClick={() => {
+                    if (opt.disabled) return;
                     onChange(opt.value);
                     setIsOpen(false);
                   }}
                 >
                   <span className="font-semibold">{opt.label}</span>
                   {opt.subLabel && (
-                    <span className={`text-xs mt-0.5 ${selectedOption?.value === opt.value ? "text-orange-600/80" : "text-gray-500"}`}>
+                    <span className={`text-xs mt-0.5 ${opt.disabled ? "text-gray-400" : selectedOption?.value === opt.value ? "text-orange-600/80" : "text-gray-500"}`}>
                       {opt.subLabel}
                     </span>
                   )}

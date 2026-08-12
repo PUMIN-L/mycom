@@ -6,6 +6,7 @@ import RichTextEditor from "../../components/RichTextEditor";
 import Toast from "../../components/Toast";
 import ErrorModal from "../../components/ErrorModal";
 import MultiSelectDropdown from "../../components/MultiSelectDropdown";
+import SearchableDropdown from "../../components/SearchableDropdown";
 import { stripHtml } from "../../lib/stripHtml";
 
 interface ProductCategory {
@@ -27,6 +28,7 @@ export default function EditProduct({ params }: { params: Promise<{ id: string }
 
   const [categories, setCategories] = useState<ProductCategory[]>([]);
   const [suppliers, setSuppliers] = useState<any[]>([]);
+  const [allProducts, setAllProducts] = useState<any[]>([]);
   const [loadingCategories, setLoadingCategories] = useState(true);
   const [selectedSupplierIds, setSelectedSupplierIds] = useState<string[]>([]);
   const [loadingProduct, setLoadingProduct] = useState(true);
@@ -73,9 +75,10 @@ export default function EditProduct({ params }: { params: Promise<{ id: string }
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [catRes, supRes] = await Promise.all([
+        const [catRes, supRes, prodRes] = await Promise.all([
           fetch("/api/products/categories"),
-          fetch("/api/suppliers")
+          fetch("/api/suppliers"),
+          fetch("/api/products")
         ]);
         if (catRes.ok) {
           const data = await catRes.json();
@@ -84,6 +87,10 @@ export default function EditProduct({ params }: { params: Promise<{ id: string }
         if (supRes.ok) {
           const supData = await supRes.json();
           setSuppliers(supData);
+        }
+        if (prodRes.ok) {
+          const prodData = await prodRes.json();
+          setAllProducts(prodData);
         }
       } catch (err) {
         console.error("Error fetching data:", err);
@@ -409,15 +416,25 @@ export default function EditProduct({ params }: { params: Promise<{ id: string }
           <div className="flex flex-col sm:flex-row gap-6 sm:items-center">
             <div className="flex flex-col gap-1">
               <label className="text-sm font-medium text-gray-700">อันดับ Best Seller</label>
-              <input
-                type="number"
-                min="1"
-                placeholder="ไม่มีลำดับ"
-                value={bestSellerRank === "" ? "" : bestSellerRank}
-                onChange={(e) => setBestSellerRank(e.target.value === "" ? "" : Number(e.target.value))}
-                className="w-32 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500"
+              <SearchableDropdown
+                options={[
+                  { value: "", label: "ไม่มีลำดับ", subLabel: "ไม่เป็นสินค้าขายดี" },
+                  ...Array.from({ length: 50 }, (_, i) => {
+                    const rank = i + 1;
+                    const existing = allProducts.find(p => p.bestSellerRank === rank);
+                    return {
+                      value: String(rank),
+                      label: `อันดับ ${rank}`,
+                      subLabel: existing ? (existing.id === productId ? "(อันดับปัจจุบัน)" : `ใช้งานอยู่โดย: ${stripHtml(existing.title_th || existing.title_en || "ไม่มีชื่อ")}`) : "ว่าง",
+                      disabled: !!existing && existing.id !== productId
+                    };
+                  })
+                ]}
+                value={bestSellerRank === "" ? "" : String(bestSellerRank)}
+                onChange={(val) => setBestSellerRank(val === "" ? "" : Number(val))}
+                placeholder="เลือกอันดับ..."
+                className="w-56"
               />
-              <span className="text-xs text-gray-400">เว้นว่างหากไม่ใช่สินค้าขายดี</span>
             </div>
             
             <div className="flex items-center gap-2 mt-2 sm:mt-0 pt-2 sm:pt-4">
