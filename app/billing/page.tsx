@@ -493,13 +493,15 @@ export default function BillingPage() {
                 ✏️ แก้ไข (New Ver.)
               </Link>
             )}
-            <button
-              onClick={handleDownload}
-              disabled={generating || docNoDup}
-              className="px-5 py-2 rounded-lg bg-orange-500 text-white text-sm font-bold hover:bg-orange-600 transition shadow-sm disabled:opacity-50"
-            >
-              {generating ? "กำลังสร้าง..." : "⬇️ ดาวน์โหลด PDF"}
-            </button>
+            {isViewOnly && (
+              <button
+                onClick={handleDownload}
+                disabled={generating || docNoDup}
+                className="px-5 py-2 rounded-lg bg-orange-500 text-white text-sm font-bold hover:bg-orange-600 transition shadow-sm disabled:opacity-50"
+              >
+                {generating ? "กำลังสร้าง..." : "⬇️ ดาวน์โหลด PDF"}
+              </button>
+            )}
           </div>
         </div>
       </div>
