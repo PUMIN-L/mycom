@@ -32,7 +32,7 @@ function daysLeft(createdAt: string): number {
 
 const TAB_OPTIONS: { value: CombinedDocType | "all"; label: string }[] = [
   { value: "all", label: "ทั้งหมด" },
-  { value: "invoice", label: "🧾 ใบแจ้งหนี้" },
+  { value: "invoice", label: "🧾 ใบแจ้งหนี้ / ใบกำกับภาษี" },
   { value: "billing_note", label: "📋 ใบวางบิล" },
   { value: "receipt", label: "🧾 ใบเสร็จ" },
   { value: "quotation", label: "📋 ใบเสนอราคา" },

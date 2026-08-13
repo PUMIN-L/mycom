@@ -12,7 +12,7 @@ export const BILLING_PREFIX: Record<BillingDocType, string> = {
 };
 
 export const BILLING_LABELS: Record<BillingDocType, { th: string; en: string }> = {
-  invoice: { th: "ใบแจ้งหนี้", en: "INVOICE" },
+  invoice: { th: "ใบแจ้งหนี้ / ใบกำกับภาษี", en: "INVOICE / TAX INVOICE" },
   billing_note: { th: "ใบวางบิล", en: "BILLING NOTE" },
   receipt: { th: "ใบเสร็จรับเงิน", en: "RECEIPT" },
 };

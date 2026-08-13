@@ -50,6 +50,7 @@ interface BillingState {
   companyTaxId: string;
   customerContact: string;
   customerCompany: string;
+  customerTaxId: string;
   customerAddress: string;
   customerPhone: string;
   customerEmail: string;
@@ -92,6 +93,7 @@ const emptyState = (): BillingState => {
     companyTaxId: "",
     customerContact: "",
     customerCompany: "",
+    customerTaxId: "",
     customerAddress: "",
     customerPhone: "",
     customerEmail: "",
@@ -115,7 +117,7 @@ const thaiDate = (iso: string) => {
 };
 
 const DOC_TYPE_OPTIONS: { value: BillingDocType; label: string }[] = [
-  { value: "invoice", label: "🧾 ใบแจ้งหนี้ (Invoice)" },
+  { value: "invoice", label: "🧾 ใบแจ้งหนี้ / ใบกำกับภาษี (Invoice / Tax Invoice)" },
   { value: "billing_note", label: "📋 ใบวางบิล (Billing Note)" },
   { value: "receipt", label: "🧾 ใบเสร็จรับเงิน (Receipt)" },
 ];
@@ -281,6 +283,7 @@ export default function BillingPage() {
         companyTaxId: data.companyTaxId || prev.companyTaxId,
         customerContact: data.customerContact || prev.customerContact,
         customerCompany: data.customerCompany || prev.customerCompany,
+        customerTaxId: data.customerTaxId || prev.customerTaxId,
         customerAddress: data.customerAddress || prev.customerAddress,
         customerPhone: data.customerPhone || prev.customerPhone,
         customerEmail: data.customerEmail || prev.customerEmail,
@@ -555,6 +558,7 @@ export default function BillingPage() {
             <h2 className="font-bold text-gray-800">👤 ข้อมูลลูกค้า</h2>
             {[
               { key: "customerCompany" as const, label: "บริษัท/ชื่อลูกค้า" },
+              { key: "customerTaxId" as const, label: "เลขประจำตัวผู้เสียภาษี" },
               { key: "customerContact" as const, label: "ผู้ติดต่อ" },
               { key: "customerAddress" as const, label: "ที่อยู่" },
               { key: "customerPhone" as const, label: "โทรศัพท์" },
@@ -723,6 +727,7 @@ export default function BillingPage() {
               <div className="flex-1">
                 <div className="font-bold text-gray-700 mb-1">ลูกค้า (To)</div>
                 <div className="font-semibold">{b.customerCompany || "-"}</div>
+                {b.customerTaxId && <div className="text-gray-700">เลขประจำตัวผู้เสียภาษี: {b.customerTaxId}</div>}
                 {b.customerContact && <div>ผู้ติดต่อ: {b.customerContact}</div>}
                 {b.customerAddress && <div className="whitespace-pre-line text-gray-700">ที่อยู่: {b.customerAddress}</div>}
                 {b.customerPhone && <div className="text-gray-700">โทร {b.customerPhone}</div>}

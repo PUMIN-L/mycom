@@ -50,14 +50,14 @@ export default function DashboardActions() {
     {
       href: "/billing",
       title: "สร้างเอกสาร (Invoice/ใบวางบิล/ใบเสร็จ)",
-      description: "สร้างใบแจ้งหนี้ ใบวางบิล หรือใบเสร็จรับเงิน",
+      description: "สร้างใบแจ้งหนี้/ใบกำกับภาษี ใบวางบิล หรือใบเสร็จรับเงิน",
       icon: "📄",
       color: "bg-amber-50 text-amber-600 border-amber-200 hover:border-amber-400 hover:shadow-amber-100",
     },
     {
       href: "/billing/saved",
       title: "ประวัติเอกสาร",
-      description: "ดูใบแจ้งหนี้ ใบวางบิล ใบเสร็จที่บันทึกไว้",
+      description: "ดูใบแจ้งหนี้/ใบกำกับภาษี ใบวางบิล ใบเสร็จที่บันทึกไว้",
       icon: "📑",
       color: "bg-lime-50 text-lime-600 border-lime-200 hover:border-lime-400 hover:shadow-lime-100",
     },
