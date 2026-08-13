@@ -475,14 +475,7 @@ export default function BillingPage() {
             <Link href="/billing/saved" className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition">
               📋 เอกสารที่บันทึกไว้
             </Link>
-            {!isViewOnly && !isEditing && (
-              <button
-                onClick={() => { isFreshRef.current = true; setB(emptyState()); }}
-                className="px-4 py-2 rounded-lg border border-red-300 text-red-500 text-sm font-semibold hover:bg-red-50 transition"
-              >
-                ↺ เริ่มใหม่
-              </button>
-            )}
+
             {!isViewOnly && (
               <button
                 onClick={handleSave}
