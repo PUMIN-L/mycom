@@ -116,7 +116,7 @@ export default function SavedQuotationsPage() {
         <div className="flex items-center justify-between gap-3 flex-wrap mb-6">
           <h1 className="text-3xl font-bold text-gray-900">📋 ใบเสนอราคาที่บันทึกไว้</h1>
           <div className="flex gap-2">
-            <Link href="/quotation" className="px-4 py-2 rounded-lg bg-orange-500 text-white text-sm font-bold hover:bg-orange-600 transition">
+            <Link href="/quotation?new=1" className="px-4 py-2 rounded-lg bg-orange-500 text-white text-sm font-bold hover:bg-orange-600 transition">
               + สร้างใหม่
             </Link>
             <Link href="/showcase" className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition">
@@ -159,10 +159,16 @@ export default function SavedQuotationsPage() {
                     <div className="font-bold text-gray-900">฿{fmt(it.total)}</div>
                   </div>
                   <Link
-                    href={`/quotation?id=${encodeURIComponent(it.id)}`}
+                    href={`/quotation?id=${encodeURIComponent(it.id)}&view=1`}
                     className="px-4 py-2 rounded-lg bg-orange-100 text-orange-600 border border-orange-300 text-sm font-semibold hover:bg-orange-200 transition"
                   >
-                    เปิด/แก้ไข
+                    👁️ ดูเอกสาร
+                  </Link>
+                  <Link
+                    href={`/quotation?id=${encodeURIComponent(it.id)}&action=clone`}
+                    className="px-4 py-2 rounded-lg bg-blue-100 text-blue-600 border border-blue-300 text-sm font-semibold hover:bg-blue-200 transition"
+                  >
+                    ✏️ แก้ไข (New Ver.)
                   </Link>
                   <button
                     onClick={() => setPendingDelete(it)}

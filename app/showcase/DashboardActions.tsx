@@ -34,7 +34,7 @@ export default function DashboardActions() {
       color: "bg-blue-50 text-blue-600 border-blue-200 hover:border-blue-400 hover:shadow-blue-100",
     },
     {
-      href: "/quotation",
+      href: "/quotation?new=1",
       title: "สร้างใบเสนอราคา",
       description: "ทำใบเสนอราคาใหม่ให้ลูกค้า",
       icon: "🧾",

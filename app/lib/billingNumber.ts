@@ -19,7 +19,7 @@ export const BILLING_LABELS: Record<BillingDocType, { th: string; en: string }> 
 
 /** Build the date prefix for a billing docNo, e.g. "INV20260810-" */
 export function billingDatePrefix(docType: BillingDocType, isoDate: string): string {
-  const dateStr = isoDate.replace(/-/g, "");
+  const dateStr = isoDate.substring(2).replace(/-/g, "");
   return `${BILLING_PREFIX[docType]}${dateStr}-`;
 }
 

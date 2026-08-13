@@ -217,6 +217,7 @@ export default function QuotationPage() {
   const [orphanedImages, setOrphanedImages] = useState<OrphanedImage[]>([]);
   const [savingQuote, setSavingQuote] = useState(false); // "เซฟ" (save without printing)
   const [showResetConfirm, setShowResetConfirm] = useState(false); // reset form modal
+  const [isViewOnly, setIsViewOnly] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const uploadTargetRef = useRef<string | null>(null);
@@ -243,12 +244,14 @@ export default function QuotationPage() {
         ...emptyState(),
         id: crypto.randomUUID(),
         docDate: iso,
-        docNo: `QT${iso.replace(/-/g, "")}-${pad2(DOCNO_START)}`,
+        docNo: `QT${iso.substring(2).replace(/-/g, "")}-${pad2(DOCNO_START)}`,
         items: [newItem()],
       });
     };
 
     const reopenId = new URLSearchParams(window.location.search).get("id");
+    const isView = new URLSearchParams(window.location.search).get("view") === "1";
+    if (isView) setIsViewOnly(true);
     if (reopenId) {
       // Reopen a saved record. Auth is via the session cookie, so this works
       // regardless of the client auth-context loading state.
@@ -260,7 +263,7 @@ export default function QuotationPage() {
             let migrated = migrateQuoteState({ ...emptyState(), ...rec.data, id: rec.id || reopenId });
             
             if (isClone) {
-              const baseDocNo = migrated.docNo.replace(/-V\d+$/, "");
+              const baseDocNo = migrated.docNo.replace(/(?:-V|v)\d+$/i, "");
               
               // Fetch docs directly to avoid race condition with existingDocs state
               let maxV = 0;
@@ -270,7 +273,7 @@ export default function QuotationPage() {
                 const docs = Array.isArray(list) ? list : [];
                 docs.forEach(d => {
                   if (d.docNo && d.docNo.startsWith(baseDocNo)) {
-                    const match = d.docNo.match(/-V(\d+)$/);
+                    const match = d.docNo.match(/(?:-V|v)(\d+)$/i);
                     if (match) {
                       const v = parseInt(match[1], 10);
                       if (v > maxV) maxV = v;
@@ -281,11 +284,11 @@ export default function QuotationPage() {
                 });
               } catch (e) {
                 // If fetch fails, fallback to simple increment
-                const vMatch = migrated.docNo.match(/-V(\d+)$/);
+                const vMatch = migrated.docNo.match(/(?:-V|v)(\d+)$/i);
                 if (vMatch) maxV = parseInt(vMatch[1], 10);
               }
               
-              migrated.docNo = `${baseDocNo}-V${maxV + 1}`;
+              migrated.docNo = `${baseDocNo}v${maxV + 1}`;
               
               // safe fallback for crypto.randomUUID
               migrated.id = typeof crypto !== 'undefined' && crypto.randomUUID 
@@ -306,31 +309,11 @@ export default function QuotationPage() {
       return;
     }
 
-    let draft: QuoteState | null = null;
-    try {
-      const raw = localStorage.getItem(DRAFT_KEY);
-      if (raw) draft = JSON.parse(raw);
-    } catch {
-      /* corrupted draft — start fresh */
-    }
-    if (draft && Array.isArray(draft.items)) {
-      // Older drafts may lack id — mint one so save/delete has a stable key.
-      setQ(migrateQuoteState({ ...emptyState(), ...draft, id: draft.id || crypto.randomUUID() }));
-    } else {
-      seedFresh();
-    }
+    seedFresh();
     hydratedRef.current = true;
   }, []);
 
-  // Autosave draft (skip until hydrated so we don't clobber it with the empty state)
-  useEffect(() => {
-    if (!hydratedRef.current) return;
-    try {
-      localStorage.setItem(DRAFT_KEY, JSON.stringify(q));
-    } catch {
-      /* storage full/blocked — nonfatal */
-    }
-  }, [q]);
+
 
   // Product list for the "เลือกจากสินค้า" autofill
   useEffect(() => {
@@ -385,7 +368,7 @@ export default function QuotationPage() {
   useEffect(() => {
     if (!isFreshRef.current) return;
     setQ((prev) => {
-      const prefix = `QT${prev.docDate.replace(/-/g, "")}-`;
+      const prefix = `QT${prev.docDate.substring(2).replace(/-/g, "")}-`;
       if (prev.docNo !== `${prefix}${pad2(DOCNO_START)}`) return prev; // user edited it
       const next = nextDocNo(prefix, existingDocs.map((u) => u.docNo));
       return next === prev.docNo ? prev : { ...prev, docNo: next };
@@ -773,7 +756,7 @@ export default function QuotationPage() {
             setShowResetConfirm(false);
             localStorage.removeItem(DRAFT_KEY);
             const iso = new Date().toISOString().slice(0, 10);
-            const prefix = `QT${iso.replace(/-/g, "")}-`;
+            const prefix = `QT${iso.substring(2).replace(/-/g, "")}-`;
             isFreshRef.current = true;
             setQ({ ...emptyState(), id: crypto.randomUUID(), docDate: iso, docNo: nextDocNo(prefix, existingDocs.map((u) => u.docNo)), items: [newItem()] });
           }}
@@ -846,19 +829,31 @@ export default function QuotationPage() {
             <Link href="/quotation/saved" className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition">
               📋 ใบที่บันทึกไว้
             </Link>
-            <button
-              onClick={() => setShowResetConfirm(true)}
-              className="px-4 py-2 rounded-lg border border-red-300 text-red-500 text-sm font-semibold hover:bg-red-50 transition"
-            >
-              ↺ เริ่มทำใบเสนอราคาใบใหม่
-            </button>
-            <button
-              onClick={handleSave}
-              disabled={savingQuote || docNoDup}
-              className="px-5 py-2 rounded-lg border border-green-500 text-green-600 text-sm font-bold hover:bg-green-50 transition disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {savingQuote ? "กำลังเซฟ..." : "💾 เซฟ"}
-            </button>
+            {!isViewOnly && (
+              <button
+                onClick={() => setShowResetConfirm(true)}
+                className="px-4 py-2 rounded-lg border border-red-300 text-red-500 text-sm font-semibold hover:bg-red-50 transition"
+              >
+                ↺ เริ่มทำใบเสนอราคาใบใหม่
+              </button>
+            )}
+            {!isViewOnly && (
+              <button
+                onClick={handleSave}
+                disabled={savingQuote || docNoDup}
+                className="px-5 py-2 rounded-lg border border-green-500 text-green-600 text-sm font-bold hover:bg-green-50 transition disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {savingQuote ? "กำลังเซฟ..." : "💾 เซฟ"}
+              </button>
+            )}
+            {isViewOnly && (
+              <Link
+                href={`/quotation?id=${encodeURIComponent(q.id)}&action=clone`}
+                className="px-5 py-2 rounded-lg border border-blue-500 text-blue-600 text-sm font-bold hover:bg-blue-50 transition"
+              >
+                ✏️ แก้ไข (New Ver.)
+              </Link>
+            )}
             <button
               onClick={handleDownload}
               disabled={docNoDup}
@@ -870,8 +865,9 @@ export default function QuotationPage() {
         </div>
       </div>
 
-      <div className="max-w-[1400px] mx-auto px-4 py-6 grid grid-cols-1 xl:grid-cols-[420px_1fr] gap-6 items-start">
+      <div className={`max-w-[1400px] mx-auto px-4 py-6 ${isViewOnly ? "flex justify-center" : "grid grid-cols-1 xl:grid-cols-[420px_1fr]"} gap-6 items-start`}>
         {/* ══ LEFT: form ══ */}
+        {!isViewOnly && (
         <div className="quote-form space-y-4">
           {/* เอกสาร */}
           <section className="bg-white rounded-xl shadow-sm border border-gray-200 p-5 space-y-3">
@@ -1224,9 +1220,10 @@ export default function QuotationPage() {
             </div>
           </section>
         </div>
+        )}
 
         {/* ══ RIGHT: A4 sheet (what gets printed) ══ */}
-        <div className="overflow-x-auto xl:sticky xl:top-[90px] xl:max-h-[calc(100vh-100px)] xl:overflow-y-auto rounded-sm">
+        <div className={`overflow-x-auto ${!isViewOnly ? "xl:sticky xl:top-[90px] xl:max-h-[calc(100vh-100px)] xl:overflow-y-auto" : ""} rounded-sm`}>
           <div
             id="quote-sheet"
             className="bg-white shadow-lg border border-gray-200 rounded-sm mx-auto text-gray-900"

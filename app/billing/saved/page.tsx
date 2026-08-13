@@ -236,8 +236,8 @@ export default function SavedBillingPage() {
                       key={item.id}
                       className="border-b hover:bg-gray-50/50 cursor-pointer transition"
                       onClick={() => {
-                        if (item.docType === "quotation") router.push(`/quotation?id=${item.id}`);
-                        else router.push(`/billing?id=${item.id}`);
+                        if (item.docType === "quotation") router.push(`/quotation?id=${item.id}&view=1`);
+                        else router.push(`/billing?id=${item.id}&view=1`);
                       }}
                     >
                       <td className="px-4 py-3">
