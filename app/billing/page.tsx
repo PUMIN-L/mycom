@@ -361,8 +361,7 @@ export default function BillingPage() {
       }
       if (!res.ok) throw new Error();
       showToast("บันทึกสำเร็จ", "success");
-      // Add to existing docs to prevent duplicate
-      setExistingDocs((prev) => [...prev, { docNo: b.docNo }]);
+      router.push(`/billing/saved?tab=${b.docType}`);
     } catch {
       showToast("บันทึกไม่สำเร็จ กรุณาลองใหม่", "error");
     } finally {

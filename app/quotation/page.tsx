@@ -693,8 +693,8 @@ export default function QuotationPage() {
         return;
       }
       if (res.ok) {
-        settleDocNo(); // reserve locally + stop the auto-running effect renumbering it
         showToast("บันทึกใบเสนอราคาแล้ว (เก็บไว้ 30 วัน)", "success");
+        router.push("/billing/saved?tab=quotation");
       } else {
         showToast("บันทึกไม่สำเร็จ", "error");
       }
