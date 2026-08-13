@@ -522,7 +522,12 @@ export default function BillingPage() {
               {DOC_TYPE_OPTIONS.map((opt) => (
                 <button
                   key={opt.value}
-                  onClick={() => set("docType", opt.value)}
+                  onClick={() => {
+                    if (b.docType === opt.value) return;
+                    const nextNum = nextBillingDocNo(opt.value, b.docDate, existingDocs.map(d => d.docNo));
+                    lastAutoDocNoRef.current = nextNum;
+                    setB(prev => ({ ...prev, docType: opt.value, docNo: nextNum }));
+                  }}
                   className={`w-full text-left px-4 py-3 rounded-lg border-2 font-semibold text-sm transition ${
                     b.docType === opt.value
                       ? "border-orange-500 bg-orange-50 text-orange-700"
