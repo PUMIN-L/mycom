@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, Suspense } from "react";
+import { useState, useEffect, Suspense, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "../../context/AuthContext";
@@ -124,6 +124,22 @@ function SavedBillingContent() {
   }
 
   const filtered = filter === "all" ? items : items.filter((i) => i.docType === filter);
+
+  const latestVersions = useMemo(() => {
+    const map = new Map<string, { id: string; version: number }>();
+    for (const item of items) {
+      if (!item.docNo) continue;
+      const match = item.docNo.match(/(?:-V|-v|v|V)(\d+)$/i);
+      const base = item.docNo.replace(/(?:-V|-v|v|V)\d+$/i, "");
+      const version = match ? parseInt(match[1], 10) : 0;
+      
+      const current = map.get(base);
+      if (!current || version > current.version) {
+        map.set(base, { id: item.id, version });
+      }
+    }
+    return map;
+  }, [items]);
 
   if (isLoading || !isLoggedIn) {
     return (
@@ -252,7 +268,15 @@ function SavedBillingContent() {
                           {item.docType === "quotation" ? "ใบเสนอราคา" : BILLING_LABELS[item.docType].th}
                         </span>
                       </td>
-                      <td className="px-4 py-3 font-mono text-sm font-semibold text-gray-800">{item.docNo || "-"}</td>
+                      <td className="px-4 py-3 font-mono text-sm font-semibold text-gray-800">
+                        {item.docNo || "-"}
+                        {item.docNo && latestVersions.get(item.docNo.replace(/(?:-V|-v|v|V)\d+$/i, ""))?.id === item.id && 
+                         latestVersions.get(item.docNo.replace(/(?:-V|-v|v|V)\d+$/i, ""))!.version > 0 && (
+                          <span className="ml-2 inline-block text-[10px] font-bold text-orange-600 bg-orange-100 px-2 py-0.5 rounded-full whitespace-nowrap">
+                            (เวอร์ชันล่าสุด)
+                          </span>
+                        )}
+                      </td>
                       <td className="px-4 py-3 text-sm text-gray-700">{item.customer}</td>
                       <td className="px-4 py-3 text-sm text-right font-semibold text-gray-800">{fmt(item.total)}</td>
                       <td className="px-4 py-3 text-right">
