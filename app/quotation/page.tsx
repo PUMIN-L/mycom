@@ -222,6 +222,7 @@ export default function QuotationPage() {
   const imageInputRef = useRef<HTMLInputElement>(null);
   const uploadTargetRef = useRef<string | null>(null);
   const hydratedRef = useRef(false);
+  const lastAutoDocNoRef = useRef<string | null>(null);
   // A brand-new quote (not a reopened/restored one) — eligible to auto-advance
   // its running number once the reserved-numbers ledger loads.
   const isFreshRef = useRef(false);
@@ -240,11 +241,13 @@ export default function QuotationPage() {
 
     const seedFresh = () => {
       isFreshRef.current = true;
+      const newDocNo = `QT${iso.substring(2).replace(/-/g, "")}-${pad2(DOCNO_START)}`;
+      lastAutoDocNoRef.current = newDocNo;
       setQ({
         ...emptyState(),
         id: crypto.randomUUID(),
         docDate: iso,
-        docNo: `QT${iso.substring(2).replace(/-/g, "")}-${pad2(DOCNO_START)}`,
+        docNo: newDocNo,
         items: [newItem()],
       });
     };
@@ -363,17 +366,23 @@ export default function QuotationPage() {
       .catch(() => {});
   }, [isLoggedIn]);
 
-  // Once the ledger is loaded, bump a fresh quote's still-default docNo to the
-  // next free trailing number (e.g. today's -01 is taken → -02).
+  // Once the ledger is loaded or date changes, bump a fresh quote's docNo
+  // to the next free trailing number.
   useEffect(() => {
-    if (!isFreshRef.current) return;
+    if (!isFreshRef.current || !q.docDate) return;
+    const prefix = `QT${q.docDate.substring(2).replace(/-/g, "")}-`;
+    const next = nextDocNo(prefix, existingDocs.map((u) => u.docNo));
     setQ((prev) => {
-      const prefix = `QT${prev.docDate.substring(2).replace(/-/g, "")}-`;
-      if (prev.docNo !== `${prefix}${pad2(DOCNO_START)}`) return prev; // user edited it
-      const next = nextDocNo(prefix, existingDocs.map((u) => u.docNo));
-      return next === prev.docNo ? prev : { ...prev, docNo: next };
+      if (
+        prev.docNo === `${prefix}${pad2(DOCNO_START)}` ||
+        prev.docNo === lastAutoDocNoRef.current
+      ) {
+        lastAutoDocNoRef.current = next;
+        return next === prev.docNo ? prev : { ...prev, docNo: next };
+      }
+      return prev; // user edited it manually
     });
-  }, [existingDocs]);
+  }, [q.docDate, existingDocs]);
 
   function showToast(message: string, type: "success" | "error") {
     setToast({ message, type });

@@ -143,6 +143,7 @@ export default function BillingPage() {
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
   // A brand-new doc (not reopened) — eligible to auto-advance its docNo.
   const isFreshRef = useRef(true);
+  const lastAutoDocNoRef = useRef<string>("");
 
   useEffect(() => {
     if (!isLoading && !isLoggedIn) router.replace("/login");
@@ -251,7 +252,14 @@ export default function BillingPage() {
       b.docDate,
       existingDocs.map((d) => d.docNo)
     );
-    setB((prev) => ({ ...prev, docNo: next }));
+    setB((prev) => {
+      // Allow update if the current docNo is empty (initial) or matches the last auto-generated one
+      if (prev.docNo === "" || prev.docNo === lastAutoDocNoRef.current) {
+        lastAutoDocNoRef.current = next;
+        return next === prev.docNo ? prev : { ...prev, docNo: next };
+      }
+      return prev; // user manually edited it
+    });
   }, [b.docType, b.docDate, existingDocs]);
 
   function showToast(message: string, type: "success" | "error") {
