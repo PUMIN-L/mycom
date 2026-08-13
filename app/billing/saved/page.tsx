@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "../../context/AuthContext";
@@ -38,7 +38,7 @@ const TAB_OPTIONS: { value: CombinedDocType | "all"; label: string }[] = [
   { value: "quotation", label: "📋 ใบเสนอราคา" },
 ];
 
-export default function SavedBillingPage() {
+function SavedBillingContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { isLoggedIn, isLoading } = useAuth();
@@ -310,5 +310,17 @@ export default function SavedBillingPage() {
       />
     )}
     </>
+  );
+}
+
+export default function SavedBillingPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="animate-spin h-8 w-8 border-4 border-orange-400 border-t-transparent rounded-full" />
+      </div>
+    }>
+      <SavedBillingContent />
+    </Suspense>
   );
 }
