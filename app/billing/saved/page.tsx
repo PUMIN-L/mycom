@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "../../context/AuthContext";
 import ConfirmDialog from "../../components/ConfirmDialog";
@@ -40,11 +40,13 @@ const TAB_OPTIONS: { value: CombinedDocType | "all"; label: string }[] = [
 
 export default function SavedBillingPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { isLoggedIn, isLoading } = useAuth();
   const [items, setItems] = useState<BillingSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadFailed, setLoadFailed] = useState(false);
-  const [filter, setFilter] = useState<CombinedDocType | "all">("all");
+  const initialTab = (searchParams?.get("tab") as CombinedDocType | "all") || "all";
+  const [filter, setFilter] = useState<CombinedDocType | "all">(initialTab);
   const [pendingDelete, setPendingDelete] = useState<BillingSummary | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
