@@ -842,7 +842,7 @@ export default function QuotationPage() {
             )}
             {!isEditing && (
               <Link href="/showcase" className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition">
-                ← กลับ
+                🏠 หน้าระบบจัดการ
               </Link>
             )}
             <Link href="/billing/saved?tab=quotation" className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition">
