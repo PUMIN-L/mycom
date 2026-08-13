@@ -140,6 +140,7 @@ export default function BillingPage() {
   const [saving, setSaving] = useState(false);
   const [loadingQuotation, setLoadingQuotation] = useState(false);
   const [isViewOnly, setIsViewOnly] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
   // A brand-new doc (not reopened) — eligible to auto-advance its docNo.
   const isFreshRef = useRef(true);
@@ -183,6 +184,7 @@ export default function BillingPage() {
     const isView = new URLSearchParams(window.location.search).get("view") === "1";
     if (isView) setIsViewOnly(true);
     if (reopenId) {
+      setIsEditing(true);
       isFreshRef.current = false; // reopening — don't overwrite docNo
       fetch(`/api/billing/${reopenId}`)
         .then((r) => (r.ok ? r.json() : null))
@@ -460,13 +462,20 @@ export default function BillingPage() {
         <div className="max-w-[1400px] mx-auto px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
           <h1 className="text-xl font-bold text-gray-900">📄 สร้างเอกสาร</h1>
           <div className="flex items-center gap-2 flex-wrap">
-            <Link href="/quotation" className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition">
-              ← ใบเสนอราคา
-            </Link>
+            {!isEditing && (
+              <Link href="/quotation" className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition">
+                ← ใบเสนอราคา
+              </Link>
+            )}
+            {isEditing && (
+              <Link href="/showcase" className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition">
+                🏠 ระบบจัดการ
+              </Link>
+            )}
             <Link href="/billing/saved" className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition">
               📋 เอกสารที่บันทึกไว้
             </Link>
-            {!isViewOnly && (
+            {!isViewOnly && !isEditing && (
               <button
                 onClick={() => { isFreshRef.current = true; setB(emptyState()); }}
                 className="px-4 py-2 rounded-lg border border-red-300 text-red-500 text-sm font-semibold hover:bg-red-50 transition"

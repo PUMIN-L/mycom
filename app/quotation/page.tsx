@@ -218,6 +218,7 @@ export default function QuotationPage() {
   const [savingQuote, setSavingQuote] = useState(false); // "เซฟ" (save without printing)
   const [showResetConfirm, setShowResetConfirm] = useState(false); // reset form modal
   const [isViewOnly, setIsViewOnly] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const uploadTargetRef = useRef<string | null>(null);
@@ -255,9 +256,9 @@ export default function QuotationPage() {
     const reopenId = new URLSearchParams(window.location.search).get("id");
     const isView = new URLSearchParams(window.location.search).get("view") === "1";
     if (isView) setIsViewOnly(true);
+    
     if (reopenId) {
-      // Reopen a saved record. Auth is via the session cookie, so this works
-      // regardless of the client auth-context loading state.
+      setIsEditing(true);
       fetch(`/api/quotations/${encodeURIComponent(reopenId)}`)
         .then((r) => (r.ok ? r.json() : null))
         .then(async (rec) => {
@@ -829,16 +830,25 @@ export default function QuotationPage() {
         <div className="max-w-[1400px] mx-auto px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
           <h1 className="text-xl font-bold text-gray-900">🧾 สร้างใบเสนอราคา</h1>
           <div className="flex items-center gap-2 flex-wrap">
-            <Link href="/" className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition">
-              🏠 หน้าแรก
-            </Link>
-            <Link href="/showcase" className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition">
-              ← กลับ
-            </Link>
+            {!isEditing && (
+              <Link href="/" className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition">
+                🏠 หน้าแรก
+              </Link>
+            )}
+            {isEditing && (
+              <Link href="/showcase" className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition">
+                🏠 ระบบจัดการ
+              </Link>
+            )}
+            {!isEditing && (
+              <Link href="/showcase" className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition">
+                ← กลับ
+              </Link>
+            )}
             <Link href="/billing/saved?tab=quotation" className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition">
               📄 ใบเสนอราคาที่บันทึกไว้
             </Link>
-            {!isViewOnly && (
+            {!isViewOnly && !isEditing && (
               <button
                 onClick={() => setShowResetConfirm(true)}
                 className="px-4 py-2 rounded-lg border border-red-300 text-red-500 text-sm font-semibold hover:bg-red-50 transition"
