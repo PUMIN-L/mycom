@@ -884,14 +884,14 @@ export default function QuotationPage() {
           <h1 className="text-xl font-bold text-gray-900">🧾 สร้างใบเสนอราคา</h1>
           <div className="flex items-center gap-2 flex-wrap">
 
+            {!isEditing && (
+              <button onClick={() => { if (isDirty) { guardedNavigate("/billing/saved?tab=quotation"); } else { router.back(); } }} className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition">
+                ← กลับ
+              </button>
+            )}
             {isEditing && (
               <button onClick={() => guardedNavigate("/showcase")} className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition">
                 🏠 ระบบจัดการ
-              </button>
-            )}
-            {!isEditing && (
-              <button onClick={() => guardedNavigate("/showcase")} className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition">
-                🏠 หน้าระบบจัดการ
               </button>
             )}
             <button onClick={() => guardedNavigate("/billing/saved?tab=quotation")} className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition">
