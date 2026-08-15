@@ -19,10 +19,16 @@ const langLabels: Record<Language, string> = {
   zh: "CN",
 };
 
-export default function Navbar() {
+interface NavbarProps {
+  isHomePage?: boolean;
+}
+
+export default function Navbar({ isHomePage: forceIsHome }: NavbarProps = {}) {
   const pathname = usePathname();
-  // More robust check for home page to handle edge cases
-  const isHome = !pathname || pathname === "/" || pathname === "/th" || pathname === "/en" || pathname === "/zh";
+  // Use prop if provided, otherwise fallback to robust pathname check
+  const isHome = forceIsHome !== undefined 
+    ? forceIsHome 
+    : (!pathname || pathname === "/" || pathname === "/th" || pathname === "/en" || pathname === "/zh");
   const { lang, setLang } = useLanguage();
   const t = useT();
   const { mobileOpen, setMobileOpen } = useNav();
