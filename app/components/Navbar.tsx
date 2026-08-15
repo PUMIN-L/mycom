@@ -21,7 +21,8 @@ const langLabels: Record<Language, string> = {
 
 export default function Navbar() {
   const pathname = usePathname();
-  const isHome = pathname === "/";
+  // More robust check for home page to handle edge cases
+  const isHome = !pathname || pathname === "/" || pathname === "/th" || pathname === "/en" || pathname === "/zh";
   const { lang, setLang } = useLanguage();
   const t = useT();
   const { mobileOpen, setMobileOpen } = useNav();
@@ -34,7 +35,10 @@ export default function Navbar() {
       window.scrollTo(0, 0);
     }
     
-    const handleScroll = () => setScrolled(window.scrollY > 50);
+    const handleScroll = () => {
+      const currentScroll = window.scrollY || document.documentElement.scrollTop || 0;
+      setScrolled(currentScroll > 50);
+    };
     
     // Check initial state after a slight delay to account for browser scroll restoration
     // or the window.scrollTo(0,0) call settling, especially in in-app browsers.
