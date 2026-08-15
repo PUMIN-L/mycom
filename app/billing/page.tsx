@@ -485,8 +485,8 @@ export default function BillingPage() {
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             {!isEditing && (
-              <button onClick={() => guardedNavigate("/quotation")} className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition">
-                ← ใบเสนอราคา
+              <button onClick={() => { if (isDirty) { guardedNavigate("/billing/saved"); } else { router.back(); } }} className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition">
+                ← กลับ
               </button>
             )}
             {isEditing && (
