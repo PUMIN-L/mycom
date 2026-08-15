@@ -173,7 +173,7 @@ function SavedBillingContent() {
           <h1 className="text-xl font-bold text-gray-900">📋 เอกสารที่บันทึกไว้</h1>
           <div className="flex items-center gap-2 flex-wrap">
             <Link href="/showcase" className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition">
-              🏠 หน้าแรก
+              🏠 หน้าระบบจัดการ
             </Link>
             <div className="relative create-dropdown-container">
               <button
