@@ -52,6 +52,7 @@ function SavedBillingContent() {
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
   const [orphanedImages, setOrphanedImages] = useState<OrphanedImage[]>([]);
   const [createDropdownOpen, setCreateDropdownOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -136,7 +137,18 @@ function SavedBillingContent() {
     }
   }
 
-  const filtered = filter === "all" ? items : items.filter((i) => i.docType === filter);
+  const filtered = useMemo(() => {
+    let result = filter === "all" ? items : items.filter((i) => i.docType === filter);
+    const q = searchQuery.trim().toLowerCase();
+    if (q) {
+      result = result.filter(
+        (i) =>
+          (i.docNo || "").toLowerCase().includes(q) ||
+          (i.customer || "").toLowerCase().includes(q)
+      );
+    }
+    return result;
+  }, [items, filter, searchQuery]);
 
   const latestVersions = useMemo(() => {
     const map = new Map<string, { id: string; version: number }>();
@@ -254,6 +266,32 @@ function SavedBillingContent() {
               {tab.label}
             </button>
           ))}
+        </div>
+
+        {/* Search */}
+        <div className="mb-4">
+          <div className="relative">
+            <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="ค้นหาเลขที่เอกสาร หรือ ชื่อลูกค้า..."
+              className="w-full pl-10 pr-10 py-2.5 rounded-xl border border-gray-300 bg-white text-sm text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-300 focus:border-orange-400 transition shadow-sm"
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery("")}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Table */}
