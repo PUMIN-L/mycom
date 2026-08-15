@@ -86,11 +86,11 @@ describe('site', () => {
     it('exposes the site name, title, description and keywords', async () => {
       const mod = await loadSite({});
       expect(mod.SITE_NAME).toBe('Profin Lab Scale');
-      expect(mod.SITE_TITLE).toBe('PROFIN | เครื่องมือทดสอบและสร้างห้องปฏิบัติการ');
-      expect(mod.SITE_DESCRIPTION).toContain('Profin Lab scale');
+      expect(mod.SITE_TITLE).toBe('PROFIN | จำหน่ายเครื่องมือวัด เครื่องทดสอบ สอบเทียบ สร้างห้องปฏิบัติการ');
+      expect(mod.SITE_DESCRIPTION).toContain('Profin Lab Scale');
       expect(Array.isArray(mod.SITE_KEYWORDS)).toBe(true);
       expect(mod.SITE_KEYWORDS).toContain('hardness tester');
-      expect(mod.SITE_KEYWORDS.length).toBe(10);
+      expect(mod.SITE_KEYWORDS.length).toBeGreaterThanOrEqual(50);
     });
   });
 });
