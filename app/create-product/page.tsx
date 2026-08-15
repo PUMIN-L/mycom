@@ -8,6 +8,7 @@ import ErrorModal from "../components/ErrorModal";
 import MultiSelectDropdown from "../components/MultiSelectDropdown";
 import SearchableDropdown from "../components/SearchableDropdown";
 import { stripHtml } from "../lib/stripHtml";
+import { useLeaveGuard } from "../components/LeaveGuard";
 
 interface ProductCategory {
   id: number;
@@ -49,6 +50,10 @@ export default function CreateProduct() {
     isOpen: false,
     message: ""
   });
+
+  // ── Unsaved-changes guard (beforeunload only — no nav Links on this page) ──
+  const formData = { titleTh, titleEn, titleZh, descTh, descEn, descZh, imageUrl, selectedCategoryId, selectedSupplierIds, bestSellerRank };
+  useLeaveGuard(formData);
 
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   function showToast(message: string, type: "success" | "error") {

@@ -9,6 +9,7 @@ import MultiSelectDropdown from "../../components/MultiSelectDropdown";
 import SearchableDropdown from "../../components/SearchableDropdown";
 import ImageDeleteConfirmDialog, { type OrphanedImage } from "../../components/ImageDeleteConfirmDialog";
 import { stripHtml } from "../../lib/stripHtml";
+import { useLeaveGuard } from "../../components/LeaveGuard";
 
 interface ProductCategory {
   id: number;
@@ -56,6 +57,10 @@ export default function EditProduct({ params }: { params: Promise<{ id: string }
     message: ""
   });
   const [orphanedImages, setOrphanedImages] = useState<OrphanedImage[]>([]);
+
+  // ── Unsaved-changes guard (beforeunload only) ──
+  const editData = { titleTh, titleEn, titleZh, descTh, descEn, descZh, imageUrl, selectedCategoryId, selectedSupplierIds, bestSellerRank };
+  const { setSnapshot: setEditSnapshot } = useLeaveGuard(editData);
 
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   function showToast(message: string, type: "success" | "error") {
@@ -131,6 +136,8 @@ export default function EditProduct({ params }: { params: Promise<{ id: string }
         router.push("/#products");
       } finally {
         setLoadingProduct(false);
+        // Snapshot after hydration so dirty-check has the correct baseline
+        setTimeout(() => setEditSnapshot(), 0);
       }
     };
     fetchProduct();

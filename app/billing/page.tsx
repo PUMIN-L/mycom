@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useAuth } from "../context/AuthContext";
 import Toast from "../components/Toast";
 import SearchableDropdown from "../components/SearchableDropdown";
+import { useLeaveGuard, LeaveGuardModal } from "../components/LeaveGuard";
 import { computeQuoteTotals } from "../lib/quotationTotals";
 import {
   BILLING_LABELS,
@@ -146,6 +147,9 @@ export default function BillingPage() {
   const isFreshRef = useRef(true);
   const lastAutoDocNoRef = useRef<string>("");
 
+  // ── Unsaved-changes guard ──
+  const { isDirty, setSnapshot, guardedNavigate, showModal, confirmLeave, cancelLeave, setShowModal } = useLeaveGuard(b);
+
   useEffect(() => {
     if (!isLoading && !isLoggedIn) router.replace("/login");
   }, [isLoggedIn, isLoading, router]);
@@ -247,6 +251,8 @@ export default function BillingPage() {
               paymentDate: doc.paymentDate ?? "",
               paymentRef: doc.paymentRef ?? "",
             });
+            // Snapshot after hydration
+            setTimeout(() => setSnapshot(), 0);
           }
         })
         .catch(() => {});
@@ -370,6 +376,7 @@ export default function BillingPage() {
         return;
       }
       if (!res.ok) throw new Error();
+      setSnapshot(); // Mark as saved
       showToast("บันทึกสำเร็จ", "success");
       router.push(`/billing/saved?tab=${b.docType}`);
     } catch {
@@ -478,18 +485,18 @@ export default function BillingPage() {
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             {!isEditing && (
-              <Link href="/quotation" className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition">
+              <button onClick={() => guardedNavigate("/quotation")} className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition">
                 ← ใบเสนอราคา
-              </Link>
+              </button>
             )}
             {isEditing && (
-              <Link href="/showcase" className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition">
+              <button onClick={() => guardedNavigate("/showcase")} className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition">
                 🏠 ระบบจัดการ
-              </Link>
+              </button>
             )}
-            <Link href="/billing/saved" className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition">
+            <button onClick={() => guardedNavigate("/billing/saved")} className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition">
               📋 เอกสารที่บันทึกไว้
-            </Link>
+            </button>
 
             {!isViewOnly && (
               <button
@@ -898,6 +905,16 @@ export default function BillingPage() {
           </div>
         </div>
       </div>
+
+      <LeaveGuardModal
+        show={showModal}
+        onSave={async () => { setShowModal(false); await handleSave(); }}
+        onDiscard={confirmLeave}
+        onCancel={cancelLeave}
+        saving={saving}
+        saveDisabled={docNoDup}
+        documentLabel={label?.th || "เอกสาร"}
+      />
     </div>
   );
 }

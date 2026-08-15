@@ -8,6 +8,7 @@ import BlockRangeControl from "../components/BlockRangeControl";
 import Toast from "../components/Toast";
 import ErrorModal from "../components/ErrorModal";
 import { stripHtml } from "../lib/stripHtml";
+import { useLeaveGuard } from "../components/LeaveGuard";
 
 interface ContentBlock {
   id: string;
@@ -62,6 +63,10 @@ function CreateContentInner() {
     isOpen: false,
     message: ""
   });
+
+  // ── Unsaved-changes guard (beforeunload only) ──
+  const formData = { title, blocks, selectedProductId };
+  useLeaveGuard(formData);
 
   // Products from API
   const [allProducts, setAllProducts] = useState<ProductItem[]>([]);
