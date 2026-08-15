@@ -1059,6 +1059,21 @@ export default function QuotationPage() {
                   onChange={(val) => {
                     const comp = dbCompanies.find(x => x.id === val);
                     if (comp) {
+                      // Validate if current customer is a known DB customer
+                      const currentCust = dbCustomers.find(c => c.name === q.customerContact);
+                      if (currentCust && currentCust.companyId && currentCust.companyId !== comp.id) {
+                        showToast(`ลูกค้า ${currentCust.name} ไม่ได้อยู่บริษัทนี้`, "error");
+                        // Clear customer name since user explicitly chose a different company
+                        setQ(prev => ({
+                          ...prev,
+                          customerContact: "",
+                          customerCompany: comp.name,
+                          customerAddress: formatAddress(comp),
+                          customerPhone: comp.phone || prev.customerPhone
+                        }));
+                        return;
+                      }
+
                       setQ(prev => ({
                         ...prev,
                         customerCompany: comp.name,
