@@ -63,6 +63,63 @@ export default async function ProductsJsonLd() {
     },
     areaServed: "TH",
     sameAs: [LINE_URL],
+    // Expertise areas — tells Google what this business knows about
+    knowsAbout: [
+      "เครื่องทดสอบแรงดึง (Tensile Tester / Universal Testing Machine)",
+      "เครื่องทดสอบฟิล์ม (Film Testing Equipment)",
+      "เครื่องทดสอบพลาสติก (Plastic Testing Equipment)",
+      "เครื่องทดสอบบรรจุภัณฑ์ (Packaging Testing)",
+      "เครื่องวัดค่า COF (Coefficient of Friction Tester)",
+      "เครื่องทดสอบแรงปิดผนึก (Heat Seal Tester)",
+      "เครื่องทดสอบแรงลอก (Peel Strength Tester)",
+      "เครื่องทดสอบแรงกระแทก (Dart Impact Tester)",
+      "เครื่องทดสอบ Melt Flow Index (MFI Tester)",
+      "เครื่องวัดความหนาฟิล์ม (Film Thickness Gauge)",
+      "เครื่องทดสอบการหดตัว (Shrinkage Tester)",
+      "เครื่องวัดความหนืด (Viscometer)",
+      "เครื่องวัดสี (Colorimeter / Spectrophotometer)",
+      "เครื่องวัดความเงา (Gloss Meter)",
+      "เครื่องวัดความแข็ง (Hardness Tester / Durometer)",
+      "เครื่องชั่งวิเคราะห์ (Analytical Balance)",
+      "เครื่องชั่งความละเอียดสูง (Precision Balance)",
+      "ตู้อบลมร้อน (Laboratory Oven)",
+      "ตู้อบสุญญากาศ (Vacuum Oven)",
+      "เครื่องทดสอบการรั่วซึม (Leak Tester)",
+      "เครื่องทดสอบยาง (Rubber Testing)",
+      "เครื่องทดสอบสิ่งทอ (Textile Testing)",
+      "เครื่องทดสอบกระดาษ (Paper Testing)",
+      "สอบเทียบเครื่องมือวัด (Calibration)",
+      "ซ่อมบำรุงเครื่องทดสอบ (Repair & Maintenance)",
+      "ติดตั้งและสอนการใช้งาน (Installation & Training)",
+      "สร้างห้องปฏิบัติการ (Laboratory Construction)",
+    ],
+    // Services offered
+    hasOfferCatalog: {
+      "@type": "OfferCatalog",
+      name: "บริการของ Profin Lab Scale",
+      itemListElement: [
+        {
+          "@type": "OfferCatalog",
+          name: "จำหน่ายเครื่องมือวัดและทดสอบ",
+          description: "จำหน่ายเครื่อง tensile tester, เครื่องทดสอบฟิล์ม, เครื่องทดสอบพลาสติก, เครื่องทดสอบ COF, เครื่องวัดสี, เครื่องชั่ง, ตู้อบ และอื่นๆ",
+        },
+        {
+          "@type": "OfferCatalog",
+          name: "สอบเทียบเครื่องมือวัด (Calibration)",
+          description: "บริการสอบเทียบเครื่องมือวัดและเครื่องทดสอบตามมาตรฐานสากล",
+        },
+        {
+          "@type": "OfferCatalog",
+          name: "ติดตั้งและสอนการใช้งาน",
+          description: "บริการติดตั้งเครื่องทดสอบและฝึกอบรมการใช้งานเครื่องมือวัดให้กับทีมงานของลูกค้า",
+        },
+        {
+          "@type": "OfferCatalog",
+          name: "ออกแบบและสร้างห้องปฏิบัติการ (Lab Construction)",
+          description: "บริการออกแบบและสร้างห้อง Lab ตามมาตรฐานสากลสำหรับอุตสาหกรรม",
+        },
+      ],
+    },
   };
 
   const website = {

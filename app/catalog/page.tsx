@@ -7,7 +7,7 @@ export const revalidate = 60;
 
 const title = "แคตตาล๊อคสินค้า (Product Catalogs) | Profin Lab Scale";
 const description =
-  "แคตตาล๊อคสินค้า โบรชัวร์ และเอกสารข้อมูลสำหรับเครื่องมือทดสอบคุณภาพจาก Profin Lab Scale";
+  "แคตตาล๊อคสินค้า โบรชัวร์ และเอกสารข้อมูลสำหรับเครื่องมือทดสอบคุณภาพจาก Profin Lab Scale — Download product catalogs, brochures & datasheets for testing instruments";
 
 export const metadata: Metadata = {
   title,

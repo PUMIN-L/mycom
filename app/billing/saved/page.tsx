@@ -51,6 +51,19 @@ function SavedBillingContent() {
   const [deleting, setDeleting] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
   const [orphanedImages, setOrphanedImages] = useState<OrphanedImage[]>([]);
+  const [createDropdownOpen, setCreateDropdownOpen] = useState(false);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (!(e.target as Element).closest(".create-dropdown-container")) {
+        setCreateDropdownOpen(false);
+      }
+    }
+    if (createDropdownOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [createDropdownOpen]);
 
   useEffect(() => {
     if (!isLoading && !isLoggedIn) router.replace("/login");
@@ -162,12 +175,65 @@ function SavedBillingContent() {
             <Link href="/showcase" className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition">
               🏠 หน้าแรก
             </Link>
-            <Link
-              href="/billing"
-              className="px-4 py-2 rounded-lg bg-orange-500 text-white text-sm font-bold hover:bg-orange-600 transition"
-            >
-              + สร้างเอกสารใหม่
-            </Link>
+            <div className="relative create-dropdown-container">
+              <button
+                onClick={() => setCreateDropdownOpen(!createDropdownOpen)}
+                className="px-4 py-2 rounded-lg bg-orange-500 text-white text-sm font-bold hover:bg-orange-600 transition flex items-center gap-1"
+              >
+                + สร้างเอกสารใหม่
+                <svg className={`w-4 h-4 transition-transform ${createDropdownOpen ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" /></svg>
+              </button>
+              
+              {createDropdownOpen && (
+                <div className="absolute right-0 mt-2 w-56 bg-white rounded-xl shadow-xl border border-gray-100 overflow-hidden z-50 animate-in fade-in slide-in-from-top-2">
+                  <Link
+                    href="/quotation?new=1"
+                    className="flex items-center gap-3 px-4 py-3 text-sm text-gray-700 hover:bg-orange-50 hover:text-orange-600 transition"
+                    onClick={() => setCreateDropdownOpen(false)}
+                  >
+                    <span className="text-lg">📋</span>
+                    <div>
+                      <div className="font-bold">ใบเสนอราคา</div>
+                      <div className="text-[10px] text-gray-500 font-normal leading-tight mt-0.5">สร้างใบเสนอราคาให้ลูกค้า</div>
+                    </div>
+                  </Link>
+                  <div className="h-px bg-gray-100" />
+                  <Link
+                    href="/billing?type=invoice"
+                    className="flex items-center gap-3 px-4 py-3 text-sm text-gray-700 hover:bg-orange-50 hover:text-orange-600 transition"
+                    onClick={() => setCreateDropdownOpen(false)}
+                  >
+                    <span className="text-lg">🧾</span>
+                    <div>
+                      <div className="font-bold">ใบแจ้งหนี้ / ใบกำกับภาษี</div>
+                      <div className="text-[10px] text-gray-500 font-normal leading-tight mt-0.5">สร้าง Invoice / Tax Invoice</div>
+                    </div>
+                  </Link>
+                  <Link
+                    href="/billing?type=billing_note"
+                    className="flex items-center gap-3 px-4 py-3 text-sm text-gray-700 hover:bg-orange-50 hover:text-orange-600 transition"
+                    onClick={() => setCreateDropdownOpen(false)}
+                  >
+                    <span className="text-lg">📋</span>
+                    <div>
+                      <div className="font-bold">ใบวางบิล</div>
+                      <div className="text-[10px] text-gray-500 font-normal leading-tight mt-0.5">สร้าง Billing Note</div>
+                    </div>
+                  </Link>
+                  <Link
+                    href="/billing?type=receipt"
+                    className="flex items-center gap-3 px-4 py-3 text-sm text-gray-700 hover:bg-orange-50 hover:text-orange-600 transition"
+                    onClick={() => setCreateDropdownOpen(false)}
+                  >
+                    <span className="text-lg">🧾</span>
+                    <div>
+                      <div className="font-bold">ใบเสร็จรับเงิน</div>
+                      <div className="text-[10px] text-gray-500 font-normal leading-tight mt-0.5">สร้าง Receipt</div>
+                    </div>
+                  </Link>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -270,12 +336,23 @@ function SavedBillingContent() {
                       </td>
                       <td className="px-4 py-3 font-mono text-sm font-semibold text-gray-800">
                         {item.docNo || "-"}
-                        {item.docNo && latestVersions.get(item.docNo.replace(/(?:-V|-v|v|V)\d+$/i, ""))?.id === item.id && 
-                         latestVersions.get(item.docNo.replace(/(?:-V|-v|v|V)\d+$/i, ""))!.version > 0 && (
-                          <span className="ml-2 inline-block text-[10px] font-bold text-orange-600 bg-orange-100 px-2 py-0.5 rounded-full whitespace-nowrap">
-                            (เวอร์ชันล่าสุด)
-                          </span>
-                        )}
+                        {item.docNo && (() => {
+                          const base = item.docNo.replace(/(?:-V|-v|v|V)\d+$/i, "");
+                          const latest = latestVersions.get(base);
+                          if (!latest || latest.version === 0) return null;
+                          if (latest.id === item.id) {
+                            return (
+                              <span className="ml-2 inline-block text-[10px] font-bold text-orange-600 bg-orange-100 px-2 py-0.5 rounded-full whitespace-nowrap">
+                                (เวอร์ชันล่าสุด)
+                              </span>
+                            );
+                          }
+                          return (
+                            <span className="ml-2 inline-block text-[10px] font-bold text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full whitespace-nowrap">
+                              (เวอร์ชันเก่า)
+                            </span>
+                          );
+                        })()}
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-700">{item.customer}</td>
                       <td className="px-4 py-3 text-sm text-right font-semibold text-gray-800">{fmt(item.total)}</td>

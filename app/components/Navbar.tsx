@@ -34,11 +34,17 @@ export default function Navbar() {
       window.scrollTo(0, 0);
     }
     
-    const handleScroll = () => setScrolled(window.scrollY > 20);
-    handleScroll(); // Check initial state immediately
+    const handleScroll = () => setScrolled(window.scrollY > 50);
+    
+    // Check initial state after a slight delay to account for browser scroll restoration
+    // or the window.scrollTo(0,0) call settling, especially in in-app browsers.
+    const initialCheckTimer = setTimeout(handleScroll, 100);
 
-    window.addEventListener("scroll", handleScroll);
-    return () => window.removeEventListener("scroll", handleScroll);
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    return () => {
+      clearTimeout(initialCheckTimer);
+      window.removeEventListener("scroll", handleScroll);
+    };
   }, [pathname]);
 
   const navLinks = [

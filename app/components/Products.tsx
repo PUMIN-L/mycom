@@ -15,6 +15,7 @@ import { pageList } from "../lib/pagination";
 import RichTextEditor from "./RichTextEditor";
 import { stripHtml } from "../lib/stripHtml";
 import ImageDeleteConfirmDialog, { type OrphanedImage } from "./ImageDeleteConfirmDialog";
+import SearchableDropdown from "./SearchableDropdown";
 
 interface ProductsProps {
   // Promise created on the server and passed down so the data is fetched during
@@ -722,8 +723,23 @@ export default function Products({ dataPromise }: ProductsProps) {
           {/* Sidebar Navigation */}
           <div className="lg:w-1/5 w-full flex-shrink-0">
             <div className="lg:sticky lg:top-32 self-start mb-12 lg:mb-0">
+              {/* Mobile Category Dropdown */}
+              <div className="block lg:hidden mb-8 relative z-20">
+                <SearchableDropdown
+                  options={allCategories.map((cat) => ({
+                    value: cat.id.toString(),
+                    label: stripHtml(getCatName(cat)),
+                  }))}
+                  value={selectedCategory.toString()}
+                  onChange={(val) => selectCategory(parseInt(val, 10))}
+                  placeholder="เลือกหมวดหมู่..."
+                  className="w-full"
+                  buttonClassName="py-3 text-base shadow-sm font-serif"
+                />
+              </div>
+
               {/* Category Search Input */}
-              <div className="mb-6 relative">
+              <div className="mb-6 relative hidden lg:block">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -741,7 +757,7 @@ export default function Products({ dataPromise }: ProductsProps) {
                 />
               </div>
 
-              <div className="grid grid-rows-2 grid-flow-col lg:flex lg:flex-col gap-x-4 gap-y-2 lg:gap-4 overflow-x-auto no-scrollbar -mx-4 px-4 lg:mx-0 lg:px-0">
+              <div className="hidden lg:flex lg:flex-col gap-x-4 gap-y-2 lg:gap-4 overflow-x-auto no-scrollbar -mx-4 px-4 lg:mx-0 lg:px-0">
                 {(showAllCategories ? filteredCategories : filteredCategories.slice(0, CATEGORIES_LIMIT)).map((category, index) => {
                   const isAllCat = category.id === -1;
                   // Calculate the actual index in the full list for drag & drop

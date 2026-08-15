@@ -58,12 +58,7 @@ export default function Services() {
                 <p className="text-[var(--text-muted)] leading-relaxed font-light mb-8">
                   {t(item.desc)}
                 </p>
-                <div className="mt-auto flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-[var(--accent)] group-hover:gap-4 transition-all">
-                  Learn More
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" />
-                  </svg>
-                </div>
+
               </div>
             </div>
           ))}

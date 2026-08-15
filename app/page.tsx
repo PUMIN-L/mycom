@@ -22,9 +22,10 @@ export const revalidate = 60;
 export const metadata: Metadata = {
   alternates: { canonical: "/" },
   description:
-    `${SITE_DESCRIPTION} — Digital calipers, micrometers, dial gauges, hardness testers (durometers), ` +
-    `viscometers, COF & leak testers, colorimeters, spectrophotometers, gloss meters, ` +
-    `analytical & precision balances, and industrial & laboratory drying ovens.`,
+    `${SITE_DESCRIPTION} — เครื่องทดสอบแรงดึง (Tensile tester), เครื่องทดสอบฟิล์ม, ` +
+    `เครื่องทดสอบพลาสติก, เครื่องวัดค่า COF, เครื่องวัดความหนืด (Viscometer), ` +
+    `เครื่องวัดสี (Colorimeter), เครื่องชั่งวิเคราะห์, ตู้อบลมร้อน, เครื่องวัดความแข็ง (Hardness tester), ` +
+    `เครื่องทดสอบการรั่วซึม (Leak tester) — สอบเทียบ ติดตั้ง สอนการใช้งาน`,
 };
 
 export default function Home() {

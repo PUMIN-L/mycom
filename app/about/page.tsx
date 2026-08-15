@@ -2,17 +2,31 @@ import type { Metadata } from "next";
 import Navbar from "../components/Navbar";
 import Footer from "../components/Footer";
 import AboutSection from "../components/AboutSection";
+import { SITE_URL } from "../lib/site";
 
 export const metadata: Metadata = {
   title: "เกี่ยวกับเรา",
   description:
-    "ประวัติและความเชี่ยวชาญของ Profin Lab Scale — ผู้จำหน่าย ซ่อมบำรุง และสอบเทียบเครื่องมือทดสอบคุณภาพ พร้อมบริการออกแบบและสร้างห้องปฏิบัติการมาตรฐานสากล จ.นนทบุรี",
+    "ประวัติและความเชี่ยวชาญของ Profin Lab Scale — ผู้จำหน่าย ซ่อมบำรุง และสอบเทียบเครื่องมือทดสอบคุณภาพ พร้อมบริการออกแบบและสร้างห้องปฏิบัติการมาตรฐานสากล จ.นนทบุรี — Testing equipment supplier, calibration services & laboratory construction in Nonthaburi, Thailand",
   alternates: { canonical: "/about" },
+};
+
+const breadcrumbLd = {
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  itemListElement: [
+    { "@type": "ListItem", position: 1, name: "Home", item: SITE_URL },
+    { "@type": "ListItem", position: 2, name: "เกี่ยวกับเรา", item: `${SITE_URL}/about` },
+  ],
 };
 
 export default function AboutPage() {
   return (
     <>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbLd).replace(/</g, '\\u003c') }}
+      />
       <Navbar />
       <main className="bg-white">
         <AboutSection />

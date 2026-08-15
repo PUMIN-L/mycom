@@ -13,6 +13,7 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
   return {
     title: `${doc.title} - ${SITE_NAME}`,
     description: doc.description || `เอกสารดาวน์โหลด: ${doc.title}`,
+    alternates: { canonical: `/document/${id}` },
   };
 }
 

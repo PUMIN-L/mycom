@@ -180,9 +180,17 @@ export default function BillingPage() {
 
   // Check if reopening from ?id=...
   useEffect(() => {
-    const reopenId = new URLSearchParams(window.location.search).get("id");
-    const isView = new URLSearchParams(window.location.search).get("view") === "1";
+    const searchParams = new URLSearchParams(window.location.search);
+    const reopenId = searchParams.get("id");
+    const isView = searchParams.get("view") === "1";
+    const initialType = searchParams.get("type") as BillingDocType | null;
+
     if (isView) setIsViewOnly(true);
+
+    if (initialType && ["invoice", "billing_note", "receipt"].includes(initialType) && !reopenId) {
+      setB(prev => ({ ...prev, docType: initialType }));
+    }
+
     if (reopenId) {
       setIsEditing(true);
       isFreshRef.current = false; // reopening — don't overwrite docNo
@@ -460,7 +468,14 @@ export default function BillingPage() {
       {/* ── Toolbar ── */}
       <div className="no-print sticky top-0 z-20 bg-white border-b border-gray-200 shadow-sm">
         <div className="max-w-[1400px] mx-auto px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
-          <h1 className="text-xl font-bold text-gray-900">📄 สร้างเอกสาร</h1>
+          <div className="flex items-center gap-3">
+            <h1 className="text-xl font-bold text-gray-900">
+              📄 สร้าง{label?.th || "เอกสาร"}
+            </h1>
+            <span className="px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider rounded bg-orange-100 text-orange-700 border border-orange-200">
+              {b.docType.replace("_", " ")}
+            </span>
+          </div>
           <div className="flex items-center gap-2 flex-wrap">
             {!isEditing && (
               <Link href="/quotation" className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition">
@@ -510,31 +525,6 @@ export default function BillingPage() {
         {/* ── Left: Form ── */}
         {!isViewOnly && (
         <div className="no-print w-full lg:w-[440px] shrink-0 space-y-4">
-          {/* Document Type */}
-          <div className="bg-white rounded-xl shadow-sm p-4 space-y-3">
-            <h2 className="font-bold text-gray-800">📑 ประเภทเอกสาร</h2>
-            <div className="grid grid-cols-1 gap-2">
-              {DOC_TYPE_OPTIONS.map((opt) => (
-                <button
-                  key={opt.value}
-                  onClick={() => {
-                    if (b.docType === opt.value) return;
-                    const nextNum = nextBillingDocNo(opt.value, b.docDate, existingDocs.map(d => d.docNo));
-                    lastAutoDocNoRef.current = nextNum;
-                    setB(prev => ({ ...prev, docType: opt.value, docNo: nextNum }));
-                  }}
-                  className={`w-full text-left px-4 py-3 rounded-lg border-2 font-semibold text-sm transition ${
-                    b.docType === opt.value
-                      ? "border-orange-500 bg-orange-50 text-orange-700"
-                      : "border-gray-200 text-gray-600 hover:border-gray-300"
-                  }`}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
           {/* Link to Quotation */}
           <div className="bg-white rounded-xl shadow-sm p-4 space-y-3">
             <h2 className="font-bold text-gray-800">🔗 เชื่อมกับใบเสนอราคา</h2>

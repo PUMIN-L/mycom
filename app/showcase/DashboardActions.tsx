@@ -41,15 +41,15 @@ export default function DashboardActions() {
       color: "bg-emerald-50 text-emerald-600 border-emerald-200 hover:border-emerald-400 hover:shadow-emerald-100",
     },
     {
-      href: "/quotation/saved",
+      href: "/billing/saved?tab=quotation",
       title: "ประวัติใบเสนอราคา",
       description: "ดูใบเสนอราคาที่เคยบันทึกไว้ทั้งหมด",
       icon: "📋",
       color: "bg-teal-50 text-teal-600 border-teal-200 hover:border-teal-400 hover:shadow-teal-100",
     },
     {
-      href: "/billing",
-      title: "สร้างเอกสาร (Invoice/ใบวางบิล/ใบเสร็จ)",
+      href: "/billing/saved",
+      title: "สร้าง / จัดการเอกสารบัญชี",
       description: "สร้างใบแจ้งหนี้/ใบกำกับภาษี ใบวางบิล หรือใบเสร็จรับเงิน",
       icon: "📄",
       color: "bg-amber-50 text-amber-600 border-amber-200 hover:border-amber-400 hover:shadow-amber-100",

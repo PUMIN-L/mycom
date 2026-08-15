@@ -34,10 +34,15 @@ export default function Hero() {
             </span>
           </div> */}
 
-          {/* Title */}
-          <h1 className="text-lg md:text-2xl font-medium leading-tight mb-2 animate-fade-in-up opacity-0 delay-200 text-white drop-shadow-2xl">
+          {/* Title — Thai default is rendered server-side so Google's
+               crawler sees real text even without executing JavaScript.
+               Client-side, useT() hydrates the correct language. */}
+          <h1
+            className="text-lg md:text-2xl font-medium leading-tight mb-2 animate-fade-in-up opacity-0 delay-200 text-white drop-shadow-2xl"
+            suppressHydrationWarning
+          >
             {t(translations.hero.title).split("\n").map((line, i) => (
-              <span key={i} className="block text-left">
+              <span key={i} className="block text-left" suppressHydrationWarning>
                 {line}
               </span>
             ))}
