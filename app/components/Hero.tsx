@@ -13,8 +13,8 @@ export default function Hero() {
       {/* Background with Overlay */}
       <div className="absolute inset-0 z-0">
         <Image
-          src="https://images.unsplash.com/photo-1581091226825-a6a2a5aee158?auto=format&fit=crop&q=80&w=2070"
-          alt="Luxury Laboratory"
+          src="/images/hero-bg.jpg"
+          alt="Profin Lab Scale Laboratory"
           fill
           sizes="100vw"
           className="object-cover"
