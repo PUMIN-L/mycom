@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "../context/AuthContext";
@@ -220,10 +220,14 @@ export default function QuotationPage() {
   const [isViewOnly, setIsViewOnly] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
+  const [showLeaveConfirm, setShowLeaveConfirm] = useState(false); // unsaved-changes modal
+  const [pendingNav, setPendingNav] = useState<string | null>(null); // URL to navigate after confirm
   const imageInputRef = useRef<HTMLInputElement>(null);
   const uploadTargetRef = useRef<string | null>(null);
   const hydratedRef = useRef(false);
   const lastAutoDocNoRef = useRef<string | null>(null);
+  // Snapshot of the state at the time of last save/load — used to detect dirty state.
+  const savedSnapshotRef = useRef<string>("");
   // A brand-new quote (not a reopened/restored one) — eligible to auto-advance
   // its running number once the reserved-numbers ledger loads.
   const isFreshRef = useRef(false);
@@ -301,6 +305,9 @@ export default function QuotationPage() {
             }
             
             setQ(migrated);
+            // Snapshot the state so isDirty can detect subsequent edits.
+            const { id: _id, ...rest } = migrated;
+            savedSnapshotRef.current = JSON.stringify(rest);
           } else {
             showToast("ไม่พบใบเสนอราคานี้ — เริ่มใบใหม่แทน", "error");
             seedFresh();
@@ -316,6 +323,14 @@ export default function QuotationPage() {
     seedFresh();
     hydratedRef.current = true;
   }, []);
+
+  // Set the snapshot once the fresh state is seeded.
+  useEffect(() => {
+    if (hydratedRef.current && savedSnapshotRef.current === "" && q.id) {
+      const { id: _id, ...rest } = q;
+      savedSnapshotRef.current = JSON.stringify(rest);
+    }
+  }, [q]);
 
 
 
@@ -384,6 +399,42 @@ export default function QuotationPage() {
       return prev; // user edited it manually
     });
   }, [q.docDate, existingDocs]);
+
+  // ── Unsaved-changes guard ──
+  // Serialize only the user-editable fields (skip volatile ids/timestamps).
+  const stateFingerprint = useCallback((s: QuoteState) => {
+    const { id, ...rest } = s;
+    return JSON.stringify(rest);
+  }, []);
+
+  const isDirty = savedSnapshotRef.current !== "" && stateFingerprint(q) !== savedSnapshotRef.current;
+
+  // Warn on browser close / refresh when there are unsaved changes
+  useEffect(() => {
+    if (!isDirty || isViewOnly) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [isDirty, isViewOnly]);
+
+  // Navigate away after user confirms "leave without saving"
+  useEffect(() => {
+    if (pendingNav && !showLeaveConfirm) {
+      // Modal was dismissed without confirming — pendingNav cleared in cancel
+    }
+  }, [pendingNav, showLeaveConfirm]);
+
+  /** Intercept in-app navigation: if dirty, show modal; else navigate. */
+  function guardedNavigate(href: string) {
+    if (isDirty && !isViewOnly) {
+      setPendingNav(href);
+      setShowLeaveConfirm(true);
+    } else {
+      router.push(href);
+    }
+  }
 
   function showToast(message: string, type: "success" | "error") {
     setToast({ message, type });
@@ -694,6 +745,8 @@ export default function QuotationPage() {
         return;
       }
       if (res.ok) {
+        // Update snapshot so the form is no longer dirty after save.
+        savedSnapshotRef.current = stateFingerprint(q);
         showToast("บันทึกใบเสนอราคาแล้ว (เก็บไว้ 30 วัน)", "success");
         router.push("/billing/saved?tab=quotation");
       } else {
@@ -832,18 +885,18 @@ export default function QuotationPage() {
           <div className="flex items-center gap-2 flex-wrap">
 
             {isEditing && (
-              <Link href="/showcase" className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition">
+              <button onClick={() => guardedNavigate("/showcase")} className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition">
                 🏠 ระบบจัดการ
-              </Link>
+              </button>
             )}
             {!isEditing && (
-              <Link href="/showcase" className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition">
+              <button onClick={() => guardedNavigate("/showcase")} className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition">
                 🏠 หน้าระบบจัดการ
-              </Link>
+              </button>
             )}
-            <Link href="/billing/saved?tab=quotation" className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition">
+            <button onClick={() => guardedNavigate("/billing/saved?tab=quotation")} className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition">
               📄 ใบเสนอราคาที่บันทึกไว้
-            </Link>
+            </button>
 
             {!isViewOnly && (
               <button
@@ -1440,6 +1493,57 @@ export default function QuotationPage() {
         images={orphanedImages}
         onComplete={() => setOrphanedImages([])}
       />
+    )}
+
+    {/* ── Unsaved-changes confirmation modal ── */}
+    {showLeaveConfirm && (
+      <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 backdrop-blur-sm">
+        <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full mx-4 overflow-hidden animate-fade-in-up">
+          <div className="p-6 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-full bg-amber-100 flex items-center justify-center text-2xl flex-shrink-0">
+                ⚠️
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-gray-900">มีการเปลี่ยนแปลงที่ยังไม่ได้บันทึก</h3>
+                <p className="text-sm text-gray-500 mt-1">คุณต้องการบันทึกใบเสนอราคานี้ก่อนออกจากหน้านี้หรือไม่?</p>
+              </div>
+            </div>
+          </div>
+          <div className="px-6 pb-6 flex flex-col gap-2">
+            <button
+              onClick={async () => {
+                setShowLeaveConfirm(false);
+                await handleSave();
+              }}
+              disabled={savingQuote || docNoDup}
+              className="w-full px-4 py-3 rounded-xl bg-green-500 text-white font-bold text-sm hover:bg-green-600 transition disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              💾 บันทึกแล้วออก
+            </button>
+            <button
+              onClick={() => {
+                setShowLeaveConfirm(false);
+                savedSnapshotRef.current = stateFingerprint(q); // prevent re-triggering
+                if (pendingNav) router.push(pendingNav);
+                setPendingNav(null);
+              }}
+              className="w-full px-4 py-3 rounded-xl bg-red-50 text-red-600 font-bold text-sm hover:bg-red-100 transition border border-red-200"
+            >
+              🚪 ออกโดยไม่บันทึก
+            </button>
+            <button
+              onClick={() => {
+                setShowLeaveConfirm(false);
+                setPendingNav(null);
+              }}
+              className="w-full px-4 py-3 rounded-xl bg-gray-100 text-gray-700 font-semibold text-sm hover:bg-gray-200 transition"
+            >
+              ← อยู่ต่อในหน้านี้
+            </button>
+          </div>
+        </div>
+      </div>
     )}
     </>
   );
