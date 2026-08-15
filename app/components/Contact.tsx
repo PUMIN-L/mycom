@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useT } from "../i18n/LanguageContext";
 import { translations } from "../i18n/translations";
-import { LINE_ID, LINE_URL, CONTACT_EMAIL } from "../lib/contact";
+import { LINE_ID, LINE_URL, LINE_APP_URL, CONTACT_EMAIL } from "../lib/contact";
 
 export default function Contact() {
   const t = useT();
@@ -130,7 +130,7 @@ export default function Contact() {
                 <h4 className="text-sm font-bold uppercase tracking-widest text-[var(--accent)]">
                   {t(translations.contact.lineLabel)}
                 </h4>
-                <a href={LINE_URL} target="_blank" rel="noopener noreferrer" className="text-lg text-[var(--text-secondary)] hover:text-[var(--accent)] transition-colors font-normal">
+                <a href={LINE_APP_URL} target="_blank" rel="noopener noreferrer" className="text-lg text-[var(--text-secondary)] hover:text-[var(--accent)] transition-colors font-normal">
                   {LINE_ID}
                 </a>
               </div>

@@ -73,9 +73,7 @@ export default function Hero() {
               {t(translations.hero.cta)}
             </a>
             <a
-              href="https://line.me/ti/p/~puminkmutnb"
-              target="_blank"
-              rel="noopener noreferrer"
+              href="line://ti/p/~puminkmutnb"
               className="group flex items-center gap-3 px-8 py-3 border-2 border-white text-white font-bold transition-all hover:bg-white hover:text-black"
             >
               <svg viewBox="0 0 24 24" className="w-5 h-5 fill-current transition-colors group-hover:text-[#06C755]">

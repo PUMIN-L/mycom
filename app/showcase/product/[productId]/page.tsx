@@ -5,7 +5,7 @@ import Image from "next/image";
 import { getContentByProductId } from "../../../lib/contentStore";
 import { getProduct } from "../../../lib/productStore";
 import { getSession } from "../../../lib/session";
-import { LINE_ID, LINE_URL, lineQrUrl } from "../../../lib/contact";
+import { LINE_ID, LINE_URL, LINE_APP_URL, lineQrUrl } from "../../../lib/contact";
 
 export const dynamic = "force-dynamic";
 
@@ -73,7 +73,7 @@ export default async function ProductContentGateway({
                 สอบถามข้อมูลเพิ่มเติมได้ที่ LINE
               </p>
               <a
-                href={LINE_URL}
+                href={LINE_APP_URL}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="block"
@@ -88,7 +88,7 @@ export default async function ProductContentGateway({
                 />
               </a>
               <a
-                href={LINE_URL}
+                href={LINE_APP_URL}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="mt-4 inline-flex items-center gap-2 text-lg font-bold text-green-600 hover:text-green-700 transition"

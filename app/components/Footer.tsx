@@ -99,9 +99,7 @@ export default function Footer() {
             </h3>
             <div className="flex gap-4">
               <a
-                href="https://line.me/ti/p/~puminkmutnb"
-                target="_blank"
-                rel="noopener noreferrer"
+                href="line://ti/p/~puminkmutnb"
                 className="w-12 h-12 border border-white/20 flex items-center justify-center hover:bg-white hover:text-footer transition-all"
                 aria-label="LINE"
               >

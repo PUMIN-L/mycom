@@ -9,6 +9,9 @@ export const LINE_ID = "@puminkmutnb";
 /** LINE "add friend" deep link (also what the QR code encodes). */
 export const LINE_URL = "https://line.me/ti/p/~puminkmutnb";
 
+/** LINE direct protocol link to forcefully open the app instead of a web browser. */
+export const LINE_APP_URL = "line://ti/p/~puminkmutnb";
+
 export const CONTACT_EMAIL = "ampumin@gmail.com";
 
 /** A scannable QR image (rendered via next/image, `unoptimized`) for LINE_URL. */
