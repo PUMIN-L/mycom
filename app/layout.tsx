@@ -74,10 +74,13 @@ export const metadata: Metadata = {
     telephone: false,
   },
   verification: {
-    // Read from env (GOOGLE_SITE_VERIFICATION) instead of hardcoding. Set it in
-    // .env.local for local and in Vercel Project Settings → Environment Variables
-    // for production, or the verification <meta> tag won't render there.
-    google: process.env.GOOGLE_SITE_VERIFICATION,
+    // Google Search Console site-verification token. It's a PUBLIC value (it
+    // ships as a <meta> tag in the HTML anyway), so the literal stays here as a
+    // safe fallback — the tag renders on prod even if the Vercel env var isn't
+    // set. GOOGLE_SITE_VERIFICATION (in .env.local / Vercel) overrides it.
+    google:
+      process.env.GOOGLE_SITE_VERIFICATION ||
+      "n4kf-TMDU4HxMTos40MVd7_QKfjknNKqS5oDBwhWHdY",
   },
 };
 
