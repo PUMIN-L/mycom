@@ -42,8 +42,9 @@ export const config = {
     '/quotation/:path*',
     '/settings',
     '/settings/:path*',
-    '/document',
-    '/document/:path*',
+    // NOTE: /document/[id] (singular) is the PUBLIC catalog PDF viewer reached
+    // from /catalog — it must NOT be gated. Only /documents (plural) is the admin
+    // management page.
     '/documents',
     '/documents/:path*',
     '/product-specs',
