@@ -13,6 +13,10 @@ export default function robots(): MetadataRoute.Robots {
         "/create-product",
         "/create-content",
         "/edit-product",
+        // /showcase and everything under it (incl. /showcase/{id}) is admin-only —
+        // block the whole subtree from crawlers. (This is why it must NOT appear
+        // in the sitemap; listing robots-blocked URLs is what Search Console
+        // rejected.)
         "/showcase",
         "/customers",
         "/suppliers",

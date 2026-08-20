@@ -1,9 +1,8 @@
 import type { MetadataRoute } from "next";
 import { SITE_URL } from "./lib/site";
-import { getAllContentsMeta } from "./lib/contentStore";
 import { getAllDocuments } from "./lib/documentStore";
 
-// Generated at request time so newly-added content appears without a rebuild.
+// Generated at request time so newly-added documents appear without a rebuild.
 export const dynamic = "force-dynamic";
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
@@ -16,27 +15,25 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     { url: `${SITE_URL}/catalog`, lastModified: now, changeFrequency: "weekly", priority: 0.7 },
   ];
 
-  // Emit the CANONICAL content pages (/showcase/{id}) — the ones that actually
-  // rank (full generateMetadata + Article JSON-LD). The old /showcase/product/{id}
-  // entries were noindex gateways that 307-redirect, so Search Console flagged
-  // every one as "noindex" / "has redirect"; they don't belong in the sitemap.
-  // NOTE: /showcase itself is the admin panel — it is NOT in the sitemap.
-  const contents = await getAllContentsMeta();
-  const contentRoutes: MetadataRoute.Sitemap = contents.map((c) => ({
-    url: `${SITE_URL}/showcase/${c.id}`,
-    lastModified: c.createdAt ? new Date(c.createdAt) : now,
-    changeFrequency: "monthly",
-    priority: 0.7,
-  }));
+  // IMPORTANT: /showcase and /showcase/{id} are ADMIN-only (blocked in robots.ts),
+  // so they must NOT be listed here — a sitemap that points to robots-blocked URLs
+  // is exactly what Google Search Console rejects.
 
-  // Include public document preview pages so Google indexes downloadable catalogs.
-  const documents = await getAllDocuments();
-  const documentRoutes: MetadataRoute.Sitemap = documents.map((d) => ({
-    url: `${SITE_URL}/document/${d.id}`,
-    lastModified: d.createdAt ? new Date(d.createdAt) : now,
-    changeFrequency: "monthly",
-    priority: 0.5,
-  }));
+  // Public document preview pages (downloadable catalogs shown on /catalog).
+  // Best-effort: a DB hiccup must never 500 the sitemap — fall back to the static
+  // routes so Google always gets a valid document.
+  let documentRoutes: MetadataRoute.Sitemap = [];
+  try {
+    const documents = await getAllDocuments();
+    documentRoutes = documents.map((d) => ({
+      url: `${SITE_URL}/document/${d.id}`,
+      lastModified: d.createdAt ? new Date(d.createdAt) : now,
+      changeFrequency: "monthly",
+      priority: 0.5,
+    }));
+  } catch (err) {
+    console.error("sitemap: failed to load documents, serving static routes only:", err);
+  }
 
-  return [...staticRoutes, ...contentRoutes, ...documentRoutes];
+  return [...staticRoutes, ...documentRoutes];
 }
