@@ -65,7 +65,7 @@ export default async function ProductsJsonLd() {
     email: CONTACT_EMAIL,
     address: {
       "@type": "PostalAddress",
-      streetAddress: "89/99 Tiwanon Rd., Bang Kra Sor",
+      streetAddress: "93 Soi Ngamwongwan 6 Yaek 19, Ngamwongwan Rd., Bang Khen",
       addressLocality: "Mueang Nonthaburi",
       addressRegion: "Nonthaburi",
       postalCode: "11000",

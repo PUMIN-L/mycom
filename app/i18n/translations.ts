@@ -120,9 +120,9 @@ export const translations = {
       zh: "通过任何渠道联系我们，我们很乐意为您提供帮助。",
     },
     address: {
-      th: "89/99 ถ.ติวานนท์ ต.บางกระสอ อ.เมืองนนทบุรี จ.นนทบุรี 11000",
-      en: "89/99 Tiwanon Rd., Bang Kra Sor, Mueang Nonthaburi, Nonthaburi 11000, Thailand",
-      zh: "泰国暖武里府暖武里市邦沙叻镇蒂瓦侬路89/99号 11000",
+      th: "93 ซอยงามวงศ์วาน 6 แยก 19 ถนนงามวงศ์วาน ตำบลบางเขน อำเภอเมืองนนทบุรี จ.นนทบุรี 11000",
+      en: "93 Soi Ngamwongwan 6 Yaek 19, Ngamwongwan Rd., Bang Khen, Mueang Nonthaburi, Nonthaburi 11000, Thailand",
+      zh: "泰国暖武里府暖武里市邦肯，岸旺翁路6巷19号93号 11000",
     },
     phone: {
       th: "02-xxx-xxxx",
