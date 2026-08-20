@@ -63,6 +63,7 @@ export default async function ProductsJsonLd() {
     logo: `${SITE_URL}/icon.png`,
     image: `${SITE_URL}/icon.png`,
     email: CONTACT_EMAIL,
+    telephone: "+66620129895", // 062-012-9895 in E.164 format
     address: {
       "@type": "PostalAddress",
       streetAddress: "93 Soi Ngamwongwan 6 Yaek 19, Ngamwongwan Rd., Bang Khen",

@@ -70,7 +70,7 @@ export const translations = {
         desc: {
           th: "บริการซ่อมบำรุง ดูแลรักษา และสอบเทียบเครื่องมือทดสอบทุกประเภท โดยทีมวิศวกรผู้เชี่ยวชาญ",
           en: "Maintenance, repair, and calibration for all types of testing equipment by expert engineers.",
-          zh: "由专业工程师团队提供各类测试设备的维修、保养 and 校准服务。",
+          zh: "由专业工程师团队提供各类测试设备的维修、保养和校准服务。",
         },
       },
       {
