@@ -1,6 +1,12 @@
 import { getProductsData } from "../lib/getProductsData";
 import { getAllContentsMeta } from "../lib/contentStore";
-import { SITE_NAME, SITE_URL, SITE_DESCRIPTION } from "../lib/site";
+import {
+  SITE_NAME,
+  SITE_URL,
+  SITE_DESCRIPTION,
+  SITE_LEGAL_NAME,
+  BRAND_ALT_NAMES,
+} from "../lib/site";
 import { CONTACT_EMAIL, LINE_URL } from "../lib/contact";
 import { stripHtml } from "../lib/stripHtml";
 
@@ -48,6 +54,10 @@ export default async function ProductsJsonLd() {
     "@type": ["Organization", "Store"],
     "@id": `${SITE_URL}/#organization`,
     name: SITE_NAME,
+    // Tells Google the brand's other names/spellings (Thai transliterations +
+    // legal name) so a Thai brand search can resolve to this entity.
+    alternateName: BRAND_ALT_NAMES,
+    legalName: SITE_LEGAL_NAME,
     url: SITE_URL,
     description: SITE_DESCRIPTION,
     logo: `${SITE_URL}/icon.png`,

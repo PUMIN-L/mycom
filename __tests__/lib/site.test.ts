@@ -86,11 +86,25 @@ describe('site', () => {
     it('exposes the site name, title, description and keywords', async () => {
       const mod = await loadSite({});
       expect(mod.SITE_NAME).toBe('Profin Lab Scale');
-      expect(mod.SITE_TITLE).toBe('PROFIN | จำหน่ายเครื่องมือวัด เครื่องทดสอบ สอบเทียบ สร้างห้องปฏิบัติการ');
+      // The <title> now leads with the Thai brand (+ English) for brand-search SEO.
+      expect(mod.SITE_TITLE).toContain('โปรฟิน แล็บสเกล');
+      expect(mod.SITE_TITLE).toContain('Profinlab');
       expect(mod.SITE_DESCRIPTION).toContain('Profinlab');
       expect(Array.isArray(mod.SITE_KEYWORDS)).toBe(true);
       expect(mod.SITE_KEYWORDS).toContain('เครื่องวัดความแข็ง');
       expect(mod.SITE_KEYWORDS.length).toBeGreaterThanOrEqual(50);
+    });
+
+    it('exposes the Thai brand name, legal name, and every spelling variant', async () => {
+      const mod = await loadSite({});
+      expect(mod.SITE_NAME_TH).toBe('โปรฟิน แล็บสเกล');
+      expect(mod.SITE_LEGAL_NAME).toBe('บริษัท โปรฟิน แล็บสเกล จำกัด');
+      expect(Array.isArray(mod.BRAND_ALT_NAMES)).toBe(true);
+      // The common Thai spellings a customer might type must all be present so
+      // any of them can match via the Organization JSON-LD alternateName.
+      for (const v of ['โปรฟินแลป', 'โปรฟินแล็บ', 'โปรฟิน แล็บสเกล', 'Profinlab']) {
+        expect(mod.BRAND_ALT_NAMES).toContain(v);
+      }
     });
   });
 });

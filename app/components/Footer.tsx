@@ -38,9 +38,9 @@ export default function Footer() {
                 <span className="text-xl font-serif font-bold tracking-tight group-hover:text-[var(--accent)] transition-colors">
                   PROFIN LAB SCALE
                 </span>
-                {/* <span className="text-[10px] uppercase tracking-[0.3em] text-[var(--accent)]">
-                  Premium Lab Solutions
-                </span> */}
+                <span className="text-sm font-semibold text-white/80">
+                  โปรฟิน แล็บสเกล
+                </span>
                 <span className="text-xs uppercase  text-[var(--accent)] font-medium">
                   Premium Testing Equipments
                 </span>
@@ -49,6 +49,7 @@ export default function Footer() {
             <p className="text-white/60 text-base leading-relaxed font-light">
               {t(translations.footer.description)}
             </p>
+            <p className="text-white/40 text-sm mt-4">บริษัท โปรฟิน แล็บสเกล จำกัด</p>
           </div>
 
           {/* Navigation Column */}

@@ -27,8 +27,31 @@ export const SITE_URL = resolveSiteUrl();
 
 export const SITE_NAME = "Profin Lab Scale";
 
+// Thai brand name, legal entity, and EVERY common spelling variant — so a search
+// in any of them ("โปรฟินแลป", "โปรฟิน แล็บ", "โปรฟิน แล็บสเกล", …) can match the
+// brand. Fed into the Organization JSON-LD `alternateName` (the strong entity
+// signal that tells Google "this brand is also known as …"). English "profinlab"
+// already ranks via the domain; these give the Thai spellings something to match.
+export const SITE_NAME_TH = "โปรฟิน แล็บสเกล";
+export const SITE_LEGAL_NAME = "บริษัท โปรฟิน แล็บสเกล จำกัด";
+export const BRAND_ALT_NAMES = [
+  "โปรฟิน แล็บสเกล",
+  "โปรฟิน แล็บ สเกล",
+  "โปรฟินแล็บสเกล",
+  "โปรฟินแลป",
+  "โปรฟินแล็บ",
+  "โปรฟิน แลป",
+  "โปรฟิน แล็บ",
+  "Profinlab",
+  "Profin Lab Scale",
+  "Profin Labscale",
+  "บริษัท โปรฟิน แล็บสเกล จำกัด",
+];
+
+// Brand name FIRST (Thai + English) so both "โปรฟิน แล็บสเกล" and "profinlab"
+// have the strongest on-page signal — the <title>.
 export const SITE_TITLE =
-  "PROFIN | จำหน่ายเครื่องมือวัด เครื่องทดสอบ สอบเทียบ สร้างห้องปฏิบัติการ";
+  "โปรฟิน แล็บสเกล (Profinlab) | จำหน่ายเครื่องมือวัด เครื่องทดสอบ สอบเทียบ สร้างห้องปฏิบัติการ";
 
 export const SITE_DESCRIPTION =
   "บริษัท โปรฟิน แล็บ สเกล จำกัด (Profinlab) — จำหน่าย ซ่อมบำรุง สอบเทียบ และติดตั้งเครื่องมือวัดและเครื่องทดสอบ" +

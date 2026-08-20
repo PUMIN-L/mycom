@@ -91,8 +91,8 @@ export default function Navbar({ isHomePage: forceIsHome }: NavbarProps = {}) {
             <span className={`text-lg font-sans font-bold tracking-tight transition-colors ${scrolled || !isHome || mobileOpen ? "text-black" : "text-white group-hover:text-[var(--accent)]"}`}>
               PROFIN LAB SCALE
             </span>
-            <span className={`text-[10px] tracking-[-0.015em] ml-[1px] mt-[-2px] uppercase transition-colors ${scrolled || !isHome || mobileOpen ? "text-gray-500" : "text-white/60"}`}>
-              Premium Testing Equipments
+            <span className={`text-[10px] tracking-[-0.015em] ml-[1px] mt-[-2px] transition-colors ${scrolled || !isHome || mobileOpen ? "text-gray-500" : "text-white/60"}`}>
+              โปรฟิน แล็บสเกล · Premium Testing Equipments
             </span>
           </div>
         </a>
