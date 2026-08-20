@@ -125,9 +125,9 @@ export const translations = {
       zh: "泰国暖武里府暖武里市邦肯，岸旺翁路6巷19号93号 11000",
     },
     phone: {
-      th: "02-xxx-xxxx",
-      en: "02-xxx-xxxx",
-      zh: "02-xxx-xxxx",
+      th: "062-012-9895",
+      en: "062-012-9895",
+      zh: "062-012-9895",
     },
     email: {
       th: "ampumin@gmail.com",
