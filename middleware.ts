@@ -52,6 +52,8 @@ export const config = {
     '/suppliers',
     '/suppliers/:path*',
     '/billing',
-    '/billing/:path*'
+    '/billing/:path*',
+    '/crm',
+    '/crm/:path*'
   ],
 };

@@ -106,3 +106,64 @@ export interface DocumentData {
   createdAt: string;
   sortOrder: number;
 }
+
+// ── CRM: Sold Equipment & Warranty Tracking ─────────────────────────────────
+
+export const SCHEDULE_TYPES = ["service", "phone_call"] as const;
+export type ScheduleType = (typeof SCHEDULE_TYPES)[number];
+
+export const SCHEDULE_STATUSES = ["pending", "completed", "cancelled"] as const;
+export type ScheduleStatus = (typeof SCHEDULE_STATUSES)[number];
+
+export interface CustomerEquipment {
+  id: string;
+  customerId: string;
+  productId: string;
+  serialNumber: string;
+  quotationNumber: string;
+  warrantyCertNumber: string;
+  warrantyType: string;
+  warrantyStartDate: string | null; // YYYY-MM-DD
+  warrantyEndDate: string | null; // YYYY-MM-DD
+  status: string; // Active | Expired
+  createdAt: string;
+  // Joined display fields (present on reads)
+  customerName?: string;
+  companyName?: string;
+  productName?: string;
+}
+
+export interface ServiceSchedule {
+  id: string;
+  equipmentId: string;
+  scheduleType: ScheduleType;
+  scheduledDate: string; // YYYY-MM-DD
+  assignedToAdminId: string;
+  status: ScheduleStatus;
+  notes: string;
+  createdAt: string;
+}
+
+export interface ServiceLog {
+  id: string;
+  scheduleId: string;
+  serviceReportNumber: string;
+  actionDate: string;
+  resultDetails: string;
+  customerFeedback: string;
+  createdAt: string;
+}
+
+export interface CrmAlerts {
+  expiringWarranties: CustomerEquipment[];
+  upcomingSchedules: Array<
+    ServiceSchedule & {
+      customerId?: string;
+      customerName?: string;
+      companyName?: string;
+      productName?: string;
+      serialNumber?: string;
+      overdue: boolean;
+    }
+  >;
+}

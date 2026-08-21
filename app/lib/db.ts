@@ -4,7 +4,7 @@ import type { QueryResult, FieldPacket, RowDataPacket } from "mysql2";
 
 // Bump whenever the schema below changes — a mismatch re-runs the (idempotent)
 // bump; a match lets returning cold instances skip it in one SELECT.
-const SCHEMA_VERSION = 18;
+const SCHEMA_VERSION = 19;
 
 type DbPool = ReturnType<typeof mysql.createPool>;
 
@@ -467,6 +467,84 @@ async function bootstrapSchemaOnce(): Promise<void> {
     try {
       await connection.query(
         `CREATE INDEX idx_billing_createdAt ON billing_documents (createdAt)`
+      );
+    } catch (error) {
+      if (!isBenignSchemaError(error)) throw error;
+    }
+
+    // ── CRM: sold equipment + warranty tracking ──────────────────────────────
+    // Document references (quotation / warranty cert / service report) are TEXT
+    // reference numbers only — no file uploads, per spec
+    // (openspec/changes/add-crm-service-tracking).
+    await connection.query(`
+        CREATE TABLE IF NOT EXISTS customer_equipments (
+          id VARCHAR(36) PRIMARY KEY,
+          customerId VARCHAR(255) NOT NULL,
+          productId VARCHAR(255) NOT NULL,
+          serialNumber VARCHAR(255) NOT NULL DEFAULT '',
+          quotationNumber VARCHAR(255) NOT NULL DEFAULT '',
+          warrantyCertNumber VARCHAR(255) NOT NULL DEFAULT '',
+          warrantyType VARCHAR(255) NOT NULL DEFAULT '',
+          warrantyStartDate VARCHAR(20) DEFAULT NULL,
+          warrantyEndDate VARCHAR(20) DEFAULT NULL,
+          status VARCHAR(20) NOT NULL DEFAULT 'Active',
+          createdAt VARCHAR(255) NOT NULL,
+          INDEX idx_ce_customer (customerId),
+          INDEX idx_ce_warrantyEnd (warrantyEndDate)
+        )
+      `);
+    try {
+      // RESTRICT (like customers→companies): a customer with tracked equipment
+      // can't be deleted out from under their service history.
+      await connection.query(
+        `ALTER TABLE customer_equipments ADD CONSTRAINT fk_ce_customer FOREIGN KEY (customerId) REFERENCES customers(id) ON DELETE RESTRICT`
+      );
+    } catch (error) {
+      if (!isBenignSchemaError(error)) throw error;
+    }
+    // NOTE: productId is a loose reference on purpose (no FK) — deleting a
+    // product from the catalog must not block on, or cascade-delete, the record
+    // of a unit already sold to a customer.
+
+    // ── CRM: service / follow-up call schedules ─────────────────────────────
+    await connection.query(`
+        CREATE TABLE IF NOT EXISTS service_schedules (
+          id VARCHAR(36) PRIMARY KEY,
+          equipmentId VARCHAR(36) NOT NULL,
+          scheduleType VARCHAR(20) NOT NULL DEFAULT 'service',
+          scheduledDate VARCHAR(20) NOT NULL,
+          assignedToAdminId VARCHAR(255) NOT NULL DEFAULT '',
+          status VARCHAR(20) NOT NULL DEFAULT 'pending',
+          notes TEXT,
+          createdAt VARCHAR(255) NOT NULL,
+          INDEX idx_ss_equipment (equipmentId),
+          INDEX idx_ss_status_date (status, scheduledDate)
+        )
+      `);
+    try {
+      await connection.query(
+        `ALTER TABLE service_schedules ADD CONSTRAINT fk_ss_equipment FOREIGN KEY (equipmentId) REFERENCES customer_equipments(id) ON DELETE CASCADE`
+      );
+    } catch (error) {
+      if (!isBenignSchemaError(error)) throw error;
+    }
+
+    // ── CRM: post-action logs (service report / call result) ────────────────
+    await connection.query(`
+        CREATE TABLE IF NOT EXISTS service_logs (
+          id VARCHAR(36) PRIMARY KEY,
+          scheduleId VARCHAR(36) NOT NULL,
+          serviceReportNumber VARCHAR(255) NOT NULL DEFAULT '',
+          actionDate VARCHAR(255) NOT NULL,
+          resultDetails TEXT,
+          customerFeedback TEXT,
+          createdAt VARCHAR(255) NOT NULL,
+          INDEX idx_sl_schedule (scheduleId)
+        )
+      `);
+    try {
+      await connection.query(
+        `ALTER TABLE service_logs ADD CONSTRAINT fk_sl_schedule FOREIGN KEY (scheduleId) REFERENCES service_schedules(id) ON DELETE CASCADE`
       );
     } catch (error) {
       if (!isBenignSchemaError(error)) throw error;

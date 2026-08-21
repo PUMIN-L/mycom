@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "../context/AuthContext";
 import Toast from "../components/Toast";
 import Link from "next/link";
+import EquipmentTab from "./EquipmentTab";
 
 interface Company {
   id: string;
@@ -42,7 +43,7 @@ interface Salesperson {
 function CustomersInner() {
   const router = useRouter();
   const { isLoggedIn, isLoading } = useAuth();
-  const [activeTab, setActiveTab] = useState<"customers" | "companies" | "salespeople">("customers");
+  const [activeTab, setActiveTab] = useState<"customers" | "companies" | "salespeople" | "equipments">("customers");
 
   const [companies, setCompanies] = useState<Company[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -313,6 +314,14 @@ function CustomersInner() {
             }`}
           >
             พนักงานขาย (Sales)
+          </button>
+          <button
+            onClick={() => setActiveTab("equipments")}
+            className={`py-2.5 px-6 rounded-xl font-semibold text-sm transition-all duration-200 ${
+              activeTab === "equipments" ? "bg-white text-orange-600 shadow-sm" : "text-gray-600 hover:text-gray-900 hover:bg-gray-200/50"
+            }`}
+          >
+            อุปกรณ์ (Equipments)
           </button>
 
         </div>
@@ -610,6 +619,10 @@ function CustomersInner() {
                 </table>
               </div>
             </div>
+          )}
+
+          {activeTab === "equipments" && (
+            <EquipmentTab showToast={showToast} />
           )}
         </div>
       </div>
