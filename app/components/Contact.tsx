@@ -5,8 +5,11 @@ import { useT } from "../i18n/LanguageContext";
 import { translations } from "../i18n/translations";
 import { LINE_ID, LINE_URL, LINE_APP_URL, CONTACT_EMAIL } from "../lib/contact";
 
+import LineQrModal from "./LineQrModal";
+
 export default function Contact() {
   const t = useT();
+  const [isLineModalOpen, setIsLineModalOpen] = useState(false);
   const [formState, setFormState] = useState({
     name: "",
     email: "",
@@ -23,6 +26,18 @@ export default function Contact() {
   // timer from a previous attempt can't flip "sending" back to "idle" mid-flight
   // and re-enable the button for a duplicate send.
   const resetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleLineClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const isMobile =
+      typeof navigator !== "undefined" &&
+      /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+    if (isMobile) {
+      window.location.href = LINE_APP_URL;
+    } else {
+      setIsLineModalOpen(true);
+    }
+  };
   useEffect(() => {
     return () => {
       if (resetTimerRef.current) clearTimeout(resetTimerRef.current);
@@ -130,9 +145,13 @@ export default function Contact() {
                 <h4 className="text-sm font-bold uppercase tracking-widest text-[var(--accent)]">
                   {t(translations.contact.lineLabel)}
                 </h4>
-                <a href={LINE_APP_URL} target="_blank" rel="noopener noreferrer" className="text-lg text-[var(--text-secondary)] hover:text-[var(--accent)] transition-colors font-normal">
+                <button
+                  type="button"
+                  onClick={handleLineClick}
+                  className="text-lg text-[var(--text-secondary)] hover:text-[var(--accent)] transition-colors font-normal cursor-pointer text-left"
+                >
                   {LINE_ID}
-                </a>
+                </button>
               </div>
             </div>
 
@@ -246,6 +265,11 @@ export default function Contact() {
           </div>
         </div>
       </div>
+
+      <LineQrModal
+        isOpen={isLineModalOpen}
+        onClose={() => setIsLineModalOpen(false)}
+      />
     </section>
   );
 }
