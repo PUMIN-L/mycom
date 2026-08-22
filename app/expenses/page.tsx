@@ -351,16 +351,16 @@ export default function ExpensesPage() {
       )}
 
       {/* Delete Confirm */}
-      <ConfirmDialog
-        isOpen={!!deletingId}
-        title="ยืนยันการลบรายจ่าย"
-        message="คุณต้องการลบรายการรายจ่ายนี้ใช่หรือไม่? ข้อมูลที่ถูกลบจะไม่สามารถกู้คืนได้ และอาจส่งผลให้ยอด Net Profit เปลี่ยนแปลง"
-        confirmLabel="ลบข้อมูล"
-        cancelLabel="ยกเลิก"
-        isDanger={true}
-        onConfirm={handleDelete}
-        onCancel={() => setDeletingId(null)}
-      />
+      {!!deletingId && (
+        <ConfirmDialog
+          title="ยืนยันการลบรายจ่าย"
+          message="คุณต้องการลบรายการรายจ่ายนี้ใช่หรือไม่? ข้อมูลที่ถูกลบจะไม่สามารถกู้คืนได้ และอาจส่งผลให้ยอด Net Profit เปลี่ยนแปลง"
+          confirmText="ลบข้อมูล"
+          cancelText="ยกเลิก"
+          onConfirm={handleDelete}
+          onCancel={() => setDeletingId(null)}
+        />
+      )}
     </div>
   );
 }
