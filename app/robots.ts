@@ -25,6 +25,7 @@ export default function robots(): MetadataRoute.Robots {
         "/billing",
         "/settings",
         "/documents",
+        "/dashboard",
       ],
     },
     sitemap: `${SITE_URL}/sitemap.xml`,

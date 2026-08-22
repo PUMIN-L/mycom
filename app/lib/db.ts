@@ -4,7 +4,7 @@ import type { QueryResult, FieldPacket, RowDataPacket } from "mysql2";
 
 // Bump whenever the schema below changes — a mismatch re-runs the (idempotent)
 // bump; a match lets returning cold instances skip it in one SELECT.
-const SCHEMA_VERSION = 19;
+const SCHEMA_VERSION = 20;
 
 type DbPool = ReturnType<typeof mysql.createPool>;
 
@@ -545,6 +545,43 @@ async function bootstrapSchemaOnce(): Promise<void> {
     try {
       await connection.query(
         `ALTER TABLE service_logs ADD CONSTRAINT fk_sl_schedule FOREIGN KEY (scheduleId) REFERENCES service_schedules(id) ON DELETE CASCADE`
+      );
+    } catch (error) {
+      if (!isBenignSchemaError(error)) throw error;
+    }
+
+    // ── Sales records (permanent, normalized — the source of truth for
+    // analytics). Quotations and billing docs are purged after 30 days, so
+    // they cannot be used for historical revenue reporting. This table stores
+    // every closed deal with indexed columns for fast GROUP BY queries.
+    await connection.query(`
+        CREATE TABLE IF NOT EXISTS sales_records (
+          id VARCHAR(36) PRIMARY KEY,
+          salespersonId VARCHAR(255) NOT NULL DEFAULT '',
+          customerId VARCHAR(255) NOT NULL DEFAULT '',
+          companyId VARCHAR(255) NOT NULL DEFAULT '',
+          productId VARCHAR(255) NOT NULL DEFAULT '',
+          productName VARCHAR(255) NOT NULL DEFAULT '',
+          categoryId INT DEFAULT NULL,
+          qty INT NOT NULL DEFAULT 1,
+          unitPrice DECIMAL(12,2) NOT NULL DEFAULT 0,
+          totalAmount DECIMAL(12,2) NOT NULL DEFAULT 0,
+          saleDate DATE NOT NULL,
+          quotationRef VARCHAR(255) NOT NULL DEFAULT '',
+          equipmentId VARCHAR(36) DEFAULT NULL,
+          note TEXT,
+          createdAt VARCHAR(255) NOT NULL,
+          INDEX idx_sr_saleDate (saleDate),
+          INDEX idx_sr_salesperson (salespersonId),
+          INDEX idx_sr_customer (customerId),
+          INDEX idx_sr_company (companyId),
+          INDEX idx_sr_product (productId),
+          INDEX idx_sr_category (categoryId)
+        )
+      `);
+    try {
+      await connection.query(
+        `ALTER TABLE sales_records ADD INDEX idx_sr_company (companyId)`
       );
     } catch (error) {
       if (!isBenignSchemaError(error)) throw error;

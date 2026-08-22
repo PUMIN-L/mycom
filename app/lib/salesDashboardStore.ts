@@ -1,0 +1,620 @@
+import "server-only";
+import { query } from "./db";
+import type { RowDataPacket, ResultSetHeader } from "mysql2";
+import { sanitizePlainText } from "./sanitizeHtml";
+
+// ── Types ────────────────────────────────────────────────────────────────────
+
+export interface SalesRecord {
+  id: string;
+  salespersonId: string;
+  customerId: string;
+  companyId: string;
+  productId: string;
+  productName: string;
+  categoryId: number | null;
+  qty: number;
+  unitPrice: number;
+  totalAmount: number;
+  saleDate: string; // YYYY-MM-DD
+  quotationRef: string;
+  equipmentId: string | null;
+  note: string;
+  createdAt: string;
+  // Joined display fields (from list queries)
+  salespersonName?: string;
+  customerName?: string;
+  companyName?: string;
+}
+
+export interface DashboardOverview {
+  currentMonth: { revenue: number; deals: number; newCustomers: number; quotations: number };
+  previousMonth: { revenue: number; deals: number; newCustomers: number; quotations: number };
+  expiringWarranties: number;
+}
+
+export interface RevenueByPeriod {
+  period: string; // e.g. "2026-01", "2026-Q1", "2026"
+  revenue: number;
+  deals: number;
+}
+
+export interface TopItem {
+  id: string;
+  name: string;
+  revenue: number;
+  qty: number;
+  deals: number;
+  percentage: number;
+}
+
+export interface SalespersonStats {
+  id: string;
+  name: string;
+  revenue: number;
+  deals: number;
+  percentage: number;
+  avgDealSize: number;
+}
+
+export interface SmartInsight {
+  type: "positive" | "warning" | "opportunity" | "info";
+  icon: string;
+  title: string;
+  description: string;
+}
+
+// ── CRUD ─────────────────────────────────────────────────────────────────────
+
+function formatLocalDate(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function cleanDate(d?: string): string | undefined {
+  if (!d) return undefined;
+  const s = String(d).trim().substring(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : undefined;
+}
+
+function cleanInput(data: Partial<SalesRecord>) {
+  return {
+    salespersonId: sanitizePlainText(data.salespersonId || "").substring(0, 255),
+    customerId: sanitizePlainText(data.customerId || "").substring(0, 255),
+    companyId: sanitizePlainText(data.companyId || "").substring(0, 255),
+    productId: sanitizePlainText(data.productId || "").substring(0, 255),
+    productName: sanitizePlainText(data.productName || "").substring(0, 255),
+    categoryId:
+      data.categoryId !== undefined &&
+      data.categoryId !== null &&
+      !isNaN(Number(data.categoryId)) &&
+      Number(data.categoryId) > 0
+        ? Math.round(Number(data.categoryId))
+        : null,
+    qty: Math.max(1, Math.min(1000000, Math.round(Number(data.qty) || 0))),
+    unitPrice: Math.max(0, Math.min(999999999.99, Number(data.unitPrice) || 0)),
+    totalAmount: Math.max(0, Math.min(9999999999.99, Number(data.totalAmount) || 0)),
+    saleDate: (() => {
+      const raw = sanitizePlainText(data.saleDate || "").substring(0, 10);
+      // Validate YYYY-MM-DD format and that it's a real date
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return formatLocalDate(new Date());
+      const d = new Date(raw + "T00:00:00");
+      if (isNaN(d.getTime())) return formatLocalDate(new Date());
+      return raw;
+    })(),
+    quotationRef: sanitizePlainText(data.quotationRef || "").substring(0, 255),
+    equipmentId: data.equipmentId
+      ? sanitizePlainText(data.equipmentId).substring(0, 36)
+      : null,
+    note: sanitizePlainText(data.note || "").substring(0, 5000),
+  };
+}
+
+const LIST_SELECT = `
+  SELECT sr.*,
+         sp.name AS salespersonName,
+         c.name AS customerName,
+         co.name AS companyName
+  FROM sales_records sr
+  LEFT JOIN salespeople sp ON sr.salespersonId = sp.id
+  LEFT JOIN customers c ON sr.customerId = c.id
+  LEFT JOIN companies co ON sr.companyId = co.id`;
+
+export async function addSalesRecord(
+  data: Partial<SalesRecord>
+): Promise<SalesRecord> {
+  const id = crypto.randomUUID();
+  const now = new Date().toISOString();
+  const v = cleanInput(data);
+
+  // Auto-populate product name and category if only productId is provided
+  if (!v.productName && v.productId) {
+    const [pRows] = await query<RowDataPacket[]>(
+      "SELECT title_th, title_en, categoryId FROM products WHERE id = ?",
+      [v.productId]
+    );
+    if (pRows[0]) {
+      v.productName = sanitizePlainText(pRows[0].title_th || pRows[0].title_en || "").substring(0, 255);
+      if (v.categoryId === null && typeof pRows[0].categoryId === "number") {
+        v.categoryId = pRows[0].categoryId;
+      }
+    }
+  }
+
+  // Auto-compute totalAmount if not provided
+  const totalAmount = v.totalAmount > 0 ? v.totalAmount : v.qty * v.unitPrice;
+  await query(
+    `INSERT INTO sales_records
+       (id, salespersonId, customerId, companyId, productId, productName,
+        categoryId, qty, unitPrice, totalAmount, saleDate, quotationRef,
+        equipmentId, note, createdAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      id, v.salespersonId, v.customerId, v.companyId, v.productId,
+      v.productName, v.categoryId, v.qty, v.unitPrice, totalAmount,
+      v.saleDate, v.quotationRef, v.equipmentId, v.note, now,
+    ]
+  );
+  return (await getSalesRecord(id))!;
+}
+
+export async function getSalesRecord(id: string): Promise<SalesRecord | null> {
+  const [rows] = await query<RowDataPacket[]>(
+    `${LIST_SELECT} WHERE sr.id = ?`,
+    [id]
+  );
+  return (rows[0] as SalesRecord) || null;
+}
+
+export async function updateSalesRecord(
+  id: string,
+  data: Partial<SalesRecord>
+): Promise<SalesRecord | null> {
+  const existing = await getSalesRecord(id);
+  if (!existing) return null;
+  const v = cleanInput({ ...existing, ...data });
+  const totalAmount = v.totalAmount > 0 ? v.totalAmount : v.qty * v.unitPrice;
+  await query(
+    `UPDATE sales_records SET
+       salespersonId = ?, customerId = ?, companyId = ?, productId = ?,
+       productName = ?, categoryId = ?, qty = ?, unitPrice = ?,
+       totalAmount = ?, saleDate = ?, quotationRef = ?, equipmentId = ?,
+       note = ?
+     WHERE id = ?`,
+    [
+      v.salespersonId, v.customerId, v.companyId, v.productId,
+      v.productName, v.categoryId, v.qty, v.unitPrice, totalAmount,
+      v.saleDate, v.quotationRef, v.equipmentId, v.note, id,
+    ]
+  );
+  return getSalesRecord(id);
+}
+
+export async function deleteSalesRecord(id: string): Promise<boolean> {
+  const [res] = await query<ResultSetHeader>(
+    "DELETE FROM sales_records WHERE id = ?",
+    [id]
+  );
+  return res.affectedRows > 0;
+}
+
+export async function listSalesRecords(filters?: {
+  salespersonId?: string;
+  customerId?: string;
+  categoryId?: number;
+  dateFrom?: string;
+  dateTo?: string;
+}): Promise<SalesRecord[]> {
+  const where: string[] = [];
+  const params: unknown[] = [];
+  if (filters?.salespersonId) {
+    where.push("sr.salespersonId = ?");
+    params.push(filters.salespersonId);
+  }
+  if (filters?.customerId) {
+    where.push("sr.customerId = ?");
+    params.push(filters.customerId);
+  }
+  if (filters?.categoryId !== undefined && filters.categoryId !== null) {
+    where.push("sr.categoryId = ?");
+    params.push(filters.categoryId);
+  }
+  const dateFrom = cleanDate(filters?.dateFrom);
+  if (dateFrom) {
+    where.push("sr.saleDate >= ?");
+    params.push(dateFrom);
+  }
+  const dateTo = cleanDate(filters?.dateTo);
+  if (dateTo) {
+    where.push("sr.saleDate <= ?");
+    params.push(dateTo);
+  }
+  const clause = where.length > 0 ? ` WHERE ${where.join(" AND ")}` : "";
+  const [rows] = await query<RowDataPacket[]>(
+    `${LIST_SELECT}${clause} ORDER BY sr.saleDate DESC LIMIT 1000`,
+    params
+  );
+  return rows as SalesRecord[];
+}
+
+// ── Aggregate Queries ────────────────────────────────────────────────────────
+
+export async function getDashboardOverview(): Promise<DashboardOverview> {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth(); // 0-indexed
+  const curStart = `${year}-${String(month + 1).padStart(2, "0")}-01`;
+  // Use Date constructor for safe month rollover (Dec → Jan next year)
+  const nextMonthDate = new Date(year, month + 1, 1);
+  const curEnd = `${nextMonthDate.getFullYear()}-${String(nextMonthDate.getMonth() + 1).padStart(2, "0")}-01`;
+  const prevDate = new Date(year, month - 1, 1);
+  const prevStart = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, "0")}-01`;
+
+  // Current month
+  const [curRows] = await query<RowDataPacket[]>(
+    `SELECT COALESCE(SUM(totalAmount), 0) AS revenue, COUNT(*) AS deals
+     FROM sales_records WHERE saleDate >= ? AND saleDate < ?`,
+    [curStart, curEnd]
+  );
+  // Previous month
+  const [prevRows] = await query<RowDataPacket[]>(
+    `SELECT COALESCE(SUM(totalAmount), 0) AS revenue, COUNT(*) AS deals
+     FROM sales_records WHERE saleDate >= ? AND saleDate < ?`,
+    [prevStart, curStart]
+  );
+  // New customers this month
+  const [curCust] = await query<RowDataPacket[]>(
+    `SELECT COUNT(*) AS cnt FROM customers WHERE createdAt >= ?`,
+    [curStart]
+  );
+  const [prevCust] = await query<RowDataPacket[]>(
+    `SELECT COUNT(*) AS cnt FROM customers WHERE createdAt >= ? AND createdAt < ?`,
+    [prevStart, curStart]
+  );
+  // Quotations (count from used_docnos since quotations themselves get purged)
+  const [curQuot] = await query<RowDataPacket[]>(
+    `SELECT COUNT(*) AS cnt FROM used_docnos WHERE createdAt >= ?`,
+    [curStart]
+  );
+  const [prevQuot] = await query<RowDataPacket[]>(
+    `SELECT COUNT(*) AS cnt FROM used_docnos WHERE createdAt >= ? AND createdAt < ?`,
+    [prevStart, curStart]
+  );
+  // Expiring warranties (≤30 days)
+  const thirtyDaysLater = formatLocalDate(
+    new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000)
+  );
+  const today = formatLocalDate(now);
+  const [expWarranty] = await query<RowDataPacket[]>(
+    `SELECT COUNT(*) AS cnt FROM customer_equipments
+     WHERE warrantyEndDate IS NOT NULL AND warrantyEndDate >= ? AND warrantyEndDate <= ?
+       AND status = 'Active'`,
+    [today, thirtyDaysLater]
+  );
+
+  return {
+    currentMonth: {
+      revenue: Number(curRows[0]?.revenue || 0),
+      deals: Number(curRows[0]?.deals || 0),
+      newCustomers: Number(curCust[0]?.cnt || 0),
+      quotations: Number(curQuot[0]?.cnt || 0),
+    },
+    previousMonth: {
+      revenue: Number(prevRows[0]?.revenue || 0),
+      deals: Number(prevRows[0]?.deals || 0),
+      newCustomers: Number(prevCust[0]?.cnt || 0),
+      quotations: Number(prevQuot[0]?.cnt || 0),
+    },
+    expiringWarranties: Number(expWarranty[0]?.cnt || 0),
+  };
+}
+
+export async function getRevenueByMonth(year: number): Promise<RevenueByPeriod[]> {
+  const [rows] = await query<RowDataPacket[]>(
+    `SELECT DATE_FORMAT(saleDate, '%Y-%m') AS period,
+            COALESCE(SUM(totalAmount), 0) AS revenue,
+            COUNT(*) AS deals
+     FROM sales_records
+     WHERE YEAR(saleDate) = ?
+     GROUP BY period ORDER BY period`,
+    [year]
+  );
+  // Fill all 12 months
+  const map = new Map(rows.map((r) => [r.period, r]));
+  return Array.from({ length: 12 }, (_, i) => {
+    const m = `${year}-${String(i + 1).padStart(2, "0")}`;
+    const r = map.get(m);
+    return { period: m, revenue: Number(r?.revenue || 0), deals: Number(r?.deals || 0) };
+  });
+}
+
+export async function getRevenueByQuarter(year: number): Promise<RevenueByPeriod[]> {
+  const [rows] = await query<RowDataPacket[]>(
+    `SELECT CONCAT(YEAR(saleDate), '-Q', QUARTER(saleDate)) AS period,
+            COALESCE(SUM(totalAmount), 0) AS revenue,
+            COUNT(*) AS deals
+     FROM sales_records
+     WHERE YEAR(saleDate) = ?
+     GROUP BY period ORDER BY period`,
+    [year]
+  );
+  const map = new Map(rows.map((r) => [r.period, r]));
+  return [1, 2, 3, 4].map((q) => {
+    const p = `${year}-Q${q}`;
+    const r = map.get(p);
+    return { period: p, revenue: Number(r?.revenue || 0), deals: Number(r?.deals || 0) };
+  });
+}
+
+export async function getRevenueByCategory(
+  dateFromRaw?: string,
+  dateToRaw?: string
+): Promise<TopItem[]> {
+  const where: string[] = [];
+  const params: unknown[] = [];
+  const dateFrom = cleanDate(dateFromRaw);
+  const dateTo = cleanDate(dateToRaw);
+  if (dateFrom) { where.push("sr.saleDate >= ?"); params.push(dateFrom); }
+  if (dateTo) { where.push("sr.saleDate <= ?"); params.push(dateTo); }
+  const clause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
+  const [rows] = await query<RowDataPacket[]>(
+    `SELECT sr.categoryId AS id,
+            COALESCE(pc.name_th, 'ไม่ระบุหมวด') AS name,
+            COALESCE(SUM(sr.totalAmount), 0) AS revenue,
+            COALESCE(SUM(sr.qty), 0) AS qty,
+            COUNT(*) AS deals
+     FROM sales_records sr
+     LEFT JOIN product_categories pc ON sr.categoryId = pc.id
+     ${clause}
+     GROUP BY sr.categoryId, pc.name_th
+     ORDER BY revenue DESC`,
+    params
+  );
+  const totalRev = rows.reduce((s, r) => s + Number(r.revenue), 0);
+  return rows.map((r) => ({
+    id: String(r.id ?? "unknown"),
+    name: r.name,
+    revenue: Number(r.revenue),
+    qty: Number(r.qty),
+    deals: Number(r.deals),
+    percentage: totalRev > 0 ? Math.round((Number(r.revenue) / totalRev) * 10000) / 100 : 0,
+  }));
+}
+
+export async function getTopProducts(
+  limit = 10,
+  dateFromRaw?: string,
+  dateToRaw?: string
+): Promise<TopItem[]> {
+  const safeLimit = Math.max(1, Math.min(100, Math.round(Number(limit) || 10)));
+  const where: string[] = [];
+  const params: unknown[] = [];
+  const dateFrom = cleanDate(dateFromRaw);
+  const dateTo = cleanDate(dateToRaw);
+  if (dateFrom) { where.push("saleDate >= ?"); params.push(dateFrom); }
+  if (dateTo) { where.push("saleDate <= ?"); params.push(dateTo); }
+  const clause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
+  const [rows] = await query<RowDataPacket[]>(
+    `SELECT productId AS id, productName AS name,
+            COALESCE(SUM(totalAmount), 0) AS revenue,
+            COALESCE(SUM(qty), 0) AS qty,
+            COUNT(*) AS deals
+     FROM sales_records ${clause}
+     GROUP BY productId, productName
+     ORDER BY revenue DESC LIMIT ?`,
+    [...params, safeLimit]
+  );
+  const totalRev = rows.reduce((s, r) => s + Number(r.revenue), 0);
+  return rows.map((r) => ({
+    id: String(r.id || "unspecified"),
+    name: r.name || "ไม่ระบุสินค้า",
+    revenue: Number(r.revenue),
+    qty: Number(r.qty),
+    deals: Number(r.deals),
+    percentage: totalRev > 0 ? Math.round((Number(r.revenue) / totalRev) * 10000) / 100 : 0,
+  }));
+}
+
+export async function getTopCustomers(
+  limit = 10,
+  dateFromRaw?: string,
+  dateToRaw?: string
+): Promise<TopItem[]> {
+  const safeLimit = Math.max(1, Math.min(100, Math.round(Number(limit) || 10)));
+  const where: string[] = [];
+  const params: unknown[] = [];
+  const dateFrom = cleanDate(dateFromRaw);
+  const dateTo = cleanDate(dateToRaw);
+  if (dateFrom) { where.push("sr.saleDate >= ?"); params.push(dateFrom); }
+  if (dateTo) { where.push("sr.saleDate <= ?"); params.push(dateTo); }
+  const clause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
+  const [rows] = await query<RowDataPacket[]>(
+    `SELECT sr.companyId AS id,
+            COALESCE(co.name, 'ไม่ระบุ') AS name,
+            COALESCE(SUM(sr.totalAmount), 0) AS revenue,
+            COALESCE(SUM(sr.qty), 0) AS qty,
+            COUNT(*) AS deals
+     FROM sales_records sr
+     LEFT JOIN companies co ON sr.companyId = co.id
+     ${clause}
+     GROUP BY sr.companyId, co.name
+     ORDER BY revenue DESC LIMIT ?`,
+    [...params, safeLimit]
+  );
+  const totalRev = rows.reduce((s, r) => s + Number(r.revenue), 0);
+  return rows.map((r) => ({
+    id: String(r.id || "unspecified"),
+    name: r.name || "ไม่ระบุ",
+    revenue: Number(r.revenue),
+    qty: Number(r.qty),
+    deals: Number(r.deals),
+    percentage: totalRev > 0 ? Math.round((Number(r.revenue) / totalRev) * 10000) / 100 : 0,
+  }));
+}
+
+export async function getSalespersonLeaderboard(
+  dateFromRaw?: string,
+  dateToRaw?: string
+): Promise<SalespersonStats[]> {
+  const where: string[] = [];
+  const params: unknown[] = [];
+  const dateFrom = cleanDate(dateFromRaw);
+  const dateTo = cleanDate(dateToRaw);
+  if (dateFrom) { where.push("sr.saleDate >= ?"); params.push(dateFrom); }
+  if (dateTo) { where.push("sr.saleDate <= ?"); params.push(dateTo); }
+  const clause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
+  const [rows] = await query<RowDataPacket[]>(
+    `SELECT sr.salespersonId AS id,
+            COALESCE(sp.name, sr.salespersonId) AS name,
+            COALESCE(SUM(sr.totalAmount), 0) AS revenue,
+            COUNT(*) AS deals
+     FROM sales_records sr
+     LEFT JOIN salespeople sp ON sr.salespersonId = sp.id
+     ${clause}
+     GROUP BY sr.salespersonId, sp.name
+     ORDER BY revenue DESC`,
+    params
+  );
+  const totalRev = rows.reduce((s, r) => s + Number(r.revenue), 0);
+  return rows.map((r) => ({
+    id: String(r.id || "unspecified"),
+    name: (r.name && String(r.name).trim()) || "ไม่ระบุเซลล์",
+    revenue: Number(r.revenue),
+    deals: Number(r.deals),
+    percentage: totalRev > 0 ? Math.round((Number(r.revenue) / totalRev) * 10000) / 100 : 0,
+    avgDealSize: Number(r.deals) > 0 ? Math.round(Number(r.revenue) / Number(r.deals)) : 0,
+  }));
+}
+
+// ── Smart Insights (rule-based) ──────────────────────────────────────────────
+
+export async function getSmartInsights(): Promise<SmartInsight[]> {
+  const insights: SmartInsight[] = [];
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth(); // 0-indexed
+
+  // 1. Month-over-month revenue comparison
+  const curStart = `${year}-${String(month + 1).padStart(2, "0")}-01`;
+  const nextMonth = new Date(year, month + 1, 1);
+  const curEnd = `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, "0")}-01`;
+  const prevDate = new Date(year, month - 1, 1);
+  const prevStart = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, "0")}-01`;
+
+  const [curRev] = await query<RowDataPacket[]>(
+    `SELECT COALESCE(SUM(totalAmount), 0) AS rev FROM sales_records WHERE saleDate >= ? AND saleDate < ?`,
+    [curStart, curEnd]
+  );
+  const [prevRev] = await query<RowDataPacket[]>(
+    `SELECT COALESCE(SUM(totalAmount), 0) AS rev FROM sales_records WHERE saleDate >= ? AND saleDate < ?`,
+    [prevStart, curStart]
+  );
+  const cur = Number(curRev[0]?.rev || 0);
+  const prev = Number(prevRev[0]?.rev || 0);
+  if (prev > 0) {
+    const pctChange = Math.round(((cur - prev) / prev) * 100);
+    if (pctChange > 0) {
+      insights.push({
+        type: "positive", icon: "📈",
+        title: `ยอดขายเดือนนี้เพิ่มขึ้น ${pctChange}%`,
+        description: `เทียบกับเดือนก่อน (${prev.toLocaleString()} → ${cur.toLocaleString()} บาท)`,
+      });
+    } else if (pctChange < -10) {
+      insights.push({
+        type: "warning", icon: "📉",
+        title: `ยอดขายเดือนนี้ลดลง ${Math.abs(pctChange)}%`,
+        description: `เทียบกับเดือนก่อน — อาจต้องเพิ่มกิจกรรม push sales`,
+      });
+    }
+  } else if (prev === 0 && cur > 0) {
+    insights.push({
+      type: "positive", icon: "📈",
+      title: `ยอดขายเดือนนี้ ${cur.toLocaleString()} บาท`,
+      description: "เริ่มต้นมียอดขายในเดือนนี้ (เดือนก่อนหน้าไม่มียอดขาย)",
+    });
+  }
+
+  // 2. Customers with no purchase in 6+ months
+  const sixMonthsDate = new Date(year, month - 6, 1);
+  const sixMonthsAgo = `${sixMonthsDate.getFullYear()}-${String(sixMonthsDate.getMonth() + 1).padStart(2, "0")}-01`;
+  const [dormant] = await query<RowDataPacket[]>(
+    `SELECT COUNT(DISTINCT companyId) AS cnt FROM sales_records
+     WHERE companyId IS NOT NULL AND companyId != '' AND companyId NOT IN (
+       SELECT DISTINCT companyId FROM sales_records WHERE saleDate >= ? AND companyId IS NOT NULL AND companyId != ''
+     )`,
+    [sixMonthsAgo]
+  );
+  const dormantCount = Number(dormant[0]?.cnt || 0);
+  if (dormantCount > 0) {
+    insights.push({
+      type: "warning", icon: "⏰",
+      title: `${dormantCount} ลูกค้าไม่ได้ซื้อมา 6+ เดือน`,
+      description: "ควร follow up เพื่อรักษาความสัมพันธ์และเสนอขายเพิ่ม",
+    });
+  }
+
+  // 3. Top selling category this month
+  const [topCat] = await query<RowDataPacket[]>(
+    `SELECT COALESCE(pc.name_th, 'ไม่ระบุ') AS name,
+            COALESCE(SUM(sr.totalAmount), 0) AS rev
+     FROM sales_records sr
+     LEFT JOIN product_categories pc ON sr.categoryId = pc.id
+     WHERE sr.saleDate >= ? AND sr.saleDate < ?
+     GROUP BY sr.categoryId, pc.name_th
+     ORDER BY rev DESC LIMIT 1`,
+    [curStart, curEnd]
+  );
+  if (topCat[0]?.name && Number(topCat[0]?.rev) > 0) {
+    insights.push({
+      type: "info", icon: "🏆",
+      title: `หมวด "${topCat[0].name}" ขายดีสุดเดือนนี้`,
+      description: `ยอดรวม ${Number(topCat[0].rev).toLocaleString()} บาท`,
+    });
+  }
+
+  // 4. Repeat customers rate (exclude unlinked empty companies)
+  const [repeatData] = await query<RowDataPacket[]>(
+    `SELECT
+       COUNT(DISTINCT companyId) AS total,
+       SUM(CASE WHEN cnt >= 2 THEN 1 ELSE 0 END) AS repeaters
+     FROM (
+       SELECT companyId, COUNT(*) AS cnt FROM sales_records
+       WHERE companyId IS NOT NULL AND companyId != ''
+       GROUP BY companyId
+     ) sub`
+  );
+  const totalCustomers = Number(repeatData[0]?.total || 0);
+  const repeatCustomers = Number(repeatData[0]?.repeaters || 0);
+  if (totalCustomers > 0) {
+    const repeatRate = Math.round((repeatCustomers / totalCustomers) * 100);
+    insights.push({
+      type: repeatRate >= 30 ? "positive" : "opportunity",
+      icon: repeatRate >= 30 ? "🔄" : "💡",
+      title: `Repeat Customer Rate: ${repeatRate}%`,
+      description: `${repeatCustomers} จาก ${totalCustomers} บริษัทซื้อซ้ำ ≥ 2 ครั้ง`,
+    });
+  }
+
+  // 5. Expiring warranties
+  const thirtyDaysLater = formatLocalDate(
+    new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000)
+  );
+  const today = formatLocalDate(now);
+  const [expiring] = await query<RowDataPacket[]>(
+    `SELECT COUNT(*) AS cnt FROM customer_equipments
+     WHERE warrantyEndDate IS NOT NULL AND warrantyEndDate >= ? AND warrantyEndDate <= ?
+       AND status = 'Active'`,
+    [today, thirtyDaysLater]
+  );
+  if (Number(expiring[0]?.cnt) > 0) {
+    insights.push({
+      type: "warning", icon: "🔔",
+      title: `${expiring[0].cnt} เครื่องประกันจะหมดใน 30 วัน`,
+      description: "โอกาสเสนอขาย extended warranty หรือ service contract",
+    });
+  }
+
+  return insights;
+}

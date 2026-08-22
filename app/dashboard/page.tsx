@@ -1,0 +1,758 @@
+"use client";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
+import Link from "next/link";
+import {
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
+  PieChart, Pie, Cell, Legend,
+  LineChart, Line,
+} from "recharts";
+import SearchableDropdown from "../components/SearchableDropdown";
+import type { SearchableDropdownOption } from "../components/SearchableDropdown";
+
+// ── Types ────────────────────────────────────────────────────────────────────
+
+interface OverviewData {
+  revenue: number; deals: number; newCustomers: number; quotations: number;
+}
+interface DashboardData {
+  overview: { currentMonth: OverviewData; previousMonth: OverviewData; expiringWarranties: number };
+  revenueMonthly: { period: string; revenue: number; deals: number }[];
+  revenueQuarterly: { period: string; revenue: number; deals: number }[];
+  revenueByCategory: TopItem[];
+  topProducts: TopItem[];
+  topCustomers: TopItem[];
+  salespersonLeaderboard: SalespersonStat[];
+  insights: Insight[];
+}
+interface TopItem { id: string; name: string; revenue: number; qty: number; deals: number; percentage: number }
+interface SalespersonStat { id: string; name: string; revenue: number; deals: number; percentage: number; avgDealSize: number }
+interface Insight { type: "positive" | "warning" | "opportunity" | "info"; icon: string; title: string; description: string }
+interface SalesRecord {
+  id: string; salespersonId: string; customerId: string; companyId: string;
+  productId: string; productName: string; categoryId: number | null;
+  qty: number; unitPrice: number; totalAmount: number; saleDate: string;
+  quotationRef: string; equipmentId: string | null; note: string; createdAt: string;
+  salespersonName?: string; customerName?: string; companyName?: string;
+}
+interface Product { id: string; title_th: string; title_en: string; categoryId: number }
+interface Customer { id: string; name: string; companyId: string; companyName?: string }
+interface Company { id: string; name: string }
+interface Salesperson { id: string; name: string }
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+const fmt = (n: number) => n.toLocaleString("th-TH", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+const fmtDec = (n: number) => n.toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const MONTHS_TH = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
+const PIE_COLORS = ["#6366f1", "#f59e0b", "#10b981", "#ef4444", "#8b5cf6", "#ec4899", "#14b8a6", "#f97316", "#06b6d4", "#84cc16"];
+
+function pctChange(cur: number, prev: number): { value: number; label: string; color: string } {
+  if (prev === 0) return { value: 0, label: "—", color: "text-gray-400" };
+  const pct = Math.round(((cur - prev) / prev) * 100);
+  if (pct > 0) return { value: pct, label: `↑${pct}%`, color: "text-emerald-600" };
+  if (pct < 0) return { value: pct, label: `↓${Math.abs(pct)}%`, color: "text-red-500" };
+  return { value: 0, label: "→0%", color: "text-gray-400" };
+}
+
+function stripHtml(html: string | null | undefined): string {
+  if (!html) return "";
+  if (typeof DOMParser !== "undefined") {
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    return doc.body.textContent?.trim() || "";
+  }
+  return html.replace(/<[^>]*>/g, "").trim();
+}
+
+function getTodayString(): string {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+const emptyForm = () => ({
+  salespersonId: "",
+  customerId: "",
+  companyId: "",
+  productId: "",
+  productName: "",
+  categoryId: null as number | null,
+  qty: 1,
+  unitPrice: 0,
+  totalAmount: 0,
+  saleDate: getTodayString(),
+  quotationRef: "",
+  note: "",
+});
+
+// ── Main Component ───────────────────────────────────────────────────────────
+
+export default function DashboardPage() {
+  const [data, setData] = useState<DashboardData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [year, setYear] = useState(new Date().getFullYear());
+  const [chartMode, setChartMode] = useState<"monthly" | "quarterly">("monthly");
+
+  // Sales record form
+  const [showForm, setShowForm] = useState(false);
+  const [salesRecords, setSalesRecords] = useState<SalesRecord[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [companies, setCompanies] = useState<Company[]>([]);
+  const [salespeople, setSalespeople] = useState<Salesperson[]>([]);
+  const [form, setForm] = useState(emptyForm);
+  const [isSaving, setIsSaving] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [showRecords, setShowRecords] = useState(false);
+  const [recordSearch, setRecordSearch] = useState("");
+  const [toast, setToast] = useState<{ msg: string; type: "success" | "error" } | null>(null);
+
+  const showToast = useCallback((msg: string, type: "success" | "error") => {
+    setToast({ msg, type });
+    setTimeout(() => setToast(null), 3000);
+  }, []);
+
+  // Fetch dashboard data
+  const fetchDashboard = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/admin/dashboard?year=${year}`);
+      if (res.ok) setData(await res.json());
+    } catch { /* ignore */ }
+    setLoading(false);
+  }, [year]);
+
+  // Fetch lookups
+  const fetchLookups = useCallback(async () => {
+    try {
+      const [pRes, cRes, coRes, spRes] = await Promise.all([
+        fetch("/api/products"), fetch("/api/customers"), fetch("/api/companies"), fetch("/api/salespeople"),
+      ]);
+      if (pRes.ok) { const d = await pRes.json(); setProducts(Array.isArray(d) ? d : d.products || []); }
+      if (cRes.ok) setCustomers(await cRes.json());
+      if (coRes.ok) setCompanies(await coRes.json());
+      if (spRes.ok) setSalespeople(await spRes.json());
+    } catch { /* ignore */ }
+  }, []);
+
+  const fetchRecords = useCallback(async () => {
+    try {
+      const res = await fetch("/api/admin/sales");
+      if (res.ok) setSalesRecords(await res.json());
+    } catch { /* ignore */ }
+  }, []);
+
+  useEffect(() => { fetchDashboard(); }, [fetchDashboard]);
+  useEffect(() => { fetchLookups(); fetchRecords(); }, [fetchLookups, fetchRecords]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && showForm) {
+        setShowForm(false);
+        setEditingId(null);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [showForm]);
+
+  // Dropdown options
+  const productOptions: SearchableDropdownOption[] = useMemo(() =>
+    products.map((p) => ({ value: p.id, label: stripHtml(p.title_th), subLabel: stripHtml(p.title_en) })),
+    [products]
+  );
+  const customerOptions: SearchableDropdownOption[] = useMemo(() =>
+    customers.map((c) => ({ value: c.id, label: c.name, subLabel: c.companyName || "" })),
+    [customers]
+  );
+  const companyOptions: SearchableDropdownOption[] = useMemo(() =>
+    companies.map((c) => ({ value: c.id, label: c.name })),
+    [companies]
+  );
+  const salespersonOptions: SearchableDropdownOption[] = useMemo(() =>
+    salespeople.map((s) => ({ value: s.id, label: s.name })),
+    [salespeople]
+  );
+  const yearOptions: SearchableDropdownOption[] = useMemo(() =>
+    [0, 1, 2, 3, 4].map((i) => {
+      const y = String(new Date().getFullYear() - i);
+      return { value: y, label: `ปี ${y}` };
+    }),
+    []
+  );
+
+  // Chart data
+  const chartData = useMemo(() => {
+    if (!data) return [];
+    if (chartMode === "monthly") {
+      return data.revenueMonthly.map((r, i) => ({ ...r, name: MONTHS_TH[i] }));
+    }
+    return data.revenueQuarterly.map((r) => ({ ...r, name: r.period.split("-")[1] }));
+  }, [data, chartMode]);
+
+  // Filtered sales records for table search
+  const filteredSalesRecords = useMemo(() => {
+    if (!recordSearch.trim()) return salesRecords;
+    const q = recordSearch.toLowerCase();
+    return salesRecords.filter(
+      (r) =>
+        r.productName?.toLowerCase().includes(q) ||
+        r.customerName?.toLowerCase().includes(q) ||
+        r.companyName?.toLowerCase().includes(q) ||
+        r.salespersonName?.toLowerCase().includes(q) ||
+        r.quotationRef?.toLowerCase().includes(q) ||
+        r.saleDate?.includes(q)
+    );
+  }, [salesRecords, recordSearch]);
+
+  // Save sales record
+  const handleSave = async () => {
+    if (isSaving) return;
+    if (!form.saleDate) {
+      showToast("กรุณาระบุวันที่ขาย", "error");
+      return;
+    }
+    if (!form.productName.trim()) {
+      showToast("กรุณาระบุชื่อสินค้า", "error");
+      return;
+    }
+    setIsSaving(true);
+    try {
+      const url = editingId ? `/api/admin/sales/${editingId}` : "/api/admin/sales";
+      const method = editingId ? "PUT" : "POST";
+      const res = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(form) });
+      if (res.ok) {
+        showToast(editingId ? "แก้ไขสำเร็จ" : "บันทึกยอดขายสำเร็จ", "success");
+        setShowForm(false);
+        setEditingId(null);
+        setForm(emptyForm());
+        fetchDashboard();
+        fetchRecords();
+      } else {
+        const err = await res.json();
+        showToast(err.error || "เกิดข้อผิดพลาด", "error");
+      }
+    } catch { showToast("เกิดข้อผิดพลาด", "error"); }
+    setIsSaving(false);
+  };
+
+  // Delete
+  const handleDelete = async (id: string) => {
+    if (!confirm("ลบรายการนี้?")) return;
+    try {
+      const res = await fetch(`/api/admin/sales/${id}`, { method: "DELETE" });
+      if (res.ok) {
+        showToast("ลบสำเร็จ", "success");
+        fetchDashboard();
+        fetchRecords();
+      } else {
+        const err = await res.json();
+        showToast(err.error || "เกิดข้อผิดพลาดในการลบ", "error");
+      }
+    } catch {
+      showToast("เกิดข้อผิดพลาดในการลบ", "error");
+    }
+  };
+
+  // Edit
+  const handleEdit = (rec: SalesRecord) => {
+    setEditingId(rec.id);
+    setForm({
+      salespersonId: rec.salespersonId, customerId: rec.customerId, companyId: rec.companyId,
+      productId: rec.productId, productName: rec.productName, categoryId: rec.categoryId,
+      qty: rec.qty, unitPrice: rec.unitPrice, totalAmount: rec.totalAmount,
+      saleDate: rec.saleDate, quotationRef: rec.quotationRef, note: rec.note || "",
+    });
+    setShowForm(true);
+  };
+
+  // Export Excel
+  const handleExport = async () => {
+    const yearRecords = salesRecords.filter(
+      (r) => r.saleDate && r.saleDate.startsWith(String(year))
+    );
+    const targetRecords = yearRecords.length > 0 ? yearRecords : salesRecords;
+    if (targetRecords.length === 0) {
+      showToast("ไม่มีข้อมูลยอดขายสำหรับส่งออก", "error");
+      return;
+    }
+    try {
+      const XLSX = await import("xlsx");
+      const rows = targetRecords.map((r) => ({
+        "วันที่": r.saleDate,
+        "สินค้า": stripHtml(r.productName),
+        "จำนวน": r.qty,
+        "ราคาต่อหน่วย": r.unitPrice,
+        "ยอดรวม": r.totalAmount,
+        "ลูกค้า": r.customerName || "",
+        "บริษัท": r.companyName || "",
+        "เซลล์": r.salespersonName || "",
+        "อ้างอิงใบเสนอราคา": r.quotationRef || "",
+        "หมายเหตุ": r.note || "",
+      }));
+      const ws = XLSX.utils.json_to_sheet(rows);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, `Sales ${year}`);
+      const filename = yearRecords.length > 0
+        ? `sales-report-${year}.xlsx`
+        : `sales-report-all.xlsx`;
+      XLSX.writeFile(wb, filename);
+      showToast(`ส่งออกไฟล์ ${filename} เรียบร้อยแล้ว`, "success");
+    } catch {
+      showToast("ไม่สามารถส่งออกไฟล์ Excel ได้", "error");
+    }
+  };
+
+  // Overview
+  const ov = data?.overview;
+  const curM = ov?.currentMonth;
+  const prevM = ov?.previousMonth;
+
+  const conversionRate = curM && curM.quotations > 0
+    ? Math.round((curM.deals / curM.quotations) * 100)
+    : 0;
+  const prevConversionRate = prevM && prevM.quotations > 0
+    ? Math.round((prevM.deals / prevM.quotations) * 100)
+    : 0;
+
+  // ── Render ─────────────────────────────────────────────────────────────────
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100">
+      {/* Toast */}
+      {toast && (
+        <div className={`fixed top-6 right-6 z-[100] px-5 py-3 rounded-xl shadow-lg text-white font-semibold animate-fade-in ${toast.type === "success" ? "bg-emerald-500" : "bg-red-500"}`}>
+          {toast.msg}
+        </div>
+      )}
+
+      {/* Header */}
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-800">📊 Dashboard ยอดขาย</h1>
+            <p className="text-gray-500 mt-1">วิเคราะห์ยอดขายและประสิทธิภาพทีมขาย</p>
+          </div>
+          <div className="flex gap-2 flex-wrap items-center">
+            <SearchableDropdown
+              options={yearOptions}
+              value={String(year)}
+              onChange={(v) => setYear(Number(v))}
+              className="w-32"
+            />
+            <button onClick={() => { setShowForm(true); setEditingId(null); setForm(emptyForm()); }} className="px-4 py-2.5 bg-indigo-600 text-white rounded-xl text-sm font-semibold hover:bg-indigo-700 transition-all shadow-sm">
+              + บันทึกยอดขาย
+            </button>
+            <button onClick={() => setShowRecords(!showRecords)} className="px-4 py-2.5 bg-white border border-gray-200 rounded-xl text-sm font-medium hover:bg-gray-50 transition-all shadow-sm">
+              📋 รายการขาย
+            </button>
+            <button onClick={handleExport} className="px-4 py-2.5 bg-emerald-600 text-white rounded-xl text-sm font-semibold hover:bg-emerald-700 transition-all shadow-sm">
+              ⬇ Export Excel
+            </button>
+            <Link href="/customers" className="px-4 py-2.5 bg-white border border-gray-200 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 hover:shadow-sm transition-all text-sm flex items-center gap-1.5 shadow-sm">
+              👥 ลูกค้า & เซลล์
+            </Link>
+            <Link href="/showcase" className="px-4 py-2.5 bg-white border border-gray-200 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 hover:shadow-sm transition-all text-sm flex items-center gap-1.5 shadow-sm">
+              🏠 หน้าหลัก
+            </Link>
+          </div>
+        </div>
+
+        {/* ── Overview Cards ──────────────────────────────────────────────── */}
+        {loading ? (
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-8">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="bg-white rounded-2xl p-5 shadow-sm animate-pulse">
+                <div className="h-4 w-20 bg-gray-200 rounded mb-3" />
+                <div className="h-8 w-28 bg-gray-200 rounded mb-2" />
+                <div className="h-3 w-16 bg-gray-200 rounded" />
+              </div>
+            ))}
+          </div>
+        ) : ov && curM && prevM && (
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-8">
+            {[
+              { label: "ยอดขายเดือนนี้", icon: "💰", value: `฿${fmt(curM.revenue)}`, change: pctChange(curM.revenue, prevM.revenue) },
+              { label: "จำนวนดีล", icon: "📦", value: String(curM.deals), change: pctChange(curM.deals, prevM.deals) },
+              { label: "ลูกค้าใหม่", icon: "🏢", value: String(curM.newCustomers), change: pctChange(curM.newCustomers, prevM.newCustomers) },
+              { label: "ใบเสนอราคา", icon: "📝", value: String(curM.quotations), change: pctChange(curM.quotations, prevM.quotations) },
+              { label: "Conversion Rate", icon: "📈", value: `${conversionRate}%`, change: pctChange(conversionRate, prevConversionRate) },
+              { label: "ประกันใกล้หมด", icon: "⏳", value: String(ov.expiringWarranties), change: { value: 0, label: "≤30 วัน", color: ov.expiringWarranties > 0 ? "text-amber-600" : "text-gray-400" } },
+            ].map((card, i) => (
+              <div key={i} className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
+                <div className="text-sm text-gray-500 mb-1">{card.icon} {card.label}</div>
+                <div className="text-2xl font-bold text-gray-800">{card.value}</div>
+                <div className={`text-sm font-medium ${card.change.color}`}>{card.change.label}</div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* ── Charts Row ─────────────────────────────────────────────────── */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+          {/* Revenue Bar Chart */}
+          <div className="lg:col-span-2 bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-lg font-bold text-gray-800">ยอดขาย {year}</h2>
+              <div className="flex bg-gray-100 rounded-lg p-1">
+                <button onClick={() => setChartMode("monthly")} className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${chartMode === "monthly" ? "bg-white shadow-sm text-indigo-600" : "text-gray-500"}`}>
+                  รายเดือน
+                </button>
+                <button onClick={() => setChartMode("quarterly")} className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${chartMode === "quarterly" ? "bg-white shadow-sm text-indigo-600" : "text-gray-500"}`}>
+                  รายไตรมาส
+                </button>
+              </div>
+            </div>
+            {loading ? (
+              <div className="h-64 bg-gray-100 rounded-xl animate-pulse" />
+            ) : (
+              <ResponsiveContainer width="100%" height={280}>
+                <BarChart data={chartData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                  <XAxis dataKey="name" tick={{ fontSize: 12 }} />
+                  <YAxis tickFormatter={(v: number) => fmt(v)} tick={{ fontSize: 11 }} />
+                  <Tooltip
+                    formatter={((value: number) => [fmtDec(value) + " ฿", "ยอดขาย"]) as any}
+                    contentStyle={{ borderRadius: 12, border: "1px solid #e5e7eb" }}
+                  />
+                  <Bar dataKey="revenue" fill="#6366f1" radius={[6, 6, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+
+          {/* Category Pie Chart */}
+          <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
+            <h2 className="text-lg font-bold text-gray-800 mb-4">สัดส่วนตามหมวดหมู่</h2>
+            {loading ? (
+              <div className="h-64 bg-gray-100 rounded-xl animate-pulse" />
+            ) : data && data.revenueByCategory.length > 0 ? (
+              <ResponsiveContainer width="100%" height={280}>
+                <PieChart>
+                  <Pie data={data.revenueByCategory} dataKey="revenue" nameKey="name" cx="50%" cy="50%" outerRadius={90} label={((entry: any) => `${entry.name} ${entry.percentage}%`) as any} labelLine={false} fontSize={10}>
+                    {data.revenueByCategory.map((_, i) => (
+                      <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip formatter={((value: number) => fmtDec(value) + " ฿") as any} />
+                </PieChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="h-64 flex items-center justify-center text-gray-400 text-sm">ยังไม่มีข้อมูล</div>
+            )}
+          </div>
+        </div>
+
+        {/* ── Smart Insights ──────────────────────────────────────────────── */}
+        {data && data.insights.length > 0 && (
+          <div className="mb-8">
+            <h2 className="text-lg font-bold text-gray-800 mb-4">💡 วิเคราะห์อัจฉริยะ</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              {data.insights.map((insight, i) => (
+                <div
+                  key={i}
+                  className={`rounded-2xl p-5 border shadow-sm ${
+                    insight.type === "positive" ? "bg-emerald-50 border-emerald-200" :
+                    insight.type === "warning" ? "bg-amber-50 border-amber-200" :
+                    insight.type === "opportunity" ? "bg-blue-50 border-blue-200" :
+                    "bg-gray-50 border-gray-200"
+                  }`}
+                >
+                  <div className="text-2xl mb-2">{insight.icon}</div>
+                  <div className="font-semibold text-gray-800 text-sm mb-1">{insight.title}</div>
+                  <div className="text-xs text-gray-500">{insight.description}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ── Top Products + Top Customers ────────────────────────────────── */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+          {/* Top Products */}
+          <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
+            <h2 className="text-lg font-bold text-gray-800 mb-4">🏆 Top 10 สินค้าขายดี</h2>
+            {loading ? (
+              <div className="space-y-3">{Array.from({ length: 5 }).map((_, i) => (
+                <div key={i} className="flex gap-3 animate-pulse">
+                  <div className="h-5 w-8 bg-gray-200 rounded" />
+                  <div className="h-5 flex-1 bg-gray-200 rounded" />
+                  <div className="h-5 w-24 bg-gray-200 rounded" />
+                </div>
+              ))}</div>
+            ) : data && data.topProducts.length > 0 ? (
+              <div className="space-y-3">
+                {data.topProducts.map((p, i) => (
+                  <div key={p.id} className="flex items-center gap-3">
+                    <div className="w-7 h-7 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center text-xs font-bold shrink-0">{i + 1}</div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium text-gray-800 truncate">{stripHtml(p.name)}</div>
+                      <div className="text-xs text-gray-400">{p.qty} เครื่อง · {p.deals} ดีล</div>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <div className="text-sm font-semibold text-gray-800">฿{fmt(p.revenue)}</div>
+                      <div className="text-xs text-gray-400">{p.percentage}%</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center text-gray-400 py-8 text-sm">ยังไม่มีข้อมูล</div>
+            )}
+          </div>
+
+          {/* Top Customers */}
+          <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
+            <h2 className="text-lg font-bold text-gray-800 mb-4">🏢 Top 10 ลูกค้า</h2>
+            {loading ? (
+              <div className="space-y-3">{Array.from({ length: 5 }).map((_, i) => (
+                <div key={i} className="flex gap-3 animate-pulse">
+                  <div className="h-5 w-8 bg-gray-200 rounded" />
+                  <div className="h-5 flex-1 bg-gray-200 rounded" />
+                  <div className="h-5 w-24 bg-gray-200 rounded" />
+                </div>
+              ))}</div>
+            ) : data && data.topCustomers.length > 0 ? (
+              <div className="space-y-3">
+                {data.topCustomers.map((c, i) => (
+                  <div key={c.id} className="flex items-center gap-3">
+                    <div className="w-7 h-7 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center text-xs font-bold shrink-0">{i + 1}</div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium text-gray-800 truncate">{c.name}</div>
+                      <div className="text-xs text-gray-400">{c.deals} ดีล</div>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <div className="text-sm font-semibold text-gray-800">฿{fmt(c.revenue)}</div>
+                      <div className="text-xs text-gray-400">{c.percentage}%</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center text-gray-400 py-8 text-sm">ยังไม่มีข้อมูล</div>
+            )}
+          </div>
+        </div>
+
+        {/* ── Salesperson Leaderboard ──────────────────────────────────────── */}
+        <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 mb-8">
+          <h2 className="text-lg font-bold text-gray-800 mb-4">👤 ผลงานเซลล์</h2>
+          {loading ? (
+            <div className="space-y-4">{Array.from({ length: 3 }).map((_, i) => (
+              <div key={i} className="flex gap-4 animate-pulse">
+                <div className="h-6 w-40 bg-gray-200 rounded" />
+                <div className="h-6 flex-1 bg-gray-200 rounded" />
+                <div className="h-6 w-24 bg-gray-200 rounded" />
+              </div>
+            ))}</div>
+          ) : data && data.salespersonLeaderboard.length > 0 ? (
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
+                    <th className="pb-3 pr-4">#</th>
+                    <th className="pb-3 pr-4">เซลล์</th>
+                    <th className="pb-3 pr-4 text-right">ยอดขาย</th>
+                    <th className="pb-3 pr-4 text-right">ดีล</th>
+                    <th className="pb-3 pr-4 text-right">สัดส่วน</th>
+                    <th className="pb-3 text-right">เฉลี่ย/ดีล</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.salespersonLeaderboard.map((s, i) => (
+                    <tr key={s.id} className="border-t border-gray-50">
+                      <td className="py-3 pr-4">
+                        <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold ${i === 0 ? "bg-yellow-100 text-yellow-600" : i === 1 ? "bg-gray-200 text-gray-600" : i === 2 ? "bg-orange-100 text-orange-600" : "bg-gray-100 text-gray-500"}`}>{i + 1}</div>
+                      </td>
+                      <td className="py-3 pr-4 font-medium text-gray-800">{s.name}</td>
+                      <td className="py-3 pr-4 text-right font-semibold text-gray-800">฿{fmt(s.revenue)}</td>
+                      <td className="py-3 pr-4 text-right text-gray-600">{s.deals}</td>
+                      <td className="py-3 pr-4 text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          <div className="w-16 h-2 bg-gray-100 rounded-full overflow-hidden">
+                            <div className="h-full bg-indigo-500 rounded-full" style={{ width: `${Math.min(s.percentage, 100)}%` }} />
+                          </div>
+                          <span className="text-sm text-gray-600">{s.percentage}%</span>
+                        </div>
+                      </td>
+                      <td className="py-3 text-right text-sm text-gray-500">฿{fmt(s.avgDealSize)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="text-center text-gray-400 py-8 text-sm">ยังไม่มีข้อมูล</div>
+          )}
+        </div>
+
+        {/* ── Sales Records Table ──────────────────────────────────────────── */}
+        {showRecords && (
+          <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 mb-8">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
+              <h2 className="text-lg font-bold text-gray-800">📋 รายการขาย ({filteredSalesRecords.length})</h2>
+              <input
+                type="text"
+                value={recordSearch}
+                onChange={(e) => setRecordSearch(e.target.value)}
+                placeholder="🔍 ค้นหาสินค้า, ลูกค้า, บริษัท, เซลล์..."
+                className="px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm w-full sm:w-72 focus:bg-white focus:ring-2 focus:ring-indigo-200 outline-none"
+              />
+            </div>
+            {filteredSalesRecords.length > 0 ? (
+              <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="text-left text-xs font-medium text-gray-400 uppercase tracking-wider sticky top-0 bg-white shadow-xs">
+                      <th className="pb-3 pr-3">วันที่</th>
+                      <th className="pb-3 pr-3">สินค้า</th>
+                      <th className="pb-3 pr-3">ลูกค้า/บริษัท</th>
+                      <th className="pb-3 pr-3">เซลล์</th>
+                      <th className="pb-3 pr-3 text-right">จำนวน</th>
+                      <th className="pb-3 pr-3 text-right">ยอดรวม</th>
+                      <th className="pb-3" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredSalesRecords.map((r) => (
+                      <tr key={r.id} className="border-t border-gray-50 hover:bg-gray-50/50 cursor-pointer transition-colors" onClick={() => handleEdit(r)}>
+                        <td className="py-3 pr-3 text-sm text-gray-600">{r.saleDate}</td>
+                        <td className="py-3 pr-3 text-sm font-medium text-gray-800">{stripHtml(r.productName)}</td>
+                        <td className="py-3 pr-3">
+                          <div className="text-sm text-gray-800">{r.customerName || "—"}</div>
+                          <div className="text-xs text-gray-400">{r.companyName || ""}</div>
+                        </td>
+                        <td className="py-3 pr-3 text-sm text-gray-600">{r.salespersonName || "—"}</td>
+                        <td className="py-3 pr-3 text-sm text-right text-gray-600">{r.qty}</td>
+                        <td className="py-3 pr-3 text-sm text-right font-semibold text-gray-800">฿{fmtDec(r.totalAmount)}</td>
+                        <td className="py-3 text-right">
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleDelete(r.id); }}
+                            className="text-red-400 hover:text-red-600 transition-colors p-1"
+                          >🗑️</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="text-center text-gray-400 py-8 text-sm">ยังไม่มีรายการขาย</div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* ── Add/Edit Sales Record Modal ─────────────────────────────────── */}
+      {showForm && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => { setShowForm(false); setEditingId(null); }}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="p-6 border-b border-gray-100 flex justify-between items-center">
+              <h3 className="text-xl font-bold text-gray-800">{editingId ? "✏️ แก้ไขรายการ" : "📝 บันทึกยอดขาย"}</h3>
+              <button onClick={() => { setShowForm(false); setEditingId(null); }} className="p-2 text-gray-400 hover:text-gray-600">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1.5">วันที่ขาย <span className="text-red-500">*</span></label>
+                  <input type="date" value={form.saleDate} onChange={(e) => setForm({ ...form, saleDate: e.target.value })}
+                    className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none" />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1.5">เซลล์</label>
+                  <SearchableDropdown options={salespersonOptions} value={form.salespersonId} onChange={(v) => setForm({ ...form, salespersonId: v })} placeholder="เลือกเซลล์..." />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1.5">สินค้าจากระบบ</label>
+                <SearchableDropdown
+                  options={productOptions}
+                  value={form.productId}
+                  onChange={(v) => {
+                    const p = products.find((x) => x.id === v);
+                    setForm({ ...form, productId: v, productName: p ? stripHtml(p.title_th) : form.productName, categoryId: p?.categoryId ?? null });
+                  }}
+                  placeholder="เลือกสินค้าจากแคตตาล็อก (หรือพิมพ์ชื่อด้านล่าง)..."
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1.5">ชื่อสินค้าที่แสดง <span className="text-red-500">*</span></label>
+                <input
+                  type="text"
+                  required
+                  value={form.productName}
+                  onChange={(e) => setForm({ ...form, productName: e.target.value })}
+                  placeholder="ชื่อเครื่อง / สินค้า / บริการ"
+                  className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1.5">ลูกค้า</label>
+                  <SearchableDropdown
+                    options={customerOptions}
+                    value={form.customerId}
+                    onChange={(v) => {
+                      const c = customers.find((x) => x.id === v);
+                      setForm({ ...form, customerId: v, companyId: c?.companyId || form.companyId });
+                    }}
+                    placeholder="เลือกลูกค้า..."
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1.5">บริษัท</label>
+                  <SearchableDropdown options={companyOptions} value={form.companyId} onChange={(v) => setForm({ ...form, companyId: v })} placeholder="เลือกบริษัท..." />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1.5">จำนวน</label>
+                  <input type="number" min={1} value={form.qty} onChange={(e) => { const q = Number(e.target.value) || 1; setForm({ ...form, qty: q, totalAmount: q * form.unitPrice }); }}
+                    className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none" />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1.5">ราคาต่อหน่วย (฿)</label>
+                  <input type="number" min={0} value={form.unitPrice} onChange={(e) => { const p = Number(e.target.value) || 0; setForm({ ...form, unitPrice: p, totalAmount: form.qty * p }); }}
+                    className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none" />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1.5">ยอดรวม (฿)</label>
+                  <input type="number" min={0} value={form.totalAmount} onChange={(e) => setForm({ ...form, totalAmount: Number(e.target.value) || 0 })}
+                    className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none bg-gray-50" />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1.5">อ้างอิงใบเสนอราคา</label>
+                <input type="text" value={form.quotationRef} onChange={(e) => setForm({ ...form, quotationRef: e.target.value })} placeholder="เลขที่ใบเสนอราคา"
+                  className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none" />
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1.5">หมายเหตุ</label>
+                <textarea value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} rows={2} placeholder="หมายเหตุ (ถ้ามี)"
+                  className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none resize-none" />
+              </div>
+            </div>
+
+            <div className="p-6 border-t border-gray-100 flex justify-end gap-3">
+              <button onClick={() => { setShowForm(false); setEditingId(null); }} className="px-5 py-2.5 bg-gray-100 text-gray-700 rounded-xl font-semibold hover:bg-gray-200 transition-all text-sm">
+                ยกเลิก
+              </button>
+              <button onClick={handleSave} disabled={isSaving} className="px-5 py-2.5 bg-indigo-600 text-white rounded-xl font-semibold hover:bg-indigo-700 transition-all text-sm disabled:opacity-50">
+                {isSaving ? "กำลังบันทึก..." : editingId ? "บันทึกการแก้ไข" : "บันทึกยอดขาย"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
