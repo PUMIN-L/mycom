@@ -82,28 +82,36 @@ export const POST = withRoute(
     // Auto-create CustomerEquipments if customer is provided
     const createdEquipments = [];
     if (body.customerId && body.customerId.trim()) {
-      // Prevent DoS: Cap the number of auto-created equipments to 50
-      const maxAutoCreate = 50;
-      let qty = Math.max(1, Number(body.qty) || 1);
-      if (qty > maxAutoCreate) qty = maxAutoCreate;
-      
-      const serialNumbers = Array.isArray(body.serialNumbers) ? body.serialNumbers : [];
-      
-      for (let i = 0; i < qty; i++) {
-        const eq = await addEquipment({
-          salesRecordId: record.id,
-          customerId: body.customerId,
-          productId: body.productId || "",
-          productName: body.productName || "",
-          serialNumber: String(serialNumbers[i] || "").trim(),
-          quotationNumber: body.quotationRef || "",
-          warrantyCertNumber: "",
-          warrantyType: "",
-          warrantyStartDate: body.warrantyStartDate || null,
-          warrantyEndDate: body.warrantyEndDate || null,
-          status: "Active",
-        });
-        createdEquipments.push(eq);
+      try {
+        // Prevent DoS: Cap the number of auto-created equipments to 50
+        const maxAutoCreate = 50;
+        let qty = Math.max(1, Number(body.qty) || 1);
+        if (qty > maxAutoCreate) qty = maxAutoCreate;
+        
+        const serialNumbers = Array.isArray(body.serialNumbers) ? body.serialNumbers : [];
+        
+        for (let i = 0; i < qty; i++) {
+          const eq = await addEquipment({
+            salesRecordId: record.id,
+            customerId: body.customerId,
+            productId: body.productId || "",
+            productName: body.productName || "",
+            serialNumber: String(serialNumbers[i] || "").trim(),
+            quotationNumber: body.quotationRef || "",
+            warrantyCertNumber: "",
+            warrantyType: "",
+            warrantyStartDate: body.warrantyStartDate || null,
+            warrantyEndDate: body.warrantyEndDate || null,
+            status: "Active",
+          });
+          createdEquipments.push(eq);
+        }
+      } catch (err: any) {
+        console.error("Failed to auto-create equipment:", err);
+        return NextResponse.json(
+          { error: `สร้างยอดขายสำเร็จ แต่ระบบไม่สามารถเพิ่มอุปกรณ์ได้: ${err.message}` },
+          { status: 500 }
+        );
       }
     }
 

@@ -45,6 +45,15 @@ function CustomersInner() {
   const { isLoggedIn, isLoading } = useAuth();
   const [activeTab, setActiveTab] = useState<"customers" | "companies" | "salespeople" | "equipments">("customers");
 
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("tab") === "equipment") {
+        setActiveTab("equipments");
+      }
+    }
+  }, []);
+
   const [companies, setCompanies] = useState<Company[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [salespeople, setSalespeople] = useState<Salesperson[]>([]);

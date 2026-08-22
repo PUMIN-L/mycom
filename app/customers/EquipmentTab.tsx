@@ -1,4 +1,5 @@
 "use client";
+import DatePicker from "../components/DatePicker";
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import Link from "next/link";
 import SearchableDropdown from "../components/SearchableDropdown";
@@ -65,6 +66,7 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
   const [viewingEquipment, setViewingEquipment] = useState<CustomerEquipment | null>(null);
   const [schedules, setSchedules] = useState<ServiceSchedule[]>([]);
   const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
+  const [viewingSchedule, setViewingSchedule] = useState<Partial<ServiceSchedule> | null>(null);
   const [editingSchedule, setEditingSchedule] = useState<Partial<ServiceSchedule> | null>(null);
   const [logs, setLogs] = useState<Record<string, ServiceLog[]>>({});
 
@@ -721,21 +723,21 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1.5">วันเริ่มประกัน</label>
-                  <input
-                    type="date"
-                    value={editing?.warrantyStartDate || ""}
-                    onChange={(e) => setEditing((prev) => ({ ...prev, warrantyStartDate: e.target.value }))}
-                    className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-400"
-                  />
+                  <DatePicker
+                      selected={editing?.warrantyStartDate ? new Date(editing.warrantyStartDate) : null}
+                      onChange={(date) => setEditing((prev) => ({ ...prev, warrantyStartDate: date ? date.toISOString().split('T')[0] : "" }))}
+                      placeholderText="ไม่ระบุ"
+                      isClearable
+                    />
                 </div>
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1.5">วันหมดประกัน</label>
-                  <input
-                    type="date"
-                    value={editing?.warrantyEndDate || ""}
-                    onChange={(e) => setEditing((prev) => ({ ...prev, warrantyEndDate: e.target.value }))}
-                    className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-400"
-                  />
+                  <DatePicker
+                      selected={editing?.warrantyEndDate ? new Date(editing.warrantyEndDate) : null}
+                      onChange={(date) => setEditing((prev) => ({ ...prev, warrantyEndDate: date ? date.toISOString().split('T')[0] : "" }))}
+                      placeholderText="ไม่ระบุ"
+                      isClearable
+                    />
                 </div>
               </div>
 
@@ -839,17 +841,14 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
                           {s.status === "pending" && (
                             <>
                               <button
-                                onClick={() => {
-                                  setEditingSchedule(s);
-                                  setIsScheduleModalOpen(true);
-                                }}
+                                onClick={(e) => { e.stopPropagation(); setEditingSchedule(s); setIsScheduleModalOpen(true); }}
                                 className="px-2.5 py-1.5 bg-blue-50 text-blue-600 hover:bg-blue-100 text-xs font-semibold rounded-lg transition-all flex items-center gap-1"
                                 title="แก้ไขนัดหมาย"
                               >
                                 ✏️ แก้ไข
                               </button>
                               <button
-                                onClick={() => { setCompletingScheduleId(s.id); setCompleteForm({ serviceReportNumber: "", actionDate: new Date().toISOString().slice(0, 10), resultDetails: "", customerFeedback: "" }); }}
+                                onClick={(e) => { e.stopPropagation(); setCompletingScheduleId(s.id); setCompleteForm({ serviceReportNumber: "", actionDate: new Date().toISOString().slice(0, 10), resultDetails: "", customerFeedback: "" }); }}
                                 className="px-3 py-1.5 bg-green-500 text-white text-xs font-semibold rounded-lg hover:bg-green-600 transition-all"
                               >
                                 ✅ จบงาน
@@ -858,7 +857,7 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
                           )}
                           {s.status === "completed" && !logs[s.id] && (
                             <button
-                              onClick={() => fetchLogs(s.id)}
+                              onClick={(e) => { e.stopPropagation(); fetchLogs(s.id); }}
                               className="px-3 py-1.5 bg-gray-100 text-gray-600 text-xs font-semibold rounded-lg hover:bg-gray-200 transition-all"
                             >
                               📋 ดูประวัติ
@@ -941,12 +940,9 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
 
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-1.5">วันที่นัดหมาย <span className="text-red-500">*</span></label>
-                <input
-                  type="date"
-                  value={editingSchedule?.scheduledDate || ""}
-                  onChange={(e) => setEditingSchedule((prev) => ({ ...prev, scheduledDate: e.target.value }))}
-                  className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-400"
-                  required
+                <DatePicker
+                  selected={editingSchedule?.scheduledDate ? new Date(editingSchedule.scheduledDate) : null}
+                  onChange={(date) => setEditingSchedule((prev) => ({ ...prev, scheduledDate: date ? date.toISOString().split('T')[0] : "" }))}
                 />
               </div>
 
@@ -990,11 +986,9 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
               </div>
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-1.5">วันที่ดำเนินการ</label>
-                <input
-                  type="date"
-                  value={completeForm.actionDate}
-                  onChange={(e) => setCompleteForm((prev) => ({ ...prev, actionDate: e.target.value }))}
-                  className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-green-500/20 focus:border-green-400"
+                <DatePicker
+                  selected={completeForm.actionDate ? new Date(completeForm.actionDate) : null}
+                  onChange={(date) => setCompleteForm((prev) => ({ ...prev, actionDate: date ? date.toISOString().split('T')[0] : "" }))}
                 />
               </div>
               <div>
@@ -1050,6 +1044,46 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
             <div className="flex gap-3 justify-center">
               <button onClick={() => setDeleteScheduleConfirm(null)} className="px-5 py-2.5 border border-gray-200 text-gray-600 font-semibold rounded-xl hover:bg-gray-50 transition-all">ยกเลิก</button>
               <button onClick={executeDeleteSchedule} className="px-5 py-2.5 bg-red-500 text-white font-semibold rounded-xl hover:bg-red-600 transition-all">ลบ</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      
+      {/* ── View Schedule Detail Modal ────────────────────────────────────── */}
+      {viewingSchedule && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[70] flex items-center justify-center p-4" onClick={() => setViewingSchedule(null)}>
+          <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="flex justify-between items-center p-6 border-b border-gray-100">
+              <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+                {viewingSchedule.scheduleType === "service" ? "🔧 Service" : "📞 โทร"}
+              </h2>
+              <button onClick={() => setViewingSchedule(null)} className="text-gray-400 hover:text-gray-600 transition-colors">
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            <div className="p-6 space-y-5">
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">วันที่นัดหมาย</label>
+                <div className="text-gray-900 font-medium">{viewingSchedule.scheduledDate}</div>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">สถานะ</label>
+                <div>{scheduleStatusBadge(viewingSchedule.status || "pending", viewingSchedule.scheduledDate || "")}</div>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">รายละเอียด / หมายเหตุ</label>
+                <div className="text-gray-700 whitespace-pre-wrap">{viewingSchedule.notes || "-"}</div>
+              </div>
+            </div>
+            <div className="p-6 border-t border-gray-100 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setViewingSchedule(null)}
+                className="px-5 py-2.5 bg-gray-100 text-gray-700 font-semibold rounded-xl hover:bg-gray-200 transition-all"
+              >
+                ปิด
+              </button>
             </div>
           </div>
         </div>

@@ -1,6 +1,7 @@
 "use client";
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import Link from "next/link";
+import DatePicker from "../components/DatePicker";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
   PieChart, Pie, Cell, Legend,
@@ -560,7 +561,7 @@ export default function DashboardPage() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8">
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
           <div>
-            <h1 className="text-3xl font-bold text-gray-800">📊 Dashboard ยอดขาย</h1>
+            <h1 className="text-3xl font-bold text-gray-800">Dashboard ยอดขาย</h1>
             <p className="text-gray-500 mt-1">วิเคราะห์ยอดขายและประสิทธิภาพทีมขาย</p>
           </div>
           <div className="flex gap-2 flex-wrap items-center">
@@ -570,26 +571,26 @@ export default function DashboardPage() {
               onChange={(v) => setYear(Number(v))}
               className="w-32"
             />
-            <button onClick={() => { setShowForm(true); setEditingId(null); setForm(emptyForm()); setCostItems([]); setShowCostCalc(false); }} className="px-4 py-2.5 bg-indigo-600 text-white rounded-xl text-sm font-semibold hover:bg-indigo-700 transition-all shadow-sm">
-              + บันทึกยอดขาย
+            <button onClick={() => { setShowForm(true); setEditingId(null); setForm(emptyForm()); setCostItems([]); setShowCostCalc(false); }} className="px-5 py-2.5 bg-black text-white rounded-full text-sm font-medium hover:bg-gray-900 transition-colors shadow-sm">
+              บันทึกยอดขาย
             </button>
             <button
               onClick={handleScrollToRecords}
-              className="px-4 py-2.5 bg-white border border-gray-200 text-gray-700 font-semibold rounded-xl text-sm hover:bg-gray-50 hover:shadow-sm transition-all shadow-sm flex items-center gap-1.5"
+              className="px-5 py-2.5 bg-gray-100 text-gray-900 font-medium rounded-full text-sm hover:bg-gray-200 transition-colors flex items-center gap-1.5"
             >
-              📋 รายการขาย {salesRecords.length > 0 && <span className="bg-indigo-100 text-indigo-700 text-xs px-1.5 py-0.5 rounded-full font-bold">{salesRecords.length}</span>}
+              รายการขาย {salesRecords.length > 0 && <span className="bg-gray-900 text-white text-xs px-2 py-0.5 rounded-full font-bold">{salesRecords.length}</span>}
             </button>
-            <button onClick={handleExport} className="px-4 py-2.5 bg-emerald-600 text-white rounded-xl text-sm font-semibold hover:bg-emerald-700 transition-all shadow-sm">
-              ⬇ Export Excel
+            <button onClick={handleExport} className="px-5 py-2.5 bg-gray-100 text-gray-900 rounded-full text-sm font-medium hover:bg-gray-200 transition-colors">
+              Export Excel
             </button>
-            <Link href="/customers" className="px-4 py-2.5 bg-white border border-gray-200 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 hover:shadow-sm transition-all text-sm flex items-center gap-1.5 shadow-sm">
-              👥 ลูกค้า & เซลล์
+            <Link href="/customers?tab=equipment" className="px-5 py-2.5 bg-gray-100 text-gray-900 font-medium rounded-full hover:bg-gray-200 transition-colors text-sm flex items-center gap-1.5">
+              อุปกรณ์ที่ขาย
             </Link>
-            <Link href="/expenses" className="px-4 py-2.5 bg-white border border-gray-200 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 hover:shadow-sm transition-all text-sm flex items-center gap-1.5 shadow-sm">
-              💸 บันทึกรายจ่าย
+            <Link href="/expenses" className="px-5 py-2.5 bg-gray-100 text-gray-900 font-medium rounded-full hover:bg-gray-200 transition-colors text-sm flex items-center gap-1.5">
+              บันทึกรายจ่าย
             </Link>
-            <Link href="/showcase" className="px-4 py-2.5 bg-white border border-gray-200 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 hover:shadow-sm transition-all text-sm flex items-center gap-1.5 shadow-sm">
-              🏠 กลับไประบบจัดการ
+            <Link href="/showcase" className="px-5 py-2.5 bg-gray-100 text-gray-900 font-medium rounded-full hover:bg-gray-200 transition-colors text-sm flex items-center gap-1.5">
+              กลับไประบบจัดการ
             </Link>
           </div>
         </div>
@@ -608,19 +609,19 @@ export default function DashboardPage() {
         ) : ov && curM && prevM && (
           <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-4 mb-8">
             {[
-              { label: "ยอดขายเดือนนี้", icon: "💰", value: `฿${fmt(curM.revenue)}`, change: pctChange(curM.revenue, prevM.revenue) },
-              { label: "ต้นทุนและรายจ่ายรวม", icon: "📊", value: `฿${fmt(curM.cost)}`, change: pctChange(curM.cost, prevM.cost) },
-              { label: "กำไรเดือนนี้", icon: "💹", value: `฿${fmt(curM.profit)}`, change: pctChange(curM.profit, prevM.profit) },
-              { label: "Profit Margin", icon: "📐", value: curM.revenue > 0 ? `${Math.round((curM.profit / curM.revenue) * 100)}%` : "—", change: (() => { const curMargin = curM.revenue > 0 ? Math.round((curM.profit / curM.revenue) * 100) : 0; const prevMarginVal = prevM.revenue > 0 ? Math.round((prevM.profit / prevM.revenue) * 100) : 0; return pctChange(curMargin, prevMarginVal); })() },
-              { label: "จำนวนดีล", icon: "📦", value: String(curM.deals), change: pctChange(curM.deals, prevM.deals) },
-              { label: "ลูกค้าใหม่", icon: "🏢", value: String(curM.newCustomers), change: pctChange(curM.newCustomers, prevM.newCustomers) },
-              { label: "Conversion Rate", icon: "📈", value: `${conversionRate}%`, change: pctChange(conversionRate, prevConversionRate) },
-              { label: "ประกันใกล้หมด", icon: "⏳", value: String(ov.expiringWarranties), change: { value: 0, label: "≤30 วัน", color: ov.expiringWarranties > 0 ? "text-amber-600" : "text-gray-400" } },
+              { label: "ยอดขายเดือนนี้", value: `฿${fmt(curM.revenue)}`, change: pctChange(curM.revenue, prevM.revenue) },
+              { label: "ต้นทุนและรายจ่ายรวม", value: `฿${fmt(curM.cost)}`, change: pctChange(curM.cost, prevM.cost) },
+              { label: "กำไรเดือนนี้", value: `฿${fmt(curM.profit)}`, change: pctChange(curM.profit, prevM.profit) },
+              { label: "Profit Margin", value: curM.revenue > 0 ? `${Math.round((curM.profit / curM.revenue) * 100)}%` : "—", change: (() => { const curMargin = curM.revenue > 0 ? Math.round((curM.profit / curM.revenue) * 100) : 0; const prevMarginVal = prevM.revenue > 0 ? Math.round((prevM.profit / prevM.revenue) * 100) : 0; return pctChange(curMargin, prevMarginVal); })() },
+              { label: "จำนวนดีล", value: String(curM.deals), change: pctChange(curM.deals, prevM.deals) },
+              { label: "ลูกค้าใหม่", value: String(curM.newCustomers), change: pctChange(curM.newCustomers, prevM.newCustomers) },
+              { label: "Conversion Rate", value: `${conversionRate}%`, change: pctChange(conversionRate, prevConversionRate) },
+              { label: "ประกันใกล้หมด", value: String(ov.expiringWarranties), change: { value: 0, label: "≤30 วัน", color: ov.expiringWarranties > 0 ? "text-amber-600" : "text-gray-400" } },
             ].map((card, i) => (
-              <div key={i} className={`rounded-2xl p-5 shadow-sm border hover:shadow-md transition-shadow ${i === 2 ? "bg-gradient-to-br from-emerald-50 to-white border-emerald-200" : i === 3 ? "bg-gradient-to-br from-indigo-50 to-white border-indigo-200" : "bg-white border-gray-100"}`}>
-                <div className="text-sm text-gray-500 mb-1">{card.icon} {card.label}</div>
-                <div className={`text-xl font-bold ${i === 2 ? "text-emerald-700" : i === 3 ? "text-indigo-700" : "text-gray-800"}`}>{card.value}</div>
-                <div className={`text-sm font-medium ${card.change.color}`}>{card.change.label}</div>
+              <div key={i} className="bg-white rounded-[24px] p-6 shadow-sm border border-gray-100/50 hover:shadow-md transition-shadow">
+                <div className="text-sm font-medium text-gray-500 mb-2">{card.label}</div>
+                <div className={`text-2xl font-bold tracking-tight ${i === 2 ? "text-emerald-600" : i === 3 ? "text-indigo-600" : "text-gray-900"}`}>{card.value}</div>
+                <div className={`text-xs font-medium mt-2 ${card.change.color}`}>{card.change.label}</div>
               </div>
             ))}
           </div>
@@ -644,33 +645,62 @@ export default function DashboardPage() {
             {loading ? (
               <div className="h-64 bg-gray-100 rounded-xl animate-pulse" />
             ) : (
-              <ResponsiveContainer width="100%" height={280}>
-                <BarChart data={chartData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                  <XAxis dataKey="name" tick={{ fontSize: 12 }} />
-                  <YAxis tickFormatter={(v: number) => fmt(v)} tick={{ fontSize: 11 }} />
-                  <Tooltip
-                    content={({ active, payload, label }: any) => {
-                      if (!active || !payload?.length) return null;
-                      const d = payload[0]?.payload;
-                      return (
-                        <div className="bg-white rounded-xl border border-gray-200 p-3 shadow-lg text-sm">
-                          <div className="font-semibold text-gray-700 mb-1">{label}</div>
-                          <div className="text-indigo-600">ยอดขาย: ฿{fmtDec(d?.revenue || 0)}</div>
-                          <div className="text-amber-600">ต้นทุนสินค้า: ฿{fmtDec(d?.cost || 0)}</div>
-                          <div className="text-rose-500">รายจ่ายบริษัท: ฿{fmtDec(d?.expense || 0)}</div>
-                          <div className="text-emerald-600 font-semibold">กำไร: ฿{fmtDec(d?.profit || 0)}</div>
-                          <div className="text-gray-500">Margin: {d?.margin || 0}%</div>
-                        </div>
-                      );
-                    }}
-                  />
-                  <Legend formatter={(value: string) => value === "revenue" ? "ยอดขาย" : value === "expense" ? "รายจ่าย" : "กำไร"} />
-                  <Bar dataKey="revenue" fill="#6366f1" radius={[6, 6, 0, 0]} name="revenue" />
-                  <Bar dataKey="expense" fill="#f43f5e" radius={[6, 6, 0, 0]} name="expense" />
-                  <Bar dataKey="profit" fill="#10b981" radius={[6, 6, 0, 0]} name="profit" />
-                </BarChart>
-              </ResponsiveContainer>
+              <div className="flex flex-col gap-8">
+                {/* Chart 1: Revenue vs Profit */}
+                <div className="h-[260px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={chartData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
+                      <XAxis dataKey="name" tick={{ fontSize: 12, fill: "#6b7280" }} axisLine={false} tickLine={false} />
+                      <YAxis tickFormatter={(v: number) => fmt(v)} tick={{ fontSize: 11, fill: "#6b7280" }} axisLine={false} tickLine={false} />
+                      <Tooltip
+                        content={({ active, payload, label }: any) => {
+                          if (!active || !payload?.length) return null;
+                          const d = payload[0]?.payload;
+                          return (
+                            <div className="bg-white rounded-[16px] border border-gray-100 p-4 shadow-[0_4px_20px_-4px_rgba(0,0,0,0.1)] text-sm">
+                              <div className="font-semibold text-gray-900 mb-2">{label}</div>
+                              <div className="text-indigo-600 font-medium">ยอดขาย: ฿{fmtDec(d?.revenue || 0)}</div>
+                              <div className="text-emerald-600 font-medium">กำไร: ฿{fmtDec(d?.profit || 0)}</div>
+                            </div>
+                          );
+                        }}
+                      />
+                      <Legend formatter={(value: string) => value === "revenue" ? "ยอดขาย" : "กำไร"} wrapperStyle={{ paddingTop: "10px" }} />
+                      <Bar dataKey="profit" fill="#10b981" radius={[4, 4, 0, 0]} name="profit" maxBarSize={40} />
+                      <Bar dataKey="revenue" fill="#6366f1" radius={[4, 4, 0, 0]} name="revenue" maxBarSize={40} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+                
+                {/* Chart 2: Profit vs Expense */}
+                <div className="h-[260px] border-t border-gray-100 pt-6">
+                  <h3 className="text-sm font-bold text-gray-800 mb-4 text-center">กำไร & รายจ่ายบริษัท</h3>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={chartData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
+                      <XAxis dataKey="name" tick={{ fontSize: 12, fill: "#6b7280" }} axisLine={false} tickLine={false} />
+                      <YAxis tickFormatter={(v: number) => fmt(v)} tick={{ fontSize: 11, fill: "#6b7280" }} axisLine={false} tickLine={false} />
+                      <Tooltip
+                        content={({ active, payload, label }: any) => {
+                          if (!active || !payload?.length) return null;
+                          const d = payload[0]?.payload;
+                          return (
+                            <div className="bg-white rounded-[16px] border border-gray-100 p-4 shadow-[0_4px_20px_-4px_rgba(0,0,0,0.1)] text-sm">
+                              <div className="font-semibold text-gray-900 mb-2">{label}</div>
+                              <div className="text-emerald-600 font-medium">กำไร: ฿{fmtDec(d?.profit || 0)}</div>
+                              <div className="text-rose-500 font-medium">รายจ่าย: ฿{fmtDec(d?.expense || 0)}</div>
+                            </div>
+                          );
+                        }}
+                      />
+                      <Legend formatter={(value: string) => value === "expense" ? "รายจ่าย" : "กำไร"} wrapperStyle={{ paddingTop: "10px" }} />
+                      <Bar dataKey="expense" fill="#f43f5e" radius={[4, 4, 0, 0]} name="expense" maxBarSize={40} />
+                      <Bar dataKey="profit" fill="#10b981" radius={[4, 4, 0, 0]} name="profit" maxBarSize={40} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
             )}
           </div>
 
@@ -789,7 +819,7 @@ export default function DashboardPage() {
         {/* ── Salesperson Leaderboard ──────────────────────────────────────── */}
         <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 mb-8">
           <div className="flex justify-between items-center mb-4">
-            <h2 className="text-lg font-bold text-gray-800">👤 ผลงานเซลล์ <span className="text-xs font-normal text-indigo-600 ml-2">(คลิกแถวเพื่อดู/แก้ไขยอดขาย)</span></h2>
+            <h2 className="text-lg font-bold text-gray-800">ผลงานทีมขาย <span className="text-xs font-normal text-indigo-600 ml-2">(คลิกแถวเพื่อดู/แก้ไขยอดขาย)</span></h2>
           </div>
           {loading ? (
             <div className="space-y-4">{Array.from({ length: 3 }).map((_, i) => (
@@ -820,7 +850,7 @@ export default function DashboardPage() {
                       </td>
                       <td className="py-3 pr-4 font-medium text-gray-800 flex items-center gap-2">
                         {s.name}
-                        <span className="text-xs px-2 py-0.5 bg-indigo-50 text-indigo-600 rounded-full font-normal opacity-75 hover:opacity-100">✏️ แก้ไข</span>
+                        <span className="text-xs px-2 py-0.5 bg-indigo-50 text-indigo-600 rounded-full font-normal opacity-75 hover:opacity-100">แก้ไข</span>
                       </td>
                       <td className="py-3 pr-4 text-right font-semibold text-gray-800">฿{fmt(s.revenue)}</td>
                       <td className="py-3 pr-4 text-right text-gray-600">{s.deals}</td>
@@ -848,8 +878,8 @@ export default function DashboardPage() {
           <div id="sales-records-section" className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 mb-8 scroll-mt-6">
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
               <div>
-                <h2 className="text-lg font-bold text-gray-800">📋 รายการขาย ({filteredSalesRecords.length})</h2>
-                <p className="text-xs text-gray-500">คลิกที่แถวหรือกดปุ่ม "✏️ แก้ไข" เพื่อแก้ไขรายละเอียดของยอดขาย</p>
+                <h2 className="text-lg font-bold text-gray-800">รายการขาย ({filteredSalesRecords.length})</h2>
+                <p className="text-xs text-gray-500">คลิกที่แถวหรือกดปุ่ม "แก้ไข" เพื่อแก้ไขรายละเอียดของยอดขาย</p>
               </div>
               <div className="flex gap-2 w-full sm:w-auto items-center">
                 <SearchableDropdown
@@ -946,7 +976,7 @@ export default function DashboardPage() {
                               className="px-2.5 py-1 text-xs font-semibold bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded-lg transition-colors"
                               title="แก้ไขยอดขาย"
                             >
-                              ✏️ แก้ไข
+                              แก้ไข
                             </button>
                             <button
                               onClick={(e) => { e.stopPropagation(); handleDelete(r.id); }}
@@ -974,7 +1004,7 @@ export default function DashboardPage() {
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setViewingRecord(null)}>
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <div className="p-6 border-b border-gray-100 flex justify-between items-center">
-              <h3 className="text-xl font-bold text-gray-800">📄 รายละเอียดยอดขาย</h3>
+              <h3 className="text-xl font-bold text-gray-800">รายละเอียดยอดขาย</h3>
               <button onClick={() => setViewingRecord(null)} className="p-2 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100">
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
               </button>
@@ -1084,7 +1114,7 @@ export default function DashboardPage() {
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => { setShowForm(false); setEditingId(null); }}>
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <div className="p-6 border-b border-gray-100 flex justify-between items-center">
-              <h3 className="text-xl font-bold text-gray-800">{editingId ? "✏️ แก้ไขรายการ" : "📝 บันทึกยอดขาย"}</h3>
+              <h3 className="text-xl font-bold text-gray-800">{editingId ? "แก้ไขรายการ" : "บันทึกยอดขาย"}</h3>
               <button onClick={() => { setShowForm(false); setEditingId(null); }} className="p-2 text-gray-400 hover:text-gray-600">
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
               </button>
@@ -1103,8 +1133,10 @@ export default function DashboardPage() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1.5">วันที่ขาย <span className="text-red-500">*</span></label>
-                  <input type="date" value={form.saleDate} onChange={(e) => setForm({ ...form, saleDate: e.target.value })}
-                    className={`w-full px-3 py-2.5 border rounded-xl text-sm focus:ring-2 outline-none ${formErrors.saleDate ? "border-red-500 bg-red-50 focus:border-red-500 focus:ring-red-200 error-border" : "border-gray-200 focus:ring-indigo-200 focus:border-indigo-400"}`} />
+                  <DatePicker
+                      selected={form.saleDate ? new Date(form.saleDate) : null}
+                      onChange={(date) => setForm({ ...form, saleDate: date ? date.toISOString().split('T')[0] : "" })}
+                    />
                 </div>
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1.5">เซลล์</label>
@@ -1306,13 +1338,21 @@ export default function DashboardPage() {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-semibold text-gray-700 mb-1.5">วันเริ่มรับประกัน <span className="text-red-500">*</span></label>
-                    <input type="date" value={form.warrantyStartDate} onChange={(e) => setForm({ ...form, warrantyStartDate: e.target.value })}
-                      className={`w-full px-3 py-2.5 border rounded-xl text-sm focus:ring-2 outline-none ${formErrors.warrantyStartDate ? "border-red-500 bg-red-50 focus:border-red-500 focus:ring-red-200 error-border" : "border-gray-200 focus:ring-indigo-200 focus:border-indigo-400"}`} />
+                    <DatePicker
+                      selected={form.warrantyStartDate ? new Date(form.warrantyStartDate) : null}
+                      onChange={(date) => setForm({ ...form, warrantyStartDate: date ? date.toISOString().split('T')[0] : "" })}
+                      placeholderText="ไม่ระบุ"
+                      isClearable
+                    />
                   </div>
                   <div>
                     <label className="block text-sm font-semibold text-gray-700 mb-1.5">วันหมดรับประกัน <span className="text-red-500">*</span></label>
-                    <input type="date" value={form.warrantyEndDate} onChange={(e) => setForm({ ...form, warrantyEndDate: e.target.value })}
-                      className={`w-full px-3 py-2.5 border rounded-xl text-sm focus:ring-2 outline-none ${formErrors.warrantyEndDate ? "border-red-500 bg-red-50 focus:border-red-500 focus:ring-red-200 error-border" : "border-gray-200 focus:ring-indigo-200 focus:border-indigo-400"}`} />
+                    <DatePicker
+                      selected={form.warrantyEndDate ? new Date(form.warrantyEndDate) : null}
+                      onChange={(date) => setForm({ ...form, warrantyEndDate: date ? date.toISOString().split('T')[0] : "" })}
+                      placeholderText="ไม่ระบุ"
+                      isClearable
+                    />
                   </div>
                 </div>
               )}
