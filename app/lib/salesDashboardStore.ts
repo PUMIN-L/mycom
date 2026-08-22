@@ -334,9 +334,9 @@ export async function getDashboardOverview(): Promise<DashboardOverview> {
   );
 
   const curRevenue = Number(curRows[0]?.revenue || 0);
-  const curCost = Number(curRows[0]?.cost || 0) + Number(curExpRows[0]?.expenses || 0);
+  const curCost = Number(curRows[0]?.cost || 0);
   const prevRevenue = Number(prevRows[0]?.revenue || 0);
-  const prevCostVal = Number(prevRows[0]?.cost || 0) + Number(prevExpRows[0]?.expenses || 0);
+  const prevCostVal = Number(prevRows[0]?.cost || 0);
 
   return {
     currentMonth: {
@@ -388,7 +388,7 @@ export async function getRevenueByMonth(year: number): Promise<RevenueByPeriod[]
     const r = map.get(m);
     const exp = expMap.get(m);
     const rev = Number(r?.revenue || 0);
-    const c = Number(r?.cost || 0) + Number(exp?.expenses || 0);
+    const c = Number(r?.cost || 0);
     const profit = rev - c;
     return {
       period: m,
@@ -430,7 +430,7 @@ export async function getRevenueByQuarter(year: number): Promise<RevenueByPeriod
     const r = map.get(p);
     const exp = expMap.get(p);
     const rev = Number(r?.revenue || 0);
-    const c = Number(r?.cost || 0) + Number(exp?.expenses || 0);
+    const c = Number(r?.cost || 0);
     const profit = rev - c;
     return {
       period: p,
