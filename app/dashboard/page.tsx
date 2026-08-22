@@ -125,6 +125,7 @@ export default function DashboardPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [showRecords, setShowRecords] = useState(true);
   const [recordSearch, setRecordSearch] = useState("");
+  const [recordMonth, setRecordMonth] = useState("");
   const [toast, setToast] = useState<{ msg: string; type: "success" | "error" } | null>(null);
   const [costItems, setCostItems] = useState<CostItemLocal[]>([]);
   const [showCostCalc, setShowCostCalc] = useState(false);
@@ -222,18 +223,24 @@ export default function DashboardPage() {
 
   // Filtered sales records for table search
   const filteredSalesRecords = useMemo(() => {
-    if (!recordSearch.trim()) return salesRecords;
-    const q = recordSearch.toLowerCase();
-    return salesRecords.filter(
-      (r) =>
-        r.productName?.toLowerCase().includes(q) ||
-        r.customerName?.toLowerCase().includes(q) ||
-        r.companyName?.toLowerCase().includes(q) ||
-        r.salespersonName?.toLowerCase().includes(q) ||
-        r.quotationRef?.toLowerCase().includes(q) ||
-        r.saleDate?.includes(q)
-    );
-  }, [salesRecords, recordSearch]);
+    let result = salesRecords;
+    if (recordSearch.trim()) {
+      const q = recordSearch.toLowerCase();
+      result = result.filter(
+        (r) =>
+          r.productName?.toLowerCase().includes(q) ||
+          r.customerName?.toLowerCase().includes(q) ||
+          r.companyName?.toLowerCase().includes(q) ||
+          r.salespersonName?.toLowerCase().includes(q) ||
+          r.quotationRef?.toLowerCase().includes(q) ||
+          r.saleDate?.includes(q)
+      );
+    }
+    if (recordMonth) {
+      result = result.filter((r) => r.saleDate && r.saleDate.substring(5, 7) === recordMonth);
+    }
+    return result;
+  }, [salesRecords, recordSearch, recordMonth]);
 
   // Save sales record
   const handleSave = async () => {
@@ -331,7 +338,7 @@ export default function DashboardPage() {
       salespersonId: rec.salespersonId, customerId: rec.customerId, companyId: rec.companyId,
       productId: rec.productId, productName: rec.productName, categoryId: rec.categoryId,
       qty: rec.qty, unitPrice: rec.unitPrice, totalAmount: rec.totalAmount,
-      saleDate: rec.saleDate, quotationRef: rec.quotationRef, note: rec.note || "",
+      saleDate: rec.saleDate ? rec.saleDate.substring(0, 10) : "", quotationRef: rec.quotationRef, note: rec.note || "",
     });
     setShowForm(true);
     // Load cost items
@@ -772,6 +779,16 @@ export default function DashboardPage() {
                 <p className="text-xs text-gray-500">คลิกที่แถวหรือกดปุ่ม "✏️ แก้ไข" เพื่อแก้ไขรายละเอียดของยอดขาย</p>
               </div>
               <div className="flex gap-2 w-full sm:w-auto items-center">
+                <select
+                  value={recordMonth}
+                  onChange={(e) => setRecordMonth(e.target.value)}
+                  className="px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:bg-white focus:ring-2 focus:ring-indigo-200 outline-none"
+                >
+                  <option value="">ทุกเดือน</option>
+                  {MONTHS_TH.map((m, i) => (
+                    <option key={i} value={String(i + 1).padStart(2, '0')}>{m}</option>
+                  ))}
+                </select>
                 <input
                   type="text"
                   value={recordSearch}

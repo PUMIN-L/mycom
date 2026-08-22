@@ -139,6 +139,7 @@ function cleanInput(data: Partial<SalesRecord>) {
 
 const LIST_SELECT = `
   SELECT sr.*,
+         DATE_FORMAT(sr.saleDate, '%Y-%m-%d') AS saleDate,
          sp.name AS salespersonName,
          c.name AS customerName,
          co.name AS companyName
