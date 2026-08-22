@@ -34,7 +34,7 @@ export class ScheduleNotPendingError extends Error {
 // loose reference by design — degrades to null, not a broken row).
 const EQUIPMENT_SELECT = `
   SELECT e.*, c.name AS customerName, co.name AS companyName,
-         p.title_th AS productName, p.image AS productImage
+         COALESCE(p.title_th, e.productName) AS productName, p.image AS productImage
   FROM customer_equipments e
   LEFT JOIN customers c ON e.customerId = c.id
   LEFT JOIN companies co ON c.companyId = co.id
