@@ -560,45 +560,56 @@ export default function DashboardPage() {
 
       {/* Header */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8">
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
+        <div className="flex flex-col xl:flex-row justify-between items-start xl:items-end gap-6 mb-10">
           <div>
-            <h1 className="text-3xl font-bold text-gray-800">Dashboard ยอดขาย</h1>
-            <p className="text-gray-500 mt-1">วิเคราะห์ยอดขายและประสิทธิภาพทีมขาย</p>
+            <h1 className="text-4xl font-extrabold text-gray-900 tracking-tight mb-2">Dashboard ยอดขาย</h1>
+            <div className="flex flex-wrap items-center gap-3 text-sm font-medium">
+              <Link href="/showcase" className="text-gray-500 hover:text-indigo-600 transition-colors flex items-center gap-1">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/></svg>
+                กลับไประบบจัดการ
+              </Link>
+              <span className="text-gray-300">|</span>
+              <span className="text-gray-500">ภาพรวมธุรกิจประจำปี</span>
+            </div>
           </div>
-          <div className="flex gap-2 flex-wrap items-center">
+          
+          <div className="flex flex-wrap items-center gap-3 bg-white p-2 rounded-[20px] shadow-sm border border-gray-100">
             <SearchableDropdown
               options={yearOptions}
               value={String(year)}
               onChange={(v) => setYear(Number(v))}
-              className="w-32"
+              className="w-32 border-none bg-gray-50 hover:bg-gray-100 transition-colors rounded-xl"
             />
-            <button onClick={() => { setShowForm(true); setEditingId(null); setForm(emptyForm()); setCostItems([]); setShowCostCalc(false); }} className="px-5 py-2.5 bg-black text-white rounded-full text-sm font-medium hover:bg-gray-900 transition-colors shadow-sm">
-              บันทึกยอดขาย
-            </button>
+            <div className="h-6 w-px bg-gray-100 hidden sm:block"></div>
+            
             <button
               onClick={handleScrollToRecords}
-              className="px-5 py-2.5 bg-gray-100 text-gray-900 font-medium rounded-full text-sm hover:bg-gray-200 transition-colors flex items-center gap-1.5"
+              className="px-4 py-2 text-gray-600 font-medium rounded-xl text-sm hover:bg-gray-50 transition-all flex items-center gap-2"
             >
-              รายการขาย {salesRecords.length > 0 && <span className="bg-gray-900 text-white text-xs px-2 py-0.5 rounded-full font-bold">{salesRecords.length}</span>}
+              รายการขาย {salesRecords.length > 0 && <span className="bg-indigo-50 text-indigo-600 border border-indigo-100 text-xs px-2 py-0.5 rounded-full font-bold">{salesRecords.length}</span>}
             </button>
-            <button onClick={handleExport} className="px-5 py-2.5 bg-gray-100 text-gray-900 rounded-full text-sm font-medium hover:bg-gray-200 transition-colors">
-              Export Excel
-            </button>
-            <Link href="/customers?tab=equipment" className="px-5 py-2.5 bg-gray-100 text-gray-900 font-medium rounded-full hover:bg-gray-200 transition-colors text-sm flex items-center gap-1.5">
+            <Link href="/customers?tab=equipment" className="px-4 py-2 text-gray-600 font-medium rounded-xl hover:bg-gray-50 transition-all text-sm">
               อุปกรณ์ที่ขาย
             </Link>
-            <Link href="/expenses" className="px-5 py-2.5 bg-gray-100 text-gray-900 font-medium rounded-full hover:bg-gray-200 transition-colors text-sm flex items-center gap-1.5">
+            <Link href="/expenses" className="px-4 py-2 text-gray-600 font-medium rounded-xl hover:bg-gray-50 transition-all text-sm">
               บันทึกรายจ่าย
             </Link>
-            <Link href="/showcase" className="px-5 py-2.5 bg-gray-100 text-gray-900 font-medium rounded-full hover:bg-gray-200 transition-colors text-sm flex items-center gap-1.5">
-              กลับไประบบจัดการ
-            </Link>
+            
+            <div className="h-6 w-px bg-gray-100 hidden sm:block"></div>
+            
+            <button onClick={handleExport} className="p-2 text-gray-400 hover:text-gray-900 rounded-xl hover:bg-gray-50 transition-all" title="Export Excel">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+            </button>
+            
+            <button onClick={() => { setShowForm(true); setEditingId(null); setForm(emptyForm()); setCostItems([]); setShowCostCalc(false); }} className="px-5 py-2.5 bg-black text-white rounded-xl text-sm font-semibold hover:bg-gray-800 transition-all shadow-md ml-1">
+              + บันทึกยอดขาย
+            </button>
           </div>
         </div>
 
         {/* ── Overview Cards ──────────────────────────────────────────────── */}
         {loading ? (
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-8">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-5 mb-10">
             {Array.from({ length: 6 }).map((_, i) => (
               <div key={i} className="bg-white rounded-2xl p-5 shadow-sm animate-pulse">
                 <div className="h-4 w-20 bg-gray-200 rounded mb-3" />
@@ -608,7 +619,7 @@ export default function DashboardPage() {
             ))}
           </div>
         ) : ov && curM && prevM && (
-          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-4 mb-8">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-5 mb-10">
             {[
               { label: "ยอดขายเดือนนี้", value: `฿${fmt(curM.revenue)}`, change: pctChange(curM.revenue, prevM.revenue) },
               { label: "ต้นทุนและรายจ่ายรวม", value: `฿${fmt(curM.cost)}`, change: pctChange(curM.cost, prevM.cost) },
