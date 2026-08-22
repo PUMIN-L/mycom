@@ -9,6 +9,19 @@ import type {
   ServiceLog,
 } from "../lib/types";
 
+/** Strip HTML tags from rich-text product titles for plain-text display. */
+function stripHtml(html: string | null | undefined): string {
+  if (!html) return "";
+  // Use the browser's DOMParser to safely extract text content.
+  // This avoids regex pitfalls and handles nested tags / entities correctly.
+  if (typeof DOMParser !== "undefined") {
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    return doc.body.textContent?.trim() || "";
+  }
+  // Fallback: simple regex strip for SSR (shouldn't happen — component is "use client").
+  return html.replace(/<[^>]*>/g, "").trim();
+}
+
 // ── Interfaces for lookups ───────────────────────────────────────────────────
 
 interface Company {
@@ -92,7 +105,7 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
       const eqData = equipments.map((eq) => ({
         "ลูกค้า": eq.customerName || "",
         "บริษัท": eq.companyName || "",
-        "สินค้า": eq.productName || eq.productId,
+        "สินค้า": stripHtml(eq.productName) || eq.productId,
         "Serial Number": eq.serialNumber,
         "เลขที่ใบเสนอราคา": eq.quotationNumber,
         "เลขที่ใบรับประกัน": eq.warrantyCertNumber,
@@ -231,8 +244,8 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
 
   const productOptions: SearchableDropdownOption[] = products.map((p) => ({
     value: p.id,
-    label: p.title_th,
-    subLabel: p.title_en,
+    label: stripHtml(p.title_th),
+    subLabel: stripHtml(p.title_en),
   }));
 
   // ── Filtered list ──────────────────────────────────────────────────────────
@@ -243,7 +256,7 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
     return (
       (eq.customerName || "").toLowerCase().includes(q) ||
       (eq.companyName || "").toLowerCase().includes(q) ||
-      (eq.productName || "").toLowerCase().includes(q) ||
+      stripHtml(eq.productName).toLowerCase().includes(q) ||
       eq.serialNumber.toLowerCase().includes(q) ||
       eq.quotationNumber.toLowerCase().includes(q)
     );
@@ -520,7 +533,7 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
                       <div className="font-semibold text-gray-800">{eq.customerName || "—"}</div>
                       <div className="text-xs text-gray-400">{eq.companyName || ""}</div>
                     </td>
-                    <td className="py-4 pr-4 text-sm text-gray-700">{eq.productName || eq.productId}</td>
+                    <td className="py-4 pr-4 text-sm text-gray-700">{stripHtml(eq.productName) || eq.productId}</td>
                     <td className="py-4 pr-4 text-sm text-gray-600 font-mono">{eq.serialNumber || "—"}</td>
                     <td className="py-4 pr-4 text-sm text-gray-600">{eq.warrantyType || "—"}</td>
                     <td className="py-4 pr-4">
@@ -689,7 +702,7 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
             <div className="p-6 border-b border-gray-100 flex justify-between items-start">
               <div>
                 <h3 className="text-xl font-bold text-gray-800">รายละเอียดอุปกรณ์</h3>
-                <p className="text-sm text-gray-400 mt-1">{viewingEquipment.productName} — S/N: {viewingEquipment.serialNumber || "—"}</p>
+                <p className="text-sm text-gray-400 mt-1">{stripHtml(viewingEquipment.productName)} — S/N: {viewingEquipment.serialNumber || "—"}</p>
               </div>
               <div className="flex gap-2">
                 <button
@@ -711,7 +724,7 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
             <div className="p-6 grid grid-cols-2 gap-4">
               <Info label="ลูกค้า" value={viewingEquipment.customerName} />
               <Info label="บริษัท" value={viewingEquipment.companyName} />
-              <Info label="สินค้า" value={viewingEquipment.productName} />
+              <Info label="สินค้า" value={stripHtml(viewingEquipment.productName)} />
               <Info label="Serial Number" value={viewingEquipment.serialNumber} />
               <Info label="ใบเสนอราคา" value={viewingEquipment.quotationNumber} />
               <Info label="ใบรับประกัน" value={viewingEquipment.warrantyCertNumber} />

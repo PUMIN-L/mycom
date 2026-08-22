@@ -1,14 +1,15 @@
 import type { NextConfig } from "next";
 
-// Content-Security-Policy is shipped as Report-Only first so it can be tuned
-// against real traffic (react-pdf blob worker, Quill/Tailwind inline styles,
-// Next's inline bootstrap) WITHOUT breaking the site. Once the browser console
-// shows no violations, switch the header key to "Content-Security-Policy".
+// Content-Security-Policy — enforced. Tuned against production traffic to
+// allow Next.js inline scripts/styles, Quill editor, react-pdf blob workers,
+// and the Google Maps embed on the Contact page. Anything outside this set
+// (unknown scripts, event handlers, iframes from other origins) is blocked.
 const contentSecurityPolicy = [
   "default-src 'self'",
   "base-uri 'self'",
   "object-src 'none'",
   "frame-ancestors 'none'",
+  "frame-src https://www.google.com",
   "form-action 'self'",
   "img-src 'self' data: blob: https://res.cloudinary.com https://images.unsplash.com https://flagcdn.com https://api.qrserver.com",
   "media-src 'self' https://res.cloudinary.com",
@@ -45,7 +46,7 @@ const nextConfig: NextConfig = {
       {
         source: "/:path*",
         headers: [
-          { key: "Content-Security-Policy-Report-Only", value: contentSecurityPolicy },
+          { key: "Content-Security-Policy", value: contentSecurityPolicy },
           { key: "X-Frame-Options", value: "DENY" },
           { key: "X-Content-Type-Options", value: "nosniff" },
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },

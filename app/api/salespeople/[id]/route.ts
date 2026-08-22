@@ -4,10 +4,11 @@ import { requireAuth, withRoute, ApiError } from "../../../lib/apiHelpers";
 
 type Ctx = { params: Promise<{ id: string }> };
 
-// GET — single salesperson (public)
+// GET — single salesperson (admin only)
 export const GET = withRoute(
   "Failed to fetch salesperson",
   async (_request: NextRequest, { params }: Ctx) => {
+    await requireAuth();
     const { id } = await params;
     const salesperson = await getSalesperson(id);
     if (!salesperson) {

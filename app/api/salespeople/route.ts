@@ -2,10 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAllSalespeople, createSalesperson } from "../../lib/salesStore";
 import { requireAuth, withRoute } from "../../lib/apiHelpers";
 
-// GET — list all salespeople (public or admin? let's make it public like products/customers so the quoting frontend can read it, or maybe admin only. Wait, the quotient is admin only. We can protect everything or leave GET public. Let's make GET public for consistency, or protect it. The customers GET is public, so we make this public).
+// GET — list all salespeople (admin only — internal staff data).
 export const GET = withRoute(
   "Failed to fetch salespeople",
   async (_request: NextRequest) => {
+    await requireAuth();
     const salespeople = await getAllSalespeople();
     return NextResponse.json(salespeople);
   }
