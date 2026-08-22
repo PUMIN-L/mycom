@@ -123,6 +123,8 @@ const LIST_SELECT = `
          co.name AS companyName,
          p.image AS productImage
   FROM sales_records sr
+  -- All JOINs below are on PRIMARY KEY columns (sp.id, c.id, co.id, p.id),
+  -- so they automatically use indexes. No additional INDEX needed.
   LEFT JOIN salespeople sp ON sr.salespersonId = sp.id
   LEFT JOIN customers c ON sr.customerId = c.id
   LEFT JOIN companies co ON sr.companyId = co.id

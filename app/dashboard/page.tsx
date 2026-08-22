@@ -12,114 +12,17 @@ import type { SearchableDropdownOption } from "../components/SearchableDropdown"
 import FormattedNumberInput from "../components/FormattedNumberInput";
 import ConfirmDialog from "../components/ConfirmDialog";
 import type { SalesRecord, CustomerEquipment } from "../lib/types";
+import ViewRecordModal from "./ViewRecordModal";
+import SalesTable from "./SalesTable";
+import {
+  type DashboardData, type TopItem, type SalespersonStat,
+  type CostItemLocal, type Product, type Customer, type Company, type Salesperson,
+  COST_TYPE_LABELS, COST_TYPE_OPTIONS,
+  fmt, fmtDec, MONTHS_TH, PIE_COLORS,
+  pctChange, stripHtml, safeImageUrl, emptyForm,
+} from "./types";
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
-/** Only allow Cloudinary image URLs to prevent XSS/SSRF via img src */
-function safeImageUrl(url: string | undefined | null): string | null {
-  if (!url) return null;
-  try {
-    const parsed = new URL(url);
-    if (parsed.hostname === "res.cloudinary.com" && parsed.protocol === "https:") return url;
-  } catch { /* invalid URL */ }
-  return null;
-}
-
-// ── Types ────────────────────────────────────────────────────────────────────
-
-interface OverviewData {
-  revenue: number; deals: number; newCustomers: number; quotations: number;
-  cost: number; profit: number;
-}
-interface DashboardData {
-  overview: { currentMonth: OverviewData; previousMonth: OverviewData; expiringWarranties: number };
-  revenueMonthly: { period: string; revenue: number; deals: number; cost: number; profit: number; margin: number }[];
-  revenueQuarterly: { period: string; revenue: number; deals: number; cost: number; profit: number; margin: number }[];
-  revenueByCategory: TopItem[];
-  topProducts: TopItem[];
-  topCustomers: TopItem[];
-  salespersonLeaderboard: SalespersonStat[];
-  insights: Insight[];
-}
-interface TopItem { id: string; name: string; revenue: number; qty: number; deals: number; percentage: number }
-interface SalespersonStat { id: string; name: string; revenue: number; deals: number; percentage: number; avgDealSize: number }
-interface Insight { type: "positive" | "warning" | "opportunity" | "info"; icon: string; title: string; description: string }
-interface CostItemLocal {
-  id?: string;
-  costType: string;
-  label: string;
-  amount: number;
-  note: string;
-}
-const COST_TYPE_LABELS: Record<string, string> = {
-  product_cost: "ต้นทุนสินค้า",
-  transport: "ค่ารถ / ค่าเดินทาง",
-  shipping: "ค่าขนส่ง",
-  service_visit: "ค่าเซอร์วิส / ค่าติดตั้ง",
-  repair: "ค่าซ่อม",
-  commission: "ค่าคอมมิชชั่น",
-  other: "อื่นๆ",
-};
-const COST_TYPE_OPTIONS = Object.entries(COST_TYPE_LABELS).map(([value, label]) => ({ value, label }));
-interface Product { id: string; title_th: string; title_en: string; categoryId: number }
-interface Customer { id: string; name: string; companyId: string; companyName?: string }
-interface Company { id: string; name: string }
-interface Salesperson { id: string; name: string }
-
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
-const fmt = (n: number) => n.toLocaleString("th-TH", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
-const fmtDec = (n: number) => n.toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const MONTHS_TH = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
-const PIE_COLORS = ["#6366f1", "#f59e0b", "#10b981", "#ef4444", "#8b5cf6", "#ec4899", "#14b8a6", "#f97316", "#06b6d4", "#84cc16"];
-
-function pctChange(cur: number, prev: number): { value: number; label: string; color: string } {
-  if (prev === 0) return { value: 0, label: "—", color: "text-gray-400" };
-  const pct = Math.round(((cur - prev) / prev) * 100);
-  if (pct > 0) return { value: pct, label: `↑${pct}%`, color: "text-emerald-600" };
-  if (pct < 0) return { value: pct, label: `↓${Math.abs(pct)}%`, color: "text-red-500" };
-  return { value: 0, label: "→0%", color: "text-gray-400" };
-}
-
-function stripHtml(html: string | null | undefined): string {
-  if (!html) return "";
-  if (typeof DOMParser !== "undefined") {
-    const doc = new DOMParser().parseFromString(html, "text/html");
-    return doc.body.textContent?.trim() || "";
-  }
-  return html.replace(/<[^>]*>/g, "").trim();
-}
-
-function getTodayString(): string {
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
-
-const emptyForm = () => ({
-  saleType: "equipment",
-  salespersonId: "",
-  customerId: "",
-  companyId: "",
-  productId: "",
-  productName: "",
-  categoryId: null as number | null,
-  qty: 1,
-  unitPrice: 0,
-  totalAmount: 0,
-  saleDate: getTodayString(),
-  quotationRef: "",
-  poRef: "",
-  deliveryRef: "",
-  invoiceRef: "",
-  receiptRef: "",
-  warrantyStartDate: "",
-  warrantyEndDate: "",
-  serialNumbers: [] as string[],
-  note: "",
-});
+// emptyForm imported from ./types
 
 // ── Main Component ───────────────────────────────────────────────────────────
 
@@ -242,25 +145,6 @@ export default function DashboardPage() {
   }, [data, chartMode]);
 
   // Filtered sales records for table search
-  const filteredSalesRecords = useMemo(() => {
-    let result = salesRecords;
-    if (recordSearch.trim()) {
-      const q = recordSearch.toLowerCase();
-      result = result.filter(
-        (r) =>
-          r.productName?.toLowerCase().includes(q) ||
-          r.customerName?.toLowerCase().includes(q) ||
-          r.companyName?.toLowerCase().includes(q) ||
-          r.salespersonName?.toLowerCase().includes(q) ||
-          r.quotationRef?.toLowerCase().includes(q) ||
-          r.saleDate?.includes(q)
-      );
-    }
-    if (recordMonth) {
-      result = result.filter((r) => r.saleDate && r.saleDate.substring(5, 7) === recordMonth);
-    }
-    return result;
-  }, [salesRecords, recordSearch, recordMonth]);
 
   // Save sales record
   const handleSave = async () => {
@@ -902,241 +786,27 @@ export default function DashboardPage() {
 
         {/* ── Sales Records Table ──────────────────────────────────────────── */}
         {showRecords && (
-          <div id="sales-records-section" className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 mb-8 scroll-mt-6">
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
-              <div>
-                <h2 className="text-lg font-bold text-gray-800">รายการขาย ({filteredSalesRecords.length})</h2>
-                <p className="text-xs text-gray-500">คลิกที่แถวหรือกดปุ่ม "แก้ไข" เพื่อแก้ไขรายละเอียดของยอดขาย</p>
-              </div>
-              <div className="flex gap-2 w-full sm:w-auto items-center">
-                <SearchableDropdown
-                  value={recordMonth}
-                  onChange={setRecordMonth}
-                  options={[
-                    { value: "", label: "ทุกเดือน" },
-                    ...MONTHS_TH.map((m, i) => ({ value: String(i + 1).padStart(2, '0'), label: m }))
-                  ]}
-                  className="w-36"
-                />
-                <input
-                  type="text"
-                  value={recordSearch}
-                  onChange={(e) => setRecordSearch(e.target.value)}
-                  placeholder="🔍 ค้นหาสินค้า, ลูกค้า, บริษัท, เซลล์..."
-                  className="px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm w-full sm:w-72 focus:bg-white focus:ring-2 focus:ring-indigo-200 outline-none"
-                />
-                {recordSearch && (
-                  <button onClick={() => setRecordSearch("")} className="px-3 py-2 text-xs bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-200">
-                    ล้าง
-                  </button>
-                )}
-                <button
-                  onClick={() => setShowRecords(false)}
-                  className="px-3 py-2 text-xs bg-gray-100 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded-xl transition-colors font-medium whitespace-nowrap"
-                  title="ซ่อนตาราง"
-                >
-                  ✕ ซ่อนตาราง
-                </button>
-              </div>
-            </div>
-            {filteredSalesRecords.length > 0 ? (
-              <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
-                <table className="w-full">
-                  <thead>
-                    <tr className="text-left text-xs font-medium text-gray-400 uppercase tracking-wider sticky top-0 bg-white shadow-xs">
-                      <th className="pb-3 pr-3">วันที่</th>
-                      <th className="pb-3 pr-3">สินค้า</th>
-                      <th className="pb-3 pr-3">ลูกค้า/บริษัท</th>
-                      <th className="pb-3 pr-3">เซลล์</th>
-                      <th className="pb-3 pr-3 text-right">จำนวน</th>
-                      <th className="pb-3 pr-3 text-right">ยอดรวม</th>
-                      <th className="pb-3 pr-3 text-right">กำไร</th>
-                      <th className="pb-3 pr-3 text-right">Margin</th>
-                      <th className="pb-3 text-right pr-2">การจัดการ</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredSalesRecords.map((r) => (
-                      <tr key={r.id} className="border-t border-gray-50 hover:bg-indigo-50/30 cursor-pointer transition-colors group" onClick={() => setViewingRecord(r)}>
-                        <td className="py-3 pr-3 text-sm text-gray-600">{r.saleDate}</td>
-                        <td className="py-3 pr-3 text-sm font-medium text-gray-800">
-                          {r.saleType === "service" ? (
-                            <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-700 mr-1.5" title="บริการ">S</span>
-                          ) : (
-                            <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-bold bg-indigo-100 text-indigo-700 mr-1.5" title="อุปกรณ์">E</span>
-                          )}
-                          {stripHtml(r.productName)}
-                          {safeImageUrl(r.productImage) && (
-                            <img src={safeImageUrl(r.productImage)!} alt="" className="inline-block ml-2 w-6 h-6 rounded object-cover border border-gray-100 bg-gray-50" />
-                          )}
-                        </td>
-                        <td className="py-3 pr-3">
-                          <div className="text-sm text-gray-800">{r.customerName || "—"}</div>
-                          <div className="text-xs text-gray-400">{r.companyName || ""}</div>
-                        </td>
-                        <td className="py-3 pr-3 text-sm text-gray-600">
-                          {r.salespersonName ? (
-                            <span className="font-medium text-gray-700">{r.salespersonName}</span>
-                          ) : (
-                            <span className="text-amber-600 bg-amber-50 px-2 py-0.5 rounded text-xs">ไม่ระบุเซลล์</span>
-                          )}
-                        </td>
-                        <td className="py-3 pr-3 text-sm text-right text-gray-600">{r.qty}</td>
-                        <td className="py-3 pr-3 text-sm text-right font-semibold text-gray-800">฿{fmtDec(r.totalAmount)}</td>
-                        <td className="py-3 pr-3 text-sm text-right">
-                          {r.costAmount > 0 ? (
-                            <span className="font-semibold text-emerald-700">฿{fmtDec(r.totalAmount - r.costAmount)}</span>
-                          ) : (
-                            <span className="text-gray-400">—</span>
-                          )}
-                        </td>
-                        <td className="py-3 pr-3 text-right">
-                          {r.costAmount > 0 ? (() => {
-                            const margin = r.totalAmount > 0 ? Math.round(((r.totalAmount - r.costAmount) / r.totalAmount) * 100) : 0;
-                            const color = margin >= 20 ? "bg-emerald-100 text-emerald-700" : margin >= 10 ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700";
-                            return <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${color}`}>{margin}%</span>;
-                          })() : (
-                            <span className="text-gray-400 text-xs">—</span>
-                          )}
-                        </td>
-                        <td className="py-3 text-right pr-2">
-                          <div className="flex items-center justify-end gap-1.5">
-                            <button
-                              onClick={(e) => { e.stopPropagation(); handleEdit(r); }}
-                              className="px-2.5 py-1 text-xs font-semibold bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded-lg transition-colors"
-                              title="แก้ไขยอดขาย"
-                            >
-                              แก้ไข
-                            </button>
-                            <button
-                              onClick={(e) => { e.stopPropagation(); handleDelete(r.id); }}
-                              className="p-1.5 text-gray-400 hover:text-red-600 transition-colors rounded-lg hover:bg-red-50"
-                              title="ลบรายการ"
-                            >
-                              🗑️
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : (
-              <div className="text-center text-gray-400 py-8 text-sm">ยังไม่มีรายการขาย</div>
-            )}
-          </div>
+          <SalesTable
+            records={salesRecords}
+            recordSearch={recordSearch}
+            setRecordSearch={setRecordSearch}
+            recordMonth={recordMonth}
+            setRecordMonth={setRecordMonth}
+            onView={setViewingRecord}
+            onEdit={handleEdit}
+            onDelete={handleDelete}
+            onHide={() => setShowRecords(false)}
+          />
         )}
       </div>
 
       {/* ── View Sales Record Modal ─────────────────────────────────── */}
       {viewingRecord && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setViewingRecord(null)}>
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-            <div className="p-6 border-b border-gray-100 flex justify-between items-center">
-              <h3 className="text-xl font-bold text-gray-800">รายละเอียดยอดขาย</h3>
-              <button onClick={() => setViewingRecord(null)} className="p-2 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100">
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
-              </button>
-            </div>
-            <div className="p-6 space-y-6">
-              <div className="grid grid-cols-2 gap-y-4 gap-x-6 text-sm">
-                <div>
-                  <div className="text-gray-500 mb-1">วันที่ขาย</div>
-                  <div className="font-semibold text-gray-800">{viewingRecord.saleDate}</div>
-                </div>
-                <div>
-                  <div className="text-gray-500 mb-1">ประเภทการขาย</div>
-                  <div className="font-semibold text-gray-800">{viewingRecord.saleType === "service" ? "บริการ/อะไหล่" : "สินค้า/เครื่องมือ"}</div>
-                </div>
-                <div>
-                  <div className="text-gray-500 mb-1">ลูกค้า</div>
-                  <div className="font-semibold text-gray-800">{viewingRecord.customerName || "—"}</div>
-                </div>
-                <div>
-                  <div className="text-gray-500 mb-1">บริษัท</div>
-                  <div className="font-semibold text-gray-800">{viewingRecord.companyName || "—"}</div>
-                </div>
-                <div className="col-span-2">
-                  <div className="text-gray-500 mb-1">สินค้า</div>
-                  <div className="font-semibold text-gray-800">{viewingRecord.productName || "—"}</div>
-                </div>
-                <div>
-                  <div className="text-gray-500 mb-1">จำนวน</div>
-                  <div className="font-semibold text-gray-800">{viewingRecord.qty}</div>
-                </div>
-                <div>
-                  <div className="text-gray-500 mb-1">เซลล์</div>
-                  <div className="font-semibold text-gray-800">{viewingRecord.salespersonName || "—"}</div>
-                </div>
-                <div>
-                  <div className="text-gray-500 mb-1">ยอดขายสุทธิ</div>
-                  <div className="font-bold text-indigo-600 text-lg">฿{Number(viewingRecord.totalAmount).toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
-                </div>
-                <div>
-                  <div className="text-gray-500 mb-1">ต้นทุนรวม</div>
-                  <div className="font-bold text-rose-600 text-lg">฿{Number(viewingRecord.costAmount).toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
-                </div>
-              </div>
-
-              {viewingRecord.saleType === "equipment" && viewingRecord.serialNumbers && viewingRecord.serialNumbers.length > 0 && (
-                <div className="pt-4 border-t border-gray-100">
-                  <div className="text-gray-500 mb-2 text-sm font-semibold">Serial Numbers</div>
-                  <div className="flex flex-wrap gap-2">
-                    {viewingRecord.serialNumbers.map((sn, idx) => (
-                      <span key={idx} className="px-2.5 py-1 bg-gray-100 text-gray-700 text-xs font-mono rounded-lg border border-gray-200">
-                        {sn}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              <div className="pt-4 border-t border-gray-100 grid grid-cols-2 gap-4 text-sm">
-                <div>
-                  <div className="text-gray-500 mb-1">อ้างอิงใบเสนอราคา</div>
-                  <div className="font-semibold text-gray-800">{viewingRecord.quotationRef || "—"}</div>
-                </div>
-                <div>
-                  <div className="text-gray-500 mb-1">อ้างอิงใบ PO</div>
-                  <div className="font-semibold text-gray-800">{viewingRecord.poRef || "—"}</div>
-                </div>
-                <div>
-                  <div className="text-gray-500 mb-1">อ้างอิงใบส่งสินค้า</div>
-                  <div className="font-semibold text-gray-800">{viewingRecord.deliveryRef || "—"}</div>
-                </div>
-                <div>
-                  <div className="text-gray-500 mb-1">อ้างอิงใบ Invoice</div>
-                  <div className="font-semibold text-gray-800">{viewingRecord.invoiceRef || "—"}</div>
-                </div>
-              </div>
-              
-              {viewingRecord.note && (
-                <div className="pt-4 border-t border-gray-100">
-                  <div className="text-gray-500 mb-1 text-sm font-semibold">หมายเหตุ</div>
-                  <div className="text-sm text-gray-700 bg-amber-50 p-3 rounded-xl border border-amber-100 whitespace-pre-wrap">{viewingRecord.note}</div>
-                </div>
-              )}
-            </div>
-
-            <div className="p-6 border-t border-gray-100 flex justify-end gap-3 bg-gray-50/50">
-              <button onClick={() => setViewingRecord(null)} className="px-5 py-2.5 bg-white border border-gray-200 text-gray-700 rounded-xl font-semibold hover:bg-gray-50 hover:border-gray-300 transition-all text-sm shadow-sm">
-                ปิด
-              </button>
-              <button 
-                onClick={() => {
-                  const rec = viewingRecord;
-                  setViewingRecord(null);
-                  handleEdit(rec);
-                }} 
-                className="px-5 py-2.5 bg-indigo-600 text-white rounded-xl font-semibold hover:bg-indigo-700 transition-all text-sm flex items-center gap-2 shadow-sm"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
-                แก้ไขยอดขาย
-              </button>
-            </div>
-          </div>
-        </div>
+        <ViewRecordModal
+          record={viewingRecord}
+          onClose={() => setViewingRecord(null)}
+          onEdit={handleEdit}
+        />
       )}
 
       {/* ── Add/Edit Sales Record Modal ─────────────────────────────────── */}
