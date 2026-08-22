@@ -56,6 +56,8 @@ export const config = {
     '/crm',
     '/crm/:path*',
     '/dashboard',
-    '/dashboard/:path*'
+    '/dashboard/:path*',
+    '/expenses',
+    '/expenses/:path*'
   ],
 };

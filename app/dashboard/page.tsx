@@ -588,6 +588,9 @@ export default function DashboardPage() {
             <Link href="/customers" className="px-4 py-2.5 bg-white border border-gray-200 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 hover:shadow-sm transition-all text-sm flex items-center gap-1.5 shadow-sm">
               👥 ลูกค้า & เซลล์
             </Link>
+            <Link href="/expenses" className="px-4 py-2.5 bg-white border border-gray-200 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 hover:shadow-sm transition-all text-sm flex items-center gap-1.5 shadow-sm">
+              💸 บันทึกรายจ่าย
+            </Link>
             <Link href="/showcase" className="px-4 py-2.5 bg-white border border-gray-200 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 hover:shadow-sm transition-all text-sm flex items-center gap-1.5 shadow-sm">
               🏠 กลับไประบบจัดการ
             </Link>
@@ -609,7 +612,7 @@ export default function DashboardPage() {
           <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-4 mb-8">
             {[
               { label: "ยอดขายเดือนนี้", icon: "💰", value: `฿${fmt(curM.revenue)}`, change: pctChange(curM.revenue, prevM.revenue) },
-              { label: "ต้นทุนเดือนนี้", icon: "📊", value: `฿${fmt(curM.cost)}`, change: pctChange(curM.cost, prevM.cost) },
+              { label: "ต้นทุนและรายจ่ายรวม", icon: "📊", value: `฿${fmt(curM.cost)}`, change: pctChange(curM.cost, prevM.cost) },
               { label: "กำไรเดือนนี้", icon: "💹", value: `฿${fmt(curM.profit)}`, change: pctChange(curM.profit, prevM.profit) },
               { label: "Profit Margin", icon: "📐", value: curM.revenue > 0 ? `${Math.round((curM.profit / curM.revenue) * 100)}%` : "—", change: (() => { const curMargin = curM.revenue > 0 ? Math.round((curM.profit / curM.revenue) * 100) : 0; const prevMarginVal = prevM.revenue > 0 ? Math.round((prevM.profit / prevM.revenue) * 100) : 0; return pctChange(curMargin, prevMarginVal); })() },
               { label: "จำนวนดีล", icon: "📦", value: String(curM.deals), change: pctChange(curM.deals, prevM.deals) },

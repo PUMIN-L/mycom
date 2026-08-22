@@ -268,11 +268,22 @@ export async function getDashboardOverview(): Promise<DashboardOverview> {
      FROM sales_records WHERE saleDate >= ? AND saleDate < ?`,
     [curStart, curEnd]
   );
+  const [curExpRows] = await query<RowDataPacket[]>(
+    `SELECT COALESCE(SUM(amount), 0) AS expenses
+     FROM expenses WHERE expenseDate >= ? AND expenseDate < ?`,
+    [curStart, curEnd]
+  );
+
   // Previous month
   const [prevRows] = await query<RowDataPacket[]>(
     `SELECT COALESCE(SUM(totalAmount), 0) AS revenue, COUNT(*) AS deals,
             COALESCE(SUM(costAmount), 0) AS cost
      FROM sales_records WHERE saleDate >= ? AND saleDate < ?`,
+    [prevStart, curStart]
+  );
+  const [prevExpRows] = await query<RowDataPacket[]>(
+    `SELECT COALESCE(SUM(amount), 0) AS expenses
+     FROM expenses WHERE expenseDate >= ? AND expenseDate < ?`,
     [prevStart, curStart]
   );
   // New customers this month
@@ -306,9 +317,9 @@ export async function getDashboardOverview(): Promise<DashboardOverview> {
   );
 
   const curRevenue = Number(curRows[0]?.revenue || 0);
-  const curCost = Number(curRows[0]?.cost || 0);
+  const curCost = Number(curRows[0]?.cost || 0) + Number(curExpRows[0]?.expenses || 0);
   const prevRevenue = Number(prevRows[0]?.revenue || 0);
-  const prevCostVal = Number(prevRows[0]?.cost || 0);
+  const prevCostVal = Number(prevRows[0]?.cost || 0) + Number(prevExpRows[0]?.expenses || 0);
 
   return {
     currentMonth: {
@@ -342,13 +353,25 @@ export async function getRevenueByMonth(year: number): Promise<RevenueByPeriod[]
      GROUP BY period ORDER BY period`,
     [year]
   );
+
+  const [expRows] = await query<RowDataPacket[]>(
+    `SELECT DATE_FORMAT(expenseDate, '%Y-%m') AS period,
+            COALESCE(SUM(amount), 0) AS expenses
+     FROM expenses
+     WHERE YEAR(expenseDate) = ?
+     GROUP BY period ORDER BY period`,
+    [year]
+  );
+
   // Fill all 12 months
   const map = new Map(rows.map((r) => [r.period, r]));
+  const expMap = new Map(expRows.map((r) => [r.period, r]));
   return Array.from({ length: 12 }, (_, i) => {
     const m = `${year}-${String(i + 1).padStart(2, "0")}`;
     const r = map.get(m);
+    const exp = expMap.get(m);
     const rev = Number(r?.revenue || 0);
-    const c = Number(r?.cost || 0);
+    const c = Number(r?.cost || 0) + Number(exp?.expenses || 0);
     const profit = rev - c;
     return {
       period: m,
@@ -372,12 +395,24 @@ export async function getRevenueByQuarter(year: number): Promise<RevenueByPeriod
      GROUP BY period ORDER BY period`,
     [year]
   );
+
+  const [expRows] = await query<RowDataPacket[]>(
+    `SELECT CONCAT(YEAR(expenseDate), '-Q', QUARTER(expenseDate)) AS period,
+            COALESCE(SUM(amount), 0) AS expenses
+     FROM expenses
+     WHERE YEAR(expenseDate) = ?
+     GROUP BY period ORDER BY period`,
+    [year]
+  );
+
   const map = new Map(rows.map((r) => [r.period, r]));
+  const expMap = new Map(expRows.map((r) => [r.period, r]));
   return [1, 2, 3, 4].map((q) => {
     const p = `${year}-Q${q}`;
     const r = map.get(p);
+    const exp = expMap.get(p);
     const rev = Number(r?.revenue || 0);
-    const c = Number(r?.cost || 0);
+    const c = Number(r?.cost || 0) + Number(exp?.expenses || 0);
     const profit = rev - c;
     return {
       period: p,

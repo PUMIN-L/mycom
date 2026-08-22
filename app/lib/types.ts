@@ -208,3 +208,13 @@ export interface CrmAlerts {
     }
   >;
 }
+
+export interface Expense {
+  id: string;
+  title: string;
+  amount: number;
+  expenseDate: string; // YYYY-MM-DD
+  category: string;
+  note: string;
+  createdAt: string;
+}

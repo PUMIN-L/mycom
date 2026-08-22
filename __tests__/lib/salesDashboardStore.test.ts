@@ -168,9 +168,13 @@ describe('salesDashboardStore', () => {
 
   describe('Aggregations & Insights', () => {
     it('getRevenueByMonth returns 12 months with filled zero for missing months', async () => {
-      vi.mocked(query).mockResolvedValueOnce([
-        [{ period: '2026-01', revenue: 50000, cost: 0, deals: 5 }],
-      ] as any);
+      vi.mocked(query)
+        .mockResolvedValueOnce([
+          [{ period: '2026-01', revenue: 50000, cost: 0, deals: 5 }],
+        ] as any)
+        .mockResolvedValueOnce([
+          [{ period: '2026-01', expenses: 0 }],
+        ] as any);
 
       const months = await getRevenueByMonth(2026);
       expect(months.length).toBe(12);
@@ -179,9 +183,13 @@ describe('salesDashboardStore', () => {
     });
 
     it('getRevenueByQuarter returns 4 quarters', async () => {
-      vi.mocked(query).mockResolvedValueOnce([
-        [{ period: '2026-Q1', revenue: 150000, cost: 0, deals: 12 }],
-      ] as any);
+      vi.mocked(query)
+        .mockResolvedValueOnce([
+          [{ period: '2026-Q1', revenue: 150000, cost: 0, deals: 12 }],
+        ] as any)
+        .mockResolvedValueOnce([
+          [{ period: '2026-Q1', expenses: 0 }],
+        ] as any);
 
       const quarters = await getRevenueByQuarter(2026);
       expect(quarters.length).toBe(4);

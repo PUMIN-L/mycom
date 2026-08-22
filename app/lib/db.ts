@@ -4,7 +4,7 @@ import type { QueryResult, FieldPacket, RowDataPacket } from "mysql2";
 
 // Bump whenever the schema below changes — a mismatch re-runs the (idempotent)
 // bump; a match lets returning cold instances skip it in one SELECT.
-const SCHEMA_VERSION = 23;
+const SCHEMA_VERSION = 24;
 
 type DbPool = ReturnType<typeof mysql.createPool>;
 
@@ -648,6 +648,20 @@ async function bootstrapSchemaOnce(): Promise<void> {
     } catch (error) {
       if (!isBenignSchemaError(error)) throw error;
     }
+
+    // v24: Add expenses table for general business expenses
+    await connection.query(`
+        CREATE TABLE IF NOT EXISTS expenses (
+          id VARCHAR(36) PRIMARY KEY,
+          title VARCHAR(255) NOT NULL,
+          amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+          expenseDate DATE NOT NULL,
+          category VARCHAR(100) NOT NULL DEFAULT '',
+          note TEXT,
+          createdAt VARCHAR(255) NOT NULL,
+          INDEX idx_exp_date (expenseDate)
+        )
+      `);
 
     // ── Seed default admin user ────────────────────────────────────────────
     // Credentials come from the environment, never from source. If
