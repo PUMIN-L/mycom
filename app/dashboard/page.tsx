@@ -657,15 +657,17 @@ export default function DashboardPage() {
                         <div className="bg-white rounded-xl border border-gray-200 p-3 shadow-lg text-sm">
                           <div className="font-semibold text-gray-700 mb-1">{label}</div>
                           <div className="text-indigo-600">ยอดขาย: ฿{fmtDec(d?.revenue || 0)}</div>
-                          <div className="text-amber-600">ต้นทุน: ฿{fmtDec(d?.cost || 0)}</div>
+                          <div className="text-amber-600">ต้นทุนสินค้า: ฿{fmtDec(d?.cost || 0)}</div>
+                          <div className="text-rose-500">รายจ่ายบริษัท: ฿{fmtDec(d?.expense || 0)}</div>
                           <div className="text-emerald-600 font-semibold">กำไร: ฿{fmtDec(d?.profit || 0)}</div>
                           <div className="text-gray-500">Margin: {d?.margin || 0}%</div>
                         </div>
                       );
                     }}
                   />
-                  <Legend formatter={(value: string) => value === "revenue" ? "ยอดขาย" : "กำไร"} />
+                  <Legend formatter={(value: string) => value === "revenue" ? "ยอดขาย" : value === "expense" ? "รายจ่าย" : "กำไร"} />
                   <Bar dataKey="revenue" fill="#6366f1" radius={[6, 6, 0, 0]} name="revenue" />
+                  <Bar dataKey="expense" fill="#f43f5e" radius={[6, 6, 0, 0]} name="expense" />
                   <Bar dataKey="profit" fill="#10b981" radius={[6, 6, 0, 0]} name="profit" />
                 </BarChart>
               </ResponsiveContainer>

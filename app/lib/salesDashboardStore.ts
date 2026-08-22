@@ -29,6 +29,7 @@ export interface RevenueByPeriod {
   revenue: number;
   deals: number;
   cost: number;
+  expense: number;
   profit: number;
   margin: number; // percentage 0-100
 }
@@ -390,6 +391,7 @@ export async function getRevenueByMonth(year: number): Promise<RevenueByPeriod[]
       revenue: rev,
       deals: Number(r?.deals || 0),
       cost: c,
+      expense: Number(exp?.expenses || 0),
       profit,
       margin: rev > 0 ? Math.round((profit / rev) * 10000) / 100 : 0,
     };
@@ -431,6 +433,7 @@ export async function getRevenueByQuarter(year: number): Promise<RevenueByPeriod
       revenue: rev,
       deals: Number(r?.deals || 0),
       cost: c,
+      expense: Number(exp?.expenses || 0),
       profit,
       margin: rev > 0 ? Math.round((profit / rev) * 10000) / 100 : 0,
     };
