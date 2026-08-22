@@ -854,16 +854,15 @@ export default function DashboardPage() {
                 <p className="text-xs text-gray-500">คลิกที่แถวหรือกดปุ่ม "✏️ แก้ไข" เพื่อแก้ไขรายละเอียดของยอดขาย</p>
               </div>
               <div className="flex gap-2 w-full sm:w-auto items-center">
-                <select
+                <SearchableDropdown
                   value={recordMonth}
-                  onChange={(e) => setRecordMonth(e.target.value)}
-                  className="px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:bg-white focus:ring-2 focus:ring-indigo-200 outline-none"
-                >
-                  <option value="">ทุกเดือน</option>
-                  {MONTHS_TH.map((m, i) => (
-                    <option key={i} value={String(i + 1).padStart(2, '0')}>{m}</option>
-                  ))}
-                </select>
+                  onChange={setRecordMonth}
+                  options={[
+                    { value: "", label: "ทุกเดือน" },
+                    ...MONTHS_TH.map((m, i) => ({ value: String(i + 1).padStart(2, '0'), label: m }))
+                  ]}
+                  className="w-36"
+                />
                 <input
                   type="text"
                   value={recordSearch}
