@@ -8,6 +8,7 @@ import {
 } from "recharts";
 import SearchableDropdown from "../components/SearchableDropdown";
 import type { SearchableDropdownOption } from "../components/SearchableDropdown";
+import FormattedNumberInput from "../components/FormattedNumberInput";
 import type { CustomerEquipment } from "../lib/types";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -35,7 +36,7 @@ interface SalesRecord {
   qty: number; unitPrice: number; totalAmount: number; costAmount: number;
   saleType?: string;
   saleDate: string;
-  quotationRef: string; 
+  quotationRef: string;
   poRef?: string;
   deliveryRef?: string;
   invoiceRef?: string;
@@ -390,17 +391,17 @@ export default function DashboardPage() {
       setEditingId(rec.id);
       setForm({
         saleType: rec.saleType || "equipment",
-        salespersonId: rec.salespersonId || "", 
-        customerId: rec.customerId || "", 
+        salespersonId: rec.salespersonId || "",
+        customerId: rec.customerId || "",
         companyId: rec.companyId || "",
-        productId: rec.productId || "", 
-        productName: rec.productName || "", 
+        productId: rec.productId || "",
+        productName: rec.productName || "",
         categoryId: rec.categoryId,
-        qty: rec.qty || 1, 
-        unitPrice: rec.unitPrice || 0, 
+        qty: rec.qty || 1,
+        unitPrice: rec.unitPrice || 0,
         totalAmount: rec.totalAmount || 0,
-        saleDate: rec.saleDate ? rec.saleDate.substring(0, 10) : "", 
-        quotationRef: rec.quotationRef || "", 
+        saleDate: rec.saleDate ? rec.saleDate.substring(0, 10) : "",
+        quotationRef: rec.quotationRef || "",
         poRef: rec.poRef || "",
         deliveryRef: rec.deliveryRef || "",
         invoiceRef: rec.invoiceRef || "",
@@ -421,7 +422,7 @@ export default function DashboardPage() {
         setCostItems([]);
         setShowCostCalc(false);
       }
-      
+
       // Show form ONLY after all data (including cost items) is fully loaded
       // This prevents the user from clicking Save too early and accidentally wiping out cost items
       setShowForm(true);
@@ -705,12 +706,11 @@ export default function DashboardPage() {
               {data.insights.map((insight, i) => (
                 <div
                   key={i}
-                  className={`rounded-2xl p-5 border shadow-sm ${
-                    insight.type === "positive" ? "bg-emerald-50 border-emerald-200" :
-                    insight.type === "warning" ? "bg-amber-50 border-amber-200" :
-                    insight.type === "opportunity" ? "bg-blue-50 border-blue-200" :
-                    "bg-gray-50 border-gray-200"
-                  }`}
+                  className={`rounded-2xl p-5 border shadow-sm ${insight.type === "positive" ? "bg-emerald-50 border-emerald-200" :
+                      insight.type === "warning" ? "bg-amber-50 border-amber-200" :
+                        insight.type === "opportunity" ? "bg-blue-50 border-blue-200" :
+                          "bg-gray-50 border-gray-200"
+                    }`}
                 >
                   <div className="text-2xl mb-2">{insight.icon}</div>
                   <div className="font-semibold text-gray-800 text-sm mb-1">{insight.title}</div>
@@ -1068,34 +1068,24 @@ export default function DashboardPage() {
                 </div>
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1.5">ราคาต่อหน่วย (฿) <span className="text-red-500">*</span></label>
-                  <input
-                    type="number"
-                    min={0.01}
-                    step="any"
-                    value={form.unitPrice || ""}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      const p = val === "" ? 0 : Math.max(0, parseFloat(val) || 0);
+                  <FormattedNumberInput
+                    value={form.unitPrice || 0}
+                    onChange={(val) => {
+                      const p = val;
                       setForm({ ...form, unitPrice: p, totalAmount: (form.qty || 1) * p });
                     }}
-                    onWheel={(e) => e.currentTarget.blur()}
-                    placeholder="0.00"
+                    placeholder="0"
                     className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none font-medium text-gray-800"
                   />
                 </div>
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1.5">ยอดรวม (฿)</label>
-                  <input
-                    type="number"
-                    min={0}
-                    step="any"
-                    value={form.totalAmount || ""}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      setForm({ ...form, totalAmount: val === "" ? 0 : Math.max(0, parseFloat(val) || 0) });
+                  <FormattedNumberInput
+                    value={form.totalAmount || 0}
+                    onChange={(val) => {
+                      setForm({ ...form, totalAmount: val });
                     }}
-                    onWheel={(e) => e.currentTarget.blur()}
-                    placeholder="0.00"
+                    placeholder="0"
                     className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none bg-gray-50 font-semibold text-gray-800"
                   />
                 </div>
@@ -1141,14 +1131,10 @@ export default function DashboardPage() {
                           placeholder="รายละเอียด (เช่น ค่ารถไปส่ง)"
                           className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-200 outline-none"
                         />
-                        <input
-                          type="number"
-                          min={0}
-                          step="any"
-                          value={ci.amount || ""}
-                          onChange={(e) => updateLocalCostItem(idx, "amount", e.target.value === "" ? 0 : Math.max(0, parseFloat(e.target.value) || 0))}
-                          onWheel={(e) => e.currentTarget.blur()}
-                          placeholder="0.00"
+                        <FormattedNumberInput
+                          value={ci.amount || 0}
+                          onChange={(val) => updateLocalCostItem(idx, "amount", val)}
+                          placeholder="0"
                           className={`w-28 px-3 py-2 border rounded-lg text-sm text-right font-medium outline-none ${costSubmitError && (!ci.amount || ci.amount <= 0) ? "border-red-400 bg-red-50 focus:ring-2 focus:ring-red-200" : "border-gray-200 focus:ring-2 focus:ring-emerald-200"}`}
                         />
                         <button
@@ -1226,7 +1212,7 @@ export default function DashboardPage() {
               {form.saleType === "equipment" && form.qty > 0 && (
                 <div className="p-5 bg-gray-50 border border-gray-100 rounded-2xl">
                   <label className="block text-sm font-semibold text-gray-700 mb-3">
-                    หมายเลขซีเรียล {form.qty > 50 ? `(กรอกได้สูงสุด 50 ชิ้นจากทั้งหมด ${form.qty} ชิ้น)` : `(จำนวน ${form.qty} ชิ้น)`} <span className="text-red-500">*</span>
+                    หมายเลขซีเรียล  <span className="text-red-500">*</span>
                   </label>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     {Array.from({ length: Math.min(form.qty, 50) }).map((_, i) => (

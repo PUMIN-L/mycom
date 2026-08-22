@@ -3,6 +3,7 @@ import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import type { Expense } from "../lib/types";
 import ConfirmDialog from "../components/ConfirmDialog";
+import FormattedNumberInput from "../components/FormattedNumberInput";
 
 const EXPENSE_CATEGORIES = [
   "เงินเดือน",
@@ -283,13 +284,9 @@ export default function ExpensesPage() {
                   <label className="block text-sm font-semibold text-gray-700 mb-1">
                     จำนวนเงิน (บาท) <span className="text-red-500">*</span>
                   </label>
-                  <input
-                    type="number"
-                    required
-                    min="0"
-                    step="0.01"
-                    value={form.amount || ""}
-                    onChange={(e) => setForm({ ...form, amount: Number(e.target.value) })}
+                  <FormattedNumberInput
+                    value={form.amount || 0}
+                    onChange={(val) => setForm({ ...form, amount: val })}
                     className="w-full px-4 py-2 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 text-rose-600 font-bold"
                   />
                 </div>
