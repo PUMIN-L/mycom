@@ -144,7 +144,7 @@ export default function DatePicker({ selected, onChange, className, placeholderT
       isClearable={isClearable}
       popperPlacement="bottom-start"
       portalId="root-portal"
-      renderCustomHeader={CustomHeader}
+      renderCustomHeader={(props) => <CustomHeader {...props} />}
     />
   );
 }
