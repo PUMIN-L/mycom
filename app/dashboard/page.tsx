@@ -130,6 +130,13 @@ export default function DashboardPage() {
   const [showCostCalc, setShowCostCalc] = useState(false);
   const [costLoading, setCostLoading] = useState(false);
 
+  const handleScrollToRecords = () => {
+    setShowRecords(true);
+    setTimeout(() => {
+      document.getElementById("sales-records-section")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 50);
+  };
+
   const showToast = useCallback((msg: string, type: "success" | "error") => {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 3000);
@@ -490,8 +497,11 @@ export default function DashboardPage() {
             <button onClick={() => { setShowForm(true); setEditingId(null); setForm(emptyForm()); setCostItems([]); setShowCostCalc(false); }} className="px-4 py-2.5 bg-indigo-600 text-white rounded-xl text-sm font-semibold hover:bg-indigo-700 transition-all shadow-sm">
               + บันทึกยอดขาย
             </button>
-            <button onClick={() => setShowRecords(!showRecords)} className="px-4 py-2.5 bg-white border border-gray-200 rounded-xl text-sm font-medium hover:bg-gray-50 transition-all shadow-sm">
-              📋 รายการขาย
+            <button
+              onClick={handleScrollToRecords}
+              className="px-4 py-2.5 bg-white border border-gray-200 text-gray-700 font-semibold rounded-xl text-sm hover:bg-gray-50 hover:shadow-sm transition-all shadow-sm flex items-center gap-1.5"
+            >
+              📋 รายการขาย {salesRecords.length > 0 && <span className="bg-indigo-100 text-indigo-700 text-xs px-1.5 py-0.5 rounded-full font-bold">{salesRecords.length}</span>}
             </button>
             <button onClick={handleExport} className="px-4 py-2.5 bg-emerald-600 text-white rounded-xl text-sm font-semibold hover:bg-emerald-700 transition-all shadow-sm">
               ⬇ Export Excel
@@ -761,7 +771,7 @@ export default function DashboardPage() {
                 <h2 className="text-lg font-bold text-gray-800">📋 รายการขาย ({filteredSalesRecords.length})</h2>
                 <p className="text-xs text-gray-500">คลิกที่แถวหรือกดปุ่ม "✏️ แก้ไข" เพื่อแก้ไขรายละเอียดของยอดขาย</p>
               </div>
-              <div className="flex gap-2 w-full sm:w-auto">
+              <div className="flex gap-2 w-full sm:w-auto items-center">
                 <input
                   type="text"
                   value={recordSearch}
@@ -774,6 +784,13 @@ export default function DashboardPage() {
                     ล้าง
                   </button>
                 )}
+                <button
+                  onClick={() => setShowRecords(false)}
+                  className="px-3 py-2 text-xs bg-gray-100 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded-xl transition-colors font-medium whitespace-nowrap"
+                  title="ซ่อนตาราง"
+                >
+                  ✕ ซ่อนตาราง
+                </button>
               </div>
             </div>
             {filteredSalesRecords.length > 0 ? (
