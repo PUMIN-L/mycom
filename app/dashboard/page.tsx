@@ -33,7 +33,8 @@ interface SalespersonStat { id: string; name: string; revenue: number; deals: nu
 interface Insight { type: "positive" | "warning" | "opportunity" | "info"; icon: string; title: string; description: string }
 interface SalesRecord {
   id: string; salespersonId: string; customerId: string; companyId: string;
-  productId: string; productName: string; categoryId: number | null;
+  productId: string; productName: string;
+  productImage?: string; categoryId: number | null;
   qty: number; unitPrice: number; totalAmount: number; costAmount: number;
   saleType?: string;
   saleDate: string;
@@ -939,6 +940,9 @@ export default function DashboardPage() {
                             <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-bold bg-indigo-100 text-indigo-700 mr-1.5" title="ขายเครื่อง">💻</span>
                           )}
                           {stripHtml(r.productName)}
+                          {r.productImage && (
+                            <img src={r.productImage} alt="" className="inline-block ml-2 w-6 h-6 rounded object-cover border border-gray-100 bg-gray-50" />
+                          )}
                         </td>
                         <td className="py-3 pr-3">
                           <div className="text-sm text-gray-800">{r.customerName || "—"}</div>

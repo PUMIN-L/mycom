@@ -120,11 +120,13 @@ const LIST_SELECT = `
          DATE_FORMAT(sr.saleDate, '%Y-%m-%d') AS saleDate,
          sp.name AS salespersonName,
          c.name AS customerName,
-         co.name AS companyName
+         co.name AS companyName,
+         p.image AS productImage
   FROM sales_records sr
   LEFT JOIN salespeople sp ON sr.salespersonId = sp.id
   LEFT JOIN customers c ON sr.customerId = c.id
-  LEFT JOIN companies co ON sr.companyId = co.id`;
+  LEFT JOIN companies co ON sr.companyId = co.id
+  LEFT JOIN products p ON sr.productId = p.id`;
 
 export async function addSalesRecord(
   data: Partial<SalesRecord>

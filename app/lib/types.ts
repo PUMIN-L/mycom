@@ -132,6 +132,7 @@ export interface CustomerEquipment {
   customerName?: string;
   companyName?: string;
   productName?: string;
+  productImage?: string;
 }
 
 export interface ServiceSchedule {
@@ -162,6 +163,7 @@ export interface SalesRecord {
   companyId: string;
   productId: string;
   productName: string;
+  productImage?: string;
   categoryId: number | null;
   qty: number;
   unitPrice: number;

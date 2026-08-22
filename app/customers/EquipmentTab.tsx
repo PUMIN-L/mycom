@@ -599,7 +599,14 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
                       <div className="font-semibold text-gray-800">{eq.customerName || "—"}</div>
                       <div className="text-xs text-gray-400">{eq.companyName || ""}</div>
                     </td>
-                    <td className="py-4 pr-4 text-sm text-gray-700">{stripHtml(eq.productName) || eq.productId}</td>
+                    <td className="py-4 pr-4">
+                      <div className="flex items-center gap-2">
+                        {eq.productImage && (
+                          <img src={eq.productImage} alt="" className="w-8 h-8 rounded object-cover border border-gray-100 bg-gray-50 shrink-0" />
+                        )}
+                        <span className="text-sm text-gray-700">{stripHtml(eq.productName) || eq.productId}</span>
+                      </div>
+                    </td>
                     <td className="py-4 pr-4 text-sm text-gray-600 font-mono">{eq.serialNumber || "—"}</td>
                     <td className="py-4 pr-4 text-sm text-gray-600">{eq.warrantyType || "—"}</td>
                     <td className="py-4 pr-4">
