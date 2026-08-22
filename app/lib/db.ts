@@ -567,8 +567,15 @@ async function bootstrapSchemaOnce(): Promise<void> {
           unitPrice DECIMAL(12,2) NOT NULL DEFAULT 0,
           totalAmount DECIMAL(12,2) NOT NULL DEFAULT 0,
           costAmount DECIMAL(12,2) NOT NULL DEFAULT 0,
+          saleType VARCHAR(50) NOT NULL DEFAULT 'equipment',
           saleDate DATE NOT NULL,
           quotationRef VARCHAR(255) NOT NULL DEFAULT '',
+          poRef VARCHAR(255) NOT NULL DEFAULT '',
+          deliveryRef VARCHAR(255) NOT NULL DEFAULT '',
+          invoiceRef VARCHAR(255) NOT NULL DEFAULT '',
+          receiptRef VARCHAR(255) NOT NULL DEFAULT '',
+          warrantyStartDate DATE DEFAULT NULL,
+          warrantyEndDate DATE DEFAULT NULL,
           equipmentId VARCHAR(36) DEFAULT NULL,
           note TEXT,
           createdAt VARCHAR(255) NOT NULL,
@@ -591,6 +598,29 @@ async function bootstrapSchemaOnce(): Promise<void> {
     try {
       await connection.query(
         `ALTER TABLE sales_records ADD COLUMN costAmount DECIMAL(12,2) NOT NULL DEFAULT 0`
+      );
+    } catch (error) {
+      if (!isBenignSchemaError(error)) throw error;
+    }
+
+    // v22: Add saleType column to existing sales_records tables
+    try {
+      await connection.query(
+        `ALTER TABLE sales_records ADD COLUMN saleType VARCHAR(50) NOT NULL DEFAULT 'equipment'`
+      );
+    } catch (error) {
+      if (!isBenignSchemaError(error)) throw error;
+    }
+
+    // v23: Add document tracking and warranty fields to sales_records
+    try {
+      await connection.query(`ALTER TABLE sales_records 
+        ADD COLUMN poRef VARCHAR(255) NOT NULL DEFAULT '',
+        ADD COLUMN deliveryRef VARCHAR(255) NOT NULL DEFAULT '',
+        ADD COLUMN invoiceRef VARCHAR(255) NOT NULL DEFAULT '',
+        ADD COLUMN receiptRef VARCHAR(255) NOT NULL DEFAULT '',
+        ADD COLUMN warrantyStartDate DATE DEFAULT NULL,
+        ADD COLUMN warrantyEndDate DATE DEFAULT NULL`
       );
     } catch (error) {
       if (!isBenignSchemaError(error)) throw error;

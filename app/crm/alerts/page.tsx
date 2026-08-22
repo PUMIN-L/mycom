@@ -262,6 +262,100 @@ export default function AlertsPage() {
         </div>
       </div>
 
+      {/* ── Section: Missing Documents ───────────────────────────────────────── */}
+      <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden mb-8">
+        <div className="p-8">
+          <div className="flex items-center gap-3 mb-6">
+            <div className="bg-red-100 text-red-600 p-3 rounded-xl">
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+            </div>
+            <h2 className="text-2xl font-bold text-gray-800">
+              เอกสารอ้างอิงสูญหาย / เกินกำหนด
+              <span className="text-gray-400 text-lg font-normal ml-2">
+                (ขาดใบส่งสินค้าหรือใบเสร็จ — {alerts?.missingDocuments?.length ?? 0} รายการ)
+              </span>
+            </h2>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left">
+              <thead>
+                <tr className="border-b border-gray-100">
+                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">พนักงานขาย</th>
+                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">ลูกค้า / บริษัท</th>
+                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">สินค้า</th>
+                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">วันที่ขาย</th>
+                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">สถานะเอกสาร</th>
+                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">จัดการ</th>
+                </tr>
+              </thead>
+              <tbody>
+                {isLoading ? (
+                  Array.from({ length: 3 }).map((_, i) => (
+                    <tr key={i} className="border-b border-gray-50 animate-pulse">
+                      <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-24"></div></td>
+                      <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-36"></div></td>
+                      <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-40"></div></td>
+                      <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-24"></div></td>
+                      <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-20"></div></td>
+                      <td className="py-4"><div className="h-4 bg-gray-200 rounded w-16"></div></td>
+                    </tr>
+                  ))
+                ) : !alerts?.missingDocuments?.length ? (
+                  <tr>
+                    <td colSpan={6} className="py-12 text-center">
+                      <div className="flex flex-col items-center gap-2">
+                        <div className="text-5xl">✅</div>
+                        <p className="text-gray-400 text-lg">เอกสารอ้างอิงครบถ้วน</p>
+                      </div>
+                    </td>
+                  </tr>
+                ) : (
+                  alerts.missingDocuments.map((doc) => {
+                    const daysSinceSale = Math.floor((new Date().getTime() - new Date(doc.saleDate).getTime()) / (1000 * 3600 * 24));
+                    const isMissingDelivery = !doc.deliveryRef && daysSinceSale >= 20;
+                    const isMissingReceipt = doc.invoiceRef && !doc.receiptRef && daysSinceSale >= 30;
+                    return (
+                    <tr key={doc.id} className="border-b border-gray-50 hover:bg-gray-50/50 transition-colors">
+                      <td className="py-4 pr-4 text-sm font-medium text-gray-900">{doc.salespersonName || "—"}</td>
+                      <td className="py-4 pr-4">
+                        <div className="text-sm font-medium text-gray-900">{doc.customerName || "—"}</div>
+                        {doc.companyName && <div className="text-xs text-gray-500 mt-0.5">{doc.companyName}</div>}
+                      </td>
+                      <td className="py-4 pr-4 text-sm text-gray-700">{doc.productName || "—"}</td>
+                      <td className="py-4 pr-4 text-sm text-gray-700">{doc.saleDate}</td>
+                      <td className="py-4 pr-4 text-sm">
+                        <div className="flex flex-col gap-1">
+                          {isMissingDelivery && (
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-red-50 text-red-700 ring-1 ring-inset ring-red-600/20">
+                              ขาดใบส่งสินค้า (เลยกำหนด {daysSinceSale - 20} วัน)
+                            </span>
+                          )}
+                          {isMissingReceipt && (
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-orange-50 text-orange-700 ring-1 ring-inset ring-orange-600/20">
+                              ขาดใบเสร็จ (เลยกำหนด {daysSinceSale - 30} วัน)
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="py-4">
+                        <Link
+                          href="/dashboard"
+                          className="px-4 py-2 bg-white border border-gray-200 text-gray-700 rounded-xl text-xs font-semibold hover:bg-gray-50 transition-colors shadow-sm inline-block"
+                        >
+                          ไปใส่ข้อมูล
+                        </Link>
+                      </td>
+                    </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
       {/* ── Section 2: Upcoming / Overdue Schedules ─────────────────────── */}
       <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
         <div className="p-8">

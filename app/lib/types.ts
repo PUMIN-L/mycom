@@ -154,9 +154,49 @@ export interface ServiceLog {
   createdAt: string;
 }
 
+export interface SalesRecord {
+  id: string;
+  salespersonId: string;
+  customerId: string;
+  companyId: string;
+  productId: string;
+  productName: string;
+  categoryId: number | null;
+  qty: number;
+  unitPrice: number;
+  totalAmount: number;
+  costAmount: number;
+  saleType: string;
+  saleDate: string; // YYYY-MM-DD
+  quotationRef: string;
+  poRef: string;
+  deliveryRef: string;
+  invoiceRef: string;
+  receiptRef: string;
+  warrantyStartDate: string | null;
+  warrantyEndDate: string | null;
+  equipmentId: string | null;
+  note: string;
+  createdAt: string;
+  salespersonName?: string;
+  customerName?: string;
+  companyName?: string;
+}
+
+export interface CostItem {
+  id: string;
+  salesRecordId: string;
+  costType: string;
+  label: string;
+  amount: number;
+  note: string;
+  createdAt: string;
+}
+
 export interface CrmAlerts {
   expiringWarranties: CustomerEquipment[];
   incompleteEquipments: CustomerEquipment[];
+  missingDocuments: SalesRecord[];
   upcomingSchedules: Array<
     ServiceSchedule & {
       customerId?: string;

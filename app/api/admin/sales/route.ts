@@ -51,6 +51,31 @@ export const POST = withRoute(
         { status: 400 }
       );
     }
+    if (body.deliveryRef && !body.invoiceRef) {
+      return NextResponse.json(
+        { error: "ถ้าระบุอ้างอิงเลขใบส่งสินค้า ต้องระบุอ้างอิงเลขใบ invoice ด้วย" },
+        { status: 400 }
+      );
+    }
+    
+    if (body.saleType === "equipment") {
+      const qty = Math.max(1, Number(body.qty) || 1);
+      const limit = Math.min(qty, 50);
+      if (!Array.isArray(body.serialNumbers)) {
+        return NextResponse.json(
+          { error: "ข้อมูล Serial Number ไม่ถูกต้อง" },
+          { status: 400 }
+        );
+      }
+      for (let i = 0; i < limit; i++) {
+        if (!body.serialNumbers[i] || !String(body.serialNumbers[i]).trim()) {
+          return NextResponse.json(
+            { error: `กรุณาระบุ Serial Number ให้ครบ (ขาดชิ้นที่ ${i + 1})` },
+            { status: 400 }
+          );
+        }
+      }
+    }
 
     const record = await addSalesRecord(body);
 
@@ -62,16 +87,18 @@ export const POST = withRoute(
       let qty = Math.max(1, Number(body.qty) || 1);
       if (qty > maxAutoCreate) qty = maxAutoCreate;
       
+      const serialNumbers = Array.isArray(body.serialNumbers) ? body.serialNumbers : [];
+      
       for (let i = 0; i < qty; i++) {
         const eq = await addEquipment({
           customerId: body.customerId,
           productId: body.productId || "",
-          serialNumber: "", // to be filled
+          serialNumber: String(serialNumbers[i] || "").trim(),
           quotationNumber: body.quotationRef || "",
           warrantyCertNumber: "",
           warrantyType: "",
-          warrantyStartDate: null,
-          warrantyEndDate: null,
+          warrantyStartDate: body.warrantyStartDate || null,
+          warrantyEndDate: body.warrantyEndDate || null,
           status: "Active",
         });
         createdEquipments.push(eq);

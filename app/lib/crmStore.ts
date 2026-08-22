@@ -8,6 +8,7 @@ import type {
   ScheduleType,
   ScheduleStatus,
   CrmAlerts,
+  SalesRecord,
 } from "./types";
 import { SCHEDULE_TYPES, SCHEDULE_STATUSES } from "./types";
 
@@ -355,9 +356,27 @@ export async function getAlerts(
     [scheduleCutoff]
   );
 
+  const [missingDocRows] = await query<RowDataPacket[]>(
+    `SELECT sr.*,
+            DATE_FORMAT(sr.saleDate, '%Y-%m-%d') AS saleDate,
+            sp.name AS salespersonName,
+            c.name AS customerName,
+            co.name AS companyName
+     FROM sales_records sr
+     LEFT JOIN salespeople sp ON sr.salespersonId = sp.id
+     LEFT JOIN customers c ON sr.customerId = c.id
+     LEFT JOIN companies co ON sr.companyId = co.id
+     WHERE 
+       (sr.saleType = 'equipment' AND sr.deliveryRef = '' AND DATEDIFF(?, sr.saleDate) >= 20)
+       OR (sr.invoiceRef != '' AND sr.receiptRef = '' AND DATEDIFF(?, sr.saleDate) >= 30)
+     ORDER BY sr.saleDate ASC`,
+    [today, today]
+  );
+
   return {
     expiringWarranties: warrantyRows as CustomerEquipment[],
     incompleteEquipments: incompleteRows as CustomerEquipment[],
+    missingDocuments: missingDocRows as SalesRecord[],
     upcomingSchedules: (scheduleRows as CrmAlerts["upcomingSchedules"]).map(
       (s) => ({ ...s, overdue: s.scheduledDate < today })
     ),

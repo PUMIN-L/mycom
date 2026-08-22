@@ -33,8 +33,16 @@ interface SalesRecord {
   id: string; salespersonId: string; customerId: string; companyId: string;
   productId: string; productName: string; categoryId: number | null;
   qty: number; unitPrice: number; totalAmount: number; costAmount: number;
+  saleType?: string;
   saleDate: string;
-  quotationRef: string; equipmentId: string | null; note: string; createdAt: string;
+  quotationRef: string; 
+  poRef?: string;
+  deliveryRef?: string;
+  invoiceRef?: string;
+  receiptRef?: string;
+  warrantyStartDate?: string | null;
+  warrantyEndDate?: string | null;
+  equipmentId: string | null; note: string; createdAt: string;
   salespersonName?: string; customerName?: string; companyName?: string;
 }
 interface CostItemLocal {
@@ -92,6 +100,7 @@ function getTodayString(): string {
 }
 
 const emptyForm = () => ({
+  saleType: "equipment",
   salespersonId: "",
   customerId: "",
   companyId: "",
@@ -103,6 +112,13 @@ const emptyForm = () => ({
   totalAmount: 0,
   saleDate: getTodayString(),
   quotationRef: "",
+  poRef: "",
+  deliveryRef: "",
+  invoiceRef: "",
+  receiptRef: "",
+  warrantyStartDate: "",
+  warrantyEndDate: "",
+  serialNumbers: [] as string[],
   note: "",
 });
 
@@ -131,6 +147,7 @@ export default function DashboardPage() {
   const [costItems, setCostItems] = useState<CostItemLocal[]>([]);
   const [showCostCalc, setShowCostCalc] = useState(false);
   const [costLoading, setCostLoading] = useState(false);
+  const [costSubmitError, setCostSubmitError] = useState(false);
   const [pendingEquipments, setPendingEquipments] = useState<CustomerEquipment[]>([]);
 
   const handleScrollToRecords = () => {
@@ -263,6 +280,34 @@ export default function DashboardPage() {
       showToast("กรุณาระบุราคาต่อหน่วย (ต้องมากกว่า 0)", "error");
       return;
     }
+    if (showCostCalc && costItems.length > 0) {
+      const hasEmptyCost = costItems.some(ci => !ci.amount || ci.amount <= 0);
+      if (hasEmptyCost) {
+        setCostSubmitError(true);
+        window.alert("กรุณาระบุจำนวนเงินต้นทุนให้ครบทุกรายการ\n(หากไม่ต้องการใส่ให้กดปุ่มลบ (✕) ออกจากรายการ)");
+        return;
+      }
+    }
+
+    if (!form.poRef.trim()) {
+      showToast("กรุณาระบุเลขอ้างอิงใบ PO", "error");
+      return;
+    }
+    if (form.saleType === "equipment") {
+      if (!form.warrantyStartDate) {
+        showToast("กรุณาระบุวันเริ่มรับประกัน", "error");
+        return;
+      }
+      if (!form.warrantyEndDate) {
+        showToast("กรุณาระบุวันหมดรับประกัน", "error");
+        return;
+      }
+    }
+    if (form.deliveryRef && !form.invoiceRef) {
+      showToast("ถ้าระบุเลขอ้างอิงใบส่งสินค้า ต้องระบุเลขอ้างอิงใบ invoice ด้วย", "error");
+      return;
+    }
+
     setIsSaving(true);
     try {
       const url = editingId ? `/api/admin/sales/${editingId}` : "/api/admin/sales";
@@ -297,10 +342,6 @@ export default function DashboardPage() {
           // If sync fails, shift to edit mode (to prevent duplicates on retry)
           // and keep the form open so the user doesn't lose their typed cost items.
           setEditingId(recordId);
-          // Still pop up the equipment modal if it was a new record
-          if (method === "POST" && savedData.createdEquipments?.length > 0) {
-            setPendingEquipments(savedData.createdEquipments);
-          }
           setIsSaving(false);
           return;
         }
@@ -313,9 +354,6 @@ export default function DashboardPage() {
         setShowCostCalc(false);
         fetchDashboard();
         fetchRecords();
-        if (method === "POST" && savedData.createdEquipments?.length > 0) {
-          setPendingEquipments(savedData.createdEquipments);
-        }
       } else {
         const err = await res.json();
         showToast(err.error || "เกิดข้อผิดพลาด", "error");
@@ -351,10 +389,26 @@ export default function DashboardPage() {
 
       setEditingId(rec.id);
       setForm({
-        salespersonId: rec.salespersonId, customerId: rec.customerId, companyId: rec.companyId,
-        productId: rec.productId, productName: rec.productName, categoryId: rec.categoryId,
-        qty: rec.qty, unitPrice: rec.unitPrice, totalAmount: rec.totalAmount,
-        saleDate: rec.saleDate ? rec.saleDate.substring(0, 10) : "", quotationRef: rec.quotationRef, note: rec.note || "",
+        saleType: rec.saleType || "equipment",
+        salespersonId: rec.salespersonId || "", 
+        customerId: rec.customerId || "", 
+        companyId: rec.companyId || "",
+        productId: rec.productId || "", 
+        productName: rec.productName || "", 
+        categoryId: rec.categoryId,
+        qty: rec.qty || 1, 
+        unitPrice: rec.unitPrice || 0, 
+        totalAmount: rec.totalAmount || 0,
+        saleDate: rec.saleDate ? rec.saleDate.substring(0, 10) : "", 
+        quotationRef: rec.quotationRef || "", 
+        poRef: rec.poRef || "",
+        deliveryRef: rec.deliveryRef || "",
+        invoiceRef: rec.invoiceRef || "",
+        receiptRef: rec.receiptRef || "",
+        warrantyStartDate: rec.warrantyStartDate ? String(rec.warrantyStartDate).substring(0, 10) : "",
+        warrantyEndDate: rec.warrantyEndDate ? String(rec.warrantyEndDate).substring(0, 10) : "",
+        serialNumbers: [], // We don't fetch or sync serial numbers on edit
+        note: rec.note || "",
       });
 
       if (data.items && data.items.length > 0) {
@@ -389,6 +443,7 @@ export default function DashboardPage() {
     setCostItems(costItems.filter((_, i) => i !== idx));
   };
   const updateLocalCostItem = (idx: number, field: keyof CostItemLocal, value: string | number) => {
+    setCostSubmitError(false);
     setCostItems(costItems.map((c, i) => i === idx ? { ...c, [field]: value } : c));
   };
 
@@ -847,7 +902,14 @@ export default function DashboardPage() {
                     {filteredSalesRecords.map((r) => (
                       <tr key={r.id} className="border-t border-gray-50 hover:bg-indigo-50/30 cursor-pointer transition-colors group" onClick={() => handleEdit(r)}>
                         <td className="py-3 pr-3 text-sm text-gray-600">{r.saleDate}</td>
-                        <td className="py-3 pr-3 text-sm font-medium text-gray-800">{stripHtml(r.productName)}</td>
+                        <td className="py-3 pr-3 text-sm font-medium text-gray-800">
+                          {r.saleType === "service" ? (
+                            <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-700 mr-1.5" title="ขายงาน Service">🔧</span>
+                          ) : (
+                            <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-bold bg-indigo-100 text-indigo-700 mr-1.5" title="ขายเครื่อง">💻</span>
+                          )}
+                          {stripHtml(r.productName)}
+                        </td>
                         <td className="py-3 pr-3">
                           <div className="text-sm text-gray-800">{r.customerName || "—"}</div>
                           <div className="text-xs text-gray-400">{r.companyName || ""}</div>
@@ -918,6 +980,16 @@ export default function DashboardPage() {
               </button>
             </div>
             <div className="p-6 space-y-4">
+              <div className="flex items-center gap-6 pb-2">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="radio" name="saleType" value="equipment" checked={form.saleType === "equipment"} onChange={(e) => setForm({ ...form, saleType: e.target.value })} className="w-4 h-4 text-indigo-600 focus:ring-indigo-500" />
+                  <span className="text-sm font-semibold text-gray-800">💻 ขายเครื่อง</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="radio" name="saleType" value="service" checked={form.saleType === "service"} onChange={(e) => setForm({ ...form, saleType: e.target.value })} className="w-4 h-4 text-amber-600 focus:ring-amber-500" />
+                  <span className="text-sm font-semibold text-gray-800">🔧 ขายงาน Service</span>
+                </label>
+              </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1.5">วันที่ขาย <span className="text-red-500">*</span></label>
@@ -987,6 +1059,7 @@ export default function DashboardPage() {
                       const q = val === "" ? 0 : Math.max(0, parseInt(val, 10) || 0);
                       setForm({ ...form, qty: q, totalAmount: q * form.unitPrice });
                     }}
+                    onWheel={(e) => e.currentTarget.blur()}
                     placeholder="1"
                     className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none"
                   />
@@ -1003,6 +1076,7 @@ export default function DashboardPage() {
                       const p = val === "" ? 0 : Math.max(0, parseFloat(val) || 0);
                       setForm({ ...form, unitPrice: p, totalAmount: (form.qty || 1) * p });
                     }}
+                    onWheel={(e) => e.currentTarget.blur()}
                     placeholder="0.00"
                     className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none font-medium text-gray-800"
                   />
@@ -1018,6 +1092,7 @@ export default function DashboardPage() {
                       const val = e.target.value;
                       setForm({ ...form, totalAmount: val === "" ? 0 : Math.max(0, parseFloat(val) || 0) });
                     }}
+                    onWheel={(e) => e.currentTarget.blur()}
                     placeholder="0.00"
                     className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none bg-gray-50 font-semibold text-gray-800"
                   />
@@ -1070,8 +1145,9 @@ export default function DashboardPage() {
                           step="any"
                           value={ci.amount || ""}
                           onChange={(e) => updateLocalCostItem(idx, "amount", e.target.value === "" ? 0 : Math.max(0, parseFloat(e.target.value) || 0))}
+                          onWheel={(e) => e.currentTarget.blur()}
                           placeholder="0.00"
-                          className="w-28 px-3 py-2 border border-gray-200 rounded-lg text-sm text-right font-medium focus:ring-2 focus:ring-emerald-200 outline-none"
+                          className={`w-28 px-3 py-2 border rounded-lg text-sm text-right font-medium outline-none ${costSubmitError && (!ci.amount || ci.amount <= 0) ? "border-red-400 bg-red-50 focus:ring-2 focus:ring-red-200" : "border-gray-200 focus:ring-2 focus:ring-emerald-200"}`}
                         />
                         <button
                           type="button"
@@ -1099,11 +1175,84 @@ export default function DashboardPage() {
                 )}
               </div>
 
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1.5">อ้างอิงใบเสนอราคา</label>
-                <input type="text" value={form.quotationRef} onChange={(e) => setForm({ ...form, quotationRef: e.target.value })} placeholder="เลขที่ใบเสนอราคา"
-                  className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none" />
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1.5">อ้างอิงใบเสนอราคา</label>
+                  <input type="text" value={form.quotationRef} onChange={(e) => setForm({ ...form, quotationRef: e.target.value })} placeholder="เลขที่ใบเสนอราคา"
+                    className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none" />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1.5">อ้างอิงใบ PO <span className="text-red-500">*</span></label>
+                  <input type="text" value={form.poRef} onChange={(e) => setForm({ ...form, poRef: e.target.value })} placeholder="เลขที่ใบ PO"
+                    className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none" />
+                </div>
               </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1.5">อ้างอิงใบส่งสินค้า</label>
+                  <input type="text" value={form.deliveryRef} onChange={(e) => setForm({ ...form, deliveryRef: e.target.value })} placeholder="เลขที่ใบส่งสินค้า"
+                    className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none" />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1.5">อ้างอิงใบ Invoice</label>
+                  <input type="text" value={form.invoiceRef} onChange={(e) => setForm({ ...form, invoiceRef: e.target.value })} placeholder="เลขที่ใบ Invoice"
+                    className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none" />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1.5">อ้างอิงใบเสร็จ</label>
+                  <input type="text" value={form.receiptRef} onChange={(e) => setForm({ ...form, receiptRef: e.target.value })} placeholder="เลขที่ใบเสร็จ"
+                    className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none" />
+                </div>
+              </div>
+
+              {form.saleType === "equipment" && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-1.5">วันเริ่มรับประกัน <span className="text-red-500">*</span></label>
+                    <input type="date" value={form.warrantyStartDate} onChange={(e) => setForm({ ...form, warrantyStartDate: e.target.value })}
+                      className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-1.5">วันหมดรับประกัน <span className="text-red-500">*</span></label>
+                    <input type="date" value={form.warrantyEndDate} onChange={(e) => setForm({ ...form, warrantyEndDate: e.target.value })}
+                      className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none" />
+                  </div>
+                </div>
+              )}
+
+              {form.saleType === "equipment" && form.qty > 0 && (
+                <div className="p-5 bg-gray-50 border border-gray-100 rounded-2xl">
+                  <label className="block text-sm font-semibold text-gray-700 mb-3">หมายเลขซีเรียล (กรอกได้สูงสุด 50 ชิ้นจาก {form.qty} ชิ้น) <span className="text-red-500">*</span></label>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {Array.from({ length: Math.min(form.qty, 50) }).map((_, i) => (
+                      <div key={i} className="flex items-center gap-3 bg-white p-2 rounded-xl border border-gray-200">
+                        <span className="text-xs text-gray-500 font-bold bg-gray-100 px-2 py-1 rounded-md shrink-0">#{i + 1}</span>
+                        <input
+                          type="text"
+                          value={form.serialNumbers[i] || ""}
+                          onChange={(e) => {
+                            const newSn = [...form.serialNumbers];
+                            newSn[i] = e.target.value;
+                            setForm({ ...form, serialNumbers: newSn });
+                          }}
+                          placeholder="Serial Number..."
+                          className="w-full px-2 py-1 text-sm focus:outline-none bg-transparent"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {editingId && form.saleType === "equipment" && (
+                <div className="p-4 bg-amber-50 rounded-xl border border-amber-200 text-amber-800 text-sm font-medium flex gap-3 items-start">
+                  <svg className="w-5 h-5 shrink-0 mt-0.5 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                  <div>
+                    หมายเหตุ: การแก้ไขวันรับประกันในหน้านี้ จะไม่ไปอัปเดตประวัติอุปกรณ์ที่เคยสร้างไว้ในระบบ CRM (หากต้องการแก้ไขข้อมูลอุปกรณ์ กรุณาไปแก้ไขแยกต่างหากในหน้าลูกค้า)
+                  </div>
+                </div>
+              )}
 
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-1.5">หมายเหตุ</label>
@@ -1118,99 +1267,6 @@ export default function DashboardPage() {
               </button>
               <button onClick={handleSave} disabled={isSaving} className="px-5 py-2.5 bg-indigo-600 text-white rounded-xl font-semibold hover:bg-indigo-700 transition-all text-sm disabled:opacity-50">
                 {isSaving ? "กำลังบันทึก..." : editingId ? "บันทึกการแก้ไข" : "บันทึกยอดขาย"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Equipment Complete Modal */}
-      {pendingEquipments.length > 0 && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl overflow-hidden flex flex-col max-h-[90vh] animate-in fade-in slide-in-from-bottom-4 duration-200">
-            <div className="flex justify-between items-center p-6 border-b border-gray-100">
-              <div>
-                <h3 className="text-xl font-bold text-gray-800">⚙️ ข้อมูลอุปกรณ์ที่ขายเพิ่มเติม</h3>
-                <p className="text-sm text-gray-500 mt-1">ระบบได้สร้างประวัติอุปกรณ์สำหรับยอดขายนี้แล้ว โปรดระบุ Serial Number และวันเริ่มประกัน เพื่อให้การติดตามบริการหลังการขายสมบูรณ์</p>
-              </div>
-              <button onClick={() => setPendingEquipments([])} className="p-2 text-gray-400 hover:text-gray-600 transition-colors">✕</button>
-            </div>
-            <div className="p-6 overflow-y-auto flex-1 bg-gray-50/50">
-              <div className="space-y-4">
-                {pendingEquipments.map((eq, i) => (
-                  <div key={eq.id} className="bg-white p-5 rounded-2xl shadow-sm border border-gray-200">
-                    <div className="font-semibold text-indigo-700 mb-4 flex items-center gap-2">
-                      <span className="w-6 h-6 rounded-full bg-indigo-100 flex items-center justify-center text-xs">
-                        {i + 1}
-                      </span>
-                      ชิ้นที่ {i + 1} {pendingEquipments.length > 1 ? "(คุมประกันแยกเครื่อง)" : ""}
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Serial Number <span className="text-red-500">*</span></label>
-                        <input
-                          type="text"
-                          placeholder="S/N ของเครื่องนี้"
-                          value={eq.serialNumber}
-                          onChange={(e) => {
-                            const newEqs = [...pendingEquipments];
-                            newEqs[i].serialNumber = e.target.value;
-                            setPendingEquipments(newEqs);
-                          }}
-                          className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm outline-none focus:bg-white focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 transition-all"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">วันเริ่มประกัน</label>
-                        <input
-                          type="date"
-                          value={eq.warrantyStartDate || ""}
-                          onChange={(e) => {
-                            const newEqs = [...pendingEquipments];
-                            newEqs[i].warrantyStartDate = e.target.value;
-                            setPendingEquipments(newEqs);
-                          }}
-                          className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm outline-none focus:bg-white focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 transition-all"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-            <div className="p-6 border-t border-gray-100 flex justify-end gap-3 bg-white">
-              <button onClick={() => setPendingEquipments([])} className="px-5 py-2.5 bg-gray-100 text-gray-700 rounded-xl font-semibold hover:bg-gray-200 transition-colors text-sm">
-                ข้ามไปก่อน (ใส่ทีหลัง)
-              </button>
-              <button
-                onClick={async () => {
-                  const hasEmptySn = pendingEquipments.some(eq => !eq.serialNumber.trim());
-                  if (hasEmptySn && !window.confirm("มีบางรายการยังไม่ได้ระบุ S/N ยืนยันการบันทึกใช่หรือไม่?")) return;
-                  
-                  try {
-                    const results = await Promise.all(
-                      pendingEquipments.map((eq) =>
-                        fetch(`/api/admin/equipments/${eq.id}`, {
-                          method: "PUT",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ serialNumber: eq.serialNumber, warrantyStartDate: eq.warrantyStartDate })
-                        })
-                      )
-                    );
-                    
-                    if (results.some(res => !res.ok)) {
-                      throw new Error("บันทึกบางรายการไม่สำเร็จ โปรดลองอีกครั้ง");
-                    }
-
-                    showToast("บันทึกข้อมูลอุปกรณ์สำเร็จ", "success");
-                    setPendingEquipments([]);
-                  } catch (err: any) {
-                    showToast(err.message || "เกิดข้อผิดพลาดในการบันทึก", "error");
-                  }
-                }}
-                className="px-6 py-2.5 bg-indigo-600 text-white rounded-xl font-semibold hover:bg-indigo-700 transition-all shadow-sm text-sm flex items-center gap-2"
-              >
-                ✓ บันทึกข้อมูลอุปกรณ์
               </button>
             </div>
           </div>
