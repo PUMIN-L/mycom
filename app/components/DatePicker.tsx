@@ -24,7 +24,9 @@ function CustomHeader({
   increaseMonth,
   prevMonthButtonDisabled,
   nextMonthButtonDisabled,
-}: ReactDatePickerCustomHeaderProps) {
+  monthDate,
+}: ReactDatePickerCustomHeaderProps & { monthDate?: Date }) {
+  const targetDate = monthDate || date;
   const [showMonthDropdown, setShowMonthDropdown] = useState(false);
   const [showYearDropdown, setShowYearDropdown] = useState(false);
   
@@ -73,17 +75,17 @@ function CustomHeader({
             onClick={() => { setShowMonthDropdown(!showMonthDropdown); setShowYearDropdown(false); }}
             className="px-3 py-1.5 bg-gray-50 border border-gray-200 rounded-lg text-sm font-semibold text-gray-700 hover:bg-gray-100 transition-colors flex items-center gap-1 min-w-[90px] justify-between"
           >
-            <span>{months[date.getMonth()]}</span>
+            <span>{months[targetDate.getMonth()]}</span>
             <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" /></svg>
           </button>
           {showMonthDropdown && (
             <div className="absolute top-full mt-1 left-0 w-32 bg-white border border-gray-100 rounded-xl shadow-xl z-50 max-h-64 overflow-y-auto py-1">
-              {months.map((option, index) => (
+              {months.map((option, idx) => (
                 <button
-                  key={option}
+                  key={idx}
                   type="button"
-                  onClick={() => { changeMonth(index); setShowMonthDropdown(false); }}
-                  className={`w-full text-left px-4 py-2 text-sm ${date.getMonth() === index ? 'bg-indigo-50 text-indigo-700 font-bold' : 'text-gray-700 hover:bg-gray-50 font-medium'}`}
+                  onClick={(e) => { e.preventDefault(); changeMonth(idx); setShowMonthDropdown(false); }}
+                  className={`w-full text-left px-4 py-2 text-sm ${targetDate.getMonth() === idx ? 'bg-indigo-50 text-indigo-700 font-bold' : 'text-gray-700 hover:bg-gray-50 font-medium'}`}
                 >
                   {option}
                 </button>
@@ -96,9 +98,9 @@ function CustomHeader({
           <button
             type="button"
             onClick={() => { setShowYearDropdown(!showYearDropdown); setShowMonthDropdown(false); }}
-            className="px-3 py-1.5 bg-gray-50 border border-gray-200 rounded-lg text-sm font-semibold text-gray-700 hover:bg-gray-100 transition-colors flex items-center gap-1 min-w-[75px] justify-between"
+            className="px-3 py-1.5 bg-gray-50 border border-gray-200 rounded-lg text-sm font-semibold text-gray-700 hover:bg-gray-100 transition-colors flex items-center gap-1"
           >
-            <span>{date.getFullYear()}</span>
+            <span>{targetDate.getFullYear()}</span>
             <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" /></svg>
           </button>
           {showYearDropdown && (
@@ -106,10 +108,10 @@ function CustomHeader({
               {years.map((option) => (
                 <button
                   key={option}
-                  ref={date.getFullYear() === option ? selectedYearRef : undefined}
+                  ref={targetDate.getFullYear() === option ? selectedYearRef : undefined}
                   type="button"
                   onClick={() => { changeYear(option); setShowYearDropdown(false); }}
-                  className={`w-full text-left px-4 py-2 text-sm ${date.getFullYear() === option ? 'bg-indigo-50 text-indigo-700 font-bold' : 'text-gray-700 hover:bg-gray-50 font-medium'}`}
+                  className={`w-full text-left px-4 py-2 text-sm ${targetDate.getFullYear() === option ? 'bg-indigo-50 text-indigo-700 font-bold' : 'text-gray-700 hover:bg-gray-50 font-medium'}`}
                 >
                   {option}
                 </button>
