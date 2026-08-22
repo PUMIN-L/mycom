@@ -170,3 +170,21 @@ export async function sendOrphanDeleteOtpEmail(
     text: `มีการขอลบรูปภาพที่ไม่ได้ใช้งานจำนวน ${imageCount} รูป ออกจาก Cloudinary\n\nหากคุณเป็นผู้ดำเนินการ กรุณานำรหัสยืนยันด้านล่างนี้ไปกรอก:\n\nรหัสยืนยัน: ${otp}\n\n(รหัสนี้มีอายุ 10 นาที)\n\nหากคุณไม่ได้เป็นผู้ดำเนินการ กรุณาเพิกเฉยต่ออีเมลฉบับนี้ และตรวจสอบความปลอดภัยของบัญชีผู้ดูแลระบบทันที`,
   });
 }
+
+/** Send a 6-digit OTP to `to` to authorize deleting a completed schedule. */
+export async function sendScheduleDeleteOtpEmail(
+  to: string,
+  otp: string,
+  scheduleInfo: { scheduleType: string; scheduledDate: string; equipmentName?: string }
+): Promise<void> {
+  const transport = createTransport();
+  const typeText = scheduleInfo.scheduleType === "service" ? "Service (บำรุงรักษา)" : "โทรติดตามผล";
+  const equipText = scheduleInfo.equipmentName ? ` สำหรับเครื่อง: ${scheduleInfo.equipmentName}` : "";
+  await transport.sendMail({
+    from: { name: "ระบบเว็บไซต์ (Profin Lab Scale)", address: process.env.SMTP_USER ?? "" },
+    to: { name: "", address: to },
+    subject: `[รหัสยืนยัน OTP] ขอลบประวัตินัดหมายที่เสร็จสิ้นแล้ว`,
+    text: `มีการขอลบประวัตินัดหมาย ${typeText} วันที่ ${scheduleInfo.scheduledDate}${equipText} ที่ดำเนินการเสร็จสิ้นแล้ว\n\nเนื่องจากการลบประวัติงานที่เสร็จแล้วส่งผลต่อข้อมูลการรับประกันและการบริการ กรุณานำรหัสยืนยัน 6 หลักด้านล่างนี้ไปกรอกเพื่อยืนยันการลบ:\n\nรหัสยืนยัน: ${otp}\n\n(รหัสนี้มีอายุ 15 นาที)\n\nหากคุณไม่ได้เป็นผู้ดำเนินการ กรุณาเพิกเฉยต่ออีเมลฉบับนี้ และตรวจสอบความปลอดภัยของบัญชีผู้ดูแลระบบทันที`,
+  });
+}
+

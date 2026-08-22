@@ -80,6 +80,18 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
   // Delete confirm
   const [deleteConfirm, setDeleteConfirm] = useState<CustomerEquipment | null>(null);
   const [deleteScheduleConfirm, setDeleteScheduleConfirm] = useState<ServiceSchedule | null>(null);
+  const [deleteCompletedSchedule, setDeleteCompletedSchedule] = useState<ServiceSchedule | null>(null);
+  const [deleteOtpCode, setDeleteOtpCode] = useState("");
+  const [deleteOtpEmail, setDeleteOtpEmail] = useState<string | null>(null);
+  const [isSendingOtp, setIsSendingOtp] = useState(false);
+  const [otpCountdown, setOtpCountdown] = useState(0);
+
+  useEffect(() => {
+    if (otpCountdown > 0) {
+      const timer = setTimeout(() => setOtpCountdown(otpCountdown - 1), 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [otpCountdown]);
 
   // Search
   const [searchText, setSearchText] = useState("");
@@ -364,6 +376,58 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
     } catch (err) {
       console.error(err);
       showToast("ลบนัดหมายไม่สำเร็จ", "error");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleSendDeleteOtp = async () => {
+    if (!deleteCompletedSchedule || isSendingOtp) return;
+    setIsSendingOtp(true);
+    try {
+      const res = await fetch(`/api/admin/schedules/${deleteCompletedSchedule.id}/delete-otp`, {
+        method: "POST",
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to send OTP");
+      }
+      setDeleteOtpEmail(data.email || "อีเมลผู้ดูแลระบบ");
+      setOtpCountdown(60);
+      showToast(data.message || "ส่งรหัส OTP เรียบร้อยแล้ว", "success");
+    } catch (err: any) {
+      console.error(err);
+      showToast(err.message || "ไม่สามารถส่งรหัส OTP ได้", "error");
+    } finally {
+      setIsSendingOtp(false);
+    }
+  };
+
+  const executeDeleteCompletedSchedule = async () => {
+    if (!deleteCompletedSchedule || isSaving) return;
+    if (!deleteOtpCode || deleteOtpCode.length !== 6) {
+      showToast("กรุณากรอกรหัส OTP 6 หลัก", "error");
+      return;
+    }
+    setIsSaving(true);
+    try {
+      const res = await fetch(`/api/admin/schedules/${deleteCompletedSchedule.id}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ otp: deleteOtpCode }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to delete schedule");
+      }
+      showToast("ลบนัดหมายสำเร็จ", "success");
+      setDeleteCompletedSchedule(null);
+      setDeleteOtpCode("");
+      setDeleteOtpEmail(null);
+      if (viewingEquipment) fetchSchedules(viewingEquipment.id);
+    } catch (err: any) {
+      console.error(err);
+      showToast(err.message || "ลบนัดหมายไม่สำเร็จ", "error");
     } finally {
       setIsSaving(false);
     }
@@ -763,12 +827,24 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
                         <div className="flex items-center gap-2">
                           {scheduleStatusBadge(s.status, s.scheduledDate)}
                           {s.status === "pending" && (
-                            <button
-                              onClick={() => { setCompletingScheduleId(s.id); setCompleteForm({ serviceReportNumber: "", actionDate: new Date().toISOString().slice(0, 10), resultDetails: "", customerFeedback: "" }); }}
-                              className="px-3 py-1.5 bg-green-500 text-white text-xs font-semibold rounded-lg hover:bg-green-600 transition-all"
-                            >
-                              ✅ จบงาน
-                            </button>
+                            <>
+                              <button
+                                onClick={() => {
+                                  setEditingSchedule(s);
+                                  setIsScheduleModalOpen(true);
+                                }}
+                                className="px-2.5 py-1.5 bg-blue-50 text-blue-600 hover:bg-blue-100 text-xs font-semibold rounded-lg transition-all flex items-center gap-1"
+                                title="แก้ไขนัดหมาย"
+                              >
+                                ✏️ แก้ไข
+                              </button>
+                              <button
+                                onClick={() => { setCompletingScheduleId(s.id); setCompleteForm({ serviceReportNumber: "", actionDate: new Date().toISOString().slice(0, 10), resultDetails: "", customerFeedback: "" }); }}
+                                className="px-3 py-1.5 bg-green-500 text-white text-xs font-semibold rounded-lg hover:bg-green-600 transition-all"
+                              >
+                                ✅ จบงาน
+                              </button>
+                            </>
                           )}
                           {s.status === "completed" && !logs[s.id] && (
                             <button
@@ -779,8 +855,18 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
                             </button>
                           )}
                           <button
-                            onClick={(e) => { e.stopPropagation(); setDeleteScheduleConfirm(s); }}
-                            className="p-1 text-gray-400 hover:text-red-500 transition-colors"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (s.status === "completed") {
+                                setDeleteCompletedSchedule(s);
+                                setDeleteOtpCode("");
+                                setDeleteOtpEmail(null);
+                              } else {
+                                setDeleteScheduleConfirm(s);
+                              }
+                            }}
+                            className="p-1.5 text-gray-400 hover:text-red-500 transition-colors rounded-lg hover:bg-red-50"
+                            title="ลบนัดหมาย"
                           >
                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
                           </button>
@@ -954,6 +1040,95 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
             <div className="flex gap-3 justify-center">
               <button onClick={() => setDeleteScheduleConfirm(null)} className="px-5 py-2.5 border border-gray-200 text-gray-600 font-semibold rounded-xl hover:bg-gray-50 transition-all">ยกเลิก</button>
               <button onClick={executeDeleteSchedule} className="px-5 py-2.5 bg-red-500 text-white font-semibold rounded-xl hover:bg-red-600 transition-all">ลบ</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Delete Completed Schedule with OTP Modal ────────────────────── */}
+      {deleteCompletedSchedule && (
+        <div
+          className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[70] flex items-center justify-center p-4 animate-fadeIn"
+          onClick={() => {
+            if (!isSaving && !isSendingOtp) {
+              setDeleteCompletedSchedule(null);
+              setDeleteOtpCode("");
+              setDeleteOtpEmail(null);
+            }
+          }}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 text-center"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="w-14 h-14 bg-red-100 text-red-600 rounded-full flex items-center justify-center text-2xl mx-auto mb-4">
+              🔒
+            </div>
+            <h3 className="text-xl font-bold text-gray-900 mb-2">ยืนยันการลบนัดหมายที่เสร็จแล้ว</h3>
+            <p className="text-gray-600 text-sm mb-4">
+              นัดหมายวันที่ <span className="font-semibold text-gray-800">{deleteCompletedSchedule.scheduledDate}</span> ({deleteCompletedSchedule.scheduleType === "service" ? "Service" : "โทรติดตาม"}) ดำเนินการเสร็จแล้ว
+              <br />
+              <span className="text-red-600 text-xs font-medium mt-1 block">
+                ⚠️ การลบจำเป็นต้องยืนยันรหัส OTP 6 หลักที่ส่งไปยังอีเมลผู้ดูแลระบบ
+              </span>
+            </p>
+
+            {/* OTP Section */}
+            <div className="bg-gray-50 rounded-xl p-4 mb-5 text-left border border-gray-100 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-gray-700">รหัสยืนยันจากอีเมล</span>
+                <button
+                  type="button"
+                  onClick={handleSendDeleteOtp}
+                  disabled={isSendingOtp || otpCountdown > 0}
+                  className="text-xs font-bold text-blue-600 hover:text-blue-700 disabled:opacity-50 transition"
+                >
+                  {isSendingOtp
+                    ? "กำลังส่งรหัส..."
+                    : otpCountdown > 0
+                    ? `ส่งอีกครั้ง (${otpCountdown}s)`
+                    : deleteOtpEmail
+                    ? "🔄 ส่งรหัสใหม่"
+                    : "📩 ส่งรหัส OTP"}
+                </button>
+              </div>
+
+              {deleteOtpEmail && (
+                <p className="text-xs text-green-600 font-medium">
+                  ✅ ส่งรหัส 6 หลักไปที่ {deleteOtpEmail} แล้ว
+                </p>
+              )}
+
+              <input
+                type="text"
+                maxLength={6}
+                value={deleteOtpCode}
+                onChange={(e) => setDeleteOtpCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                placeholder="กรอกรหัส 6 หลัก เช่น 123456"
+                className="w-full px-4 py-2.5 bg-white border border-gray-200 rounded-xl text-center text-xl font-mono tracking-widest font-bold focus:ring-2 focus:ring-red-500/20 focus:border-red-500 outline-none"
+              />
+            </div>
+
+            <div className="flex gap-3 justify-center">
+              <button
+                type="button"
+                onClick={() => {
+                  setDeleteCompletedSchedule(null);
+                  setDeleteOtpCode("");
+                  setDeleteOtpEmail(null);
+                }}
+                className="px-5 py-2.5 border border-gray-200 text-gray-600 font-semibold rounded-xl hover:bg-gray-50 transition-all text-sm flex-1"
+              >
+                ยกเลิก
+              </button>
+              <button
+                type="button"
+                onClick={executeDeleteCompletedSchedule}
+                disabled={isSaving || deleteOtpCode.length !== 6}
+                className="px-5 py-2.5 bg-red-600 text-white font-semibold rounded-xl hover:bg-red-700 transition-all text-sm flex-1 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isSaving ? "กำลังลบ..." : "🗑️ ยืนยันลบ"}
+              </button>
             </div>
           </div>
         </div>
