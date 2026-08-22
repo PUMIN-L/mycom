@@ -1225,7 +1225,9 @@ export default function DashboardPage() {
 
               {form.saleType === "equipment" && form.qty > 0 && (
                 <div className="p-5 bg-gray-50 border border-gray-100 rounded-2xl">
-                  <label className="block text-sm font-semibold text-gray-700 mb-3">หมายเลขซีเรียล (กรอกได้สูงสุด 50 ชิ้นจาก {form.qty} ชิ้น) <span className="text-red-500">*</span></label>
+                  <label className="block text-sm font-semibold text-gray-700 mb-3">
+                    หมายเลขซีเรียล {form.qty > 50 ? `(กรอกได้สูงสุด 50 ชิ้นจากทั้งหมด ${form.qty} ชิ้น)` : `(จำนวน ${form.qty} ชิ้น)`} <span className="text-red-500">*</span>
+                  </label>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     {Array.from({ length: Math.min(form.qty, 50) }).map((_, i) => (
                       <div key={i} className="flex items-center gap-3 bg-white p-2 rounded-xl border border-gray-200">
