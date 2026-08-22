@@ -101,8 +101,9 @@ describe('Admin Sales API', () => {
           }),
         })
       );
-      expect(res.status).toBe(201);
-      expect(await res.json()).toEqual(created);
+      const body = await res.json();
+      expect(body.record).toEqual(created);
+      expect(body.createdEquipments).toEqual([]);
     });
   });
 

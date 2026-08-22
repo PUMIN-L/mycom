@@ -1,5 +1,5 @@
 import "server-only";
-import { query } from "./db";
+import { query, withTransaction } from "./db";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { sanitizePlainText } from "./sanitizeHtml";
 
@@ -771,4 +771,46 @@ export async function deleteCostItem(id: string): Promise<boolean> {
     await recalcCostAmount(existing[0].salesRecordId);
   }
   return res.affectedRows > 0;
+}
+
+export async function syncCostItems(
+  salesRecordId: string,
+  items: Partial<CostItem>[]
+): Promise<CostItem[]> {
+  const existing = await getSalesRecord(salesRecordId);
+  if (!existing) return [];
+  
+  return await withTransaction(async (conn) => {
+    // 1. Delete existing items
+    await conn.execute(
+      `DELETE FROM sale_cost_items WHERE salesRecordId = ?`,
+      [salesRecordId]
+    );
+    
+    // 2. Insert new items and compute total
+    const insertedItems: CostItem[] = [];
+    let total = 0;
+    for (const item of items) {
+      if (Number(item.amount) > 0) {
+        const id = crypto.randomUUID();
+        const now = new Date().toISOString();
+        const v = cleanCostInput(item);
+        await conn.execute(
+          `INSERT INTO sale_cost_items (id, salesRecordId, costType, label, amount, note, createdAt)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [id, salesRecordId, v.costType, v.label, v.amount, v.note, now]
+        );
+        total += v.amount;
+        insertedItems.push({ id, salesRecordId, ...v, createdAt: now } as CostItem);
+      }
+    }
+    
+    // 3. Update total cost in sales_records
+    await conn.execute(
+      `UPDATE sales_records SET costAmount = ? WHERE id = ?`,
+      [total, salesRecordId]
+    );
+    
+    return insertedItems;
+  });
 }

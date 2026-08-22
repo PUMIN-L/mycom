@@ -336,6 +336,12 @@ export async function getAlerts(
     [today, warrantyCutoff]
   );
 
+  const [incompleteRows] = await query<RowDataPacket[]>(
+    `${EQUIPMENT_SELECT}
+     WHERE e.serialNumber = '' OR e.serialNumber IS NULL OR e.warrantyStartDate IS NULL
+     ORDER BY e.createdAt DESC LIMIT 100`
+  );
+
   const [scheduleRows] = await query<RowDataPacket[]>(
     `SELECT s.*, e.customerId, e.serialNumber, c.name AS customerName,
             co.name AS companyName, p.title_th AS productName
@@ -351,6 +357,7 @@ export async function getAlerts(
 
   return {
     expiringWarranties: warrantyRows as CustomerEquipment[],
+    incompleteEquipments: incompleteRows as CustomerEquipment[],
     upcomingSchedules: (scheduleRows as CrmAlerts["upcomingSchedules"]).map(
       (s) => ({ ...s, overdue: s.scheduledDate < today })
     ),

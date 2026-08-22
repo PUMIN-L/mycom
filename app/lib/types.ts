@@ -156,6 +156,7 @@ export interface ServiceLog {
 
 export interface CrmAlerts {
   expiringWarranties: CustomerEquipment[];
+  incompleteEquipments: CustomerEquipment[];
   upcomingSchedules: Array<
     ServiceSchedule & {
       customerId?: string;

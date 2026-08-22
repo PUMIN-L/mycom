@@ -187,6 +187,81 @@ export default function AlertsPage() {
         </div>
       </div>
 
+      {/* ── Section 1.5: Incomplete Equipments ────────────────────────────── */}
+      <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden mb-8">
+        <div className="p-8">
+          <div className="flex items-center gap-3 mb-6">
+            <div className="bg-red-100 text-red-600 p-3 rounded-xl">
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+            </div>
+            <h2 className="text-2xl font-bold text-gray-800">
+              อุปกรณ์ขาดข้อมูลสำคัญ
+              <span className="text-gray-400 text-lg font-normal ml-2">
+                (ยังไม่ระบุ S/N หรือประกัน — {alerts?.incompleteEquipments.length ?? 0} รายการ)
+              </span>
+            </h2>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left">
+              <thead>
+                <tr className="border-b border-gray-100">
+                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">ลูกค้า / บริษัท</th>
+                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">สินค้า</th>
+                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">สิ่งที่ขาด</th>
+                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">จัดการ</th>
+                </tr>
+              </thead>
+              <tbody>
+                {isLoading ? (
+                  Array.from({ length: 3 }).map((_, i) => (
+                    <tr key={i} className="border-b border-gray-50 animate-pulse">
+                      <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-36"></div></td>
+                      <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-40"></div></td>
+                      <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-20"></div></td>
+                      <td className="py-4"><div className="h-8 bg-gray-200 rounded-xl w-24"></div></td>
+                    </tr>
+                  ))
+                ) : !alerts?.incompleteEquipments.length ? (
+                  <tr>
+                    <td colSpan={4} className="py-12 text-center">
+                      <div className="flex flex-col items-center gap-2">
+                        <div className="text-5xl">🎉</div>
+                        <p className="text-gray-400 text-lg">ข้อมูลอุปกรณ์ครบถ้วนสมบูรณ์</p>
+                      </div>
+                    </td>
+                  </tr>
+                ) : (
+                  alerts.incompleteEquipments.map((eq) => (
+                    <tr key={eq.id} className="border-b border-gray-50 bg-red-50/20">
+                      <td className="py-4 pr-4">
+                        <div className="font-semibold text-gray-800">{eq.customerName || "—"}</div>
+                        <div className="text-xs text-gray-400">{eq.companyName}</div>
+                      </td>
+                      <td className="py-4 pr-4 text-sm text-gray-700">{eq.productName || "—"}</td>
+                      <td className="py-4 pr-4 text-sm">
+                        <div className="flex flex-col gap-1">
+                          {!eq.serialNumber && <span className="text-red-600 font-medium">❌ ขาด Serial Number</span>}
+                          {!eq.warrantyStartDate && <span className="text-red-600 font-medium">❌ ขาดวันเริ่มประกัน</span>}
+                        </div>
+                      </td>
+                      <td className="py-4">
+                        <Link
+                          href="/customers"
+                          className="px-4 py-2 bg-white border border-gray-200 text-gray-700 rounded-xl text-xs font-semibold hover:bg-gray-50 transition-colors shadow-sm inline-block"
+                        >
+                          ไปใส่ข้อมูล
+                        </Link>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
       {/* ── Section 2: Upcoming / Overdue Schedules ─────────────────────── */}
       <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
         <div className="p-8">

@@ -8,6 +8,7 @@ import {
 } from "recharts";
 import SearchableDropdown from "../components/SearchableDropdown";
 import type { SearchableDropdownOption } from "../components/SearchableDropdown";
+import type { CustomerEquipment } from "../lib/types";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -130,6 +131,7 @@ export default function DashboardPage() {
   const [costItems, setCostItems] = useState<CostItemLocal[]>([]);
   const [showCostCalc, setShowCostCalc] = useState(false);
   const [costLoading, setCostLoading] = useState(false);
+  const [pendingEquipments, setPendingEquipments] = useState<CustomerEquipment[]>([]);
 
   const handleScrollToRecords = () => {
     setShowRecords(true);
@@ -265,36 +267,42 @@ export default function DashboardPage() {
     try {
       const url = editingId ? `/api/admin/sales/${editingId}` : "/api/admin/sales";
       const method = editingId ? "PUT" : "POST";
-      const payload = { ...form, costAmount: costTotal };
+      // Do not send costAmount here. The sync endpoint will calculate and update it.
+      // This prevents a ghost costAmount if the sync endpoint fails.
+      const payload = { ...form };
       const res = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       if (res.ok) {
-        const savedRecord = await res.json();
-        const recordId = savedRecord.id || editingId;
+        const savedData = await res.json();
+        const savedRecord = method === "POST" ? savedData.record : savedData;
+        const recordId = savedRecord?.id || editingId;
 
         // Save cost items
-        if (recordId && costItems.length > 0) {
-          // For editing: delete existing items, then re-add all
-          if (editingId) {
-            try {
-              const existingRes = await fetch(`/api/admin/sales/${recordId}/costs`);
-              if (existingRes.ok) {
-                const existing = await existingRes.json();
-                for (const item of existing.items || []) {
-                  await fetch(`/api/admin/sales/${recordId}/costs/${item.id}`, { method: "DELETE" });
-                }
-              }
-            } catch { /* ignore cleanup errors */ }
+        let costSyncSuccess = true;
+        if (recordId) {
+          try {
+            const validCostItems = costItems.filter(ci => ci.amount > 0);
+            const syncRes = await fetch(`/api/admin/sales/${recordId}/costs/sync`, {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(validCostItems),
+            });
+            if (!syncRes.ok) throw new Error("ไม่สามารถบันทึกต้นทุนใหม่ได้");
+          } catch (err: any) {
+            showToast(err.message || "เกิดข้อผิดพลาดในการบันทึกต้นทุน โปรดลองบันทึกอีกครั้ง", "error");
+            costSyncSuccess = false;
           }
-          // Add all current cost items
-          for (const ci of costItems) {
-            if (ci.amount > 0) {
-              await fetch(`/api/admin/sales/${recordId}/costs`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(ci),
-              });
-            }
+        }
+
+        if (!costSyncSuccess) {
+          // If sync fails, shift to edit mode (to prevent duplicates on retry)
+          // and keep the form open so the user doesn't lose their typed cost items.
+          setEditingId(recordId);
+          // Still pop up the equipment modal if it was a new record
+          if (method === "POST" && savedData.createdEquipments?.length > 0) {
+            setPendingEquipments(savedData.createdEquipments);
           }
+          setIsSaving(false);
+          return;
         }
 
         showToast(editingId ? "แก้ไขสำเร็จ" : "บันทึกยอดขายสำเร็จ", "success");
@@ -305,6 +313,9 @@ export default function DashboardPage() {
         setShowCostCalc(false);
         fetchDashboard();
         fetchRecords();
+        if (method === "POST" && savedData.createdEquipments?.length > 0) {
+          setPendingEquipments(savedData.createdEquipments);
+        }
       } else {
         const err = await res.json();
         showToast(err.error || "เกิดข้อผิดพลาด", "error");
@@ -333,30 +344,36 @@ export default function DashboardPage() {
 
   // Edit
   const handleEdit = async (rec: SalesRecord) => {
-    setEditingId(rec.id);
-    setForm({
-      salespersonId: rec.salespersonId, customerId: rec.customerId, companyId: rec.companyId,
-      productId: rec.productId, productName: rec.productName, categoryId: rec.categoryId,
-      qty: rec.qty, unitPrice: rec.unitPrice, totalAmount: rec.totalAmount,
-      saleDate: rec.saleDate ? rec.saleDate.substring(0, 10) : "", quotationRef: rec.quotationRef, note: rec.note || "",
-    });
-    setShowForm(true);
-    // Load cost items
-    setCostItems([]);
-    setShowCostCalc(false);
     try {
       const res = await fetch(`/api/admin/sales/${rec.id}/costs`);
-      if (res.ok) {
-        const data = await res.json();
-        if (data.items && data.items.length > 0) {
-          setCostItems(data.items.map((it: any) => ({
-            id: it.id, costType: it.costType, label: it.label,
-            amount: Number(it.amount), note: it.note || "",
-          })));
-          setShowCostCalc(true);
-        }
+      if (!res.ok) throw new Error("โหลดต้นทุนไม่สำเร็จ");
+      const data = await res.json();
+
+      setEditingId(rec.id);
+      setForm({
+        salespersonId: rec.salespersonId, customerId: rec.customerId, companyId: rec.companyId,
+        productId: rec.productId, productName: rec.productName, categoryId: rec.categoryId,
+        qty: rec.qty, unitPrice: rec.unitPrice, totalAmount: rec.totalAmount,
+        saleDate: rec.saleDate ? rec.saleDate.substring(0, 10) : "", quotationRef: rec.quotationRef, note: rec.note || "",
+      });
+
+      if (data.items && data.items.length > 0) {
+        setCostItems(data.items.map((it: any) => ({
+          id: it.id, costType: it.costType, label: it.label,
+          amount: Number(it.amount), note: it.note || "",
+        })));
+        setShowCostCalc(true);
+      } else {
+        setCostItems([]);
+        setShowCostCalc(false);
       }
-    } catch { /* ignore */ }
+      
+      // Show form ONLY after all data (including cost items) is fully loaded
+      // This prevents the user from clicking Save too early and accidentally wiping out cost items
+      setShowForm(true);
+    } catch {
+      showToast("เกิดข้อผิดพลาดในการดึงข้อมูลต้นทุน กรุณาลองใหม่", "error");
+    }
   };
 
   // Cost calculator helpers
@@ -1101,6 +1118,100 @@ export default function DashboardPage() {
               </button>
               <button onClick={handleSave} disabled={isSaving} className="px-5 py-2.5 bg-indigo-600 text-white rounded-xl font-semibold hover:bg-indigo-700 transition-all text-sm disabled:opacity-50">
                 {isSaving ? "กำลังบันทึก..." : editingId ? "บันทึกการแก้ไข" : "บันทึกยอดขาย"}
+              </button>
+            </div>
+          </div>
+          </div>
+        </div>
+      )}
+
+      {/* Equipment Complete Modal */}
+      {pendingEquipments.length > 0 && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl overflow-hidden flex flex-col max-h-[90vh] animate-in fade-in slide-in-from-bottom-4 duration-200">
+            <div className="flex justify-between items-center p-6 border-b border-gray-100">
+              <div>
+                <h3 className="text-xl font-bold text-gray-800">⚙️ ข้อมูลอุปกรณ์ที่ขายเพิ่มเติม</h3>
+                <p className="text-sm text-gray-500 mt-1">ระบบได้สร้างประวัติอุปกรณ์สำหรับยอดขายนี้แล้ว โปรดระบุ Serial Number และวันเริ่มประกัน เพื่อให้การติดตามบริการหลังการขายสมบูรณ์</p>
+              </div>
+              <button onClick={() => setPendingEquipments([])} className="p-2 text-gray-400 hover:text-gray-600 transition-colors">✕</button>
+            </div>
+            <div className="p-6 overflow-y-auto flex-1 bg-gray-50/50">
+              <div className="space-y-4">
+                {pendingEquipments.map((eq, i) => (
+                  <div key={eq.id} className="bg-white p-5 rounded-2xl shadow-sm border border-gray-200">
+                    <div className="font-semibold text-indigo-700 mb-4 flex items-center gap-2">
+                      <span className="w-6 h-6 rounded-full bg-indigo-100 flex items-center justify-center text-xs">
+                        {i + 1}
+                      </span>
+                      ชิ้นที่ {i + 1} {pendingEquipments.length > 1 ? "(คุมประกันแยกเครื่อง)" : ""}
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Serial Number <span className="text-red-500">*</span></label>
+                        <input
+                          type="text"
+                          placeholder="S/N ของเครื่องนี้"
+                          value={eq.serialNumber}
+                          onChange={(e) => {
+                            const newEqs = [...pendingEquipments];
+                            newEqs[i].serialNumber = e.target.value;
+                            setPendingEquipments(newEqs);
+                          }}
+                          className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm outline-none focus:bg-white focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 transition-all"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">วันเริ่มประกัน</label>
+                        <input
+                          type="date"
+                          value={eq.warrantyStartDate || ""}
+                          onChange={(e) => {
+                            const newEqs = [...pendingEquipments];
+                            newEqs[i].warrantyStartDate = e.target.value;
+                            setPendingEquipments(newEqs);
+                          }}
+                          className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm outline-none focus:bg-white focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 transition-all"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="p-6 border-t border-gray-100 flex justify-end gap-3 bg-white">
+              <button onClick={() => setPendingEquipments([])} className="px-5 py-2.5 bg-gray-100 text-gray-700 rounded-xl font-semibold hover:bg-gray-200 transition-colors text-sm">
+                ข้ามไปก่อน (ใส่ทีหลัง)
+              </button>
+              <button
+                onClick={async () => {
+                  const hasEmptySn = pendingEquipments.some(eq => !eq.serialNumber.trim());
+                  if (hasEmptySn && !window.confirm("มีบางรายการยังไม่ได้ระบุ S/N ยืนยันการบันทึกใช่หรือไม่?")) return;
+                  
+                  try {
+                    const results = await Promise.all(
+                      pendingEquipments.map((eq) =>
+                        fetch(`/api/admin/equipments/${eq.id}`, {
+                          method: "PUT",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ serialNumber: eq.serialNumber, warrantyStartDate: eq.warrantyStartDate })
+                        })
+                      )
+                    );
+                    
+                    if (results.some(res => !res.ok)) {
+                      throw new Error("บันทึกบางรายการไม่สำเร็จ โปรดลองอีกครั้ง");
+                    }
+
+                    showToast("บันทึกข้อมูลอุปกรณ์สำเร็จ", "success");
+                    setPendingEquipments([]);
+                  } catch (err: any) {
+                    showToast(err.message || "เกิดข้อผิดพลาดในการบันทึก", "error");
+                  }
+                }}
+                className="px-6 py-2.5 bg-indigo-600 text-white rounded-xl font-semibold hover:bg-indigo-700 transition-all shadow-sm text-sm flex items-center gap-2"
+              >
+                ✓ บันทึกข้อมูลอุปกรณ์
               </button>
             </div>
           </div>

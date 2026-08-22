@@ -4,6 +4,7 @@ import {
   addSalesRecord,
   listSalesRecords,
 } from "../../../lib/salesDashboardStore";
+import { addEquipment } from "../../../lib/crmStore";
 
 // GET /api/admin/sales — list sales records (filterable)
 export const GET = withRoute(
@@ -52,6 +53,34 @@ export const POST = withRoute(
     }
 
     const record = await addSalesRecord(body);
-    return NextResponse.json(record, { status: 201 });
+
+    // Auto-create CustomerEquipments if customer is provided
+    const createdEquipments = [];
+    if (body.customerId && body.customerId.trim()) {
+      // Prevent DoS: Cap the number of auto-created equipments to 50
+      const maxAutoCreate = 50;
+      let qty = Math.max(1, Number(body.qty) || 1);
+      if (qty > maxAutoCreate) qty = maxAutoCreate;
+      
+      for (let i = 0; i < qty; i++) {
+        const eq = await addEquipment({
+          customerId: body.customerId,
+          productId: body.productId || "",
+          serialNumber: "", // to be filled
+          quotationNumber: body.quotationRef || "",
+          warrantyCertNumber: "",
+          warrantyType: "",
+          warrantyStartDate: null,
+          warrantyEndDate: null,
+          status: "Active",
+        });
+        createdEquipments.push(eq);
+      }
+    }
+
+    return NextResponse.json({
+      record,
+      createdEquipments,
+    }, { status: 201 });
   }
 );
