@@ -104,7 +104,7 @@ export default function DashboardPage() {
   const [form, setForm] = useState(emptyForm);
   const [isSaving, setIsSaving] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [showRecords, setShowRecords] = useState(false);
+  const [showRecords, setShowRecords] = useState(true);
   const [recordSearch, setRecordSearch] = useState("");
   const [toast, setToast] = useState<{ msg: string; type: "success" | "error" } | null>(null);
 
@@ -265,6 +265,49 @@ export default function DashboardPage() {
       saleDate: rec.saleDate, quotationRef: rec.quotationRef, note: rec.note || "",
     });
     setShowForm(true);
+  };
+
+  // Quick click-to-edit from rankings
+  const handleSalespersonClick = (s: SalespersonStat) => {
+    setShowRecords(true);
+    const matching = salesRecords.filter((r) =>
+      s.name === "ไม่ระบุเซลล์"
+        ? !r.salespersonId || !r.salespersonName
+        : r.salespersonId === s.id || r.salespersonName === s.name
+    );
+    if (matching.length === 1) {
+      handleEdit(matching[0]);
+    } else {
+      setRecordSearch(s.name === "ไม่ระบุเซลล์" ? "" : s.name);
+      document.getElementById("sales-records-section")?.scrollIntoView({ behavior: "smooth" });
+    }
+  };
+
+  const handleProductClick = (p: TopItem) => {
+    setShowRecords(true);
+    const cleanName = stripHtml(p.name);
+    const matching = salesRecords.filter(
+      (r) => r.productId === p.id || stripHtml(r.productName) === cleanName
+    );
+    if (matching.length === 1) {
+      handleEdit(matching[0]);
+    } else {
+      setRecordSearch(cleanName);
+      document.getElementById("sales-records-section")?.scrollIntoView({ behavior: "smooth" });
+    }
+  };
+
+  const handleCustomerClick = (c: TopItem) => {
+    setShowRecords(true);
+    const matching = salesRecords.filter(
+      (r) => r.companyId === c.id || r.customerName === c.name || r.companyName === c.name
+    );
+    if (matching.length === 1) {
+      handleEdit(matching[0]);
+    } else {
+      setRecordSearch(c.name === "ไม่ระบุ" ? "" : c.name);
+      document.getElementById("sales-records-section")?.scrollIntoView({ behavior: "smooth" });
+    }
   };
 
   // Export Excel
@@ -472,7 +515,7 @@ export default function DashboardPage() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
           {/* Top Products */}
           <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
-            <h2 className="text-lg font-bold text-gray-800 mb-4">🏆 Top 10 สินค้าขายดี</h2>
+            <h2 className="text-lg font-bold text-gray-800 mb-4">🏆 Top 10 สินค้าขายดี <span className="text-xs font-normal text-indigo-600 ml-2 cursor-pointer">(คลิกเพื่อดู/แก้ไข)</span></h2>
             {loading ? (
               <div className="space-y-3">{Array.from({ length: 5 }).map((_, i) => (
                 <div key={i} className="flex gap-3 animate-pulse">
@@ -482,9 +525,9 @@ export default function DashboardPage() {
                 </div>
               ))}</div>
             ) : data && data.topProducts.length > 0 ? (
-              <div className="space-y-3">
+              <div className="space-y-2">
                 {data.topProducts.map((p, i) => (
-                  <div key={p.id} className="flex items-center gap-3">
+                  <div key={p.id} onClick={() => handleProductClick(p)} className="flex items-center gap-3 p-2 rounded-xl hover:bg-indigo-50/50 cursor-pointer transition-colors">
                     <div className="w-7 h-7 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center text-xs font-bold shrink-0">{i + 1}</div>
                     <div className="flex-1 min-w-0">
                       <div className="text-sm font-medium text-gray-800 truncate">{stripHtml(p.name)}</div>
@@ -504,7 +547,7 @@ export default function DashboardPage() {
 
           {/* Top Customers */}
           <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
-            <h2 className="text-lg font-bold text-gray-800 mb-4">🏢 Top 10 ลูกค้า</h2>
+            <h2 className="text-lg font-bold text-gray-800 mb-4">🏢 Top 10 ลูกค้า <span className="text-xs font-normal text-amber-600 ml-2 cursor-pointer">(คลิกเพื่อดู/แก้ไข)</span></h2>
             {loading ? (
               <div className="space-y-3">{Array.from({ length: 5 }).map((_, i) => (
                 <div key={i} className="flex gap-3 animate-pulse">
@@ -514,9 +557,9 @@ export default function DashboardPage() {
                 </div>
               ))}</div>
             ) : data && data.topCustomers.length > 0 ? (
-              <div className="space-y-3">
+              <div className="space-y-2">
                 {data.topCustomers.map((c, i) => (
-                  <div key={c.id} className="flex items-center gap-3">
+                  <div key={c.id} onClick={() => handleCustomerClick(c)} className="flex items-center gap-3 p-2 rounded-xl hover:bg-amber-50/50 cursor-pointer transition-colors">
                     <div className="w-7 h-7 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center text-xs font-bold shrink-0">{i + 1}</div>
                     <div className="flex-1 min-w-0">
                       <div className="text-sm font-medium text-gray-800 truncate">{c.name}</div>
@@ -537,7 +580,9 @@ export default function DashboardPage() {
 
         {/* ── Salesperson Leaderboard ──────────────────────────────────────── */}
         <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 mb-8">
-          <h2 className="text-lg font-bold text-gray-800 mb-4">👤 ผลงานเซลล์</h2>
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-lg font-bold text-gray-800">👤 ผลงานเซลล์ <span className="text-xs font-normal text-indigo-600 ml-2">(คลิกแถวเพื่อดู/แก้ไขยอดขาย)</span></h2>
+          </div>
           {loading ? (
             <div className="space-y-4">{Array.from({ length: 3 }).map((_, i) => (
               <div key={i} className="flex gap-4 animate-pulse">
@@ -561,11 +606,14 @@ export default function DashboardPage() {
                 </thead>
                 <tbody>
                   {data.salespersonLeaderboard.map((s, i) => (
-                    <tr key={s.id} className="border-t border-gray-50">
+                    <tr key={s.id} onClick={() => handleSalespersonClick(s)} className="border-t border-gray-50 hover:bg-indigo-50/40 cursor-pointer transition-colors">
                       <td className="py-3 pr-4">
                         <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold ${i === 0 ? "bg-yellow-100 text-yellow-600" : i === 1 ? "bg-gray-200 text-gray-600" : i === 2 ? "bg-orange-100 text-orange-600" : "bg-gray-100 text-gray-500"}`}>{i + 1}</div>
                       </td>
-                      <td className="py-3 pr-4 font-medium text-gray-800">{s.name}</td>
+                      <td className="py-3 pr-4 font-medium text-gray-800 flex items-center gap-2">
+                        {s.name}
+                        <span className="text-xs px-2 py-0.5 bg-indigo-50 text-indigo-600 rounded-full font-normal opacity-75 hover:opacity-100">✏️ แก้ไข</span>
+                      </td>
                       <td className="py-3 pr-4 text-right font-semibold text-gray-800">฿{fmt(s.revenue)}</td>
                       <td className="py-3 pr-4 text-right text-gray-600">{s.deals}</td>
                       <td className="py-3 pr-4 text-right">
@@ -589,16 +637,26 @@ export default function DashboardPage() {
 
         {/* ── Sales Records Table ──────────────────────────────────────────── */}
         {showRecords && (
-          <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 mb-8">
+          <div id="sales-records-section" className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 mb-8 scroll-mt-6">
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
-              <h2 className="text-lg font-bold text-gray-800">📋 รายการขาย ({filteredSalesRecords.length})</h2>
-              <input
-                type="text"
-                value={recordSearch}
-                onChange={(e) => setRecordSearch(e.target.value)}
-                placeholder="🔍 ค้นหาสินค้า, ลูกค้า, บริษัท, เซลล์..."
-                className="px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm w-full sm:w-72 focus:bg-white focus:ring-2 focus:ring-indigo-200 outline-none"
-              />
+              <div>
+                <h2 className="text-lg font-bold text-gray-800">📋 รายการขาย ({filteredSalesRecords.length})</h2>
+                <p className="text-xs text-gray-500">คลิกที่แถวหรือกดปุ่ม "✏️ แก้ไข" เพื่อแก้ไขรายละเอียดของยอดขาย</p>
+              </div>
+              <div className="flex gap-2 w-full sm:w-auto">
+                <input
+                  type="text"
+                  value={recordSearch}
+                  onChange={(e) => setRecordSearch(e.target.value)}
+                  placeholder="🔍 ค้นหาสินค้า, ลูกค้า, บริษัท, เซลล์..."
+                  className="px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm w-full sm:w-72 focus:bg-white focus:ring-2 focus:ring-indigo-200 outline-none"
+                />
+                {recordSearch && (
+                  <button onClick={() => setRecordSearch("")} className="px-3 py-2 text-xs bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-200">
+                    ล้าง
+                  </button>
+                )}
+              </div>
             </div>
             {filteredSalesRecords.length > 0 ? (
               <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
@@ -611,26 +669,44 @@ export default function DashboardPage() {
                       <th className="pb-3 pr-3">เซลล์</th>
                       <th className="pb-3 pr-3 text-right">จำนวน</th>
                       <th className="pb-3 pr-3 text-right">ยอดรวม</th>
-                      <th className="pb-3" />
+                      <th className="pb-3 text-right pr-2">การจัดการ</th>
                     </tr>
                   </thead>
                   <tbody>
                     {filteredSalesRecords.map((r) => (
-                      <tr key={r.id} className="border-t border-gray-50 hover:bg-gray-50/50 cursor-pointer transition-colors" onClick={() => handleEdit(r)}>
+                      <tr key={r.id} className="border-t border-gray-50 hover:bg-indigo-50/30 cursor-pointer transition-colors group" onClick={() => handleEdit(r)}>
                         <td className="py-3 pr-3 text-sm text-gray-600">{r.saleDate}</td>
                         <td className="py-3 pr-3 text-sm font-medium text-gray-800">{stripHtml(r.productName)}</td>
                         <td className="py-3 pr-3">
                           <div className="text-sm text-gray-800">{r.customerName || "—"}</div>
                           <div className="text-xs text-gray-400">{r.companyName || ""}</div>
                         </td>
-                        <td className="py-3 pr-3 text-sm text-gray-600">{r.salespersonName || "—"}</td>
+                        <td className="py-3 pr-3 text-sm text-gray-600">
+                          {r.salespersonName ? (
+                            <span className="font-medium text-gray-700">{r.salespersonName}</span>
+                          ) : (
+                            <span className="text-amber-600 bg-amber-50 px-2 py-0.5 rounded text-xs">ไม่ระบุเซลล์</span>
+                          )}
+                        </td>
                         <td className="py-3 pr-3 text-sm text-right text-gray-600">{r.qty}</td>
                         <td className="py-3 pr-3 text-sm text-right font-semibold text-gray-800">฿{fmtDec(r.totalAmount)}</td>
-                        <td className="py-3 text-right">
-                          <button
-                            onClick={(e) => { e.stopPropagation(); handleDelete(r.id); }}
-                            className="text-red-400 hover:text-red-600 transition-colors p-1"
-                          >🗑️</button>
+                        <td className="py-3 text-right pr-2">
+                          <div className="flex items-center justify-end gap-1.5">
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handleEdit(r); }}
+                              className="px-2.5 py-1 text-xs font-semibold bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded-lg transition-colors"
+                              title="แก้ไขยอดขาย"
+                            >
+                              ✏️ แก้ไข
+                            </button>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handleDelete(r.id); }}
+                              className="p-1.5 text-gray-400 hover:text-red-600 transition-colors rounded-lg hover:bg-red-50"
+                              title="ลบรายการ"
+                            >
+                              🗑️
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}
