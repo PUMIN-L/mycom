@@ -4,39 +4,9 @@ import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { sanitizePlainText } from "./sanitizeHtml";
 
 // ── Types ────────────────────────────────────────────────────────────────────
+import type { SalesRecord, CostItem } from "./types";
 
-export interface SalesRecord {
-  id: string;
-  salespersonId: string;
-  customerId: string;
-  companyId: string;
-  productId: string;
-  productName: string;
-  categoryId: number | null;
-  qty: number;
-  unitPrice: number;
-  totalAmount: number;
-  costAmount: number;
-  saleDate: string; // YYYY-MM-DD
-  quotationRef: string;
-  equipmentId: string | null;
-  note: string;
-  createdAt: string;
-  // Joined display fields (from list queries)
-  salespersonName?: string;
-  customerName?: string;
-  companyName?: string;
-}
 
-export interface CostItem {
-  id: string;
-  salesRecordId: string;
-  costType: string; // product_cost | transport | shipping | service_visit | repair | commission | other
-  label: string;
-  amount: number;
-  note: string;
-  createdAt: string;
-}
 
 export const COST_TYPE_LABELS: Record<string, string> = {
   product_cost: "ต้นทุนสินค้า",
@@ -97,7 +67,7 @@ function formatLocalDate(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
-function cleanDate(d?: string): string | undefined {
+function cleanDate(d?: string | null): string | undefined {
   if (!d) return undefined;
   const s = String(d).trim().substring(0, 10);
   return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : undefined;
@@ -121,6 +91,7 @@ function cleanInput(data: Partial<SalesRecord>) {
     unitPrice: Math.max(0, Math.min(999999999.99, Number(data.unitPrice) || 0)),
     totalAmount: Math.max(0, Math.min(9999999999.99, Number(data.totalAmount) || 0)),
     costAmount: Math.max(0, Math.min(9999999999.99, Number(data.costAmount) || 0)),
+    saleType: data.saleType === "service" ? "service" : "equipment",
     saleDate: (() => {
       const raw = sanitizePlainText(data.saleDate || "").substring(0, 10);
       // Validate YYYY-MM-DD format and that it's a real date
@@ -130,6 +101,12 @@ function cleanInput(data: Partial<SalesRecord>) {
       return raw;
     })(),
     quotationRef: sanitizePlainText(data.quotationRef || "").substring(0, 255),
+    poRef: sanitizePlainText(data.poRef || "").substring(0, 255),
+    deliveryRef: sanitizePlainText(data.deliveryRef || "").substring(0, 255),
+    invoiceRef: sanitizePlainText(data.invoiceRef || "").substring(0, 255),
+    receiptRef: sanitizePlainText(data.receiptRef || "").substring(0, 255),
+    warrantyStartDate: cleanDate(data.warrantyStartDate) || null,
+    warrantyEndDate: cleanDate(data.warrantyEndDate) || null,
     equipmentId: data.equipmentId
       ? sanitizePlainText(data.equipmentId).substring(0, 36)
       : null,
@@ -174,13 +151,16 @@ export async function addSalesRecord(
   await query(
     `INSERT INTO sales_records
        (id, salespersonId, customerId, companyId, productId, productName,
-        categoryId, qty, unitPrice, totalAmount, costAmount, saleDate, quotationRef,
+        categoryId, qty, unitPrice, totalAmount, costAmount, saleType, saleDate, quotationRef,
+        poRef, deliveryRef, invoiceRef, receiptRef, warrantyStartDate, warrantyEndDate,
         equipmentId, note, createdAt)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id, v.salespersonId, v.customerId, v.companyId, v.productId,
       v.productName, v.categoryId, v.qty, v.unitPrice, totalAmount,
-      v.costAmount, v.saleDate, v.quotationRef, v.equipmentId, v.note, now,
+      v.costAmount, v.saleType, v.saleDate, v.quotationRef,
+      v.poRef, v.deliveryRef, v.invoiceRef, v.receiptRef, v.warrantyStartDate, v.warrantyEndDate,
+      v.equipmentId, v.note, now,
     ]
   );
   return (await getSalesRecord(id))!;
@@ -206,13 +186,16 @@ export async function updateSalesRecord(
     `UPDATE sales_records SET
        salespersonId = ?, customerId = ?, companyId = ?, productId = ?,
        productName = ?, categoryId = ?, qty = ?, unitPrice = ?,
-       totalAmount = ?, costAmount = ?, saleDate = ?, quotationRef = ?, equipmentId = ?,
-       note = ?
+       totalAmount = ?, costAmount = ?, saleType = ?, saleDate = ?, quotationRef = ?,
+       poRef = ?, deliveryRef = ?, invoiceRef = ?, receiptRef = ?, warrantyStartDate = ?, warrantyEndDate = ?,
+       equipmentId = ?, note = ?
      WHERE id = ?`,
     [
       v.salespersonId, v.customerId, v.companyId, v.productId,
       v.productName, v.categoryId, v.qty, v.unitPrice, totalAmount,
-      v.costAmount, v.saleDate, v.quotationRef, v.equipmentId, v.note, id,
+      v.costAmount, v.saleType, v.saleDate, v.quotationRef,
+      v.poRef, v.deliveryRef, v.invoiceRef, v.receiptRef, v.warrantyStartDate, v.warrantyEndDate,
+      v.equipmentId, v.note, id,
     ]
   );
   return getSalesRecord(id);
