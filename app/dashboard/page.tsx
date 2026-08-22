@@ -217,6 +217,14 @@ export default function DashboardPage() {
       showToast("กรุณาระบุชื่อสินค้า", "error");
       return;
     }
+    if (!form.qty || form.qty <= 0) {
+      showToast("กรุณาระบุจำนวนสินค้า (ต้องมากกว่า 0)", "error");
+      return;
+    }
+    if (!form.unitPrice || form.unitPrice <= 0) {
+      showToast("กรุณาระบุราคาต่อหน่วย (ต้องมากกว่า 0)", "error");
+      return;
+    }
     setIsSaving(true);
     try {
       const url = editingId ? `/api/admin/sales/${editingId}` : "/api/admin/sales";
@@ -795,19 +803,51 @@ export default function DashboardPage() {
 
               <div className="grid grid-cols-3 gap-4">
                 <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1.5">จำนวน</label>
-                  <input type="number" min={1} value={form.qty} onChange={(e) => { const q = Number(e.target.value) || 1; setForm({ ...form, qty: q, totalAmount: q * form.unitPrice }); }}
-                    className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none" />
+                  <label className="block text-sm font-semibold text-gray-700 mb-1.5">จำนวน <span className="text-red-500">*</span></label>
+                  <input
+                    type="number"
+                    min={1}
+                    step={1}
+                    value={form.qty || ""}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      const q = val === "" ? 0 : Math.max(0, parseInt(val, 10) || 0);
+                      setForm({ ...form, qty: q, totalAmount: q * form.unitPrice });
+                    }}
+                    placeholder="1"
+                    className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none"
+                  />
                 </div>
                 <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1.5">ราคาต่อหน่วย (฿)</label>
-                  <input type="number" min={0} value={form.unitPrice} onChange={(e) => { const p = Number(e.target.value) || 0; setForm({ ...form, unitPrice: p, totalAmount: form.qty * p }); }}
-                    className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none" />
+                  <label className="block text-sm font-semibold text-gray-700 mb-1.5">ราคาต่อหน่วย (฿) <span className="text-red-500">*</span></label>
+                  <input
+                    type="number"
+                    min={0.01}
+                    step="any"
+                    value={form.unitPrice || ""}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      const p = val === "" ? 0 : Math.max(0, parseFloat(val) || 0);
+                      setForm({ ...form, unitPrice: p, totalAmount: (form.qty || 1) * p });
+                    }}
+                    placeholder="0.00"
+                    className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none font-medium text-gray-800"
+                  />
                 </div>
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1.5">ยอดรวม (฿)</label>
-                  <input type="number" min={0} value={form.totalAmount} onChange={(e) => setForm({ ...form, totalAmount: Number(e.target.value) || 0 })}
-                    className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none bg-gray-50" />
+                  <input
+                    type="number"
+                    min={0}
+                    step="any"
+                    value={form.totalAmount || ""}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setForm({ ...form, totalAmount: val === "" ? 0 : Math.max(0, parseFloat(val) || 0) });
+                    }}
+                    placeholder="0.00"
+                    className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none bg-gray-50 font-semibold text-gray-800"
+                  />
                 </div>
               </div>
 
