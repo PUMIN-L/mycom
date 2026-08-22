@@ -64,9 +64,9 @@ function CreateContentInner() {
     message: ""
   });
 
-  // ── Unsaved-changes guard (beforeunload only) ──
+  // ── Unsaved-changes guard ──
   const formData = { title, blocks, selectedProductId };
-  useLeaveGuard(formData);
+  const { guardedNavigate, LeaveGuardModal, setSnapshot } = useLeaveGuard(formData);
 
   // Products from API
   const [allProducts, setAllProducts] = useState<ProductItem[]>([]);
@@ -347,6 +347,7 @@ function CreateContentInner() {
       }
 
       // Redirect to showcase page
+      setSnapshot();
       router.push(`/showcase/${contentData.id}`);
     } catch (error: any) {
       console.error(error);
@@ -357,11 +358,23 @@ function CreateContentInner() {
   return (
     <div className="min-h-screen bg-gray-50 py-12">
       {toast && <Toast message={toast.message} type={toast.type} />}
+      <LeaveGuardModal onSave={handleSubmit} />
       <div className="max-w-4xl mx-auto px-4">
-        <h1 className="text-4xl font-bold mb-2 text-gray-900">Create Content</h1>
-        <p className="text-gray-600 mb-8">
-          Build your content by adding text and images
-        </p>
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
+          <div>
+            <h1 className="text-4xl font-bold mb-2 text-gray-900">Create Content</h1>
+            <p className="text-gray-600">
+              Build your content by adding text and images
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => guardedNavigate("/showcase")}
+            className="px-5 py-2.5 bg-white border border-gray-300 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 transition shadow-sm self-start sm:self-auto flex items-center gap-1.5 text-sm"
+          >
+            🏠 กลับไปหน้าระบบจัดการ
+          </button>
+        </div>
 
         {/* Title Input */}
         <div className="bg-white rounded-lg shadow p-6 mb-6">
