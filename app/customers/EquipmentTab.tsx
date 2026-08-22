@@ -11,6 +11,16 @@ import type {
 } from "../lib/types";
 
 /** Strip HTML tags from rich-text product titles for plain-text display. */
+/** Only allow Cloudinary image URLs to prevent XSS/SSRF via img src */
+function safeImageUrl(url: string | undefined | null): string | null {
+  if (!url) return null;
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname === "res.cloudinary.com" && parsed.protocol === "https:") return url;
+  } catch { /* invalid URL */ }
+  return null;
+}
+
 function stripHtml(html: string | null | undefined): string {
   if (!html) return "";
   // Use the browser's DOMParser to safely extract text content.
@@ -601,8 +611,8 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
                     </td>
                     <td className="py-4 pr-4">
                       <div className="flex items-center gap-2">
-                        {eq.productImage && (
-                          <img src={eq.productImage} alt="" className="w-8 h-8 rounded object-cover border border-gray-100 bg-gray-50 shrink-0" />
+                        {safeImageUrl(eq.productImage) && (
+                          <img src={safeImageUrl(eq.productImage)!} alt="" className="w-8 h-8 rounded object-cover border border-gray-100 bg-gray-50 shrink-0" />
                         )}
                         <span className="text-sm text-gray-700">{stripHtml(eq.productName) || eq.productId}</span>
                       </div>

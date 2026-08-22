@@ -100,6 +100,7 @@ export default function RootLayout({
             <NavProvider>{children}</NavProvider>
           </AuthProvider>
         </LanguageProvider>
+        <div id="root-portal" />
       </body>
     </html>
   );

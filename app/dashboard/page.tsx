@@ -10,7 +10,20 @@ import {
 import SearchableDropdown from "../components/SearchableDropdown";
 import type { SearchableDropdownOption } from "../components/SearchableDropdown";
 import FormattedNumberInput from "../components/FormattedNumberInput";
-import type { CustomerEquipment } from "../lib/types";
+import ConfirmDialog from "../components/ConfirmDialog";
+import type { SalesRecord, CustomerEquipment } from "../lib/types";
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+/** Only allow Cloudinary image URLs to prevent XSS/SSRF via img src */
+function safeImageUrl(url: string | undefined | null): string | null {
+  if (!url) return null;
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname === "res.cloudinary.com" && parsed.protocol === "https:") return url;
+  } catch { /* invalid URL */ }
+  return null;
+}
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -31,24 +44,6 @@ interface DashboardData {
 interface TopItem { id: string; name: string; revenue: number; qty: number; deals: number; percentage: number }
 interface SalespersonStat { id: string; name: string; revenue: number; deals: number; percentage: number; avgDealSize: number }
 interface Insight { type: "positive" | "warning" | "opportunity" | "info"; icon: string; title: string; description: string }
-interface SalesRecord {
-  id: string; salespersonId: string; customerId: string; companyId: string;
-  productId: string; productName: string;
-  productImage?: string; categoryId: number | null;
-  qty: number; unitPrice: number; totalAmount: number; costAmount: number;
-  saleType?: string;
-  saleDate: string;
-  quotationRef: string;
-  poRef?: string;
-  deliveryRef?: string;
-  invoiceRef?: string;
-  receiptRef?: string;
-  warrantyStartDate?: string | null;
-  warrantyEndDate?: string | null;
-  serialNumbers?: string[];
-  equipmentId: string | null; note: string; createdAt: string;
-  salespersonName?: string; customerName?: string; companyName?: string;
-}
 interface CostItemLocal {
   id?: string;
   costType: string;
@@ -315,7 +310,9 @@ export default function DashboardPage() {
       // This prevents a ghost costAmount if the sync endpoint fails.
       const payload = { ...form };
       const res = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-      if (res.ok) {
+      if (res.ok || res.status === 207) {
+        // 207 = sales record saved but equipment partially failed
+        const is207 = res.status === 207;
         const savedData = await res.json();
         const savedRecord = method === "POST" ? savedData.record : savedData;
         const recordId = savedRecord?.id || editingId;
@@ -345,7 +342,11 @@ export default function DashboardPage() {
           return;
         }
 
-        showToast(editingId ? "แก้ไขสำเร็จ" : "บันทึกยอดขายสำเร็จ", "success");
+        if (is207 && savedData.warning) {
+          showToast(`บันทึกยอดขายสำเร็จ แต่: ${savedData.warning}`, "error");
+        } else {
+          showToast(editingId ? "แก้ไขสำเร็จ" : "บันทึกยอดขายสำเร็จ", "success");
+        }
         setShowForm(false);
         setEditingId(null);
         setForm(emptyForm());
@@ -361,11 +362,13 @@ export default function DashboardPage() {
     setIsSaving(false);
   };
 
-  // Delete
-  const handleDelete = async (id: string) => {
-    if (!confirm("ลบรายการนี้?")) return;
+  // Delete with confirm dialog
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const handleDelete = (id: string) => setDeleteTarget(id);
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
     try {
-      const res = await fetch(`/api/admin/sales/${id}`, { method: "DELETE" });
+      const res = await fetch(`/api/admin/sales/${deleteTarget}`, { method: "DELETE" });
       if (res.ok) {
         showToast("ลบสำเร็จ", "success");
         fetchDashboard();
@@ -377,6 +380,7 @@ export default function DashboardPage() {
     } catch {
       showToast("เกิดข้อผิดพลาดในการลบ", "error");
     }
+    setDeleteTarget(null);
   };
 
   // Edit
@@ -551,6 +555,17 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100">
+      {/* Delete Confirmation Dialog */}
+      {deleteTarget && (
+        <ConfirmDialog
+          title="ยืนยันการลบ"
+          message="ต้องการลบรายการขายนี้หรือไม่? การลบจะไม่สามารถย้อนกลับได้"
+          confirmText="ลบ"
+          cancelText="ยกเลิก"
+          onConfirm={confirmDelete}
+          onCancel={() => setDeleteTarget(null)}
+        />
+      )}
       {/* Toast */}
       {toast && (
         <div className={`fixed top-6 right-6 z-[100] px-5 py-3 rounded-xl shadow-lg text-white font-semibold animate-fade-in ${toast.type === "success" ? "bg-emerald-500" : "bg-red-500"}`}>
@@ -946,13 +961,13 @@ export default function DashboardPage() {
                         <td className="py-3 pr-3 text-sm text-gray-600">{r.saleDate}</td>
                         <td className="py-3 pr-3 text-sm font-medium text-gray-800">
                           {r.saleType === "service" ? (
-                            <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-700 mr-1.5" title="ขายงาน Service">🔧</span>
+                            <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-700 mr-1.5" title="บริการ">S</span>
                           ) : (
-                            <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-bold bg-indigo-100 text-indigo-700 mr-1.5" title="ขายเครื่อง">💻</span>
+                            <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-bold bg-indigo-100 text-indigo-700 mr-1.5" title="อุปกรณ์">E</span>
                           )}
                           {stripHtml(r.productName)}
-                          {r.productImage && (
-                            <img src={r.productImage} alt="" className="inline-block ml-2 w-6 h-6 rounded object-cover border border-gray-100 bg-gray-50" />
+                          {safeImageUrl(r.productImage) && (
+                            <img src={safeImageUrl(r.productImage)!} alt="" className="inline-block ml-2 w-6 h-6 rounded object-cover border border-gray-100 bg-gray-50" />
                           )}
                         </td>
                         <td className="py-3 pr-3">

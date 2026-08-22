@@ -79,18 +79,22 @@ export const POST = withRoute(
 
     const record = await addSalesRecord(body);
 
-    // Auto-create CustomerEquipments if customer is provided
+    // Auto-create CustomerEquipments only for equipment sales with a customer
     const createdEquipments = [];
-    if (body.customerId && body.customerId.trim()) {
-      try {
-        // Prevent DoS: Cap the number of auto-created equipments to 50
-        const maxAutoCreate = 50;
-        let qty = Math.max(1, Number(body.qty) || 1);
-        if (qty > maxAutoCreate) qty = maxAutoCreate;
-        
-        const serialNumbers = Array.isArray(body.serialNumbers) ? body.serialNumbers : [];
-        
-        for (let i = 0; i < qty; i++) {
+    let equipmentWarning: string | null = null;
+    if (
+      body.saleType === "equipment" &&
+      body.customerId &&
+      body.customerId.trim()
+    ) {
+      const maxAutoCreate = 50;
+      let qty = Math.max(1, Number(body.qty) || 1);
+      if (qty > maxAutoCreate) qty = maxAutoCreate;
+      
+      const serialNumbers = Array.isArray(body.serialNumbers) ? body.serialNumbers : [];
+      
+      for (let i = 0; i < qty; i++) {
+        try {
           const eq = await addEquipment({
             salesRecordId: record.id,
             customerId: body.customerId,
@@ -105,14 +109,22 @@ export const POST = withRoute(
             status: "Active",
           });
           createdEquipments.push(eq);
+        } catch (err: any) {
+          console.error(`Failed to auto-create equipment #${i + 1}:`, err);
+          equipmentWarning = `สร้างอุปกรณ์ได้ ${createdEquipments.length}/${qty} ชิ้น: ${err.message}`;
+          break;
         }
-      } catch (err: any) {
-        console.error("Failed to auto-create equipment:", err);
-        return NextResponse.json(
-          { error: `สร้างยอดขายสำเร็จ แต่ระบบไม่สามารถเพิ่มอุปกรณ์ได้: ${err.message}` },
-          { status: 500 }
-        );
       }
+    }
+
+    // If equipment creation partially failed, return 207 Multi-Status
+    // so the client knows the sales record was saved but equipment is incomplete
+    if (equipmentWarning) {
+      return NextResponse.json({
+        record,
+        createdEquipments,
+        warning: equipmentWarning,
+      }, { status: 207 });
     }
 
     return NextResponse.json({

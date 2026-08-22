@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import ReactDatePicker from 'react-datepicker';
+import type { ReactDatePickerCustomHeaderProps } from 'react-datepicker';
 import 'react-datepicker/dist/react-datepicker.css';
 
 interface DatePickerProps {
@@ -15,7 +16,15 @@ const months = [
   "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"
 ];
 
-function CustomHeader({ date, changeYear, changeMonth, decreaseMonth, increaseMonth, prevMonthButtonDisabled, nextMonthButtonDisabled }: any) {
+function CustomHeader({
+  date,
+  changeYear,
+  changeMonth,
+  decreaseMonth,
+  increaseMonth,
+  prevMonthButtonDisabled,
+  nextMonthButtonDisabled,
+}: ReactDatePickerCustomHeaderProps) {
   const [showMonthDropdown, setShowMonthDropdown] = useState(false);
   const [showYearDropdown, setShowYearDropdown] = useState(false);
   
@@ -24,6 +33,7 @@ function CustomHeader({ date, changeYear, changeMonth, decreaseMonth, increaseMo
 
   const monthRef = useRef<HTMLDivElement>(null);
   const yearRef = useRef<HTMLDivElement>(null);
+  const selectedYearRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -37,6 +47,13 @@ function CustomHeader({ date, changeYear, changeMonth, decreaseMonth, increaseMo
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
+
+  // Auto-scroll to selected year when dropdown opens
+  useEffect(() => {
+    if (showYearDropdown && selectedYearRef.current) {
+      selectedYearRef.current.scrollIntoView({ block: 'center' });
+    }
+  }, [showYearDropdown]);
 
   return (
     <div className="flex items-center justify-between px-2 py-2 bg-white relative">
@@ -89,6 +106,7 @@ function CustomHeader({ date, changeYear, changeMonth, decreaseMonth, increaseMo
               {years.map((option) => (
                 <button
                   key={option}
+                  ref={date.getFullYear() === option ? selectedYearRef : undefined}
                   type="button"
                   onClick={() => { changeYear(option); setShowYearDropdown(false); }}
                   className={`w-full text-left px-4 py-2 text-sm ${date.getFullYear() === option ? 'bg-indigo-50 text-indigo-700 font-bold' : 'text-gray-700 hover:bg-gray-50 font-medium'}`}
