@@ -276,3 +276,5 @@ input[type="number"] {
 .react-datepicker__navigation:hover *::before {
   border-color: #111827 !important;
 }
+
+.react-datepicker-popper { z-index: 9999 !important; }

@@ -123,6 +123,7 @@ export default function DatePicker({ selected, onChange, className, placeholderT
       placeholderText={placeholderText || "YYYY-MM-DD"}
       isClearable={isClearable}
       popperPlacement="bottom-start"
+      portalId="root-portal"
       renderCustomHeader={CustomHeader}
     />
   );
