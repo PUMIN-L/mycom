@@ -279,7 +279,9 @@ export default function DashboardPage() {
       handleEdit(matching[0]);
     } else {
       setRecordSearch(s.name === "ไม่ระบุเซลล์" ? "" : s.name);
-      document.getElementById("sales-records-section")?.scrollIntoView({ behavior: "smooth" });
+      setTimeout(() => {
+        document.getElementById("sales-records-section")?.scrollIntoView({ behavior: "smooth" });
+      }, 50);
     }
   };
 
@@ -293,7 +295,9 @@ export default function DashboardPage() {
       handleEdit(matching[0]);
     } else {
       setRecordSearch(cleanName);
-      document.getElementById("sales-records-section")?.scrollIntoView({ behavior: "smooth" });
+      setTimeout(() => {
+        document.getElementById("sales-records-section")?.scrollIntoView({ behavior: "smooth" });
+      }, 50);
     }
   };
 
@@ -306,7 +310,9 @@ export default function DashboardPage() {
       handleEdit(matching[0]);
     } else {
       setRecordSearch(c.name === "ไม่ระบุ" ? "" : c.name);
-      document.getElementById("sales-records-section")?.scrollIntoView({ behavior: "smooth" });
+      setTimeout(() => {
+        document.getElementById("sales-records-section")?.scrollIntoView({ behavior: "smooth" });
+      }, 50);
     }
   };
 
