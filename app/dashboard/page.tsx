@@ -13,11 +13,12 @@ import type { SearchableDropdownOption } from "../components/SearchableDropdown"
 
 interface OverviewData {
   revenue: number; deals: number; newCustomers: number; quotations: number;
+  cost: number; profit: number;
 }
 interface DashboardData {
   overview: { currentMonth: OverviewData; previousMonth: OverviewData; expiringWarranties: number };
-  revenueMonthly: { period: string; revenue: number; deals: number }[];
-  revenueQuarterly: { period: string; revenue: number; deals: number }[];
+  revenueMonthly: { period: string; revenue: number; deals: number; cost: number; profit: number; margin: number }[];
+  revenueQuarterly: { period: string; revenue: number; deals: number; cost: number; profit: number; margin: number }[];
   revenueByCategory: TopItem[];
   topProducts: TopItem[];
   topCustomers: TopItem[];
@@ -30,10 +31,28 @@ interface Insight { type: "positive" | "warning" | "opportunity" | "info"; icon:
 interface SalesRecord {
   id: string; salespersonId: string; customerId: string; companyId: string;
   productId: string; productName: string; categoryId: number | null;
-  qty: number; unitPrice: number; totalAmount: number; saleDate: string;
+  qty: number; unitPrice: number; totalAmount: number; costAmount: number;
+  saleDate: string;
   quotationRef: string; equipmentId: string | null; note: string; createdAt: string;
   salespersonName?: string; customerName?: string; companyName?: string;
 }
+interface CostItemLocal {
+  id?: string;
+  costType: string;
+  label: string;
+  amount: number;
+  note: string;
+}
+const COST_TYPE_LABELS: Record<string, string> = {
+  product_cost: "ต้นทุนสินค้า",
+  transport: "ค่ารถ / ค่าเดินทาง",
+  shipping: "ค่าขนส่ง",
+  service_visit: "ค่าเซอร์วิส / ค่าติดตั้ง",
+  repair: "ค่าซ่อม",
+  commission: "ค่าคอมมิชชั่น",
+  other: "อื่นๆ",
+};
+const COST_TYPE_OPTIONS = Object.entries(COST_TYPE_LABELS).map(([value, label]) => ({ value, label }));
 interface Product { id: string; title_th: string; title_en: string; categoryId: number }
 interface Customer { id: string; name: string; companyId: string; companyName?: string }
 interface Company { id: string; name: string }
@@ -107,6 +126,9 @@ export default function DashboardPage() {
   const [showRecords, setShowRecords] = useState(true);
   const [recordSearch, setRecordSearch] = useState("");
   const [toast, setToast] = useState<{ msg: string; type: "success" | "error" } | null>(null);
+  const [costItems, setCostItems] = useState<CostItemLocal[]>([]);
+  const [showCostCalc, setShowCostCalc] = useState(false);
+  const [costLoading, setCostLoading] = useState(false);
 
   const showToast = useCallback((msg: string, type: "success" | "error") => {
     setToast({ msg, type });
@@ -229,12 +251,44 @@ export default function DashboardPage() {
     try {
       const url = editingId ? `/api/admin/sales/${editingId}` : "/api/admin/sales";
       const method = editingId ? "PUT" : "POST";
-      const res = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(form) });
+      const payload = { ...form, costAmount: costTotal };
+      const res = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       if (res.ok) {
+        const savedRecord = await res.json();
+        const recordId = savedRecord.id || editingId;
+
+        // Save cost items
+        if (recordId && costItems.length > 0) {
+          // For editing: delete existing items, then re-add all
+          if (editingId) {
+            try {
+              const existingRes = await fetch(`/api/admin/sales/${recordId}/costs`);
+              if (existingRes.ok) {
+                const existing = await existingRes.json();
+                for (const item of existing.items || []) {
+                  await fetch(`/api/admin/sales/${recordId}/costs/${item.id}`, { method: "DELETE" });
+                }
+              }
+            } catch { /* ignore cleanup errors */ }
+          }
+          // Add all current cost items
+          for (const ci of costItems) {
+            if (ci.amount > 0) {
+              await fetch(`/api/admin/sales/${recordId}/costs`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(ci),
+              });
+            }
+          }
+        }
+
         showToast(editingId ? "แก้ไขสำเร็จ" : "บันทึกยอดขายสำเร็จ", "success");
         setShowForm(false);
         setEditingId(null);
         setForm(emptyForm());
+        setCostItems([]);
+        setShowCostCalc(false);
         fetchDashboard();
         fetchRecords();
       } else {
@@ -264,7 +318,7 @@ export default function DashboardPage() {
   };
 
   // Edit
-  const handleEdit = (rec: SalesRecord) => {
+  const handleEdit = async (rec: SalesRecord) => {
     setEditingId(rec.id);
     setForm({
       salespersonId: rec.salespersonId, customerId: rec.customerId, companyId: rec.companyId,
@@ -273,6 +327,38 @@ export default function DashboardPage() {
       saleDate: rec.saleDate, quotationRef: rec.quotationRef, note: rec.note || "",
     });
     setShowForm(true);
+    // Load cost items
+    setCostItems([]);
+    setShowCostCalc(false);
+    try {
+      const res = await fetch(`/api/admin/sales/${rec.id}/costs`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.items && data.items.length > 0) {
+          setCostItems(data.items.map((it: any) => ({
+            id: it.id, costType: it.costType, label: it.label,
+            amount: Number(it.amount), note: it.note || "",
+          })));
+          setShowCostCalc(true);
+        }
+      }
+    } catch { /* ignore */ }
+  };
+
+  // Cost calculator helpers
+  const costTotal = useMemo(() => costItems.reduce((sum, c) => sum + (c.amount || 0), 0), [costItems]);
+  const formProfit = (form.totalAmount || 0) - costTotal;
+  const formMargin = form.totalAmount > 0 ? Math.round((formProfit / form.totalAmount) * 10000) / 100 : 0;
+
+  const addLocalCostItem = () => {
+    setCostItems([...costItems, { costType: "product_cost", label: "", amount: 0, note: "" }]);
+    setShowCostCalc(true);
+  };
+  const removeLocalCostItem = (idx: number) => {
+    setCostItems(costItems.filter((_, i) => i !== idx));
+  };
+  const updateLocalCostItem = (idx: number, field: keyof CostItemLocal, value: string | number) => {
+    setCostItems(costItems.map((c, i) => i === idx ? { ...c, [field]: value } : c));
   };
 
   // Quick click-to-edit from rankings
@@ -342,6 +428,9 @@ export default function DashboardPage() {
         "จำนวน": r.qty,
         "ราคาต่อหน่วย": r.unitPrice,
         "ยอดรวม": r.totalAmount,
+        "ต้นทุน": r.costAmount || 0,
+        "กำไร": r.totalAmount - (r.costAmount || 0),
+        "Margin%": r.totalAmount > 0 ? Math.round(((r.totalAmount - (r.costAmount || 0)) / r.totalAmount) * 100) : 0,
         "ลูกค้า": r.customerName || "",
         "บริษัท": r.companyName || "",
         "เซลล์": r.salespersonName || "",
@@ -398,7 +487,7 @@ export default function DashboardPage() {
               onChange={(v) => setYear(Number(v))}
               className="w-32"
             />
-            <button onClick={() => { setShowForm(true); setEditingId(null); setForm(emptyForm()); }} className="px-4 py-2.5 bg-indigo-600 text-white rounded-xl text-sm font-semibold hover:bg-indigo-700 transition-all shadow-sm">
+            <button onClick={() => { setShowForm(true); setEditingId(null); setForm(emptyForm()); setCostItems([]); setShowCostCalc(false); }} className="px-4 py-2.5 bg-indigo-600 text-white rounded-xl text-sm font-semibold hover:bg-indigo-700 transition-all shadow-sm">
               + บันทึกยอดขาย
             </button>
             <button onClick={() => setShowRecords(!showRecords)} className="px-4 py-2.5 bg-white border border-gray-200 rounded-xl text-sm font-medium hover:bg-gray-50 transition-all shadow-sm">
@@ -428,18 +517,20 @@ export default function DashboardPage() {
             ))}
           </div>
         ) : ov && curM && prevM && (
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-8">
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-4 mb-8">
             {[
               { label: "ยอดขายเดือนนี้", icon: "💰", value: `฿${fmt(curM.revenue)}`, change: pctChange(curM.revenue, prevM.revenue) },
+              { label: "ต้นทุนเดือนนี้", icon: "📊", value: `฿${fmt(curM.cost)}`, change: pctChange(curM.cost, prevM.cost) },
+              { label: "กำไรเดือนนี้", icon: "💹", value: `฿${fmt(curM.profit)}`, change: pctChange(curM.profit, prevM.profit) },
+              { label: "Profit Margin", icon: "📐", value: curM.revenue > 0 ? `${Math.round((curM.profit / curM.revenue) * 100)}%` : "—", change: (() => { const curMargin = curM.revenue > 0 ? Math.round((curM.profit / curM.revenue) * 100) : 0; const prevMarginVal = prevM.revenue > 0 ? Math.round((prevM.profit / prevM.revenue) * 100) : 0; return pctChange(curMargin, prevMarginVal); })() },
               { label: "จำนวนดีล", icon: "📦", value: String(curM.deals), change: pctChange(curM.deals, prevM.deals) },
               { label: "ลูกค้าใหม่", icon: "🏢", value: String(curM.newCustomers), change: pctChange(curM.newCustomers, prevM.newCustomers) },
-              { label: "ใบเสนอราคา", icon: "📝", value: String(curM.quotations), change: pctChange(curM.quotations, prevM.quotations) },
               { label: "Conversion Rate", icon: "📈", value: `${conversionRate}%`, change: pctChange(conversionRate, prevConversionRate) },
               { label: "ประกันใกล้หมด", icon: "⏳", value: String(ov.expiringWarranties), change: { value: 0, label: "≤30 วัน", color: ov.expiringWarranties > 0 ? "text-amber-600" : "text-gray-400" } },
             ].map((card, i) => (
-              <div key={i} className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
+              <div key={i} className={`rounded-2xl p-5 shadow-sm border hover:shadow-md transition-shadow ${i === 2 ? "bg-gradient-to-br from-emerald-50 to-white border-emerald-200" : i === 3 ? "bg-gradient-to-br from-indigo-50 to-white border-indigo-200" : "bg-white border-gray-100"}`}>
                 <div className="text-sm text-gray-500 mb-1">{card.icon} {card.label}</div>
-                <div className="text-2xl font-bold text-gray-800">{card.value}</div>
+                <div className={`text-xl font-bold ${i === 2 ? "text-emerald-700" : i === 3 ? "text-indigo-700" : "text-gray-800"}`}>{card.value}</div>
                 <div className={`text-sm font-medium ${card.change.color}`}>{card.change.label}</div>
               </div>
             ))}
@@ -470,10 +561,23 @@ export default function DashboardPage() {
                   <XAxis dataKey="name" tick={{ fontSize: 12 }} />
                   <YAxis tickFormatter={(v: number) => fmt(v)} tick={{ fontSize: 11 }} />
                   <Tooltip
-                    formatter={((value: number) => [fmtDec(value) + " ฿", "ยอดขาย"]) as any}
-                    contentStyle={{ borderRadius: 12, border: "1px solid #e5e7eb" }}
+                    content={({ active, payload, label }: any) => {
+                      if (!active || !payload?.length) return null;
+                      const d = payload[0]?.payload;
+                      return (
+                        <div className="bg-white rounded-xl border border-gray-200 p-3 shadow-lg text-sm">
+                          <div className="font-semibold text-gray-700 mb-1">{label}</div>
+                          <div className="text-indigo-600">ยอดขาย: ฿{fmtDec(d?.revenue || 0)}</div>
+                          <div className="text-amber-600">ต้นทุน: ฿{fmtDec(d?.cost || 0)}</div>
+                          <div className="text-emerald-600 font-semibold">กำไร: ฿{fmtDec(d?.profit || 0)}</div>
+                          <div className="text-gray-500">Margin: {d?.margin || 0}%</div>
+                        </div>
+                      );
+                    }}
                   />
-                  <Bar dataKey="revenue" fill="#6366f1" radius={[6, 6, 0, 0]} />
+                  <Legend formatter={(value: string) => value === "revenue" ? "ยอดขาย" : "กำไร"} />
+                  <Bar dataKey="revenue" fill="#6366f1" radius={[6, 6, 0, 0]} name="revenue" />
+                  <Bar dataKey="profit" fill="#10b981" radius={[6, 6, 0, 0]} name="profit" />
                 </BarChart>
               </ResponsiveContainer>
             )}
@@ -683,6 +787,8 @@ export default function DashboardPage() {
                       <th className="pb-3 pr-3">เซลล์</th>
                       <th className="pb-3 pr-3 text-right">จำนวน</th>
                       <th className="pb-3 pr-3 text-right">ยอดรวม</th>
+                      <th className="pb-3 pr-3 text-right">กำไร</th>
+                      <th className="pb-3 pr-3 text-right">Margin</th>
                       <th className="pb-3 text-right pr-2">การจัดการ</th>
                     </tr>
                   </thead>
@@ -704,6 +810,22 @@ export default function DashboardPage() {
                         </td>
                         <td className="py-3 pr-3 text-sm text-right text-gray-600">{r.qty}</td>
                         <td className="py-3 pr-3 text-sm text-right font-semibold text-gray-800">฿{fmtDec(r.totalAmount)}</td>
+                        <td className="py-3 pr-3 text-sm text-right">
+                          {r.costAmount > 0 ? (
+                            <span className="font-semibold text-emerald-700">฿{fmtDec(r.totalAmount - r.costAmount)}</span>
+                          ) : (
+                            <span className="text-gray-400">—</span>
+                          )}
+                        </td>
+                        <td className="py-3 pr-3 text-right">
+                          {r.costAmount > 0 ? (() => {
+                            const margin = r.totalAmount > 0 ? Math.round(((r.totalAmount - r.costAmount) / r.totalAmount) * 100) : 0;
+                            const color = margin >= 20 ? "bg-emerald-100 text-emerald-700" : margin >= 10 ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700";
+                            return <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${color}`}>{margin}%</span>;
+                          })() : (
+                            <span className="text-gray-400 text-xs">—</span>
+                          )}
+                        </td>
                         <td className="py-3 text-right pr-2">
                           <div className="flex items-center justify-end gap-1.5">
                             <button
@@ -849,6 +971,81 @@ export default function DashboardPage() {
                     className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none bg-gray-50 font-semibold text-gray-800"
                   />
                 </div>
+              </div>
+
+              {/* ── Cost Calculator ──────────────────────────────────── */}
+              <div className="border border-dashed border-emerald-300 rounded-xl bg-emerald-50/50 p-4">
+                <div className="flex justify-between items-center mb-3">
+                  <button
+                    type="button"
+                    onClick={() => { setShowCostCalc(!showCostCalc); if (!showCostCalc && costItems.length === 0) addLocalCostItem(); }}
+                    className="text-sm font-semibold text-emerald-700 hover:text-emerald-800 flex items-center gap-1.5"
+                  >
+                    💰 {showCostCalc ? "ซ่อน" : "เปิด"} ตัวช่วยคำนวณต้นทุน
+                  </button>
+                  {(form.totalAmount > 0 || costTotal > 0) && (
+                    <div className="flex items-center gap-3 text-sm">
+                      <span className="text-gray-500">กำไร: <span className={`font-bold ${formProfit >= 0 ? "text-emerald-700" : "text-red-600"}`}>฿{fmtDec(formProfit)}</span></span>
+                      <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${formMargin >= 20 ? "bg-emerald-100 text-emerald-700" : formMargin >= 10 ? "bg-amber-100 text-amber-700" : formMargin >= 0 ? "bg-red-100 text-red-700" : "bg-red-200 text-red-800"}`}>
+                        Margin {formMargin}%
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                {showCostCalc && (
+                  <div className="space-y-2">
+                    {costItems.map((ci, idx) => (
+                      <div key={idx} className="flex gap-2 items-start">
+                        <select
+                          value={ci.costType}
+                          onChange={(e) => updateLocalCostItem(idx, "costType", e.target.value)}
+                          className="px-2 py-2 border border-gray-200 rounded-lg text-sm bg-white w-40 shrink-0"
+                        >
+                          {COST_TYPE_OPTIONS.map((opt) => (
+                            <option key={opt.value} value={opt.value}>{opt.label}</option>
+                          ))}
+                        </select>
+                        <input
+                          type="text"
+                          value={ci.label}
+                          onChange={(e) => updateLocalCostItem(idx, "label", e.target.value)}
+                          placeholder="รายละเอียด (เช่น ค่ารถไปส่ง)"
+                          className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-200 outline-none"
+                        />
+                        <input
+                          type="number"
+                          min={0}
+                          step="any"
+                          value={ci.amount || ""}
+                          onChange={(e) => updateLocalCostItem(idx, "amount", e.target.value === "" ? 0 : Math.max(0, parseFloat(e.target.value) || 0))}
+                          placeholder="0.00"
+                          className="w-28 px-3 py-2 border border-gray-200 rounded-lg text-sm text-right font-medium focus:ring-2 focus:ring-emerald-200 outline-none"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => removeLocalCostItem(idx)}
+                          className="p-2 text-gray-400 hover:text-red-500 transition-colors shrink-0"
+                          title="ลบรายการ"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                    <div className="flex justify-between items-center pt-2">
+                      <button
+                        type="button"
+                        onClick={addLocalCostItem}
+                        className="text-sm text-emerald-600 hover:text-emerald-700 font-medium"
+                      >
+                        + เพิ่มรายการต้นทุน
+                      </button>
+                      <div className="text-sm font-semibold text-gray-700">
+                        รวมต้นทุน: <span className="text-amber-700">฿{fmtDec(costTotal)}</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div>

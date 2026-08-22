@@ -4,7 +4,7 @@ import type { QueryResult, FieldPacket, RowDataPacket } from "mysql2";
 
 // Bump whenever the schema below changes — a mismatch re-runs the (idempotent)
 // bump; a match lets returning cold instances skip it in one SELECT.
-const SCHEMA_VERSION = 20;
+const SCHEMA_VERSION = 21;
 
 type DbPool = ReturnType<typeof mysql.createPool>;
 
@@ -566,6 +566,7 @@ async function bootstrapSchemaOnce(): Promise<void> {
           qty INT NOT NULL DEFAULT 1,
           unitPrice DECIMAL(12,2) NOT NULL DEFAULT 0,
           totalAmount DECIMAL(12,2) NOT NULL DEFAULT 0,
+          costAmount DECIMAL(12,2) NOT NULL DEFAULT 0,
           saleDate DATE NOT NULL,
           quotationRef VARCHAR(255) NOT NULL DEFAULT '',
           equipmentId VARCHAR(36) DEFAULT NULL,
@@ -582,6 +583,37 @@ async function bootstrapSchemaOnce(): Promise<void> {
     try {
       await connection.query(
         `ALTER TABLE sales_records ADD INDEX idx_sr_company (companyId)`
+      );
+    } catch (error) {
+      if (!isBenignSchemaError(error)) throw error;
+    }
+    // v21: Add costAmount column to existing sales_records tables
+    try {
+      await connection.query(
+        `ALTER TABLE sales_records ADD COLUMN costAmount DECIMAL(12,2) NOT NULL DEFAULT 0`
+      );
+    } catch (error) {
+      if (!isBenignSchemaError(error)) throw error;
+    }
+
+    // ── Sale cost items — breakdown of costs per sale (transport, service,
+    // repair, shipping, commission etc.). The parent sales_records.costAmount
+    // is the cached SUM and is recalculated whenever items change.
+    await connection.query(`
+        CREATE TABLE IF NOT EXISTS sale_cost_items (
+          id VARCHAR(36) PRIMARY KEY,
+          salesRecordId VARCHAR(36) NOT NULL,
+          costType VARCHAR(50) NOT NULL DEFAULT 'other',
+          label VARCHAR(255) NOT NULL DEFAULT '',
+          amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+          note TEXT,
+          createdAt VARCHAR(255) NOT NULL,
+          INDEX idx_sci_salesRecord (salesRecordId)
+        )
+      `);
+    try {
+      await connection.query(
+        `ALTER TABLE sale_cost_items ADD CONSTRAINT fk_sci_sales FOREIGN KEY (salesRecordId) REFERENCES sales_records(id) ON DELETE CASCADE`
       );
     } catch (error) {
       if (!isBenignSchemaError(error)) throw error;

@@ -169,24 +169,24 @@ describe('salesDashboardStore', () => {
   describe('Aggregations & Insights', () => {
     it('getRevenueByMonth returns 12 months with filled zero for missing months', async () => {
       vi.mocked(query).mockResolvedValueOnce([
-        [{ period: '2026-01', revenue: 50000, deals: 5 }],
+        [{ period: '2026-01', revenue: 50000, cost: 0, deals: 5 }],
       ] as any);
 
       const months = await getRevenueByMonth(2026);
       expect(months.length).toBe(12);
-      expect(months[0]).toEqual({ period: '2026-01', revenue: 50000, deals: 5 });
-      expect(months[1]).toEqual({ period: '2026-02', revenue: 0, deals: 0 });
+      expect(months[0]).toEqual({ period: '2026-01', revenue: 50000, deals: 5, cost: 0, profit: 50000, margin: 100 });
+      expect(months[1]).toEqual({ period: '2026-02', revenue: 0, deals: 0, cost: 0, profit: 0, margin: 0 });
     });
 
     it('getRevenueByQuarter returns 4 quarters', async () => {
       vi.mocked(query).mockResolvedValueOnce([
-        [{ period: '2026-Q1', revenue: 150000, deals: 12 }],
+        [{ period: '2026-Q1', revenue: 150000, cost: 0, deals: 12 }],
       ] as any);
 
       const quarters = await getRevenueByQuarter(2026);
       expect(quarters.length).toBe(4);
-      expect(quarters[0]).toEqual({ period: '2026-Q1', revenue: 150000, deals: 12 });
-      expect(quarters[1]).toEqual({ period: '2026-Q2', revenue: 0, deals: 0 });
+      expect(quarters[0]).toEqual({ period: '2026-Q1', revenue: 150000, deals: 12, cost: 0, profit: 150000, margin: 100 });
+      expect(quarters[1]).toEqual({ period: '2026-Q2', revenue: 0, deals: 0, cost: 0, profit: 0, margin: 0 });
     });
 
     it('getSalespersonLeaderboard calculates percentage and avgDealSize', async () => {

@@ -16,6 +16,7 @@ export interface SalesRecord {
   qty: number;
   unitPrice: number;
   totalAmount: number;
+  costAmount: number;
   saleDate: string; // YYYY-MM-DD
   quotationRef: string;
   equipmentId: string | null;
@@ -27,9 +28,29 @@ export interface SalesRecord {
   companyName?: string;
 }
 
+export interface CostItem {
+  id: string;
+  salesRecordId: string;
+  costType: string; // product_cost | transport | shipping | service_visit | repair | commission | other
+  label: string;
+  amount: number;
+  note: string;
+  createdAt: string;
+}
+
+export const COST_TYPE_LABELS: Record<string, string> = {
+  product_cost: "ต้นทุนสินค้า",
+  transport: "ค่ารถ / ค่าเดินทาง",
+  shipping: "ค่าขนส่ง",
+  service_visit: "ค่าเซอร์วิส / ค่าติดตั้ง",
+  repair: "ค่าซ่อม",
+  commission: "ค่าคอมมิชชั่น",
+  other: "อื่นๆ",
+};
+
 export interface DashboardOverview {
-  currentMonth: { revenue: number; deals: number; newCustomers: number; quotations: number };
-  previousMonth: { revenue: number; deals: number; newCustomers: number; quotations: number };
+  currentMonth: { revenue: number; deals: number; newCustomers: number; quotations: number; cost: number; profit: number };
+  previousMonth: { revenue: number; deals: number; newCustomers: number; quotations: number; cost: number; profit: number };
   expiringWarranties: number;
 }
 
@@ -37,6 +58,9 @@ export interface RevenueByPeriod {
   period: string; // e.g. "2026-01", "2026-Q1", "2026"
   revenue: number;
   deals: number;
+  cost: number;
+  profit: number;
+  margin: number; // percentage 0-100
 }
 
 export interface TopItem {
@@ -96,6 +120,7 @@ function cleanInput(data: Partial<SalesRecord>) {
     qty: Math.max(1, Math.min(1000000, Math.round(Number(data.qty) || 0))),
     unitPrice: Math.max(0, Math.min(999999999.99, Number(data.unitPrice) || 0)),
     totalAmount: Math.max(0, Math.min(9999999999.99, Number(data.totalAmount) || 0)),
+    costAmount: Math.max(0, Math.min(9999999999.99, Number(data.costAmount) || 0)),
     saleDate: (() => {
       const raw = sanitizePlainText(data.saleDate || "").substring(0, 10);
       // Validate YYYY-MM-DD format and that it's a real date
@@ -148,13 +173,13 @@ export async function addSalesRecord(
   await query(
     `INSERT INTO sales_records
        (id, salespersonId, customerId, companyId, productId, productName,
-        categoryId, qty, unitPrice, totalAmount, saleDate, quotationRef,
+        categoryId, qty, unitPrice, totalAmount, costAmount, saleDate, quotationRef,
         equipmentId, note, createdAt)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id, v.salespersonId, v.customerId, v.companyId, v.productId,
       v.productName, v.categoryId, v.qty, v.unitPrice, totalAmount,
-      v.saleDate, v.quotationRef, v.equipmentId, v.note, now,
+      v.costAmount, v.saleDate, v.quotationRef, v.equipmentId, v.note, now,
     ]
   );
   return (await getSalesRecord(id))!;
@@ -180,13 +205,13 @@ export async function updateSalesRecord(
     `UPDATE sales_records SET
        salespersonId = ?, customerId = ?, companyId = ?, productId = ?,
        productName = ?, categoryId = ?, qty = ?, unitPrice = ?,
-       totalAmount = ?, saleDate = ?, quotationRef = ?, equipmentId = ?,
+       totalAmount = ?, costAmount = ?, saleDate = ?, quotationRef = ?, equipmentId = ?,
        note = ?
      WHERE id = ?`,
     [
       v.salespersonId, v.customerId, v.companyId, v.productId,
       v.productName, v.categoryId, v.qty, v.unitPrice, totalAmount,
-      v.saleDate, v.quotationRef, v.equipmentId, v.note, id,
+      v.costAmount, v.saleDate, v.quotationRef, v.equipmentId, v.note, id,
     ]
   );
   return getSalesRecord(id);
@@ -254,13 +279,15 @@ export async function getDashboardOverview(): Promise<DashboardOverview> {
 
   // Current month
   const [curRows] = await query<RowDataPacket[]>(
-    `SELECT COALESCE(SUM(totalAmount), 0) AS revenue, COUNT(*) AS deals
+    `SELECT COALESCE(SUM(totalAmount), 0) AS revenue, COUNT(*) AS deals,
+            COALESCE(SUM(costAmount), 0) AS cost
      FROM sales_records WHERE saleDate >= ? AND saleDate < ?`,
     [curStart, curEnd]
   );
   // Previous month
   const [prevRows] = await query<RowDataPacket[]>(
-    `SELECT COALESCE(SUM(totalAmount), 0) AS revenue, COUNT(*) AS deals
+    `SELECT COALESCE(SUM(totalAmount), 0) AS revenue, COUNT(*) AS deals,
+            COALESCE(SUM(costAmount), 0) AS cost
      FROM sales_records WHERE saleDate >= ? AND saleDate < ?`,
     [prevStart, curStart]
   );
@@ -294,18 +321,27 @@ export async function getDashboardOverview(): Promise<DashboardOverview> {
     [today, thirtyDaysLater]
   );
 
+  const curRevenue = Number(curRows[0]?.revenue || 0);
+  const curCost = Number(curRows[0]?.cost || 0);
+  const prevRevenue = Number(prevRows[0]?.revenue || 0);
+  const prevCostVal = Number(prevRows[0]?.cost || 0);
+
   return {
     currentMonth: {
-      revenue: Number(curRows[0]?.revenue || 0),
+      revenue: curRevenue,
       deals: Number(curRows[0]?.deals || 0),
       newCustomers: Number(curCust[0]?.cnt || 0),
       quotations: Number(curQuot[0]?.cnt || 0),
+      cost: curCost,
+      profit: curRevenue - curCost,
     },
     previousMonth: {
-      revenue: Number(prevRows[0]?.revenue || 0),
+      revenue: prevRevenue,
       deals: Number(prevRows[0]?.deals || 0),
       newCustomers: Number(prevCust[0]?.cnt || 0),
       quotations: Number(prevQuot[0]?.cnt || 0),
+      cost: prevCostVal,
+      profit: prevRevenue - prevCostVal,
     },
     expiringWarranties: Number(expWarranty[0]?.cnt || 0),
   };
@@ -315,6 +351,7 @@ export async function getRevenueByMonth(year: number): Promise<RevenueByPeriod[]
   const [rows] = await query<RowDataPacket[]>(
     `SELECT DATE_FORMAT(saleDate, '%Y-%m') AS period,
             COALESCE(SUM(totalAmount), 0) AS revenue,
+            COALESCE(SUM(costAmount), 0) AS cost,
             COUNT(*) AS deals
      FROM sales_records
      WHERE YEAR(saleDate) = ?
@@ -326,7 +363,17 @@ export async function getRevenueByMonth(year: number): Promise<RevenueByPeriod[]
   return Array.from({ length: 12 }, (_, i) => {
     const m = `${year}-${String(i + 1).padStart(2, "0")}`;
     const r = map.get(m);
-    return { period: m, revenue: Number(r?.revenue || 0), deals: Number(r?.deals || 0) };
+    const rev = Number(r?.revenue || 0);
+    const c = Number(r?.cost || 0);
+    const profit = rev - c;
+    return {
+      period: m,
+      revenue: rev,
+      deals: Number(r?.deals || 0),
+      cost: c,
+      profit,
+      margin: rev > 0 ? Math.round((profit / rev) * 10000) / 100 : 0,
+    };
   });
 }
 
@@ -334,6 +381,7 @@ export async function getRevenueByQuarter(year: number): Promise<RevenueByPeriod
   const [rows] = await query<RowDataPacket[]>(
     `SELECT CONCAT(YEAR(saleDate), '-Q', QUARTER(saleDate)) AS period,
             COALESCE(SUM(totalAmount), 0) AS revenue,
+            COALESCE(SUM(costAmount), 0) AS cost,
             COUNT(*) AS deals
      FROM sales_records
      WHERE YEAR(saleDate) = ?
@@ -344,7 +392,17 @@ export async function getRevenueByQuarter(year: number): Promise<RevenueByPeriod
   return [1, 2, 3, 4].map((q) => {
     const p = `${year}-Q${q}`;
     const r = map.get(p);
-    return { period: p, revenue: Number(r?.revenue || 0), deals: Number(r?.deals || 0) };
+    const rev = Number(r?.revenue || 0);
+    const c = Number(r?.cost || 0);
+    const profit = rev - c;
+    return {
+      period: p,
+      revenue: rev,
+      deals: Number(r?.deals || 0),
+      cost: c,
+      profit,
+      margin: rev > 0 ? Math.round((profit / rev) * 10000) / 100 : 0,
+    };
   });
 }
 
@@ -617,4 +675,99 @@ export async function getSmartInsights(): Promise<SmartInsight[]> {
   }
 
   return insights;
+}
+
+// ── Cost Item CRUD ───────────────────────────────────────────────────────────
+
+const VALID_COST_TYPES = new Set([
+  "product_cost", "transport", "shipping", "service_visit",
+  "repair", "commission", "other",
+]);
+
+function cleanCostInput(data: Partial<CostItem>) {
+  return {
+    costType: VALID_COST_TYPES.has(data.costType || "") ? data.costType! : "other",
+    label: sanitizePlainText(data.label || "").substring(0, 255),
+    amount: Math.max(0, Math.min(9999999999.99, Number(data.amount) || 0)),
+    note: sanitizePlainText(data.note || "").substring(0, 5000),
+  };
+}
+
+/** Recalculate the cached costAmount on sales_records from its cost items */
+export async function recalcCostAmount(salesRecordId: string): Promise<number> {
+  const [rows] = await query<RowDataPacket[]>(
+    `SELECT COALESCE(SUM(amount), 0) AS total FROM sale_cost_items WHERE salesRecordId = ?`,
+    [salesRecordId]
+  );
+  const total = Number(rows[0]?.total || 0);
+  await query(
+    `UPDATE sales_records SET costAmount = ? WHERE id = ?`,
+    [total, salesRecordId]
+  );
+  return total;
+}
+
+export async function getCostItems(salesRecordId: string): Promise<CostItem[]> {
+  const [rows] = await query<RowDataPacket[]>(
+    `SELECT * FROM sale_cost_items WHERE salesRecordId = ? ORDER BY createdAt ASC`,
+    [salesRecordId]
+  );
+  return rows as CostItem[];
+}
+
+export async function addCostItem(
+  salesRecordId: string,
+  data: Partial<CostItem>
+): Promise<CostItem> {
+  const id = crypto.randomUUID();
+  const now = new Date().toISOString();
+  const v = cleanCostInput(data);
+  await query(
+    `INSERT INTO sale_cost_items (id, salesRecordId, costType, label, amount, note, createdAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [id, salesRecordId, v.costType, v.label, v.amount, v.note, now]
+  );
+  await recalcCostAmount(salesRecordId);
+  const [rows] = await query<RowDataPacket[]>(
+    `SELECT * FROM sale_cost_items WHERE id = ?`,
+    [id]
+  );
+  return rows[0] as CostItem;
+}
+
+export async function updateCostItem(
+  id: string,
+  data: Partial<CostItem>
+): Promise<CostItem | null> {
+  const [existing] = await query<RowDataPacket[]>(
+    `SELECT * FROM sale_cost_items WHERE id = ?`,
+    [id]
+  );
+  if (!existing[0]) return null;
+  const v = cleanCostInput({ ...existing[0], ...data });
+  await query(
+    `UPDATE sale_cost_items SET costType = ?, label = ?, amount = ?, note = ? WHERE id = ?`,
+    [v.costType, v.label, v.amount, v.note, id]
+  );
+  await recalcCostAmount(existing[0].salesRecordId);
+  const [rows] = await query<RowDataPacket[]>(
+    `SELECT * FROM sale_cost_items WHERE id = ?`,
+    [id]
+  );
+  return rows[0] as CostItem;
+}
+
+export async function deleteCostItem(id: string): Promise<boolean> {
+  const [existing] = await query<RowDataPacket[]>(
+    `SELECT salesRecordId FROM sale_cost_items WHERE id = ?`,
+    [id]
+  );
+  const [res] = await query<ResultSetHeader>(
+    `DELETE FROM sale_cost_items WHERE id = ?`,
+    [id]
+  );
+  if (res.affectedRows > 0 && existing[0]) {
+    await recalcCostAmount(existing[0].salesRecordId);
+  }
+  return res.affectedRows > 0;
 }
