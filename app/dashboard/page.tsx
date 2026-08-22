@@ -149,6 +149,7 @@ export default function DashboardPage() {
   const [showCostCalc, setShowCostCalc] = useState(false);
   const [costLoading, setCostLoading] = useState(false);
   const [costSubmitError, setCostSubmitError] = useState(false);
+  const [formErrors, setFormErrors] = useState<Record<string, boolean>>({});
   const [pendingEquipments, setPendingEquipments] = useState<CustomerEquipment[]>([]);
 
   const handleScrollToRecords = () => {
@@ -265,49 +266,42 @@ export default function DashboardPage() {
   // Save sales record
   const handleSave = async () => {
     if (isSaving) return;
-    if (!form.saleDate) {
-      showToast("กรุณาระบุวันที่ขาย", "error");
-      return;
+
+    const errors: Record<string, boolean> = {};
+    if (!form.saleDate) errors.saleDate = true;
+    if (!form.productName.trim()) errors.productName = true;
+    if (!form.qty || form.qty <= 0) errors.qty = true;
+    if (!form.unitPrice || form.unitPrice <= 0) errors.unitPrice = true;
+    if (!form.poRef.trim()) errors.poRef = true;
+    
+    if (form.saleType === "equipment") {
+      if (!form.warrantyStartDate) errors.warrantyStartDate = true;
+      if (!form.warrantyEndDate) errors.warrantyEndDate = true;
     }
-    if (!form.productName.trim()) {
-      showToast("กรุณาระบุชื่อสินค้า", "error");
-      return;
-    }
-    if (!form.qty || form.qty <= 0) {
-      showToast("กรุณาระบุจำนวนสินค้า (ต้องมากกว่า 0)", "error");
-      return;
-    }
-    if (!form.unitPrice || form.unitPrice <= 0) {
-      showToast("กรุณาระบุราคาต่อหน่วย (ต้องมากกว่า 0)", "error");
-      return;
-    }
+    
+    if (form.deliveryRef && !form.invoiceRef) errors.invoiceRef = true;
+
     if (showCostCalc && costItems.length > 0) {
       const hasEmptyCost = costItems.some(ci => !ci.amount || ci.amount <= 0);
       if (hasEmptyCost) {
         setCostSubmitError(true);
-        window.alert("กรุณาระบุจำนวนเงินต้นทุนให้ครบทุกรายการ\n(หากไม่ต้องการใส่ให้กดปุ่มลบ (✕) ออกจากรายการ)");
-        return;
+        errors.costItems = true;
       }
     }
 
-    if (!form.poRef.trim()) {
-      showToast("กรุณาระบุเลขอ้างอิงใบ PO", "error");
+    if (Object.keys(errors).length > 0) {
+      setFormErrors(errors);
+      showToast("กรุณากรอกข้อมูลที่จำเป็นให้ครบถ้วน", "error");
+      setTimeout(() => {
+        const firstErrorElement = document.querySelector('.error-border');
+        if (firstErrorElement) {
+          firstErrorElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }, 100);
       return;
     }
-    if (form.saleType === "equipment") {
-      if (!form.warrantyStartDate) {
-        showToast("กรุณาระบุวันเริ่มรับประกัน", "error");
-        return;
-      }
-      if (!form.warrantyEndDate) {
-        showToast("กรุณาระบุวันหมดรับประกัน", "error");
-        return;
-      }
-    }
-    if (form.deliveryRef && !form.invoiceRef) {
-      showToast("ถ้าระบุเลขอ้างอิงใบส่งสินค้า ต้องระบุเลขอ้างอิงใบ invoice ด้วย", "error");
-      return;
-    }
+    
+    setFormErrors({});
 
     setIsSaving(true);
     try {
@@ -996,7 +990,7 @@ export default function DashboardPage() {
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1.5">วันที่ขาย <span className="text-red-500">*</span></label>
                   <input type="date" value={form.saleDate} onChange={(e) => setForm({ ...form, saleDate: e.target.value })}
-                    className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none" />
+                    className={`w-full px-3 py-2.5 border rounded-xl text-sm focus:ring-2 outline-none ${formErrors.saleDate ? "border-red-500 bg-red-50 focus:border-red-500 focus:ring-red-200 error-border" : "border-gray-200 focus:ring-indigo-200 focus:border-indigo-400"}`} />
                 </div>
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1.5">เซลล์</label>
@@ -1025,7 +1019,7 @@ export default function DashboardPage() {
                   value={form.productName}
                   onChange={(e) => setForm({ ...form, productName: e.target.value })}
                   placeholder="ชื่อเครื่อง / สินค้า / บริการ"
-                  className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none"
+                  className={`w-full px-3 py-2.5 border rounded-xl text-sm focus:ring-2 outline-none ${formErrors.productName ? "border-red-500 bg-red-50 focus:border-red-500 focus:ring-red-200 error-border" : "border-gray-200 focus:ring-indigo-200 focus:border-indigo-400"}`}
                 />
               </div>
 
@@ -1063,7 +1057,7 @@ export default function DashboardPage() {
                     }}
                     onWheel={(e) => e.currentTarget.blur()}
                     placeholder="1"
-                    className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none"
+                    className={`w-full px-3 py-2.5 border rounded-xl text-sm focus:ring-2 outline-none ${formErrors.qty ? "border-red-500 bg-red-50 focus:border-red-500 focus:ring-red-200 error-border" : "border-gray-200 focus:ring-indigo-200 focus:border-indigo-400"}`}
                   />
                 </div>
                 <div>
@@ -1075,7 +1069,7 @@ export default function DashboardPage() {
                       setForm({ ...form, unitPrice: p, totalAmount: (form.qty || 1) * p });
                     }}
                     placeholder="0"
-                    className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none font-medium text-gray-800"
+                    className={`w-full px-3 py-2.5 border rounded-xl text-sm focus:ring-2 outline-none font-medium text-gray-800 ${formErrors.unitPrice ? "border-red-500 bg-red-50 focus:border-red-500 focus:ring-red-200 error-border" : "border-gray-200 focus:ring-indigo-200 focus:border-indigo-400"}`}
                   />
                 </div>
                 <div>
@@ -1135,7 +1129,7 @@ export default function DashboardPage() {
                           value={ci.amount || 0}
                           onChange={(val) => updateLocalCostItem(idx, "amount", val)}
                           placeholder="0"
-                          className={`w-28 px-3 py-2 border rounded-lg text-sm text-right font-medium outline-none ${costSubmitError && (!ci.amount || ci.amount <= 0) ? "border-red-400 bg-red-50 focus:ring-2 focus:ring-red-200" : "border-gray-200 focus:ring-2 focus:ring-emerald-200"}`}
+                          className={`w-28 px-3 py-2 border rounded-lg text-sm text-right font-medium outline-none ${costSubmitError && (!ci.amount || ci.amount <= 0) ? "border-red-400 bg-red-50 focus:ring-2 focus:ring-red-200 error-border" : "border-gray-200 focus:ring-2 focus:ring-emerald-200"}`}
                         />
                         <button
                           type="button"
@@ -1172,7 +1166,7 @@ export default function DashboardPage() {
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1.5">อ้างอิงใบ PO <span className="text-red-500">*</span></label>
                   <input type="text" value={form.poRef} onChange={(e) => setForm({ ...form, poRef: e.target.value })} placeholder="เลขที่ใบ PO"
-                    className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none" />
+                    className={`w-full px-3 py-2.5 border rounded-xl text-sm focus:ring-2 outline-none ${formErrors.poRef ? "border-red-500 bg-red-50 focus:border-red-500 focus:ring-red-200 error-border" : "border-gray-200 focus:ring-indigo-200 focus:border-indigo-400"}`} />
                 </div>
               </div>
 
@@ -1185,7 +1179,7 @@ export default function DashboardPage() {
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1.5">อ้างอิงใบ Invoice</label>
                   <input type="text" value={form.invoiceRef} onChange={(e) => setForm({ ...form, invoiceRef: e.target.value })} placeholder="เลขที่ใบ Invoice"
-                    className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none" />
+                    className={`w-full px-3 py-2.5 border rounded-xl text-sm focus:ring-2 outline-none ${formErrors.invoiceRef ? "border-red-500 bg-red-50 focus:border-red-500 focus:ring-red-200 error-border" : "border-gray-200 focus:ring-indigo-200 focus:border-indigo-400"}`} />
                 </div>
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1.5">อ้างอิงใบเสร็จ</label>
@@ -1199,12 +1193,12 @@ export default function DashboardPage() {
                   <div>
                     <label className="block text-sm font-semibold text-gray-700 mb-1.5">วันเริ่มรับประกัน <span className="text-red-500">*</span></label>
                     <input type="date" value={form.warrantyStartDate} onChange={(e) => setForm({ ...form, warrantyStartDate: e.target.value })}
-                      className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none" />
+                      className={`w-full px-3 py-2.5 border rounded-xl text-sm focus:ring-2 outline-none ${formErrors.warrantyStartDate ? "border-red-500 bg-red-50 focus:border-red-500 focus:ring-red-200 error-border" : "border-gray-200 focus:ring-indigo-200 focus:border-indigo-400"}`} />
                   </div>
                   <div>
                     <label className="block text-sm font-semibold text-gray-700 mb-1.5">วันหมดรับประกัน <span className="text-red-500">*</span></label>
                     <input type="date" value={form.warrantyEndDate} onChange={(e) => setForm({ ...form, warrantyEndDate: e.target.value })}
-                      className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none" />
+                      className={`w-full px-3 py-2.5 border rounded-xl text-sm focus:ring-2 outline-none ${formErrors.warrantyEndDate ? "border-red-500 bg-red-50 focus:border-red-500 focus:ring-red-200 error-border" : "border-gray-200 focus:ring-indigo-200 focus:border-indigo-400"}`} />
                   </div>
                 </div>
               )}
