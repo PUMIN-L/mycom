@@ -57,7 +57,7 @@ export const POST = withRoute(
     if (schedule.equipmentId) {
       try {
         const eq = await getEquipment(schedule.equipmentId);
-        if (eq) equipmentName = `${eq.name || ""} (S/N: ${eq.serialNumber || "-"})`;
+        if (eq) equipmentName = `${eq.productName || ""} (S/N: ${eq.serialNumber || "-"})`;
       } catch { /* ignore */ }
     }
 
