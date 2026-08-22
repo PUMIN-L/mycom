@@ -8,7 +8,7 @@ import BlockRangeControl from "../components/BlockRangeControl";
 import Toast from "../components/Toast";
 import ErrorModal from "../components/ErrorModal";
 import { stripHtml } from "../lib/stripHtml";
-import { useLeaveGuard } from "../components/LeaveGuard";
+import { useLeaveGuard, LeaveGuardModal } from "../components/LeaveGuard";
 
 interface ContentBlock {
   id: string;
@@ -66,7 +66,7 @@ function CreateContentInner() {
 
   // ── Unsaved-changes guard ──
   const formData = { title, blocks, selectedProductId };
-  const { guardedNavigate, LeaveGuardModal, setSnapshot } = useLeaveGuard(formData);
+  const { guardedNavigate, setSnapshot, showModal, confirmLeave, cancelLeave, setShowModal } = useLeaveGuard(formData);
 
   // Products from API
   const [allProducts, setAllProducts] = useState<ProductItem[]>([]);
@@ -358,7 +358,13 @@ function CreateContentInner() {
   return (
     <div className="min-h-screen bg-gray-50 py-12">
       {toast && <Toast message={toast.message} type={toast.type} />}
-      <LeaveGuardModal onSave={handleSubmit} />
+      <LeaveGuardModal
+        show={showModal}
+        onSave={async () => { setShowModal(false); await handleSubmit(); }}
+        onDiscard={confirmLeave}
+        onCancel={cancelLeave}
+        documentLabel="เนื้อหา"
+      />
       <div className="max-w-4xl mx-auto px-4">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
           <div>
