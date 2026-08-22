@@ -479,8 +479,10 @@ async function bootstrapSchemaOnce(): Promise<void> {
     await connection.query(`
         CREATE TABLE IF NOT EXISTS customer_equipments (
           id VARCHAR(36) PRIMARY KEY,
+          salesRecordId VARCHAR(255) DEFAULT '',
           customerId VARCHAR(255) NOT NULL,
           productId VARCHAR(255) NOT NULL,
+          productName VARCHAR(255) DEFAULT '',
           serialNumber VARCHAR(255) NOT NULL DEFAULT '',
           quotationNumber VARCHAR(255) NOT NULL DEFAULT '',
           warrantyCertNumber VARCHAR(255) NOT NULL DEFAULT '',
@@ -493,6 +495,16 @@ async function bootstrapSchemaOnce(): Promise<void> {
           INDEX idx_ce_warrantyEnd (warrantyEndDate)
         )
       `);
+    try {
+      await connection.query("ALTER TABLE customer_equipments ADD COLUMN salesRecordId VARCHAR(255) DEFAULT ''");
+    } catch (e: any) {
+      if (e.code !== "ER_DUP_FIELDNAME") console.warn("Failed to add salesRecordId to customer_equipments", e);
+    }
+    try {
+      await connection.query("ALTER TABLE customer_equipments ADD COLUMN productName VARCHAR(255) DEFAULT ''");
+    } catch (e: any) {
+      if (e.code !== "ER_DUP_FIELDNAME") console.warn("Failed to add productName to customer_equipments", e);
+    }
     try {
       // RESTRICT (like customers→companies): a customer with tracked equipment
       // can't be deleted out from under their service history.

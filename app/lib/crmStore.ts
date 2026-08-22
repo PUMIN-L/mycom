@@ -70,8 +70,10 @@ export async function getEquipment(
 
 function cleanEquipment(data: Partial<CustomerEquipment>) {
   return {
+    salesRecordId: sanitizePlainText(data.salesRecordId || "").substring(0, 255),
     customerId: sanitizePlainText(data.customerId || "").substring(0, 255),
     productId: sanitizePlainText(data.productId || "").substring(0, 255),
+    productName: sanitizePlainText(data.productName || "").substring(0, 255),
     serialNumber: sanitizePlainText(data.serialNumber || "").substring(0, 255),
     quotationNumber: sanitizePlainText(data.quotationNumber || "").substring(0, 255),
     warrantyCertNumber: sanitizePlainText(data.warrantyCertNumber || "").substring(0, 255),
@@ -94,14 +96,16 @@ export async function addEquipment(
   const v = cleanEquipment(data);
   await query(
     `INSERT INTO customer_equipments
-       (id, customerId, productId, serialNumber, quotationNumber,
+       (id, salesRecordId, customerId, productId, productName, serialNumber, quotationNumber,
         warrantyCertNumber, warrantyType, warrantyStartDate, warrantyEndDate,
         status, createdAt)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
+      v.salesRecordId,
       v.customerId,
       v.productId,
+      v.productName,
       v.serialNumber,
       v.quotationNumber,
       v.warrantyCertNumber,
@@ -113,6 +117,47 @@ export async function addEquipment(
     ]
   );
   return (await getEquipment(id))!;
+}
+
+export async function syncEquipmentsForSalesRecord(
+  salesRecordId: string,
+  serialNumbers: string[],
+  baseEquipmentData: Partial<CustomerEquipment>
+): Promise<void> {
+  if (!salesRecordId) return;
+  
+  // 1. Fetch existing equipments for this sales record
+  const [existing] = await query<RowDataPacket[]>(
+    `SELECT id, serialNumber FROM customer_equipments WHERE salesRecordId = ? ORDER BY createdAt ASC`,
+    [salesRecordId]
+  );
+  
+  const existingEqs = existing as { id: string, serialNumber: string }[];
+  
+  // 2. Update existing or insert new
+  const limit = Math.min(serialNumbers.length, 50);
+  for (let i = 0; i < limit; i++) {
+    const sn = String(serialNumbers[i] || "").trim();
+    if (i < existingEqs.length) {
+      // Update existing
+      await updateEquipment(existingEqs[i].id, {
+        ...baseEquipmentData,
+        serialNumber: sn
+      });
+    } else {
+      // Insert new
+      await addEquipment({
+        ...baseEquipmentData,
+        salesRecordId,
+        serialNumber: sn
+      });
+    }
+  }
+  
+  // 3. Delete any excess equipments if qty was reduced
+  for (let i = limit; i < existingEqs.length; i++) {
+    await deleteEquipment(existingEqs[i].id);
+  }
 }
 
 export async function updateEquipment(

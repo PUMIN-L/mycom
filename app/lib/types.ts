@@ -117,6 +117,7 @@ export type ScheduleStatus = (typeof SCHEDULE_STATUSES)[number];
 
 export interface CustomerEquipment {
   id: string;
+  salesRecordId?: string;
   customerId: string;
   productId: string;
   serialNumber: string;
@@ -175,6 +176,7 @@ export interface SalesRecord {
   receiptRef: string;
   warrantyStartDate: string | null;
   warrantyEndDate: string | null;
+  serialNumbers?: string[];
   equipmentId: string | null;
   note: string;
   createdAt: string;

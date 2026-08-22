@@ -91,8 +91,10 @@ export const POST = withRoute(
       
       for (let i = 0; i < qty; i++) {
         const eq = await addEquipment({
+          salesRecordId: record.id,
           customerId: body.customerId,
           productId: body.productId || "",
+          productName: body.productName || "",
           serialNumber: String(serialNumbers[i] || "").trim(),
           quotationNumber: body.quotationRef || "",
           warrantyCertNumber: "",

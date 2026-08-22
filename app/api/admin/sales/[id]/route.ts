@@ -5,6 +5,7 @@ import {
   updateSalesRecord,
   deleteSalesRecord,
 } from "../../../../lib/salesDashboardStore";
+import { syncEquipmentsForSalesRecord } from "../../../../lib/crmStore";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -47,6 +48,22 @@ export const PUT = withRoute(
     if (!updated) {
       return NextResponse.json({ error: "ไม่พบรายการ" }, { status: 404 });
     }
+
+    // Sync equipments if sale type is equipment
+    if (body.saleType === "equipment" && Array.isArray(body.serialNumbers)) {
+      await syncEquipmentsForSalesRecord(id, body.serialNumbers, {
+        customerId: body.customerId,
+        productId: body.productId || "",
+        productName: body.productName || "",
+        quotationNumber: body.quotationRef || "",
+        warrantyCertNumber: "",
+        warrantyType: "",
+        warrantyStartDate: body.warrantyStartDate || null,
+        warrantyEndDate: body.warrantyEndDate || null,
+        status: "Active",
+      });
+    }
+
     return NextResponse.json(updated);
   }
 );

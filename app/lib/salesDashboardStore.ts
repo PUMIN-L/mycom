@@ -171,7 +171,15 @@ export async function getSalesRecord(id: string): Promise<SalesRecord | null> {
     `${LIST_SELECT} WHERE sr.id = ?`,
     [id]
   );
-  return (rows[0] as SalesRecord) || null;
+  const record = (rows[0] as SalesRecord) || null;
+  if (record) {
+    const [eqs] = await query<RowDataPacket[]>(
+      `SELECT serialNumber FROM customer_equipments WHERE salesRecordId = ? ORDER BY createdAt ASC`,
+      [id]
+    );
+    record.serialNumbers = eqs.map((eq: any) => eq.serialNumber);
+  }
+  return record;
 }
 
 export async function updateSalesRecord(
