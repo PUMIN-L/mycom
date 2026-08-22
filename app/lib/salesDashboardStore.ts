@@ -171,13 +171,17 @@ export async function getSalesRecord(id: string): Promise<SalesRecord | null> {
     `${LIST_SELECT} WHERE sr.id = ?`,
     [id]
   );
-  const record = (rows[0] as SalesRecord) || null;
+  const record = (rows && rows[0] as SalesRecord) || null;
   if (record) {
-    const [eqs] = await query<RowDataPacket[]>(
+    const result = await query<RowDataPacket[]>(
       `SELECT serialNumber FROM customer_equipments WHERE salesRecordId = ? ORDER BY createdAt ASC`,
       [id]
     );
-    record.serialNumbers = eqs.map((eq: any) => eq.serialNumber);
+    if (result && Array.isArray(result[0])) {
+      record.serialNumbers = result[0].map((eq: any) => eq.serialNumber);
+    } else {
+      record.serialNumbers = [];
+    }
   }
   return record;
 }

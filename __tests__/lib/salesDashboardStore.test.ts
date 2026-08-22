@@ -102,6 +102,7 @@ describe('salesDashboardStore', () => {
             },
           ],
         ] as any) // existing record check
+        .mockResolvedValueOnce([[]] as any) // equipments check
         .mockResolvedValueOnce([{ affectedRows: 1 }] as any) // UPDATE
         .mockResolvedValueOnce([
           [
@@ -123,7 +124,8 @@ describe('salesDashboardStore', () => {
               createdAt: '2026-08-22T00:00:00.000Z',
             },
           ],
-        ] as any); // reload
+        ] as any) // reload
+        .mockResolvedValueOnce([[]] as any);
 
       const updated = await updateSalesRecord('rec-1', {
         productName: 'Scale A Updated',
