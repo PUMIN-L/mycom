@@ -133,10 +133,18 @@ export default function ProductSpecsPage() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
             <div className="flex items-center gap-4">
-              <Link href="/quotation" className="p-2 -ml-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full transition-colors">
+              <Link href="/quotation" className="p-2 -ml-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full transition-colors" title="กลับไปใบเสนอราคา">
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
               </Link>
               <h1 className="text-xl font-bold text-gray-900">จัดการสเปคสินค้า (Product Specs)</h1>
+            </div>
+            <div className="flex items-center gap-3">
+              <Link
+                href="/showcase"
+                className="px-4 py-2 bg-white border border-gray-200 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 hover:shadow-sm transition-all text-sm flex items-center gap-1.5 shadow-sm"
+              >
+                🏠 กลับไประบบจัดการ
+              </Link>
             </div>
           </div>
         </div>
