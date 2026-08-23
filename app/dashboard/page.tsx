@@ -192,7 +192,18 @@ export default function DashboardPage() {
 
     if (Object.keys(errors).length > 0) {
       setFormErrors(errors);
-      showToast("กรุณากรอกข้อมูลที่จำเป็นให้ครบถ้วน", "error");
+      // Build specific error message
+      const missing: string[] = [];
+      if (errors.saleDate) missing.push("วันที่ขาย");
+      if (errors.productName) missing.push("ชื่อสินค้า");
+      if (errors.qty) missing.push("จำนวน");
+      if (errors.unitPrice) missing.push("ราคา");
+      if (errors.poRef) missing.push("อ้างอิง PO");
+      if (errors.warrantyStartDate) missing.push("วันเริ่มรับประกัน");
+      if (errors.warrantyEndDate) missing.push("วันสิ้นสุดรับประกัน");
+      if (errors.invoiceRef) missing.push("อ้างอิง Invoice");
+      if (errors.costItems) missing.push("ต้นทุน (กรุณาเปิดเครื่องคิดต้นทุน แล้วกรอกยอดต้นทุน)");
+      showToast(`กรุณากรอก: ${missing.join(", ")}`, "error");
       setTimeout(() => {
         const firstErrorElement = document.querySelector('.error-border');
         if (firstErrorElement) {
