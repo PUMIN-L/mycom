@@ -91,12 +91,13 @@ export async function listExpenses(filters?: {
         CONCAT(s.productName, ' (ต้นทุนขาย)') AS title,
         s.costAmount AS amount,
         s.saleDate AS expenseDate,
-        'ต้นทุนสินค้า' AS category,
+        CONCAT('ต้นทุน: ', IFNULL(pc.name_th, 'ไม่ระบุหมวดหมู่')) AS category,
         CONCAT('อ้างอิงจากลูกค้า: ', IFNULL(c.name, 'ไม่ระบุ')) AS note,
         s.createdAt,
         'sale_cost' AS source
       FROM sales_records s
       LEFT JOIN customers c ON s.customerId = c.id
+      LEFT JOIN product_categories pc ON s.categoryId = pc.id
       WHERE s.costAmount > 0
     ) AS combined
     WHERE 1=1
