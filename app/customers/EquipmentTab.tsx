@@ -78,6 +78,7 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
   const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
   const [viewingSchedule, setViewingSchedule] = useState<Partial<ServiceSchedule> | null>(null);
   const [editingSchedule, setEditingSchedule] = useState<Partial<ServiceSchedule> | null>(null);
+  const [scheduleFormError, setScheduleFormError] = useState(false);
   const [logs, setLogs] = useState<Record<string, ServiceLog[]>>({});
 
   // Complete action modal
@@ -353,9 +354,11 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
     e.preventDefault();
     if (isSaving) return;
     if (!editingSchedule?.scheduledDate) {
+      setScheduleFormError(true);
       showToast("กรุณาระบุวันที่นัดหมาย", "error");
       return;
     }
+    setScheduleFormError(false);
     setIsSaving(true);
     try {
       const method = editingSchedule.id ? "PUT" : "POST";
@@ -936,7 +939,7 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
 
       {/* ── Schedule CRUD Modal ───────────────────────────────────────────── */}
       {isScheduleModalOpen && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[60] flex items-center justify-center p-4" onClick={() => setIsScheduleModalOpen(false)}>
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[60] flex items-center justify-center p-4" onClick={() => { setIsScheduleModalOpen(false); setScheduleFormError(false); }}>
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg" onClick={(e) => e.stopPropagation()}>
             <div className="p-6 border-b border-gray-100">
               <h3 className="text-xl font-bold text-gray-800">{editingSchedule?.id ? "แก้ไขนัดหมาย" : "เพิ่มนัดหมายใหม่"}</h3>
@@ -967,7 +970,11 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
                 <label className="block text-sm font-semibold text-gray-700 mb-1.5">วันที่นัดหมาย <span className="text-red-500">*</span></label>
                 <DatePicker
                   selected={editingSchedule?.scheduledDate ? new Date(editingSchedule.scheduledDate) : null}
-                  onChange={(date) => setEditingSchedule((prev) => ({ ...prev, scheduledDate: date ? date.toISOString().split('T')[0] : "" }))}
+                  onChange={(date) => {
+                    setScheduleFormError(false);
+                    setEditingSchedule((prev) => ({ ...prev, scheduledDate: date ? date.toISOString().split('T')[0] : "" }));
+                  }}
+                  className={scheduleFormError && !editingSchedule?.scheduledDate ? "!border-red-500 !bg-red-50 !ring-red-200" : ""}
                 />
               </div>
 

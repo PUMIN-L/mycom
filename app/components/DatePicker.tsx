@@ -139,7 +139,7 @@ export default function DatePicker({ selected, onChange, className, placeholderT
       selected={selected}
       onChange={onChange}
       dateFormat="yyyy-MM-dd"
-      className={className || "w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"}
+      className={`w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all ${className || ""}`}
       placeholderText={placeholderText || "YYYY-MM-DD"}
       isClearable={isClearable}
       popperPlacement="bottom-start"
