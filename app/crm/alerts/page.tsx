@@ -13,6 +13,7 @@ export default function AlertsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [activeTab, setActiveTab] = useState("all");
 
   // Complete modal
   const [completingId, setCompletingId] = useState<string | null>(null);
@@ -94,12 +95,20 @@ export default function AlertsPage() {
     );
   }
 
+  const tabs = [
+    { id: "all", label: "รวมทั้งหมด", count: (alerts?.upcomingSchedules.length ?? 0) + (alerts?.expiringWarranties.length ?? 0) + (alerts?.incompleteEquipments.length ?? 0) + (alerts?.missingDocuments?.length ?? 0) },
+    { id: "schedules", label: "กำหนดการ Service", count: alerts?.upcomingSchedules.length ?? 0 },
+    { id: "warranties", label: "ประกันใกล้หมดอายุ", count: alerts?.expiringWarranties.length ?? 0 },
+    { id: "incomplete", label: "อุปกรณ์ขาดข้อมูล", count: alerts?.incompleteEquipments.length ?? 0 },
+    { id: "missing_docs", label: "เอกสารอ้างอิงสูญหาย", count: alerts?.missingDocuments?.length ?? 0 },
+  ];
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100/50 pt-32 pb-16 px-4 md:px-16">
       {toast && <Toast message={toast.message} type={toast.type} />}
 
       {/* Header */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-10 gap-4">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
         <div>
           <h1 className="text-4xl font-extrabold text-gray-900 tracking-tight">🔔 แจ้งเตือน CRM</h1>
           <p className="text-gray-500 mt-2 text-lg">ประกันใกล้หมดอายุ และกำหนดการที่ใกล้ถึง</p>
@@ -113,251 +122,31 @@ export default function AlertsPage() {
         </Link>
       </div>
 
-      {/* ── Section 1: Expiring Warranties ──────────────────────────────── */}
-      <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden mb-8">
-        <div className="p-8">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="bg-amber-100 text-amber-600 p-3 rounded-xl">
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
-            </div>
-            <h2 className="text-2xl font-bold text-gray-800">
-              ประกันใกล้หมดอายุ
-              <span className="text-gray-400 text-lg font-normal ml-2">
-                (ภายใน 30 วัน — {alerts?.expiringWarranties.length ?? 0} รายการ)
-              </span>
-            </h2>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-left">
-              <thead>
-                <tr className="border-b border-gray-100">
-                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">ลูกค้า / บริษัท</th>
-                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">สินค้า</th>
-                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">S/N</th>
-                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">หมดประกัน</th>
-                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">เหลือ</th>
-                </tr>
-              </thead>
-              <tbody>
-                {isLoading ? (
-                  Array.from({ length: 3 }).map((_, i) => (
-                    <tr key={i} className="border-b border-gray-50 animate-pulse">
-                      <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-36"></div></td>
-                      <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-40"></div></td>
-                      <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-20"></div></td>
-                      <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-24"></div></td>
-                      <td className="py-4"><div className="h-4 bg-gray-200 rounded w-16"></div></td>
-                    </tr>
-                  ))
-                ) : !alerts?.expiringWarranties.length ? (
-                  <tr>
-                    <td colSpan={5} className="py-12 text-center">
-                      <div className="flex flex-col items-center gap-2">
-                        <div className="text-5xl">✅</div>
-                        <p className="text-gray-400 text-lg">ไม่มีอุปกรณ์ที่ประกันใกล้หมดอายุ</p>
-                      </div>
-                    </td>
-                  </tr>
-                ) : (
-                  alerts.expiringWarranties.map((eq) => {
-                    const days = warrantyDaysLeft(eq.warrantyEndDate);
-                    const isUrgent = days !== null && days <= 7;
-                    return (
-                      <tr key={eq.id} className={`border-b border-gray-50 ${isUrgent ? "bg-red-50/50" : ""}`}>
-                        <td className="py-4 pr-4">
-                          <div className="font-semibold text-gray-800">{eq.customerName || "—"}</div>
-                          <div className="text-xs text-gray-400">{eq.companyName}</div>
-                        </td>
-                        <td className="py-4 pr-4 text-sm text-gray-700">{eq.productName || "—"}</td>
-                        <td className="py-4 pr-4 text-sm text-gray-600 font-mono">{eq.serialNumber || "—"}</td>
-                        <td className="py-4 pr-4 text-sm text-gray-700">{eq.warrantyEndDate}</td>
-                        <td className="py-4">
-                          <span className={`px-2.5 py-1 text-xs font-bold rounded-full ${isUrgent ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"}`}>
-                            {days !== null ? `${days} วัน` : "—"}
-                          </span>
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-
-      {/* ── Section 1.5: Incomplete Equipments ────────────────────────────── */}
-      <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden mb-8">
-        <div className="p-8">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="bg-red-100 text-red-600 p-3 rounded-xl">
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
-            </div>
-            <h2 className="text-2xl font-bold text-gray-800">
-              อุปกรณ์ขาดข้อมูลสำคัญ
-              <span className="text-gray-400 text-lg font-normal ml-2">
-                (ยังไม่ระบุ S/N หรือประกัน — {alerts?.incompleteEquipments.length ?? 0} รายการ)
-              </span>
-            </h2>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-left">
-              <thead>
-                <tr className="border-b border-gray-100">
-                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">ลูกค้า / บริษัท</th>
-                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">สินค้า</th>
-                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">สิ่งที่ขาด</th>
-                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">จัดการ</th>
-                </tr>
-              </thead>
-              <tbody>
-                {isLoading ? (
-                  Array.from({ length: 3 }).map((_, i) => (
-                    <tr key={i} className="border-b border-gray-50 animate-pulse">
-                      <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-36"></div></td>
-                      <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-40"></div></td>
-                      <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-20"></div></td>
-                      <td className="py-4"><div className="h-8 bg-gray-200 rounded-xl w-24"></div></td>
-                    </tr>
-                  ))
-                ) : !alerts?.incompleteEquipments.length ? (
-                  <tr>
-                    <td colSpan={4} className="py-12 text-center">
-                      <div className="flex flex-col items-center gap-2">
-                        <div className="text-5xl">🎉</div>
-                        <p className="text-gray-400 text-lg">ข้อมูลอุปกรณ์ครบถ้วนสมบูรณ์</p>
-                      </div>
-                    </td>
-                  </tr>
-                ) : (
-                  alerts.incompleteEquipments.map((eq) => (
-                    <tr key={eq.id} className="border-b border-gray-50 bg-red-50/20">
-                      <td className="py-4 pr-4">
-                        <div className="font-semibold text-gray-800">{eq.customerName || "—"}</div>
-                        <div className="text-xs text-gray-400">{eq.companyName}</div>
-                      </td>
-                      <td className="py-4 pr-4 text-sm text-gray-700">{eq.productName || "—"}</td>
-                      <td className="py-4 pr-4 text-sm">
-                        <div className="flex flex-col gap-1">
-                          {!eq.serialNumber && <span className="text-red-600 font-medium">❌ ขาด Serial Number</span>}
-                          {!eq.warrantyStartDate && <span className="text-red-600 font-medium">❌ ขาดวันเริ่มประกัน</span>}
-                        </div>
-                      </td>
-                      <td className="py-4">
-                        <Link
-                          href="/customers"
-                          className="px-4 py-2 bg-white border border-gray-200 text-gray-700 rounded-xl text-xs font-semibold hover:bg-gray-50 transition-colors shadow-sm inline-block"
-                        >
-                          ไปใส่ข้อมูล
-                        </Link>
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-
-      {/* ── Section: Missing Documents ───────────────────────────────────────── */}
-      <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden mb-8">
-        <div className="p-8">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="bg-red-100 text-red-600 p-3 rounded-xl">
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
-            </div>
-            <h2 className="text-2xl font-bold text-gray-800">
-              เอกสารอ้างอิงสูญหาย / เกินกำหนด
-              <span className="text-gray-400 text-lg font-normal ml-2">
-                (ขาดใบส่งสินค้าหรือใบเสร็จ — {alerts?.missingDocuments?.length ?? 0} รายการ)
-              </span>
-            </h2>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-left">
-              <thead>
-                <tr className="border-b border-gray-100">
-                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">พนักงานขาย</th>
-                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">ลูกค้า / บริษัท</th>
-                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">สินค้า</th>
-                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">วันที่ขาย</th>
-                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">สถานะเอกสาร</th>
-                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">จัดการ</th>
-                </tr>
-              </thead>
-              <tbody>
-                {isLoading ? (
-                  Array.from({ length: 3 }).map((_, i) => (
-                    <tr key={i} className="border-b border-gray-50 animate-pulse">
-                      <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-24"></div></td>
-                      <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-36"></div></td>
-                      <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-40"></div></td>
-                      <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-24"></div></td>
-                      <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-20"></div></td>
-                      <td className="py-4"><div className="h-4 bg-gray-200 rounded w-16"></div></td>
-                    </tr>
-                  ))
-                ) : !alerts?.missingDocuments?.length ? (
-                  <tr>
-                    <td colSpan={6} className="py-12 text-center">
-                      <div className="flex flex-col items-center gap-2">
-                        <div className="text-5xl">✅</div>
-                        <p className="text-gray-400 text-lg">เอกสารอ้างอิงครบถ้วน</p>
-                      </div>
-                    </td>
-                  </tr>
-                ) : (
-                  alerts.missingDocuments.map((doc) => {
-                    const daysSinceSale = Math.floor((new Date().getTime() - new Date(doc.saleDate).getTime()) / (1000 * 3600 * 24));
-                    const isMissingDelivery = !doc.deliveryRef && daysSinceSale >= 20;
-                    const isMissingReceipt = doc.invoiceRef && !doc.receiptRef && daysSinceSale >= 30;
-                    return (
-                    <tr key={doc.id} className="border-b border-gray-50 hover:bg-gray-50/50 transition-colors">
-                      <td className="py-4 pr-4 text-sm font-medium text-gray-900">{doc.salespersonName || "—"}</td>
-                      <td className="py-4 pr-4">
-                        <div className="text-sm font-medium text-gray-900">{doc.customerName || "—"}</div>
-                        {doc.companyName && <div className="text-xs text-gray-500 mt-0.5">{doc.companyName}</div>}
-                      </td>
-                      <td className="py-4 pr-4 text-sm text-gray-700">{doc.productName || "—"}</td>
-                      <td className="py-4 pr-4 text-sm text-gray-700">{doc.saleDate}</td>
-                      <td className="py-4 pr-4 text-sm">
-                        <div className="flex flex-col gap-1">
-                          {isMissingDelivery && (
-                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-red-50 text-red-700 ring-1 ring-inset ring-red-600/20">
-                              ขาดใบส่งสินค้า (เลยกำหนด {daysSinceSale - 20} วัน)
-                            </span>
-                          )}
-                          {isMissingReceipt && (
-                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-orange-50 text-orange-700 ring-1 ring-inset ring-orange-600/20">
-                              ขาดใบเสร็จ (เลยกำหนด {daysSinceSale - 30} วัน)
-                            </span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="py-4">
-                        <Link
-                          href="/dashboard"
-                          className="px-4 py-2 bg-white border border-gray-200 text-gray-700 rounded-xl text-xs font-semibold hover:bg-gray-50 transition-colors shadow-sm inline-block"
-                        >
-                          ไปใส่ข้อมูล
-                        </Link>
-                      </td>
-                    </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
+      {/* Tabs */}
+      <div className="flex overflow-x-auto hide-scrollbar gap-2 mb-8 pb-2">
+        {tabs.map(tab => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            className={`px-5 py-2.5 rounded-xl font-semibold text-sm transition-all whitespace-nowrap flex items-center gap-2 ${
+              activeTab === tab.id
+                ? "bg-gray-900 text-white shadow-md"
+                : "bg-white text-gray-600 hover:bg-gray-50 border border-gray-200"
+            }`}
+          >
+            {tab.label}
+            <span className={`px-2 py-0.5 rounded-full text-xs ${
+              activeTab === tab.id ? "bg-white/20 text-white font-bold" : "bg-gray-100 text-gray-600 font-medium"
+            }`}>
+              {tab.count}
+            </span>
+          </button>
+        ))}
       </div>
 
       {/* ── Section 2: Upcoming / Overdue Schedules ─────────────────────── */}
-      <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
+      {(activeTab === "all" || activeTab === "schedules") && (
+      <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden mb-8">
         <div className="p-8">
           <div className="flex items-center gap-3 mb-6">
             <div className="bg-blue-100 text-blue-600 p-3 rounded-xl">
@@ -451,6 +240,256 @@ export default function AlertsPage() {
           </div>
         </div>
       </div>
+      )}
+
+      {/* ── Section 1: Expiring Warranties ──────────────────────────────── */}
+      {(activeTab === "all" || activeTab === "warranties") && (
+      <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden mb-8">
+        <div className="p-8">
+          <div className="flex items-center gap-3 mb-6">
+            <div className="bg-amber-100 text-amber-600 p-3 rounded-xl">
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+            </div>
+            <h2 className="text-2xl font-bold text-gray-800">
+              ประกันใกล้หมดอายุ
+              <span className="text-gray-400 text-lg font-normal ml-2">
+                (ภายใน 30 วัน — {alerts?.expiringWarranties.length ?? 0} รายการ)
+              </span>
+            </h2>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left">
+              <thead>
+                <tr className="border-b border-gray-100">
+                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">ลูกค้า / บริษัท</th>
+                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">สินค้า</th>
+                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">S/N</th>
+                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">หมดประกัน</th>
+                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">เหลือ</th>
+                </tr>
+              </thead>
+              <tbody>
+                {isLoading ? (
+                  Array.from({ length: 3 }).map((_, i) => (
+                    <tr key={i} className="border-b border-gray-50 animate-pulse">
+                      <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-36"></div></td>
+                      <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-40"></div></td>
+                      <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-20"></div></td>
+                      <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-24"></div></td>
+                      <td className="py-4"><div className="h-4 bg-gray-200 rounded w-16"></div></td>
+                    </tr>
+                  ))
+                ) : !alerts?.expiringWarranties.length ? (
+                  <tr>
+                    <td colSpan={5} className="py-12 text-center">
+                      <div className="flex flex-col items-center gap-2">
+                        <div className="text-5xl">✅</div>
+                        <p className="text-gray-400 text-lg">ไม่มีอุปกรณ์ที่ประกันใกล้หมดอายุ</p>
+                      </div>
+                    </td>
+                  </tr>
+                ) : (
+                  alerts.expiringWarranties.map((eq) => {
+                    const days = warrantyDaysLeft(eq.warrantyEndDate);
+                    const isUrgent = days !== null && days <= 7;
+                    return (
+                      <tr key={eq.id} className={`border-b border-gray-50 ${isUrgent ? "bg-red-50/50" : ""}`}>
+                        <td className="py-4 pr-4">
+                          <div className="font-semibold text-gray-800">{eq.customerName || "—"}</div>
+                          <div className="text-xs text-gray-400">{eq.companyName}</div>
+                        </td>
+                        <td className="py-4 pr-4 text-sm text-gray-700">{eq.productName || "—"}</td>
+                        <td className="py-4 pr-4 text-sm text-gray-600 font-mono">{eq.serialNumber || "—"}</td>
+                        <td className="py-4 pr-4 text-sm text-gray-700">{eq.warrantyEndDate}</td>
+                        <td className="py-4">
+                          <span className={`px-2.5 py-1 text-xs font-bold rounded-full ${isUrgent ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"}`}>
+                            {days !== null ? `${days} วัน` : "—"}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      )}
+
+      {/* ── Section 1.5: Incomplete Equipments ────────────────────────────── */}
+      {(activeTab === "all" || activeTab === "incomplete") && (
+      <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden mb-8">
+        <div className="p-8">
+          <div className="flex items-center gap-3 mb-6">
+            <div className="bg-red-100 text-red-600 p-3 rounded-xl">
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+            </div>
+            <h2 className="text-2xl font-bold text-gray-800">
+              อุปกรณ์ขาดข้อมูลสำคัญ
+              <span className="text-gray-400 text-lg font-normal ml-2">
+                (ยังไม่ระบุ S/N หรือประกัน — {alerts?.incompleteEquipments.length ?? 0} รายการ)
+              </span>
+            </h2>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left">
+              <thead>
+                <tr className="border-b border-gray-100">
+                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">ลูกค้า / บริษัท</th>
+                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">สินค้า</th>
+                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">สิ่งที่ขาด</th>
+                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">จัดการ</th>
+                </tr>
+              </thead>
+              <tbody>
+                {isLoading ? (
+                  Array.from({ length: 3 }).map((_, i) => (
+                    <tr key={i} className="border-b border-gray-50 animate-pulse">
+                      <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-36"></div></td>
+                      <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-40"></div></td>
+                      <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-20"></div></td>
+                      <td className="py-4"><div className="h-8 bg-gray-200 rounded-xl w-24"></div></td>
+                    </tr>
+                  ))
+                ) : !alerts?.incompleteEquipments.length ? (
+                  <tr>
+                    <td colSpan={4} className="py-12 text-center">
+                      <div className="flex flex-col items-center gap-2">
+                        <div className="text-5xl">🎉</div>
+                        <p className="text-gray-400 text-lg">ข้อมูลอุปกรณ์ครบถ้วนสมบูรณ์</p>
+                      </div>
+                    </td>
+                  </tr>
+                ) : (
+                  alerts.incompleteEquipments.map((eq) => (
+                    <tr key={eq.id} className="border-b border-gray-50 bg-red-50/20">
+                      <td className="py-4 pr-4">
+                        <div className="font-semibold text-gray-800">{eq.customerName || "—"}</div>
+                        <div className="text-xs text-gray-400">{eq.companyName}</div>
+                      </td>
+                      <td className="py-4 pr-4 text-sm text-gray-700">{eq.productName || "—"}</td>
+                      <td className="py-4 pr-4 text-sm">
+                        <div className="flex flex-col gap-1">
+                          {!eq.serialNumber && <span className="text-red-600 font-medium">❌ ขาด Serial Number</span>}
+                          {!eq.warrantyStartDate && <span className="text-red-600 font-medium">❌ ขาดวันเริ่มประกัน</span>}
+                        </div>
+                      </td>
+                      <td className="py-4">
+                        <Link
+                          href="/customers"
+                          className="px-4 py-2 bg-white border border-gray-200 text-gray-700 rounded-xl text-xs font-semibold hover:bg-gray-50 transition-colors shadow-sm inline-block"
+                        >
+                          ไปใส่ข้อมูล
+                        </Link>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      )}
+
+      {/* ── Section: Missing Documents ───────────────────────────────────────── */}
+      {(activeTab === "all" || activeTab === "missing_docs") && (
+      <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden mb-8">
+        <div className="p-8">
+          <div className="flex items-center gap-3 mb-6">
+            <div className="bg-red-100 text-red-600 p-3 rounded-xl">
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+            </div>
+            <h2 className="text-2xl font-bold text-gray-800">
+              เอกสารอ้างอิงสูญหาย / เกินกำหนด
+              <span className="text-gray-400 text-lg font-normal ml-2">
+                (ขาดใบส่งสินค้าหรือใบเสร็จ — {alerts?.missingDocuments?.length ?? 0} รายการ)
+              </span>
+            </h2>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left">
+              <thead>
+                <tr className="border-b border-gray-100">
+                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">พนักงานขาย</th>
+                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">ลูกค้า / บริษัท</th>
+                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">สินค้า</th>
+                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">วันที่ขาย</th>
+                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">สถานะเอกสาร</th>
+                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">จัดการ</th>
+                </tr>
+              </thead>
+              <tbody>
+                {isLoading ? (
+                  Array.from({ length: 3 }).map((_, i) => (
+                    <tr key={i} className="border-b border-gray-50 animate-pulse">
+                      <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-24"></div></td>
+                      <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-36"></div></td>
+                      <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-40"></div></td>
+                      <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-24"></div></td>
+                      <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-20"></div></td>
+                      <td className="py-4"><div className="h-4 bg-gray-200 rounded w-16"></div></td>
+                    </tr>
+                  ))
+                ) : !alerts?.missingDocuments?.length ? (
+                  <tr>
+                    <td colSpan={6} className="py-12 text-center">
+                      <div className="flex flex-col items-center gap-2">
+                        <div className="text-5xl">✅</div>
+                        <p className="text-gray-400 text-lg">เอกสารอ้างอิงครบถ้วน</p>
+                      </div>
+                    </td>
+                  </tr>
+                ) : (
+                  alerts.missingDocuments.map((doc) => {
+                    const daysSinceSale = Math.floor((new Date().getTime() - new Date(doc.saleDate).getTime()) / (1000 * 3600 * 24));
+                    const isMissingDelivery = !doc.deliveryRef && daysSinceSale >= 20;
+                    const isMissingReceipt = doc.invoiceRef && !doc.receiptRef && daysSinceSale >= 30;
+                    return (
+                    <tr key={doc.id} className="border-b border-gray-50 hover:bg-gray-50/50 transition-colors">
+                      <td className="py-4 pr-4 text-sm font-medium text-gray-900">{doc.salespersonName || "—"}</td>
+                      <td className="py-4 pr-4">
+                        <div className="text-sm font-medium text-gray-900">{doc.customerName || "—"}</div>
+                        {doc.companyName && <div className="text-xs text-gray-500 mt-0.5">{doc.companyName}</div>}
+                      </td>
+                      <td className="py-4 pr-4 text-sm text-gray-700">{doc.productName || "—"}</td>
+                      <td className="py-4 pr-4 text-sm text-gray-700">{doc.saleDate}</td>
+                      <td className="py-4 pr-4 text-sm">
+                        <div className="flex flex-col gap-1">
+                          {isMissingDelivery && (
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-red-50 text-red-700 ring-1 ring-inset ring-red-600/20">
+                              ขาดใบส่งสินค้า (เลยกำหนด {daysSinceSale - 20} วัน)
+                            </span>
+                          )}
+                          {isMissingReceipt && (
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-orange-50 text-orange-700 ring-1 ring-inset ring-orange-600/20">
+                              ขาดใบเสร็จ (เลยกำหนด {daysSinceSale - 30} วัน)
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="py-4">
+                        <Link
+                          href="/dashboard"
+                          className="px-4 py-2 bg-white border border-gray-200 text-gray-700 rounded-xl text-xs font-semibold hover:bg-gray-50 transition-colors shadow-sm inline-block"
+                        >
+                          ไปใส่ข้อมูล
+                        </Link>
+                      </td>
+                    </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      )}
 
       {/* ── Complete Action Modal ─────────────────────────────────────────── */}
       {completingId && (
