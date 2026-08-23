@@ -143,7 +143,11 @@ export default function DashboardPage() {
     if (!data) return [];
     if (chartMode === "monthly") {
       return data.revenueMonthly.map((r) => {
-        const monthIndex = parseInt(r.period.split("-")[1], 10) - 1;
+        const parts = r.period.split("-");
+        if (parts.length === 3) {
+          return { ...r, name: `${parseInt(parts[2], 10)} ${MONTHS_TH[parseInt(parts[1], 10) - 1]}` };
+        }
+        const monthIndex = parseInt(parts[1], 10) - 1;
         return { ...r, name: MONTHS_TH[monthIndex] };
       });
     }

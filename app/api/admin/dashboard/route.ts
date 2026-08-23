@@ -3,6 +3,7 @@ import { withRoute, requireAuth } from "../../../lib/apiHelpers";
 import {
   getDashboardOverview,
   getRevenueByMonth,
+  getRevenueByDay,
   getRevenueByQuarter,
   getRevenueByCategory,
   getTopProducts,
@@ -37,7 +38,7 @@ export const GET = withRoute(
       insights,
     ] = await Promise.all([
       getDashboardOverview(curStart, curEnd, prevStart, prevEnd),
-      getRevenueByMonth(curStart, curEnd),
+      periodType === "month" ? getRevenueByDay(curStart, curEnd) : getRevenueByMonth(curStart, curEnd),
       getRevenueByQuarter(curStart, curEnd),
       getRevenueByCategory(curStart, curEnd),
       getTopProducts(10, curStart, curEnd),
