@@ -954,7 +954,7 @@ export default function DashboardPage() {
                     onChange={(e) => {
                       const val = e.target.value;
                       const q = val === "" ? 0 : Math.max(0, parseInt(val, 10) || 0);
-                      setForm({ ...form, qty: q, totalAmount: q * form.unitPrice });
+                      setForm(prev => ({ ...prev, qty: q, totalAmount: q * prev.unitPrice }));
                     }}
                     onWheel={(e) => e.currentTarget.blur()}
                     placeholder="1"
@@ -967,7 +967,7 @@ export default function DashboardPage() {
                     value={form.unitPrice || 0}
                     onChange={(val) => {
                       const p = val;
-                      setForm({ ...form, unitPrice: p, totalAmount: (form.qty || 1) * p });
+                      setForm(prev => ({ ...prev, unitPrice: p, totalAmount: (prev.qty || 1) * p }));
                     }}
                     placeholder="0"
                     className={`w-full px-3 py-2.5 border rounded-xl text-sm focus:ring-2 outline-none font-medium text-gray-800 ${formErrors.unitPrice ? "border-red-500 bg-red-50 focus:border-red-500 focus:ring-red-200 error-border" : "border-gray-200 focus:ring-indigo-200 focus:border-indigo-400"}`}
@@ -978,7 +978,7 @@ export default function DashboardPage() {
                   <FormattedNumberInput
                     value={form.totalAmount || 0}
                     onChange={(val) => {
-                      setForm({ ...form, totalAmount: val });
+                      setForm(prev => ({ ...prev, totalAmount: val }));
                     }}
                     placeholder="0"
                     className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none bg-gray-50 font-semibold text-gray-800"
@@ -1124,11 +1124,14 @@ export default function DashboardPage() {
                         <span className="text-xs text-gray-500 font-bold bg-gray-100 px-2 py-1 rounded-md shrink-0">#{i + 1}</span>
                         <input
                           type="text"
-                          value={form.serialNumbers[i] || ""}
+                          value={(form.serialNumbers && form.serialNumbers[i]) || ""}
                           onChange={(e) => {
-                            const newSn = [...(form.serialNumbers || [])];
-                            newSn[i] = e.target.value;
-                            setForm({ ...form, serialNumbers: newSn });
+                            const val = e.target.value;
+                            setForm(prev => {
+                              const newSn = [...(prev.serialNumbers || [])];
+                              newSn[i] = val;
+                              return { ...prev, serialNumbers: newSn };
+                            });
                           }}
                           placeholder="Serial Number..."
                           className="w-full px-2 py-1 text-sm focus:outline-none bg-transparent"
