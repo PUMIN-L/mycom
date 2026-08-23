@@ -633,21 +633,21 @@ export default function DashboardPage() {
         ) : ov && curM && prevM && (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
             {[
-              { label: `ยอดขาย${ov.periodLabel}`, value: `฿${fmt(curM.revenue)}`, change: pctChange(curM.revenue, prevM.revenue) },
-              { label: "ต้นทุนและรายจ่ายรวม", value: `฿${fmt(curM.cost)}`, change: pctChange(curM.cost, prevM.cost) },
-              { label: `กำไร${ov.periodLabel}`, value: `฿${fmt(curM.profit)}`, change: pctChange(curM.profit, prevM.profit) },
-              { label: "Profit Margin", value: curM.revenue > 0 ? `${Math.round((curM.profit / curM.revenue) * 100)}%` : "—", change: (() => { const curMargin = curM.revenue > 0 ? Math.round((curM.profit / curM.revenue) * 100) : 0; const prevMarginVal = prevM.revenue > 0 ? Math.round((prevM.profit / prevM.revenue) * 100) : 0; return pctChange(curMargin, prevMarginVal); })() },
-              { label: "จำนวนดีล", value: String(curM.deals), change: pctChange(curM.deals, prevM.deals) },
-              { label: "ลูกค้าใหม่", value: String(curM.newCustomers), change: pctChange(curM.newCustomers, prevM.newCustomers) },
-              { label: "Conversion Rate", value: `${conversionRate}%`, change: pctChange(conversionRate, prevConversionRate) },
+              { label: `ยอดขาย${ov.periodLabel}`, value: `฿${fmt(curM.revenue)}`, change: pctChange(curM.revenue, prevM.revenue), color: "text-indigo-600", border: "border-indigo-100", bg: "bg-indigo-50/30" },
+              { label: "ต้นทุนและรายจ่ายรวม", value: `฿${fmt(curM.cost)}`, change: pctChange(curM.cost, prevM.cost), color: "text-rose-600", border: "border-rose-100", bg: "bg-rose-50/30" },
+              { label: `กำไร${ov.periodLabel}`, value: `฿${fmt(curM.profit)}`, change: pctChange(curM.profit, prevM.profit), color: "text-emerald-600", border: "border-emerald-100", bg: "bg-emerald-50/30" },
+              { label: "Profit Margin", value: curM.revenue > 0 ? `${Math.round((curM.profit / curM.revenue) * 100)}%` : "—", change: (() => { const curMargin = curM.revenue > 0 ? Math.round((curM.profit / curM.revenue) * 100) : 0; const prevMarginVal = prevM.revenue > 0 ? Math.round((prevM.profit / prevM.revenue) * 100) : 0; return pctChange(curMargin, prevMarginVal); })(), color: "text-purple-600", border: "border-purple-100", bg: "bg-purple-50/30" },
+              { label: "จำนวนดีล", value: String(curM.deals), change: pctChange(curM.deals, prevM.deals), color: "text-blue-600", border: "border-blue-100", bg: "bg-blue-50/30" },
+              { label: "ลูกค้าใหม่", value: String(curM.newCustomers), change: pctChange(curM.newCustomers, prevM.newCustomers), color: "text-cyan-600", border: "border-cyan-100", bg: "bg-cyan-50/30" },
+              { label: "Conversion Rate", value: `${conversionRate}%`, change: pctChange(conversionRate, prevConversionRate), color: "text-amber-600", border: "border-amber-100", bg: "bg-amber-50/30" },
             ].map((card, i) => (
-              <div key={i} className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100/50 hover:shadow-md transition-shadow flex flex-col justify-between">
+              <div key={i} className={`rounded-2xl p-5 shadow-sm border ${card.border} ${card.bg} hover:shadow-md transition-all hover:-translate-y-1 flex flex-col justify-between`}>
                 <div>
-                  <div className="text-[13px] font-medium text-gray-500 mb-1">{card.label}</div>
-                  <div className={`text-xl sm:text-2xl font-bold tracking-tight ${i === 2 ? "text-emerald-600" : i === 3 ? "text-indigo-600" : "text-gray-900"}`}>{card.value}</div>
+                  <div className="text-[13px] font-semibold text-gray-600 mb-1">{card.label}</div>
+                  <div className={`text-2xl sm:text-3xl font-black tracking-tight ${card.color}`}>{card.value}</div>
                 </div>
                 {card.change.label !== "—" && (
-                  <div className={`text-[11px] font-medium mt-1.5 ${card.change.color}`}>{card.change.label}</div>
+                  <div className={`text-xs font-bold mt-2 ${card.change.color}`}>{card.change.label}</div>
                 )}
               </div>
             ))}
