@@ -611,9 +611,9 @@ export default function DashboardPage() {
             ) : (
               <div className="flex flex-col gap-8">
                 {/* Chart 1: Revenue vs Profit */}
-                <div className="h-[260px]">
+                <div className="h-[280px] pb-4">
                   <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={chartData}>
+                    <BarChart data={chartData} margin={{ bottom: 20 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
                       <XAxis dataKey="name" tick={{ fontSize: 12, fill: "#6b7280" }} axisLine={false} tickLine={false} />
                       <YAxis tickFormatter={(v: number) => fmt(v)} tick={{ fontSize: 11, fill: "#6b7280" }} axisLine={false} tickLine={false} />
@@ -638,10 +638,10 @@ export default function DashboardPage() {
                 </div>
                 
                 {/* Chart 2: Profit vs Expense */}
-                <div className="h-[260px] border-t border-gray-100 pt-6">
+                <div className="h-[280px] border-t border-gray-100 pt-6 pb-4">
                   <h3 className="text-sm font-bold text-gray-800 mb-4 text-center">กำไร & รายจ่ายบริษัท</h3>
                   <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={chartData}>
+                    <BarChart data={chartData} margin={{ bottom: 20 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
                       <XAxis dataKey="name" tick={{ fontSize: 12, fill: "#6b7280" }} axisLine={false} tickLine={false} />
                       <YAxis tickFormatter={(v: number) => fmt(v)} tick={{ fontSize: 11, fill: "#6b7280" }} axisLine={false} tickLine={false} />
