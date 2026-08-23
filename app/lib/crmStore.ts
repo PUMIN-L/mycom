@@ -160,6 +160,15 @@ export async function syncEquipmentsForSalesRecord(
   }
 }
 
+/** Delete all equipments linked to a sales record (cascade cleanup). */
+export async function cleanupEquipmentsForSalesRecord(salesRecordId: string): Promise<void> {
+  if (!salesRecordId) return;
+  await query(
+    `DELETE FROM customer_equipments WHERE salesRecordId = ?`,
+    [salesRecordId]
+  );
+}
+
 export async function updateEquipment(
   id: string,
   data: Partial<CustomerEquipment>
@@ -169,13 +178,14 @@ export async function updateEquipment(
   const v = cleanEquipment({ ...existing, ...data });
   await query(
     `UPDATE customer_equipments SET
-       customerId = ?, productId = ?, serialNumber = ?, quotationNumber = ?,
+       customerId = ?, productId = ?, productName = ?, serialNumber = ?, quotationNumber = ?,
        warrantyCertNumber = ?, warrantyType = ?, warrantyStartDate = ?,
        warrantyEndDate = ?, status = ?
      WHERE id = ?`,
     [
       v.customerId,
       v.productId,
+      v.productName,
       v.serialNumber,
       v.quotationNumber,
       v.warrantyCertNumber,

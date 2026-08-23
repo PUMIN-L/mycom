@@ -5,7 +5,7 @@ import {
   updateSalesRecord,
   deleteSalesRecord,
 } from "../../../../lib/salesDashboardStore";
-import { syncEquipmentsForSalesRecord } from "../../../../lib/crmStore";
+import { syncEquipmentsForSalesRecord, cleanupEquipmentsForSalesRecord } from "../../../../lib/crmStore";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -86,6 +86,12 @@ export const DELETE = withRoute(
   async (_request: NextRequest, { params }: Ctx) => {
     await requireAuth();
     const { id } = await params;
+    // Clean up linked equipment records first
+    try {
+      await cleanupEquipmentsForSalesRecord(id);
+    } catch (err) {
+      console.error("Failed to cleanup equipments for sales record:", err);
+    }
     const deleted = await deleteSalesRecord(id);
     if (!deleted) {
       return NextResponse.json({ error: "ไม่พบรายการ" }, { status: 404 });
