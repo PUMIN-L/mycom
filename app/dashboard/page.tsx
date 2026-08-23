@@ -29,9 +29,9 @@ import {
 export default function DashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [periodType, setPeriodType] = useState<"month" | "quarter" | "year">("month");
+  const [periodType, setPeriodType] = useState<"month" | "quarter" | "year">("year");
   const [periodValue, setPeriodValue] = useState<string>(
-    `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`
+    new Date().getFullYear().toString()
   );
   const [chartMode, setChartMode] = useState<"monthly" | "quarterly">("monthly");
 
