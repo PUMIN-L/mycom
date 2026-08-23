@@ -3,7 +3,7 @@ import React, { useState, useEffect, useCallback, useMemo } from "react";
 import Link from "next/link";
 import DatePicker from "../components/DatePicker";
 import {
-  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine,
   PieChart, Pie, Cell, Legend,
   LineChart, Line,
 } from "recharts";
@@ -631,7 +631,12 @@ export default function DashboardPage() {
                         }}
                       />
                       <Legend formatter={(value: string) => value === "revenue" ? "ยอดขาย" : "กำไร"} wrapperStyle={{ paddingTop: "10px" }} />
-                      <Bar dataKey="profit" fill="#10b981" radius={[4, 4, 0, 0]} name="profit" maxBarSize={40} />
+                      <ReferenceLine y={0} stroke="#cbd5e1" />
+                      <Bar dataKey="profit" name="profit" maxBarSize={40} radius={4}>
+                        {chartData.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={entry.profit < 0 ? "#ef4444" : "#10b981"} />
+                        ))}
+                      </Bar>
                       <Bar dataKey="revenue" fill="#6366f1" radius={[4, 4, 0, 0]} name="revenue" maxBarSize={40} />
                     </BarChart>
                   </ResponsiveContainer>
@@ -660,7 +665,12 @@ export default function DashboardPage() {
                       />
                       <Legend formatter={(value: string) => value === "expense" ? "รายจ่าย" : "กำไร"} wrapperStyle={{ paddingTop: "10px" }} />
                       <Bar dataKey="expense" fill="#f43f5e" radius={[4, 4, 0, 0]} name="expense" maxBarSize={40} />
-                      <Bar dataKey="profit" fill="#10b981" radius={[4, 4, 0, 0]} name="profit" maxBarSize={40} />
+                      <ReferenceLine y={0} stroke="#cbd5e1" />
+                      <Bar dataKey="profit" name="profit" maxBarSize={40} radius={4}>
+                        {chartData.map((entry, index) => (
+                          <Cell key={`cell-2-${index}`} fill={entry.profit < 0 ? "#ef4444" : "#10b981"} />
+                        ))}
+                      </Bar>
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
