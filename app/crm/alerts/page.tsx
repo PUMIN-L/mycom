@@ -96,11 +96,51 @@ export default function AlertsPage() {
   }
 
   const tabs = [
-    { id: "all", label: "รวมทั้งหมด", count: (alerts?.upcomingSchedules.length ?? 0) + (alerts?.expiringWarranties.length ?? 0) + (alerts?.incompleteEquipments.length ?? 0) + (alerts?.missingDocuments?.length ?? 0) },
-    { id: "schedules", label: "กำหนดการ Service", count: alerts?.upcomingSchedules.length ?? 0 },
-    { id: "warranties", label: "ประกันใกล้หมดอายุ", count: alerts?.expiringWarranties.length ?? 0 },
-    { id: "incomplete", label: "อุปกรณ์ขาดข้อมูล", count: alerts?.incompleteEquipments.length ?? 0 },
-    { id: "missing_docs", label: "เอกสารอ้างอิงสูญหาย", count: alerts?.missingDocuments?.length ?? 0 },
+    { 
+      id: "all", 
+      label: "รวมทั้งหมด", 
+      count: (alerts?.upcomingSchedules.length ?? 0) + (alerts?.expiringWarranties.length ?? 0) + (alerts?.incompleteEquipments.length ?? 0) + (alerts?.missingDocuments?.length ?? 0),
+      activeBg: "bg-gray-900 text-white shadow-md border-gray-900",
+      inactiveBg: "bg-white text-gray-600 hover:bg-gray-50 border-gray-200",
+      activeBadge: "bg-white/20 text-white font-bold",
+      inactiveBadge: "bg-gray-100 text-gray-600 font-medium"
+    },
+    { 
+      id: "schedules", 
+      label: "กำหนดการ Service", 
+      count: alerts?.upcomingSchedules.length ?? 0,
+      activeBg: "bg-blue-600 text-white shadow-md border-blue-600",
+      inactiveBg: "bg-white text-gray-600 hover:bg-blue-50 hover:text-blue-700 border-gray-200 hover:border-blue-200",
+      activeBadge: "bg-white/20 text-white font-bold",
+      inactiveBadge: "bg-gray-100 text-gray-600 font-medium group-hover:bg-blue-100 group-hover:text-blue-700"
+    },
+    { 
+      id: "warranties", 
+      label: "ประกันใกล้หมดอายุ", 
+      count: alerts?.expiringWarranties.length ?? 0,
+      activeBg: "bg-amber-500 text-white shadow-md border-amber-500",
+      inactiveBg: "bg-white text-gray-600 hover:bg-amber-50 hover:text-amber-700 border-gray-200 hover:border-amber-200",
+      activeBadge: "bg-white/20 text-white font-bold",
+      inactiveBadge: "bg-gray-100 text-gray-600 font-medium group-hover:bg-amber-100 group-hover:text-amber-700"
+    },
+    { 
+      id: "incomplete", 
+      label: "อุปกรณ์ขาดข้อมูล", 
+      count: alerts?.incompleteEquipments.length ?? 0,
+      activeBg: "bg-rose-500 text-white shadow-md border-rose-500",
+      inactiveBg: "bg-white text-gray-600 hover:bg-rose-50 hover:text-rose-700 border-gray-200 hover:border-rose-200",
+      activeBadge: "bg-white/20 text-white font-bold",
+      inactiveBadge: "bg-gray-100 text-gray-600 font-medium group-hover:bg-rose-100 group-hover:text-rose-700"
+    },
+    { 
+      id: "missing_docs", 
+      label: "เอกสารอ้างอิงสูญหาย", 
+      count: alerts?.missingDocuments?.length ?? 0,
+      activeBg: "bg-red-500 text-white shadow-md border-red-500",
+      inactiveBg: "bg-white text-gray-600 hover:bg-red-50 hover:text-red-700 border-gray-200 hover:border-red-200",
+      activeBadge: "bg-white/20 text-white font-bold",
+      inactiveBadge: "bg-gray-100 text-gray-600 font-medium group-hover:bg-red-100 group-hover:text-red-700"
+    },
   ];
 
   return (
@@ -129,15 +169,13 @@ export default function AlertsPage() {
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`px-5 py-2.5 rounded-xl font-semibold text-sm transition-all whitespace-nowrap flex items-center gap-2 ${
-                activeTab === tab.id
-                  ? "bg-gray-900 text-white shadow-md"
-                  : "bg-white text-gray-600 hover:bg-gray-50 border border-gray-200"
+              className={`group px-5 py-2.5 rounded-xl font-semibold text-sm transition-all whitespace-nowrap flex items-center gap-2 border ${
+                activeTab === tab.id ? tab.activeBg : tab.inactiveBg
               }`}
             >
               {tab.label}
-              <span className={`px-2 py-0.5 rounded-full text-xs ${
-                activeTab === tab.id ? "bg-white/20 text-white font-bold" : "bg-gray-100 text-gray-600 font-medium"
+              <span className={`px-2 py-0.5 rounded-full text-xs transition-colors ${
+                activeTab === tab.id ? tab.activeBadge : tab.inactiveBadge
               }`}>
                 {tab.count}
               </span>
@@ -197,9 +235,13 @@ export default function AlertsPage() {
                       <tr key={s.id} className={`border-b border-gray-50 transition-colors ${s.overdue ? "bg-red-50/30 hover:bg-red-50/50" : "hover:bg-gray-50/50"}`}>
                         <td className="p-4">
                           {s.scheduleType === "service" ? (
-                            <span className="px-2.5 py-1 text-xs font-medium rounded-full bg-blue-100 text-blue-700">🔧 Service</span>
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-full bg-blue-50 text-blue-700 border border-blue-100 whitespace-nowrap">
+                              <span>🔧</span> Service
+                            </span>
                           ) : (
-                            <span className="px-2.5 py-1 text-xs font-medium rounded-full bg-purple-100 text-purple-700">📞 โทร</span>
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-full bg-purple-50 text-purple-700 border border-purple-100 whitespace-nowrap">
+                              <span>📞</span> โทรติดตาม
+                            </span>
                           )}
                         </td>
                         <td className="p-4">
