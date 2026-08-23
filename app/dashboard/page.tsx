@@ -642,10 +642,14 @@ export default function DashboardPage() {
               { label: "Conversion Rate", value: `${conversionRate}%`, change: pctChange(conversionRate, prevConversionRate) },
               { label: "ประกันใกล้หมด", value: String(ov.expiringWarranties), change: { value: 0, label: "≤30 วัน", color: ov.expiringWarranties > 0 ? "text-amber-600" : "text-gray-400" } },
             ].map((card, i) => (
-              <div key={i} className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100/50 hover:shadow-md transition-shadow">
-                <div className="text-[13px] font-medium text-gray-500 mb-1">{card.label}</div>
-                <div className={`text-xl sm:text-2xl font-bold tracking-tight ${i === 2 ? "text-emerald-600" : i === 3 ? "text-indigo-600" : "text-gray-900"}`}>{card.value}</div>
-                <div className={`text-[11px] font-medium mt-1.5 ${card.change.color}`}>{card.change.label}</div>
+              <div key={i} className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100/50 hover:shadow-md transition-shadow flex flex-col justify-between">
+                <div>
+                  <div className="text-[13px] font-medium text-gray-500 mb-1">{card.label}</div>
+                  <div className={`text-xl sm:text-2xl font-bold tracking-tight ${i === 2 ? "text-emerald-600" : i === 3 ? "text-indigo-600" : "text-gray-900"}`}>{card.value}</div>
+                </div>
+                {card.change.label !== "—" && (
+                  <div className={`text-[11px] font-medium mt-1.5 ${card.change.color}`}>{card.change.label}</div>
+                )}
               </div>
             ))}
           </div>
