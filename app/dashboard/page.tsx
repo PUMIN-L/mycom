@@ -545,6 +545,7 @@ export default function DashboardPage() {
                 }}
                 className="w-28 shrink-0 bg-transparent"
                 buttonClassName="h-8 border-none bg-transparent hover:bg-white rounded-full shadow-none font-medium text-sm text-gray-700 transition-all"
+                searchable={false}
               />
               <div className="h-4 w-px bg-gray-300 mx-1 shrink-0"></div>
               {periodType === "month" && (
@@ -568,6 +569,7 @@ export default function DashboardPage() {
                     onChange={(v) => setPeriodValue(`${periodValue.split('-')[0]}-${v}`)}
                     className="w-32 bg-transparent"
                     buttonClassName="h-8 border-none bg-transparent hover:bg-white rounded-full shadow-none font-medium text-sm text-gray-700 transition-all"
+                    searchable={false}
                   />
                   <SearchableDropdown
                     options={yearOptions}
@@ -575,6 +577,7 @@ export default function DashboardPage() {
                     onChange={(v) => setPeriodValue(`${v}-${periodValue.split('-')[1] || "Q1"}`)}
                     className="w-24 bg-transparent"
                     buttonClassName="h-8 border-none bg-transparent hover:bg-white rounded-full shadow-none font-medium text-sm text-gray-700 transition-all"
+                    searchable={false}
                   />
                 </div>
               )}
@@ -585,6 +588,7 @@ export default function DashboardPage() {
                   onChange={setPeriodValue}
                   className="w-28 shrink-0 bg-transparent"
                   buttonClassName="h-8 border-none bg-transparent hover:bg-white rounded-full shadow-none font-medium text-sm text-gray-700 transition-all"
+                  searchable={false}
                 />
               )}
             </div>
