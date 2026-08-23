@@ -388,8 +388,9 @@ export default function DashboardPage() {
 
   // Export Excel
   const handleExport = async () => {
+    const selectedYear = periodValue.split('-')[0];
     const yearRecords = salesRecords.filter(
-      (r) => r.saleDate && r.saleDate.startsWith(String(year))
+      (r) => r.saleDate && r.saleDate.startsWith(selectedYear)
     );
     const targetRecords = yearRecords.length > 0 ? yearRecords : salesRecords;
     if (targetRecords.length === 0) {
@@ -415,9 +416,9 @@ export default function DashboardPage() {
       }));
       const ws = XLSX.utils.json_to_sheet(rows);
       const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, `Sales ${year}`);
+      XLSX.utils.book_append_sheet(wb, ws, `Sales ${selectedYear}`);
       const filename = yearRecords.length > 0
-        ? `sales-report-${year}.xlsx`
+        ? `sales-report-${selectedYear}.xlsx`
         : `sales-report-all.xlsx`;
       XLSX.writeFile(wb, filename);
       showToast(`ส่งออกไฟล์ ${filename} เรียบร้อยแล้ว`, "success");
@@ -595,7 +596,7 @@ export default function DashboardPage() {
           {/* Revenue Bar Chart */}
           <div className="lg:col-span-2 bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
             <div className="flex justify-between items-center mb-4">
-              <h2 className="text-lg font-bold text-gray-800">ยอดขาย {ov?.periodLabel || year}</h2>
+              <h2 className="text-lg font-bold text-gray-800">ยอดขาย {ov?.periodLabel || periodValue.split('-')[0]}</h2>
               <div className="flex bg-gray-100 rounded-lg p-1">
                 <button onClick={() => setChartMode("monthly")} className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${chartMode === "monthly" ? "bg-white shadow-sm text-indigo-600" : "text-gray-500"}`}>
                   รายเดือน

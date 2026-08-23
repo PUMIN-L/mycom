@@ -8,7 +8,7 @@ export interface OverviewData {
 }
 
 export interface DashboardData {
-  overview: { currentMonth: OverviewData; previousMonth: OverviewData; expiringWarranties: number };
+  overview: { currentPeriod: OverviewData; previousPeriod: OverviewData; expiringWarranties: number; periodLabel: string };
   revenueMonthly: ChartPeriod[];
   revenueQuarterly: ChartPeriod[];
   revenueByCategory: TopItem[];
