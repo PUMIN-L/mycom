@@ -67,7 +67,13 @@ export default function ExpensesPage() {
       const res = await fetch(`/api/admin/expenses?dateFrom=${dateFrom}&dateTo=${dateTo}`);
       if (!res.ok) throw new Error("Failed to fetch");
       const data = await res.json();
-      setRecords(data);
+      const stripHtml = (html: string) => html ? html.replace(/<[^>]*>?/gm, '') : '';
+      setRecords(data.map((r: any) => ({
+        ...r,
+        title: stripHtml(r.title),
+        category: stripHtml(r.category),
+        note: stripHtml(r.note)
+      })));
     } catch {
       showToast("ดึงข้อมูลรายจ่ายไม่สำเร็จ", "error");
     } finally {
