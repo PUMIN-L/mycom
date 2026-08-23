@@ -58,6 +58,8 @@ export const config = {
     '/dashboard',
     '/dashboard/:path*',
     '/expenses',
-    '/expenses/:path*'
+    '/expenses/:path*',
+    '/showcase',
+    '/showcase/:path*'
   ],
 };
