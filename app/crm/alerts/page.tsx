@@ -104,451 +104,465 @@ export default function AlertsPage() {
   ];
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100/50 pt-32 pb-16 px-4 md:px-16">
+    <div className="min-h-screen bg-gray-50/50 p-6 md:p-8 pt-32">
       {toast && <Toast message={toast.message} type={toast.type} />}
 
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
-        <div>
-          <h1 className="text-4xl font-extrabold text-gray-900 tracking-tight">🔔 แจ้งเตือน CRM</h1>
-          <p className="text-gray-500 mt-2 text-lg">ประกันใกล้หมดอายุ และกำหนดการที่ใกล้ถึง</p>
-        </div>
-        <Link
-          href="/customers"
-          className="px-5 py-2.5 bg-white border border-gray-200 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 hover:shadow-sm transition-all flex items-center gap-2"
-        >
-          <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
-          กลับไปหน้าลูกค้า
-        </Link>
-      </div>
-
-      {/* Tabs */}
-      <div className="flex overflow-x-auto hide-scrollbar gap-2 mb-8 pb-2">
-        {tabs.map(tab => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
-            className={`px-5 py-2.5 rounded-xl font-semibold text-sm transition-all whitespace-nowrap flex items-center gap-2 ${
-              activeTab === tab.id
-                ? "bg-gray-900 text-white shadow-md"
-                : "bg-white text-gray-600 hover:bg-gray-50 border border-gray-200"
-            }`}
+      <div className="max-w-6xl mx-auto">
+        {/* Header */}
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-800">🔔 แจ้งเตือน CRM</h1>
+            <p className="text-gray-500 mt-1">จัดการกำหนดการ, ประกันใกล้หมดอายุ และเอกสาร</p>
+          </div>
+          <Link
+            href="/customers"
+            className="px-4 py-2.5 bg-white border border-gray-200 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 transition-all text-sm flex items-center gap-2 shadow-sm"
           >
-            {tab.label}
-            <span className={`px-2 py-0.5 rounded-full text-xs ${
-              activeTab === tab.id ? "bg-white/20 text-white font-bold" : "bg-gray-100 text-gray-600 font-medium"
-            }`}>
-              {tab.count}
-            </span>
-          </button>
-        ))}
-      </div>
-
-      {/* ── Section 2: Upcoming / Overdue Schedules ─────────────────────── */}
-      {(activeTab === "all" || activeTab === "schedules") && (
-      <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden mb-8">
-        <div className="p-8">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="bg-blue-100 text-blue-600 p-3 rounded-xl">
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
-            </div>
-            <h2 className="text-2xl font-bold text-gray-800">
-              กำหนดการ Service / โทรติดตาม
-              <span className="text-gray-400 text-lg font-normal ml-2">
-                ({alerts?.upcomingSchedules.length ?? 0} รายการ)
-              </span>
-            </h2>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-left">
-              <thead>
-                <tr className="border-b border-gray-100">
-                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">ประเภท</th>
-                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">ลูกค้า / บริษัท</th>
-                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">สินค้า</th>
-                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">กำหนด</th>
-                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">สถานะ</th>
-                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {isLoading ? (
-                  Array.from({ length: 3 }).map((_, i) => (
-                    <tr key={i} className="border-b border-gray-50 animate-pulse">
-                      <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-20"></div></td>
-                      <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-36"></div></td>
-                      <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-32"></div></td>
-                      <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-24"></div></td>
-                      <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-20"></div></td>
-                      <td className="py-4"><div className="h-4 bg-gray-200 rounded w-16"></div></td>
-                    </tr>
-                  ))
-                ) : !alerts?.upcomingSchedules.length ? (
-                  <tr>
-                    <td colSpan={6} className="py-12 text-center">
-                      <div className="flex flex-col items-center gap-2">
-                        <div className="text-5xl">📅</div>
-                        <p className="text-gray-400 text-lg">ไม่มีกำหนดการที่ใกล้ถึง</p>
-                      </div>
-                    </td>
-                  </tr>
-                ) : (
-                  alerts.upcomingSchedules.map((s) => (
-                    <tr key={s.id} className={`border-b border-gray-50 ${s.overdue ? "bg-red-50/50" : ""}`}>
-                      <td className="py-4 pr-4">
-                        {s.scheduleType === "service" ? (
-                          <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-blue-100 text-blue-700">🔧 Service</span>
-                        ) : (
-                          <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-purple-100 text-purple-700">📞 โทร</span>
-                        )}
-                      </td>
-                      <td className="py-4 pr-4">
-                        <div className="font-semibold text-gray-800">{s.customerName || "—"}</div>
-                        <div className="text-xs text-gray-400">{s.companyName}</div>
-                      </td>
-                      <td className="py-4 pr-4 text-sm text-gray-700">
-                        {s.productName ? <div dangerouslySetInnerHTML={{ __html: s.productName }} /> : "—"}
-                      </td>
-                      <td className="py-4 pr-4 text-sm text-gray-700">{s.scheduledDate}</td>
-                      <td className="py-4 pr-4">
-                        {s.overdue ? (
-                          <span className="px-2.5 py-1 text-xs font-bold rounded-full bg-red-100 text-red-700">⚠️ เกินกำหนด</span>
-                        ) : (
-                          <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-yellow-100 text-yellow-700">รอดำเนินการ</span>
-                        )}
-                      </td>
-                      <td className="py-4">
-                        <button
-                          onClick={() => {
-                            setCompletingId(s.id);
-                            setCompleteForm({
-                              serviceReportNumber: "",
-                              actionDate: new Date().toISOString().slice(0, 10),
-                              resultDetails: "",
-                              customerFeedback: "",
-                            });
-                          }}
-                          className="px-3 py-1.5 bg-green-500 text-white text-xs font-semibold rounded-lg hover:bg-green-600 transition-all"
-                        >
-                          ✅ จบงาน
-                        </button>
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
+            <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
+            กลับไปหน้าลูกค้า
+          </Link>
         </div>
-      </div>
-      )}
 
-      {/* ── Section 1: Expiring Warranties ──────────────────────────────── */}
-      {(activeTab === "all" || activeTab === "warranties") && (
-      <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden mb-8">
-        <div className="p-8">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="bg-amber-100 text-amber-600 p-3 rounded-xl">
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
-            </div>
-            <h2 className="text-2xl font-bold text-gray-800">
-              ประกันใกล้หมดอายุ
-              <span className="text-gray-400 text-lg font-normal ml-2">
-                (ภายใน 30 วัน — {alerts?.expiringWarranties.length ?? 0} รายการ)
+        {/* Tabs */}
+        <div className="flex overflow-x-auto hide-scrollbar gap-2 mb-8 pb-2">
+          {tabs.map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`px-5 py-2.5 rounded-xl font-semibold text-sm transition-all whitespace-nowrap flex items-center gap-2 ${
+                activeTab === tab.id
+                  ? "bg-gray-900 text-white shadow-md"
+                  : "bg-white text-gray-600 hover:bg-gray-50 border border-gray-200"
+              }`}
+            >
+              {tab.label}
+              <span className={`px-2 py-0.5 rounded-full text-xs ${
+                activeTab === tab.id ? "bg-white/20 text-white font-bold" : "bg-gray-100 text-gray-600 font-medium"
+              }`}>
+                {tab.count}
               </span>
-            </h2>
-          </div>
+            </button>
+          ))}
+        </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-left">
-              <thead>
-                <tr className="border-b border-gray-100">
-                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">ลูกค้า / บริษัท</th>
-                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">สินค้า</th>
-                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">S/N</th>
-                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">หมดประกัน</th>
-                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">เหลือ</th>
-                </tr>
-              </thead>
-              <tbody>
-                {isLoading ? (
-                  Array.from({ length: 3 }).map((_, i) => (
-                    <tr key={i} className="border-b border-gray-50 animate-pulse">
-                      <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-36"></div></td>
-                      <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-40"></div></td>
-                      <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-20"></div></td>
-                      <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-24"></div></td>
-                      <td className="py-4"><div className="h-4 bg-gray-200 rounded w-16"></div></td>
-                    </tr>
-                  ))
-                ) : !alerts?.expiringWarranties.length ? (
-                  <tr>
-                    <td colSpan={5} className="py-12 text-center">
-                      <div className="flex flex-col items-center gap-2">
-                        <div className="text-5xl">✅</div>
-                        <p className="text-gray-400 text-lg">ไม่มีอุปกรณ์ที่ประกันใกล้หมดอายุ</p>
-                      </div>
-                    </td>
+        {/* ── Section 2: Upcoming / Overdue Schedules ─────────────────────── */}
+        {(activeTab === "all" || activeTab === "schedules") && (
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden mb-8">
+            <div className="p-6 md:px-8 border-b border-gray-50">
+              <div className="flex items-center gap-3">
+                <div className="bg-blue-50 text-blue-600 p-2.5 rounded-xl">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
+                </div>
+                <h2 className="text-xl font-bold text-gray-800">
+                  กำหนดการ Service / โทรติดตาม
+                  <span className="text-gray-400 text-base font-normal ml-2">
+                    ({alerts?.upcomingSchedules.length ?? 0} รายการ)
+                  </span>
+                </h2>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-gray-50/80 border-b border-gray-100 text-gray-600 text-sm">
+                    <th className="p-4 font-semibold w-24">ประเภท</th>
+                    <th className="p-4 font-semibold">ลูกค้า / บริษัท</th>
+                    <th className="p-4 font-semibold w-48">สินค้า</th>
+                    <th className="p-4 font-semibold w-32">กำหนด</th>
+                    <th className="p-4 font-semibold w-32">สถานะ</th>
+                    <th className="p-4 font-semibold text-center w-28">จัดการ</th>
                   </tr>
-                ) : (
-                  alerts.expiringWarranties.map((eq) => {
-                    const days = warrantyDaysLeft(eq.warrantyEndDate);
-                    const isUrgent = days !== null && days <= 7;
-                    return (
-                      <tr key={eq.id} className={`border-b border-gray-50 ${isUrgent ? "bg-red-50/50" : ""}`}>
-                        <td className="py-4 pr-4">
-                          <div className="font-semibold text-gray-800">{eq.customerName || "—"}</div>
-                          <div className="text-xs text-gray-400">{eq.companyName}</div>
+                </thead>
+                <tbody>
+                  {isLoading ? (
+                    Array.from({ length: 3 }).map((_, i) => (
+                      <tr key={i} className="border-b border-gray-50">
+                        <td className="p-4"><div className="h-5 bg-gray-200 rounded w-16 animate-pulse"></div></td>
+                        <td className="p-4"><div className="h-5 bg-gray-200 rounded w-36 animate-pulse"></div></td>
+                        <td className="p-4"><div className="h-5 bg-gray-200 rounded w-32 animate-pulse"></div></td>
+                        <td className="p-4"><div className="h-5 bg-gray-200 rounded w-24 animate-pulse"></div></td>
+                        <td className="p-4"><div className="h-5 bg-gray-200 rounded w-20 animate-pulse"></div></td>
+                        <td className="p-4"><div className="h-5 bg-gray-200 rounded w-16 mx-auto animate-pulse"></div></td>
+                      </tr>
+                    ))
+                  ) : !alerts?.upcomingSchedules.length ? (
+                    <tr>
+                      <td colSpan={6} className="p-12 text-center text-gray-400">
+                        ไม่มีกำหนดการที่ใกล้ถึง
+                      </td>
+                    </tr>
+                  ) : (
+                    alerts.upcomingSchedules.map((s) => (
+                      <tr key={s.id} className={`border-b border-gray-50 transition-colors ${s.overdue ? "bg-red-50/30 hover:bg-red-50/50" : "hover:bg-gray-50/50"}`}>
+                        <td className="p-4">
+                          {s.scheduleType === "service" ? (
+                            <span className="px-2.5 py-1 text-xs font-medium rounded-full bg-blue-100 text-blue-700">🔧 Service</span>
+                          ) : (
+                            <span className="px-2.5 py-1 text-xs font-medium rounded-full bg-purple-100 text-purple-700">📞 โทร</span>
+                          )}
                         </td>
-                        <td className="py-4 pr-4 text-sm text-gray-700">
-                          {eq.productName ? <div dangerouslySetInnerHTML={{ __html: eq.productName }} /> : "—"}
+                        <td className="p-4">
+                          <div className="font-medium text-gray-800">{s.customerName || "—"}</div>
+                          <div className="text-xs text-gray-500 mt-0.5">{s.companyName}</div>
                         </td>
-                        <td className="py-4 pr-4 text-sm text-gray-600 font-mono">{eq.serialNumber || "—"}</td>
-                        <td className="py-4 pr-4 text-sm text-gray-700">{eq.warrantyEndDate}</td>
-                        <td className="py-4">
-                          <span className={`px-2.5 py-1 text-xs font-bold rounded-full ${isUrgent ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"}`}>
-                            {days !== null ? `${days} วัน` : "—"}
-                          </span>
+                        <td className="p-4 text-sm text-gray-700">
+                          {s.productName ? <div dangerouslySetInnerHTML={{ __html: s.productName }} /> : "—"}
+                        </td>
+                        <td className="p-4 text-sm text-gray-600">{s.scheduledDate}</td>
+                        <td className="p-4">
+                          {s.overdue ? (
+                            <span className="px-2.5 py-1 text-xs font-bold rounded-full bg-red-100 text-red-700">⚠️ เกินกำหนด</span>
+                          ) : (
+                            <span className="px-2.5 py-1 text-xs font-medium rounded-full bg-amber-100 text-amber-700">รอดำเนินการ</span>
+                          )}
+                        </td>
+                        <td className="p-4 text-center">
+                          <button
+                            onClick={() => {
+                              setCompletingId(s.id);
+                              setCompleteForm({
+                                serviceReportNumber: "",
+                                actionDate: new Date().toISOString().slice(0, 10),
+                                resultDetails: "",
+                                customerFeedback: "",
+                              });
+                            }}
+                            className="px-3 py-1.5 bg-emerald-50 text-emerald-600 border border-emerald-200 text-xs font-semibold rounded-lg hover:bg-emerald-100 transition-colors"
+                          >
+                            ✅ จบงาน
+                          </button>
                         </td>
                       </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-      )}
-
-      {/* ── Section 1.5: Incomplete Equipments ────────────────────────────── */}
-      {(activeTab === "all" || activeTab === "incomplete") && (
-      <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden mb-8">
-        <div className="p-8">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="bg-red-100 text-red-600 p-3 rounded-xl">
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                    ))
+                  )}
+                </tbody>
+              </table>
             </div>
-            <h2 className="text-2xl font-bold text-gray-800">
-              อุปกรณ์ขาดข้อมูลสำคัญ
-              <span className="text-gray-400 text-lg font-normal ml-2">
-                (ยังไม่ระบุ S/N หรือประกัน — {alerts?.incompleteEquipments.length ?? 0} รายการ)
-              </span>
-            </h2>
           </div>
+        )}
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-left">
-              <thead>
-                <tr className="border-b border-gray-100">
-                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">ลูกค้า / บริษัท</th>
-                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">สินค้า</th>
-                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">สิ่งที่ขาด</th>
-                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">จัดการ</th>
-                </tr>
-              </thead>
-              <tbody>
-                {isLoading ? (
-                  Array.from({ length: 3 }).map((_, i) => (
-                    <tr key={i} className="border-b border-gray-50 animate-pulse">
-                      <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-36"></div></td>
-                      <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-40"></div></td>
-                      <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-20"></div></td>
-                      <td className="py-4"><div className="h-8 bg-gray-200 rounded-xl w-24"></div></td>
-                    </tr>
-                  ))
-                ) : !alerts?.incompleteEquipments.length ? (
-                  <tr>
-                    <td colSpan={4} className="py-12 text-center">
-                      <div className="flex flex-col items-center gap-2">
-                        <div className="text-5xl">🎉</div>
-                        <p className="text-gray-400 text-lg">ข้อมูลอุปกรณ์ครบถ้วนสมบูรณ์</p>
-                      </div>
-                    </td>
-                  </tr>
-                ) : (
-                  alerts.incompleteEquipments.map((eq) => (
-                    <tr key={eq.id} className="border-b border-gray-50 bg-red-50/20">
-                      <td className="py-4 pr-4">
-                        <div className="font-semibold text-gray-800">{eq.customerName || "—"}</div>
-                        <div className="text-xs text-gray-400">{eq.companyName}</div>
-                      </td>
-                      <td className="py-4 pr-4 text-sm text-gray-700">
-                        {eq.productName ? <div dangerouslySetInnerHTML={{ __html: eq.productName }} /> : "—"}
-                      </td>
-                      <td className="py-4 pr-4 text-sm">
-                        <div className="flex flex-col gap-1">
-                          {!eq.serialNumber && <span className="text-red-600 font-medium">❌ ขาด Serial Number</span>}
-                          {!eq.warrantyStartDate && <span className="text-red-600 font-medium">❌ ขาดวันเริ่มประกัน</span>}
-                        </div>
-                      </td>
-                      <td className="py-4">
-                        <Link
-                          href={eq.salesRecordId ? `/dashboard?edit=${eq.salesRecordId}` : "/customers"}
-                          className="px-4 py-2 bg-white border border-gray-200 text-gray-700 rounded-xl text-xs font-semibold hover:bg-gray-50 transition-colors shadow-sm inline-block"
-                        >
-                          ไปใส่ข้อมูล
-                        </Link>
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-      )}
-
-      {/* ── Section: Missing Documents ───────────────────────────────────────── */}
-      {(activeTab === "all" || activeTab === "missing_docs") && (
-      <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden mb-8">
-        <div className="p-8">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="bg-red-100 text-red-600 p-3 rounded-xl">
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+        {/* ── Section 1: Expiring Warranties ──────────────────────────────── */}
+        {(activeTab === "all" || activeTab === "warranties") && (
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden mb-8">
+            <div className="p-6 md:px-8 border-b border-gray-50">
+              <div className="flex items-center gap-3">
+                <div className="bg-amber-50 text-amber-600 p-2.5 rounded-xl">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                </div>
+                <h2 className="text-xl font-bold text-gray-800">
+                  ประกันใกล้หมดอายุ
+                  <span className="text-gray-400 text-base font-normal ml-2">
+                    (ภายใน 30 วัน — {alerts?.expiringWarranties.length ?? 0} รายการ)
+                  </span>
+                </h2>
+              </div>
             </div>
-            <h2 className="text-2xl font-bold text-gray-800">
-              เอกสารอ้างอิงสูญหาย / เกินกำหนด
-              <span className="text-gray-400 text-lg font-normal ml-2">
-                (ขาดใบส่งสินค้าหรือใบเสร็จ — {alerts?.missingDocuments?.length ?? 0} รายการ)
-              </span>
-            </h2>
-          </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-left">
-              <thead>
-                <tr className="border-b border-gray-100">
-                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">พนักงานขาย</th>
-                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">ลูกค้า / บริษัท</th>
-                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">สินค้า</th>
-                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">วันที่ขาย</th>
-                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">สถานะเอกสาร</th>
-                  <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">จัดการ</th>
-                </tr>
-              </thead>
-              <tbody>
-                {isLoading ? (
-                  Array.from({ length: 3 }).map((_, i) => (
-                    <tr key={i} className="border-b border-gray-50 animate-pulse">
-                      <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-24"></div></td>
-                      <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-36"></div></td>
-                      <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-40"></div></td>
-                      <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-24"></div></td>
-                      <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-20"></div></td>
-                      <td className="py-4"><div className="h-4 bg-gray-200 rounded w-16"></div></td>
-                    </tr>
-                  ))
-                ) : !alerts?.missingDocuments?.length ? (
-                  <tr>
-                    <td colSpan={6} className="py-12 text-center">
-                      <div className="flex flex-col items-center gap-2">
-                        <div className="text-5xl">✅</div>
-                        <p className="text-gray-400 text-lg">เอกสารอ้างอิงครบถ้วน</p>
-                      </div>
-                    </td>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-gray-50/80 border-b border-gray-100 text-gray-600 text-sm">
+                    <th className="p-4 font-semibold">ลูกค้า / บริษัท</th>
+                    <th className="p-4 font-semibold w-48">สินค้า</th>
+                    <th className="p-4 font-semibold w-40">S/N</th>
+                    <th className="p-4 font-semibold w-32">หมดประกัน</th>
+                    <th className="p-4 font-semibold w-28">เหลือ</th>
                   </tr>
-                ) : (
-                  alerts.missingDocuments.map((doc) => {
-                    const daysSinceSale = Math.floor((new Date().getTime() - new Date(doc.saleDate).getTime()) / (1000 * 3600 * 24));
-                    const isMissingDelivery = !doc.deliveryRef && daysSinceSale >= 20;
-                    const isMissingReceipt = doc.invoiceRef && !doc.receiptRef && daysSinceSale >= 30;
-                    return (
-                    <tr key={doc.id} className="border-b border-gray-50 hover:bg-gray-50/50 transition-colors">
-                      <td className="py-4 pr-4 text-sm font-medium text-gray-900">{doc.salespersonName || "—"}</td>
-                      <td className="py-4 pr-4">
-                        <div className="text-sm font-medium text-gray-900">{doc.customerName || "—"}</div>
-                        {doc.companyName && <div className="text-xs text-gray-500 mt-0.5">{doc.companyName}</div>}
-                      </td>
-                      <td className="py-4 pr-4 text-sm text-gray-700">
-                        {doc.productName ? <div dangerouslySetInnerHTML={{ __html: doc.productName }} /> : "—"}
-                      </td>
-                      <td className="py-4 pr-4 text-sm text-gray-700">{doc.saleDate}</td>
-                      <td className="py-4 pr-4 text-sm">
-                        <div className="flex flex-col gap-1">
-                          {isMissingDelivery && (
-                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-red-50 text-red-700 ring-1 ring-inset ring-red-600/20">
-                              ขาดใบส่งสินค้า (เลยกำหนด {daysSinceSale - 20} วัน)
-                            </span>
-                          )}
-                          {isMissingReceipt && (
-                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-orange-50 text-orange-700 ring-1 ring-inset ring-orange-600/20">
-                              ขาดใบเสร็จ (เลยกำหนด {daysSinceSale - 30} วัน)
-                            </span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="py-4">
-                        <Link
-                          href={`/dashboard?edit=${doc.id}`}
-                          className="px-4 py-2 bg-white border border-gray-200 text-gray-700 rounded-xl text-xs font-semibold hover:bg-gray-50 transition-colors shadow-sm inline-block"
-                        >
-                          ไปใส่ข้อมูล
-                        </Link>
+                </thead>
+                <tbody>
+                  {isLoading ? (
+                    Array.from({ length: 3 }).map((_, i) => (
+                      <tr key={i} className="border-b border-gray-50">
+                        <td className="p-4"><div className="h-5 bg-gray-200 rounded w-36 animate-pulse"></div></td>
+                        <td className="p-4"><div className="h-5 bg-gray-200 rounded w-40 animate-pulse"></div></td>
+                        <td className="p-4"><div className="h-5 bg-gray-200 rounded w-20 animate-pulse"></div></td>
+                        <td className="p-4"><div className="h-5 bg-gray-200 rounded w-24 animate-pulse"></div></td>
+                        <td className="p-4"><div className="h-5 bg-gray-200 rounded w-16 animate-pulse"></div></td>
+                      </tr>
+                    ))
+                  ) : !alerts?.expiringWarranties.length ? (
+                    <tr>
+                      <td colSpan={5} className="p-12 text-center text-gray-400">
+                        ไม่มีอุปกรณ์ที่ประกันใกล้หมดอายุ
                       </td>
                     </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
+                  ) : (
+                    alerts.expiringWarranties.map((eq) => {
+                      const days = warrantyDaysLeft(eq.warrantyEndDate);
+                      const isUrgent = days !== null && days <= 7;
+                      return (
+                        <tr key={eq.id} className={`border-b border-gray-50 transition-colors ${isUrgent ? "bg-red-50/30 hover:bg-red-50/50" : "hover:bg-gray-50/50"}`}>
+                          <td className="p-4">
+                            <div className="font-medium text-gray-800">{eq.customerName || "—"}</div>
+                            <div className="text-xs text-gray-500 mt-0.5">{eq.companyName}</div>
+                          </td>
+                          <td className="p-4 text-sm text-gray-700">
+                            {eq.productName ? <div dangerouslySetInnerHTML={{ __html: eq.productName }} /> : "—"}
+                          </td>
+                          <td className="p-4 text-sm text-gray-600 font-mono">{eq.serialNumber || "—"}</td>
+                          <td className="p-4 text-sm text-gray-600">{eq.warrantyEndDate}</td>
+                          <td className="p-4">
+                            <span className={`px-2.5 py-1 text-xs font-bold rounded-full ${isUrgent ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"}`}>
+                              {days !== null ? `${days} วัน` : "—"}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
-        </div>
+        )}
+
+        {/* ── Section 1.5: Incomplete Equipments ────────────────────────────── */}
+        {(activeTab === "all" || activeTab === "incomplete") && (
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden mb-8">
+            <div className="p-6 md:px-8 border-b border-gray-50">
+              <div className="flex items-center gap-3">
+                <div className="bg-rose-50 text-rose-600 p-2.5 rounded-xl">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                </div>
+                <h2 className="text-xl font-bold text-gray-800">
+                  อุปกรณ์ขาดข้อมูลสำคัญ
+                  <span className="text-gray-400 text-base font-normal ml-2">
+                    (ยังไม่ระบุ S/N หรือประกัน — {alerts?.incompleteEquipments.length ?? 0} รายการ)
+                  </span>
+                </h2>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-gray-50/80 border-b border-gray-100 text-gray-600 text-sm">
+                    <th className="p-4 font-semibold">ลูกค้า / บริษัท</th>
+                    <th className="p-4 font-semibold w-48">สินค้า</th>
+                    <th className="p-4 font-semibold w-48">สิ่งที่ขาด</th>
+                    <th className="p-4 font-semibold text-center w-28">จัดการ</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {isLoading ? (
+                    Array.from({ length: 3 }).map((_, i) => (
+                      <tr key={i} className="border-b border-gray-50">
+                        <td className="p-4"><div className="h-5 bg-gray-200 rounded w-36 animate-pulse"></div></td>
+                        <td className="p-4"><div className="h-5 bg-gray-200 rounded w-40 animate-pulse"></div></td>
+                        <td className="p-4"><div className="h-5 bg-gray-200 rounded w-20 animate-pulse"></div></td>
+                        <td className="p-4"><div className="h-8 bg-gray-200 rounded-xl w-24 mx-auto animate-pulse"></div></td>
+                      </tr>
+                    ))
+                  ) : !alerts?.incompleteEquipments.length ? (
+                    <tr>
+                      <td colSpan={4} className="p-12 text-center text-gray-400">
+                        ข้อมูลอุปกรณ์ครบถ้วนสมบูรณ์
+                      </td>
+                    </tr>
+                  ) : (
+                    alerts.incompleteEquipments.map((eq) => (
+                      <tr key={eq.id} className="border-b border-gray-50 bg-rose-50/20 hover:bg-rose-50/40 transition-colors">
+                        <td className="p-4">
+                          <div className="font-medium text-gray-800">{eq.customerName || "—"}</div>
+                          <div className="text-xs text-gray-500 mt-0.5">{eq.companyName}</div>
+                        </td>
+                        <td className="p-4 text-sm text-gray-700">
+                          {eq.productName ? <div dangerouslySetInnerHTML={{ __html: eq.productName }} /> : "—"}
+                        </td>
+                        <td className="p-4 text-sm">
+                          <div className="flex flex-col gap-1.5">
+                            {!eq.serialNumber && <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-white border border-rose-100 text-rose-700 w-fit shadow-sm">❌ ขาด Serial Number</span>}
+                            {!eq.warrantyStartDate && <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-white border border-rose-100 text-rose-700 w-fit shadow-sm">❌ ขาดวันเริ่มประกัน</span>}
+                          </div>
+                        </td>
+                        <td className="p-4 text-center">
+                          <Link
+                            href={eq.salesRecordId ? `/dashboard?edit=${eq.salesRecordId}` : "/customers"}
+                            className="px-4 py-1.5 bg-white border border-gray-200 text-gray-700 rounded-lg text-xs font-semibold hover:bg-gray-50 transition-colors shadow-sm inline-block"
+                          >
+                            ไปใส่ข้อมูล
+                          </Link>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* ── Section: Missing Documents ───────────────────────────────────────── */}
+        {(activeTab === "all" || activeTab === "missing_docs") && (
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden mb-8">
+            <div className="p-6 md:px-8 border-b border-gray-50">
+              <div className="flex items-center gap-3">
+                <div className="bg-red-50 text-red-600 p-2.5 rounded-xl">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                </div>
+                <h2 className="text-xl font-bold text-gray-800">
+                  เอกสารอ้างอิงสูญหาย / เกินกำหนด
+                  <span className="text-gray-400 text-base font-normal ml-2">
+                    (ขาดใบส่งสินค้าหรือใบเสร็จ — {alerts?.missingDocuments?.length ?? 0} รายการ)
+                  </span>
+                </h2>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-gray-50/80 border-b border-gray-100 text-gray-600 text-sm">
+                    <th className="p-4 font-semibold w-24">พนักงานขาย</th>
+                    <th className="p-4 font-semibold">ลูกค้า / บริษัท</th>
+                    <th className="p-4 font-semibold w-48">สินค้า</th>
+                    <th className="p-4 font-semibold w-24">วันที่ขาย</th>
+                    <th className="p-4 font-semibold w-48">สถานะเอกสาร</th>
+                    <th className="p-4 font-semibold text-center w-28">จัดการ</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {isLoading ? (
+                    Array.from({ length: 3 }).map((_, i) => (
+                      <tr key={i} className="border-b border-gray-50">
+                        <td className="p-4"><div className="h-5 bg-gray-200 rounded w-16 animate-pulse"></div></td>
+                        <td className="p-4"><div className="h-5 bg-gray-200 rounded w-36 animate-pulse"></div></td>
+                        <td className="p-4"><div className="h-5 bg-gray-200 rounded w-40 animate-pulse"></div></td>
+                        <td className="p-4"><div className="h-5 bg-gray-200 rounded w-20 animate-pulse"></div></td>
+                        <td className="p-4"><div className="h-5 bg-gray-200 rounded w-24 animate-pulse"></div></td>
+                        <td className="p-4"><div className="h-8 bg-gray-200 rounded-xl w-24 mx-auto animate-pulse"></div></td>
+                      </tr>
+                    ))
+                  ) : !alerts?.missingDocuments?.length ? (
+                    <tr>
+                      <td colSpan={6} className="p-12 text-center text-gray-400">
+                        เอกสารอ้างอิงครบถ้วน
+                      </td>
+                    </tr>
+                  ) : (
+                    alerts.missingDocuments.map((doc) => {
+                      const daysSinceSale = Math.floor((new Date().getTime() - new Date(doc.saleDate).getTime()) / (1000 * 3600 * 24));
+                      const isMissingDelivery = !doc.deliveryRef && daysSinceSale >= 20;
+                      const isMissingReceipt = doc.invoiceRef && !doc.receiptRef && daysSinceSale >= 30;
+                      return (
+                      <tr key={doc.id} className="border-b border-gray-50 hover:bg-gray-50/50 transition-colors">
+                        <td className="p-4 text-sm font-medium text-gray-600">{doc.salespersonName || "—"}</td>
+                        <td className="p-4">
+                          <div className="font-medium text-gray-800">{doc.customerName || "—"}</div>
+                          {doc.companyName && <div className="text-xs text-gray-500 mt-0.5">{doc.companyName}</div>}
+                        </td>
+                        <td className="p-4 text-sm text-gray-700">
+                          {doc.productName ? <div dangerouslySetInnerHTML={{ __html: doc.productName }} /> : "—"}
+                        </td>
+                        <td className="p-4 text-sm text-gray-600">{doc.saleDate}</td>
+                        <td className="p-4 text-sm">
+                          <div className="flex flex-col gap-1.5">
+                            {isMissingDelivery && (
+                              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-red-50 text-red-700 w-fit">
+                                ขาดใบส่งสินค้า (เลย {daysSinceSale - 20} วัน)
+                              </span>
+                            )}
+                            {isMissingReceipt && (
+                              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-orange-50 text-orange-700 w-fit">
+                                ขาดใบเสร็จ (เลย {daysSinceSale - 30} วัน)
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="p-4 text-center">
+                          <Link
+                            href={`/dashboard?edit=${doc.id}`}
+                            className="px-4 py-1.5 bg-white border border-gray-200 text-gray-700 rounded-lg text-xs font-semibold hover:bg-gray-50 transition-colors shadow-sm inline-block"
+                          >
+                            ไปใส่ข้อมูล
+                          </Link>
+                        </td>
+                      </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </div>
-      )}
 
       {/* ── Complete Action Modal ─────────────────────────────────────────── */}
       {completingId && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setCompletingId(null)}>
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg" onClick={(e) => e.stopPropagation()}>
-            <div className="p-6 border-b border-gray-100">
-              <h3 className="text-xl font-bold text-gray-800">✅ บันทึกผลการดำเนินงาน</h3>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm animate-in fade-in" onClick={() => setCompletingId(null)}>
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg overflow-hidden animate-in zoom-in-95" onClick={(e) => e.stopPropagation()}>
+            <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
+              <h2 className="text-lg font-bold text-gray-800">✅ บันทึกผลการดำเนินงาน</h2>
+              <button
+                onClick={() => setCompletingId(null)}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                ✕
+              </button>
             </div>
             <form onSubmit={handleComplete} className="p-6 space-y-5">
               <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1.5">เลขที่ใบรายงานการซ่อม</label>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">
+                  เลขที่ใบรายงานการซ่อม <span className="text-red-500">*</span>
+                </label>
                 <input
                   type="text"
+                  required
                   value={completeForm.serviceReportNumber}
                   onChange={(e) => setCompleteForm((prev) => ({ ...prev, serviceReportNumber: e.target.value }))}
-                  className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-green-500/20 focus:border-green-400"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
                   placeholder="SR-XXXXX"
                 />
               </div>
               <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1.5">วันที่ดำเนินการ</label>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">
+                  วันที่ดำเนินการ <span className="text-red-500">*</span>
+                </label>
                 <input
                   type="date"
+                  required
                   value={completeForm.actionDate}
                   onChange={(e) => setCompleteForm((prev) => ({ ...prev, actionDate: e.target.value }))}
-                  className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-green-500/20 focus:border-green-400"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
                 />
               </div>
               <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1.5">รายละเอียดสิ่งที่ทำ</label>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">รายละเอียดสิ่งที่ทำ</label>
                 <textarea
                   value={completeForm.resultDetails}
                   onChange={(e) => setCompleteForm((prev) => ({ ...prev, resultDetails: e.target.value }))}
                   rows={3}
-                  className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-green-500/20 focus:border-green-400 resize-none"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 resize-y"
                   placeholder="อธิบายสิ่งที่ดำเนินการ..."
                 />
               </div>
               <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1.5">Feedback ลูกค้า / โอกาสขายเพิ่ม</label>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">Feedback ลูกค้า / โอกาสขายเพิ่ม</label>
                 <textarea
                   value={completeForm.customerFeedback}
                   onChange={(e) => setCompleteForm((prev) => ({ ...prev, customerFeedback: e.target.value }))}
                   rows={3}
-                  className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-green-500/20 focus:border-green-400 resize-none"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 resize-y"
                   placeholder="ลูกค้าสนใจสินค้าอะไรเพิ่มเติม / ความต้องการในอนาคต..."
                 />
               </div>
-              <div className="flex justify-end gap-3 pt-4 border-t border-gray-100">
-                <button type="button" onClick={() => setCompletingId(null)} className="px-5 py-2.5 border border-gray-200 text-gray-600 font-semibold rounded-xl hover:bg-gray-50 transition-all">ยกเลิก</button>
-                <button type="submit" disabled={isSaving} className="px-5 py-2.5 bg-gradient-to-r from-green-500 to-green-600 text-white font-semibold rounded-xl hover:from-green-600 hover:to-green-700 transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed">{isSaving ? "กำลังบันทึก..." : "บันทึกผลงาน"}</button>
+              <div className="pt-4 flex justify-end gap-3">
+                <button 
+                  type="button" 
+                  onClick={() => setCompletingId(null)} 
+                  className="px-5 py-2.5 text-gray-600 font-medium hover:bg-gray-100 rounded-xl transition-colors"
+                >
+                  ยกเลิก
+                </button>
+                <button 
+                  type="submit" 
+                  disabled={isSaving} 
+                  className="px-6 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white font-semibold rounded-xl shadow-sm disabled:opacity-50 transition-colors"
+                >
+                  {isSaving ? "กำลังบันทึก..." : "บันทึกข้อมูล"}
+                </button>
               </div>
             </form>
           </div>

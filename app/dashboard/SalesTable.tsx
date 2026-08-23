@@ -98,7 +98,8 @@ export default function SalesTable({
         </div>
       </div>
       {filtered.length > 0 ? (
-        <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
+        <>
+          <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
           <table className="w-full">
             <thead>
               <tr className="text-left text-xs font-medium text-gray-400 uppercase tracking-wider sticky top-0 bg-white shadow-xs">
@@ -197,7 +198,7 @@ export default function SalesTable({
             </div>
           </div>
         )}
-      </div>
+        </>
       ) : (
         <div className="text-center text-gray-400 py-8 text-sm">ยังไม่มีรายการขาย</div>
       )}
