@@ -127,20 +127,15 @@ export default function SalesTable({
                   <td className="py-3 pr-3 text-sm text-right text-gray-600">{r.qty}</td>
                   <td className="py-3 pr-3 text-sm text-right font-semibold text-gray-800">฿{fmtDec(r.totalAmount)}</td>
                   <td className="py-3 pr-3 text-sm text-right">
-                    {r.costAmount > 0 ? (
-                      <span className="font-semibold text-emerald-700">฿{fmtDec(r.totalAmount - r.costAmount)}</span>
-                    ) : (
-                      <span className="text-gray-400">—</span>
-                    )}
+                    <span className="font-semibold text-emerald-700">฿{fmtDec(r.totalAmount - (r.costAmount || 0))}</span>
                   </td>
                   <td className="py-3 pr-3 text-right">
-                    {r.costAmount > 0 ? (() => {
-                      const margin = r.totalAmount > 0 ? Math.round(((r.totalAmount - r.costAmount) / r.totalAmount) * 100) : 0;
+                    {(() => {
+                      const cost = r.costAmount || 0;
+                      const margin = r.totalAmount > 0 ? Math.round(((r.totalAmount - cost) / r.totalAmount) * 100) : 0;
                       const color = margin >= 20 ? "bg-emerald-100 text-emerald-700" : margin >= 10 ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700";
                       return <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${color}`}>{margin}%</span>;
-                    })() : (
-                      <span className="text-gray-400 text-xs">—</span>
-                    )}
+                    })()}
                   </td>
                   <td className="py-3 text-right pr-2">
                     <div className="flex items-center justify-end gap-1.5">
