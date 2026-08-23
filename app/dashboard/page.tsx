@@ -655,7 +655,7 @@ export default function DashboardPage() {
                       />
                       <Legend formatter={(value: string) => value === "revenue" ? "ยอดขาย" : "กำไร"} wrapperStyle={{ paddingTop: "10px" }} />
                       <ReferenceLine y={0} stroke="#cbd5e1" />
-                      <Bar dataKey="profit" name="profit" maxBarSize={40} radius={4}>
+                      <Bar dataKey="profit" name="profit" maxBarSize={40} radius={4} fill="#10b981">
                         {chartData.map((entry, index) => (
                           <Cell key={`cell-${index}`} fill={entry.profit < 0 ? "#ef4444" : "#10b981"} />
                         ))}
@@ -689,7 +689,7 @@ export default function DashboardPage() {
                       <Legend formatter={(value: string) => value === "expense" ? "รายจ่าย" : "กำไร"} wrapperStyle={{ paddingTop: "10px" }} />
                       <Bar dataKey="expense" fill="#f43f5e" radius={[4, 4, 0, 0]} name="expense" maxBarSize={40} />
                       <ReferenceLine y={0} stroke="#cbd5e1" />
-                      <Bar dataKey="profit" name="profit" maxBarSize={40} radius={4}>
+                      <Bar dataKey="profit" name="profit" maxBarSize={40} radius={4} fill="#10b981">
                         {chartData.map((entry, index) => (
                           <Cell key={`cell-2-${index}`} fill={entry.profit < 0 ? "#ef4444" : "#10b981"} />
                         ))}
