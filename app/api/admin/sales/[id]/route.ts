@@ -53,23 +53,21 @@ export const PUT = withRoute(
     let equipmentWarning: string | null = null;
     if (body.saleType === "equipment" && Array.isArray(body.serialNumbers)) {
       const customerId = body.customerId || updated.customerId || "";
-      if (customerId.trim()) {
-        try {
-          await syncEquipmentsForSalesRecord(id, body.serialNumbers, {
-            customerId,
-            productId: body.productId || updated.productId || "",
-            productName: body.productName || updated.productName || "",
-            quotationNumber: body.quotationRef || updated.quotationRef || "",
-            warrantyCertNumber: "",
-            warrantyType: "",
-            warrantyStartDate: body.warrantyStartDate || updated.warrantyStartDate || null,
-            warrantyEndDate: body.warrantyEndDate || updated.warrantyEndDate || null,
-            status: "Active",
-          });
-        } catch (err: any) {
-          console.error("syncEquipmentsForSalesRecord failed:", err);
-          equipmentWarning = `บันทึกยอดขายสำเร็จ แต่ซิงค์อุปกรณ์ล้มเหลว: ${err.message}`;
-        }
+      try {
+        await syncEquipmentsForSalesRecord(id, body.serialNumbers, {
+          customerId,
+          productId: body.productId || updated.productId || "",
+          productName: body.productName || updated.productName || "",
+          quotationNumber: body.quotationRef || updated.quotationRef || "",
+          warrantyCertNumber: "",
+          warrantyType: "",
+          warrantyStartDate: body.warrantyStartDate || updated.warrantyStartDate || null,
+          warrantyEndDate: body.warrantyEndDate || updated.warrantyEndDate || null,
+          status: "Active",
+        });
+      } catch (err: any) {
+        console.error("syncEquipmentsForSalesRecord failed:", err);
+        equipmentWarning = `บันทึกยอดขายสำเร็จ แต่ซิงค์อุปกรณ์ล้มเหลว: ${err.message}`;
       }
     }
 

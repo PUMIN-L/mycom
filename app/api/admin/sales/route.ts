@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { withRoute, requireAuth } from "../../../lib/apiHelpers";
 import {
   addSalesRecord,
+  getSalesRecord,
   listSalesRecords,
 } from "../../../lib/salesDashboardStore";
 import { addEquipment } from "../../../lib/crmStore";
@@ -79,14 +80,10 @@ export const POST = withRoute(
 
     const record = await addSalesRecord(body);
 
-    // Auto-create CustomerEquipments only for equipment sales with a customer
+    // Auto-create CustomerEquipments for equipment sales (even without customer)
     const createdEquipments = [];
     let equipmentWarning: string | null = null;
-    if (
-      body.saleType === "equipment" &&
-      body.customerId &&
-      body.customerId.trim()
-    ) {
+    if (body.saleType === "equipment") {
       const maxAutoCreate = 50;
       let qty = Math.max(1, Number(body.qty) || 1);
       if (qty > maxAutoCreate) qty = maxAutoCreate;
@@ -117,18 +114,20 @@ export const POST = withRoute(
       }
     }
 
+    // Re-fetch record to include synced serial numbers
+    const finalRecord = await getSalesRecord(record.id) || record;
+
     // If equipment creation partially failed, return 207 Multi-Status
-    // so the client knows the sales record was saved but equipment is incomplete
     if (equipmentWarning) {
       return NextResponse.json({
-        record,
+        record: finalRecord,
         createdEquipments,
         warning: equipmentWarning,
       }, { status: 207 });
     }
 
     return NextResponse.json({
-      record,
+      record: finalRecord,
       createdEquipments,
     }, { status: 201 });
   }
