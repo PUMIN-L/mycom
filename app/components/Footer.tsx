@@ -21,7 +21,7 @@ export default function Footer() {
     // { href: "/#clients", label: t(translations.nav.clients) },
     // Contact is a standalone page (not a home section) — match the Navbar.
     { href: "/contact", label: t(translations.nav.contact) },
-    { href: "/showcase", label: "Content" },
+    ...(isLoggedIn ? [{ href: "/showcase", label: "Content" }] : []),
   ];
 
   return (
