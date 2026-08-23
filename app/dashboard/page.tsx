@@ -94,7 +94,7 @@ export default function DashboardPage() {
 
   const fetchRecords = useCallback(async () => {
     try {
-      const res = await fetch("/api/admin/sales");
+      const res = await fetch("/api/admin/sales?t=" + Date.now());
       if (res.ok) setSalesRecords(await res.json());
     } catch { /* ignore */ }
   }, []);
