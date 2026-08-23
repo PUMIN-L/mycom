@@ -907,6 +907,7 @@ export default function DashboardPage() {
                   <DatePicker
                       selected={form.saleDate ? new Date(form.saleDate) : null}
                       onChange={(date) => setForm({ ...form, saleDate: date ? date.toISOString().split('T')[0] : "" })}
+                      className={`w-full px-4 py-2.5 border rounded-xl text-sm focus:outline-none focus:ring-2 transition-all ${formErrors.saleDate ? "border-red-500 bg-red-50 focus:border-red-500 focus:ring-red-200 error-border" : "bg-gray-50 border-gray-200 focus:ring-indigo-500/20 focus:border-indigo-500"}`}
                     />
                 </div>
                 <div>
@@ -1114,6 +1115,7 @@ export default function DashboardPage() {
                       onChange={(date) => setForm({ ...form, warrantyStartDate: date ? date.toISOString().split('T')[0] : "" })}
                       placeholderText="ไม่ระบุ"
                       isClearable
+                      className={`w-full px-4 py-2.5 border rounded-xl text-sm focus:outline-none focus:ring-2 transition-all ${formErrors.warrantyStartDate ? "border-red-500 bg-red-50 focus:border-red-500 focus:ring-red-200 error-border" : "bg-gray-50 border-gray-200 focus:ring-indigo-500/20 focus:border-indigo-500"}`}
                     />
                   </div>
                   <div>
@@ -1123,6 +1125,7 @@ export default function DashboardPage() {
                       onChange={(date) => setForm({ ...form, warrantyEndDate: date ? date.toISOString().split('T')[0] : "" })}
                       placeholderText="ไม่ระบุ"
                       isClearable
+                      className={`w-full px-4 py-2.5 border rounded-xl text-sm focus:outline-none focus:ring-2 transition-all ${formErrors.warrantyEndDate ? "border-red-500 bg-red-50 focus:border-red-500 focus:ring-red-200 error-border" : "bg-gray-50 border-gray-200 focus:ring-indigo-500/20 focus:border-indigo-500"}`}
                     />
                   </div>
                 </div>
