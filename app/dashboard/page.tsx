@@ -887,11 +887,11 @@ export default function DashboardPage() {
             <div className="p-6 space-y-4">
               <div className="flex items-center gap-6 pb-2">
                 <label className="flex items-center gap-2 cursor-pointer">
-                  <input type="radio" name="saleType" value="equipment" checked={form.saleType === "equipment"} onChange={(e) => setForm({ ...form, saleType: e.target.value })} className="w-4 h-4 text-indigo-600 focus:ring-indigo-500" />
+                  <input type="radio" name="saleType" value="equipment" checked={form.saleType === "equipment"} onChange={(e) => { const v = e.target.value; setForm(prev => ({ ...prev, saleType: v })); }} className="w-4 h-4 text-indigo-600 focus:ring-indigo-500" />
                   <span className="text-sm font-semibold text-gray-800">💻 ขายเครื่อง</span>
                 </label>
                 <label className="flex items-center gap-2 cursor-pointer">
-                  <input type="radio" name="saleType" value="service" checked={form.saleType === "service"} onChange={(e) => setForm({ ...form, saleType: e.target.value })} className="w-4 h-4 text-amber-600 focus:ring-amber-500" />
+                  <input type="radio" name="saleType" value="service" checked={form.saleType === "service"} onChange={(e) => { const v = e.target.value; setForm(prev => ({ ...prev, saleType: v })); }} className="w-4 h-4 text-amber-600 focus:ring-amber-500" />
                   <span className="text-sm font-semibold text-gray-800">🔧 ขายงาน Service</span>
                 </label>
               </div>
@@ -900,13 +900,13 @@ export default function DashboardPage() {
                   <label className="block text-sm font-semibold text-gray-700 mb-1.5">วันที่ขาย <span className="text-red-500">*</span></label>
                   <DatePicker
                       selected={form.saleDate ? new Date(form.saleDate) : null}
-                      onChange={(date) => setForm({ ...form, saleDate: date ? date.toISOString().split('T')[0] : "" })}
+                      onChange={(date) => { const v = date ? date.toISOString().split('T')[0] : ""; setForm(prev => ({ ...prev, saleDate: v })); }}
                       className={`w-full px-4 py-2.5 border rounded-xl text-sm focus:outline-none focus:ring-2 transition-all ${formErrors.saleDate ? "border-red-500 bg-red-50 focus:border-red-500 focus:ring-red-200 error-border" : "bg-gray-50 border-gray-200 focus:ring-indigo-500/20 focus:border-indigo-500"}`}
                     />
                 </div>
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1.5">เซลล์</label>
-                  <SearchableDropdown options={salespersonOptions} value={form.salespersonId} onChange={(v) => setForm({ ...form, salespersonId: v })} placeholder="เลือกเซลล์..." />
+                  <SearchableDropdown options={salespersonOptions} value={form.salespersonId} onChange={(v) => setForm(prev => ({ ...prev, salespersonId: v }))} placeholder="เลือกเซลล์..." />
                 </div>
               </div>
 
@@ -917,7 +917,7 @@ export default function DashboardPage() {
                   value={form.productId}
                   onChange={(v) => {
                     const p = products.find((x) => x.id === v);
-                    setForm({ ...form, productId: v, productName: p ? stripHtml(p.title_th) : form.productName, categoryId: p?.categoryId ?? null });
+                    setForm(prev => ({ ...prev, productId: v, productName: p ? stripHtml(p.title_th) : prev.productName, categoryId: p?.categoryId ?? null }));
                   }}
                   placeholder="เลือกสินค้าจากแคตตาล็อก (หรือพิมพ์ชื่อด้านล่าง)..."
                 />
@@ -929,7 +929,7 @@ export default function DashboardPage() {
                   type="text"
                   required
                   value={form.productName}
-                  onChange={(e) => setForm({ ...form, productName: e.target.value })}
+                  onChange={(e) => { const v = e.target.value; setForm(prev => ({ ...prev, productName: v })); }}
                   placeholder="ชื่อเครื่อง / สินค้า / บริการ"
                   className={`w-full px-3 py-2.5 border rounded-xl text-sm focus:ring-2 outline-none ${formErrors.productName ? "border-red-500 bg-red-50 focus:border-red-500 focus:ring-red-200 error-border" : "border-gray-200 focus:ring-indigo-200 focus:border-indigo-400"}`}
                 />
@@ -943,14 +943,14 @@ export default function DashboardPage() {
                     value={form.customerId}
                     onChange={(v) => {
                       const c = customers.find((x) => x.id === v);
-                      setForm({ ...form, customerId: v, companyId: c?.companyId || form.companyId });
+                      setForm(prev => ({ ...prev, customerId: v, companyId: c?.companyId || prev.companyId }));
                     }}
                     placeholder="เลือกลูกค้า..."
                   />
                 </div>
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1.5">บริษัท</label>
-                  <SearchableDropdown options={companyOptions} value={form.companyId} onChange={(v) => setForm({ ...form, companyId: v })} placeholder="เลือกบริษัท..." />
+                  <SearchableDropdown options={companyOptions} value={form.companyId} onChange={(v) => setForm(prev => ({ ...prev, companyId: v }))} placeholder="เลือกบริษัท..." />
                 </div>
               </div>
 
@@ -1071,12 +1071,12 @@ export default function DashboardPage() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1.5">อ้างอิงใบเสนอราคา</label>
-                  <input type="text" value={form.quotationRef} onChange={(e) => setForm({ ...form, quotationRef: e.target.value })} placeholder="เลขที่ใบเสนอราคา"
+                  <input type="text" value={form.quotationRef} onChange={(e) => { const v = e.target.value; setForm(prev => ({ ...prev, quotationRef: v })); }} placeholder="เลขที่ใบเสนอราคา"
                     className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none" />
                 </div>
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1.5">อ้างอิงใบ PO <span className="text-red-500">*</span></label>
-                  <input type="text" value={form.poRef} onChange={(e) => setForm({ ...form, poRef: e.target.value })} placeholder="เลขที่ใบ PO"
+                  <input type="text" value={form.poRef} onChange={(e) => { const v = e.target.value; setForm(prev => ({ ...prev, poRef: v })); }} placeholder="เลขที่ใบ PO"
                     className={`w-full px-3 py-2.5 border rounded-xl text-sm focus:ring-2 outline-none ${formErrors.poRef ? "border-red-500 bg-red-50 focus:border-red-500 focus:ring-red-200 error-border" : "border-gray-200 focus:ring-indigo-200 focus:border-indigo-400"}`} />
                 </div>
               </div>
@@ -1084,17 +1084,17 @@ export default function DashboardPage() {
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1.5">อ้างอิงใบส่งสินค้า</label>
-                  <input type="text" value={form.deliveryRef} onChange={(e) => setForm({ ...form, deliveryRef: e.target.value })} placeholder="เลขที่ใบส่งสินค้า"
+                  <input type="text" value={form.deliveryRef} onChange={(e) => { const v = e.target.value; setForm(prev => ({ ...prev, deliveryRef: v })); }} placeholder="เลขที่ใบส่งสินค้า"
                     className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none" />
                 </div>
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1.5">อ้างอิงใบ Invoice</label>
-                  <input type="text" value={form.invoiceRef} onChange={(e) => setForm({ ...form, invoiceRef: e.target.value })} placeholder="เลขที่ใบ Invoice"
+                  <input type="text" value={form.invoiceRef} onChange={(e) => { const v = e.target.value; setForm(prev => ({ ...prev, invoiceRef: v })); }} placeholder="เลขที่ใบ Invoice"
                     className={`w-full px-3 py-2.5 border rounded-xl text-sm focus:ring-2 outline-none ${formErrors.invoiceRef ? "border-red-500 bg-red-50 focus:border-red-500 focus:ring-red-200 error-border" : "border-gray-200 focus:ring-indigo-200 focus:border-indigo-400"}`} />
                 </div>
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1.5">อ้างอิงใบเสร็จ</label>
-                  <input type="text" value={form.receiptRef} onChange={(e) => setForm({ ...form, receiptRef: e.target.value })} placeholder="เลขที่ใบเสร็จ"
+                  <input type="text" value={form.receiptRef} onChange={(e) => { const v = e.target.value; setForm(prev => ({ ...prev, receiptRef: v })); }} placeholder="เลขที่ใบเสร็จ"
                     className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none" />
                 </div>
               </div>
@@ -1105,7 +1105,7 @@ export default function DashboardPage() {
                     <label className="block text-sm font-semibold text-gray-700 mb-1.5">วันเริ่มรับประกัน <span className="text-red-500">*</span></label>
                     <DatePicker
                       selected={form.warrantyStartDate ? new Date(form.warrantyStartDate) : null}
-                      onChange={(date) => setForm({ ...form, warrantyStartDate: date ? date.toISOString().split('T')[0] : "" })}
+                      onChange={(date) => { const v = date ? date.toISOString().split('T')[0] : ""; setForm(prev => ({ ...prev, warrantyStartDate: v })); }}
                       placeholderText="ไม่ระบุ"
                       isClearable
                       className={`w-full px-4 py-2.5 border rounded-xl text-sm focus:outline-none focus:ring-2 transition-all ${formErrors.warrantyStartDate ? "border-red-500 bg-red-50 focus:border-red-500 focus:ring-red-200 error-border" : "bg-gray-50 border-gray-200 focus:ring-indigo-500/20 focus:border-indigo-500"}`}
@@ -1115,7 +1115,7 @@ export default function DashboardPage() {
                     <label className="block text-sm font-semibold text-gray-700 mb-1.5">วันหมดรับประกัน <span className="text-red-500">*</span></label>
                     <DatePicker
                       selected={form.warrantyEndDate ? new Date(form.warrantyEndDate) : null}
-                      onChange={(date) => setForm({ ...form, warrantyEndDate: date ? date.toISOString().split('T')[0] : "" })}
+                      onChange={(date) => { const v = date ? date.toISOString().split('T')[0] : ""; setForm(prev => ({ ...prev, warrantyEndDate: v })); }}
                       placeholderText="ไม่ระบุ"
                       isClearable
                       className={`w-full px-4 py-2.5 border rounded-xl text-sm focus:outline-none focus:ring-2 transition-all ${formErrors.warrantyEndDate ? "border-red-500 bg-red-50 focus:border-red-500 focus:ring-red-200 error-border" : "bg-gray-50 border-gray-200 focus:ring-indigo-500/20 focus:border-indigo-500"}`}
@@ -1157,7 +1157,7 @@ export default function DashboardPage() {
 
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-1.5">หมายเหตุ</label>
-                <textarea value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} rows={2} placeholder="หมายเหตุ (ถ้ามี)"
+                <textarea value={form.note} onChange={(e) => { const v = e.target.value; setForm(prev => ({ ...prev, note: v })); }} rows={2} placeholder="หมายเหตุ (ถ้ามี)"
                   className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none resize-none" />
               </div>
             </div>
