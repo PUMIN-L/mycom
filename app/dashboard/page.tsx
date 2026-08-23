@@ -1161,14 +1161,7 @@ export default function DashboardPage() {
                 </div>
               )}
 
-              {editingId && form.saleType === "equipment" && (
-                <div className="p-4 bg-amber-50 rounded-xl border border-amber-200 text-amber-800 text-sm font-medium flex gap-3 items-start">
-                  <svg className="w-5 h-5 shrink-0 mt-0.5 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                  <div>
-                    หมายเหตุ: การแก้ไขวันรับประกันในหน้านี้ จะไม่ไปอัปเดตประวัติอุปกรณ์ที่เคยสร้างไว้ในระบบ CRM (หากต้องการแก้ไขข้อมูลอุปกรณ์ กรุณาไปแก้ไขแยกต่างหากในหน้าลูกค้า)
-                  </div>
-                </div>
-              )}
+
 
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-1.5">หมายเหตุ</label>
