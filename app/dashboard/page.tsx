@@ -232,7 +232,7 @@ export default function DashboardPage() {
         if (is207 && savedData.warning) {
           showToast(`บันทึกยอดขายสำเร็จ แต่: ${savedData.warning}`, "error");
         } else {
-          showToast(editingId ? "แก้ไขสำเร็จ" : "บันทึกยอดขายสำเร็จ", "success");
+          showToast("บันทึกยอดขายและต้นทุนสำเร็จ", "success");
         }
         setShowForm(false);
         setEditingId(null);
