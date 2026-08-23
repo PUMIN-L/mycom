@@ -173,10 +173,12 @@ export async function reserveDocNo(
   );
 }
 
-/** All currently-reserved numbers (the ledger is small — only ~2 days). */
+/** All currently-reserved numbers from the last 7 days. */
 export async function listRecentDocNos(): Promise<UsedDocNo[]> {
+  const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
   const [rows] = await query<RowDataPacket[]>(
-    "SELECT docNo, quotationId FROM used_docnos"
+    "SELECT docNo, quotationId FROM used_docnos WHERE createdAt >= ?",
+    [cutoff]
   );
   return rows.map((r) => ({ docNo: r.docNo, quotationId: String(r.quotationId) }));
 }

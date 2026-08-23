@@ -26,7 +26,7 @@ export const GET = withRoute(
     try {
       const deleted = await purgeExpiredQuotations(RETENTION_DAYS);
       const billingDeleted = await purgeExpiredBillingDocuments(RETENTION_DAYS);
-      const docNosPurged = await purgeOldDocNos(DOCNO_RETENTION_DAYS);
+      const docNosPurged = 0; // Legacy: docNos are no longer purged to preserve conversion rate analytics.
       // Structured success line so a MISSING nightly run is detectable in logs.
       console.log(
         `[cron:quotations-cleanup] ok deleted=${deleted} billingDeleted=${billingDeleted} docNosPurged=${docNosPurged}`
