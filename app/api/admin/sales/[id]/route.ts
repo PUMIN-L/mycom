@@ -50,21 +50,35 @@ export const PUT = withRoute(
     }
 
     // Sync equipments if sale type is equipment
-    if (body.saleType === "equipment" && body.customerId && body.customerId.trim() && Array.isArray(body.serialNumbers)) {
-      await syncEquipmentsForSalesRecord(id, body.serialNumbers, {
-        customerId: body.customerId,
-        productId: body.productId || "",
-        productName: body.productName || "",
-        quotationNumber: body.quotationRef || "",
-        warrantyCertNumber: "",
-        warrantyType: "",
-        warrantyStartDate: body.warrantyStartDate || null,
-        warrantyEndDate: body.warrantyEndDate || null,
-        status: "Active",
-      });
+    let equipmentWarning: string | null = null;
+    if (body.saleType === "equipment" && Array.isArray(body.serialNumbers)) {
+      const customerId = body.customerId || updated.customerId || "";
+      if (customerId.trim()) {
+        try {
+          await syncEquipmentsForSalesRecord(id, body.serialNumbers, {
+            customerId,
+            productId: body.productId || updated.productId || "",
+            productName: body.productName || updated.productName || "",
+            quotationNumber: body.quotationRef || updated.quotationRef || "",
+            warrantyCertNumber: "",
+            warrantyType: "",
+            warrantyStartDate: body.warrantyStartDate || updated.warrantyStartDate || null,
+            warrantyEndDate: body.warrantyEndDate || updated.warrantyEndDate || null,
+            status: "Active",
+          });
+        } catch (err: any) {
+          console.error("syncEquipmentsForSalesRecord failed:", err);
+          equipmentWarning = `บันทึกยอดขายสำเร็จ แต่ซิงค์อุปกรณ์ล้มเหลว: ${err.message}`;
+        }
+      }
     }
 
-    return NextResponse.json(updated);
+    // Re-fetch to include synced serial numbers in the response
+    const final = await getSalesRecord(id) || updated;
+    if (equipmentWarning) {
+      return NextResponse.json({ ...final, warning: equipmentWarning });
+    }
+    return NextResponse.json(final);
   }
 );
 
