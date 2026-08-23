@@ -8,9 +8,10 @@ Never use plain text like "กำลังโหลด..." (Loading...) for tabl
 - Use rounded gray blocks for text (`bg-gray-200 rounded`) with varying widths (e.g., `w-24`, `w-48`) to look natural.
 
 ## 2. Dropdown Selects
-Never use native OS `<select>` elements (`<select> <option>...</option> </select>`) for primary forms or modals, as they look inconsistent across devices (especially dark mode/light mode conflicts).
+Never use native OS `<select>` elements (`<select> <option>...</option> </select>`) for primary forms or modals, as they look inconsistent across devices (especially dark mode/light mode conflicts where they might appear black).
 - **Always** use the custom `SearchableDropdown` component (`app/components/SearchableDropdown.tsx`).
 - It supports search and provides a beautiful, consistent UI across all platforms.
+- **Styling**: Ensure the dropdown button is styled with a nice white background (e.g., `buttonClassName="bg-white border-gray-200"` or similar) to match the light mode theme of the app perfectly.
 
 ## 3. Clickable Table Rows
 When displaying a list of entities (like customers, product specs) that can be edited:

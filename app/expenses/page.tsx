@@ -377,15 +377,13 @@ export default function ExpensesPage() {
 
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-1">หมวดหมู่</label>
-                <select
+                <SearchableDropdown
+                  options={EXPENSE_CATEGORIES.map(c => ({ value: c, label: c }))}
                   value={form.category}
-                  onChange={(e) => setForm({ ...form, category: e.target.value })}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 bg-white"
-                >
-                  {EXPENSE_CATEGORIES.map((c) => (
-                    <option key={c} value={c}>{c}</option>
-                  ))}
-                </select>
+                  onChange={(v) => setForm({ ...form, category: v })}
+                  className="w-full"
+                  buttonClassName="h-[42px] border-gray-300 focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500"
+                />
               </div>
 
               <div>

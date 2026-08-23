@@ -517,21 +517,24 @@ export default function DashboardPage() {
               )}
               {periodType === "quarter" && (
                 <div className="flex gap-2">
-                  <select
+                  <SearchableDropdown
+                    options={[
+                      { value: "Q1", label: "Q1 (ม.ค. - มี.ค.)" },
+                      { value: "Q2", label: "Q2 (เม.ย. - มิ.ย.)" },
+                      { value: "Q3", label: "Q3 (ก.ค. - ก.ย.)" },
+                      { value: "Q4", label: "Q4 (ต.ค. - ธ.ค.)" }
+                    ]}
                     value={periodValue.split('-')[1] || "Q1"}
-                    onChange={(e) => setPeriodValue(`${periodValue.split('-')[0]}-${e.target.value}`)}
-                    className="px-3 py-2 border-none bg-gray-50 hover:bg-gray-100 transition-colors rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 outline-none h-[42px] cursor-pointer"
-                  >
-                    <option value="Q1">Q1 (ม.ค. - มี.ค.)</option>
-                    <option value="Q2">Q2 (เม.ย. - มิ.ย.)</option>
-                    <option value="Q3">Q3 (ก.ค. - ก.ย.)</option>
-                    <option value="Q4">Q4 (ต.ค. - ธ.ค.)</option>
-                  </select>
+                    onChange={(v) => setPeriodValue(`${periodValue.split('-')[0]}-${v}`)}
+                    className="w-40"
+                    buttonClassName="h-[42px] border-gray-200"
+                  />
                   <SearchableDropdown
                     options={yearOptions}
                     value={periodValue.split('-')[0] || String(new Date().getFullYear())}
                     onChange={(v) => setPeriodValue(`${v}-${periodValue.split('-')[1] || "Q1"}`)}
-                    className="w-32 border-none bg-gray-50 hover:bg-gray-100 transition-colors rounded-xl"
+                    className="w-32"
+                    buttonClassName="h-[42px] border-gray-200"
                   />
                 </div>
               )}
@@ -540,7 +543,8 @@ export default function DashboardPage() {
                   options={yearOptions}
                   value={periodValue}
                   onChange={setPeriodValue}
-                  className="w-32 border-none bg-gray-50 hover:bg-gray-100 transition-colors rounded-xl"
+                  className="w-32"
+                  buttonClassName="h-[42px] border-gray-200"
                 />
               )}
             </div>
@@ -1031,15 +1035,14 @@ export default function DashboardPage() {
                   <div className="space-y-2">
                     {costItems.map((ci, idx) => (
                       <div key={idx} className="flex gap-2 items-start">
-                        <select
+                        <SearchableDropdown
+                          options={COST_TYPE_OPTIONS}
                           value={ci.costType}
-                          onChange={(e) => updateLocalCostItem(idx, "costType", e.target.value)}
-                          className="px-2 py-2 border border-gray-200 rounded-lg text-sm bg-white w-40 shrink-0"
-                        >
-                          {COST_TYPE_OPTIONS.map((opt) => (
-                            <option key={opt.value} value={opt.value}>{opt.label}</option>
-                          ))}
-                        </select>
+                          onChange={(v) => updateLocalCostItem(idx, "costType", v)}
+                          placeholder="เลือกประเภท..."
+                          className="w-44 shrink-0"
+                          buttonClassName="h-[38px] border-gray-200"
+                        />
                         <input
                           type="text"
                           value={ci.label}
