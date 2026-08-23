@@ -380,7 +380,7 @@ export default function ExpensesPage() {
                 <label className="block text-sm font-semibold text-gray-700 mb-1">หมวดหมู่</label>
                 <SearchableDropdown
                   options={EXPENSE_CATEGORIES.map(c => ({ value: c, label: c }))}
-                  value={form.category}
+                  value={form.category || ""}
                   onChange={(v) => setForm({ ...form, category: v })}
                   className="w-full"
                   buttonClassName="h-[42px] border-gray-300 focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500"
