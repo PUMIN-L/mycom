@@ -113,7 +113,7 @@ function cleanInput(data: Partial<SalesRecord>) {
     warrantyEndDate: cleanDate(data.warrantyEndDate) || null,
     equipmentId: data.equipmentId
       ? sanitizePlainText(data.equipmentId).substring(0, 36)
-      : null,
+      : "",
     note: sanitizePlainText(data.note || "").substring(0, 5000),
   };
 }

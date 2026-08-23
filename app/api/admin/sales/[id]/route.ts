@@ -50,7 +50,7 @@ export const PUT = withRoute(
     }
 
     // Sync equipments if sale type is equipment
-    if (body.saleType === "equipment" && Array.isArray(body.serialNumbers)) {
+    if (body.saleType === "equipment" && body.customerId && body.customerId.trim() && Array.isArray(body.serialNumbers)) {
       await syncEquipmentsForSalesRecord(id, body.serialNumbers, {
         customerId: body.customerId,
         productId: body.productId || "",
