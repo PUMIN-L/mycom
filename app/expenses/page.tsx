@@ -217,7 +217,7 @@ export default function ExpensesPage() {
                     ))}
                   </Pie>
                   <RechartsTooltip 
-                    formatter={(value: number) => `฿${value.toLocaleString()}`}
+                    formatter={(value: any) => `฿${Number(value || 0).toLocaleString()}`}
                     contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
                   />
                   <Legend verticalAlign="bottom" height={36} iconType="circle" wrapperStyle={{ fontSize: '12px' }} />
