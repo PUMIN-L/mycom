@@ -100,10 +100,10 @@ export default function AlertsPage() {
       id: "all", 
       label: "รวมทั้งหมด", 
       count: (alerts?.upcomingSchedules.length ?? 0) + (alerts?.expiringWarranties.length ?? 0) + (alerts?.incompleteEquipments.length ?? 0) + (alerts?.missingDocuments?.length ?? 0),
-      activeBg: "bg-gray-900 text-white shadow-md border-gray-900",
-      inactiveBg: "bg-white text-gray-600 hover:bg-gray-50 border-gray-200",
+      activeBg: "bg-indigo-600 text-white shadow-md border-indigo-600",
+      inactiveBg: "bg-white text-gray-600 hover:bg-indigo-50 hover:text-indigo-700 border-gray-200 hover:border-indigo-200",
       activeBadge: "bg-white/20 text-white font-bold",
-      inactiveBadge: "bg-gray-100 text-gray-600 font-medium"
+      inactiveBadge: "bg-gray-100 text-gray-600 font-medium group-hover:bg-indigo-100 group-hover:text-indigo-700"
     },
     { 
       id: "schedules", 
