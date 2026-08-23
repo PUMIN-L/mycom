@@ -103,11 +103,7 @@ export default function SalesTable({
                 <tr key={r.id} className="border-t border-gray-50 hover:bg-indigo-50/30 cursor-pointer transition-colors group" onClick={() => onView(r)}>
                   <td className="py-3 pr-3 text-sm text-gray-600">{r.saleDate}</td>
                   <td className="py-3 pr-3 text-sm font-medium text-gray-800">
-                    {r.saleType === "service" ? (
-                      <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-700 mr-1.5" title="บริการ">S</span>
-                    ) : (
-                      <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-bold bg-indigo-100 text-indigo-700 mr-1.5" title="อุปกรณ์">E</span>
-                    )}
+
                     {stripHtml(r.productName)}
                     {safeImageUrl(r.productImage) && (
                       <img src={safeImageUrl(r.productImage)!} alt="" className="inline-block ml-2 w-6 h-6 rounded object-cover border border-gray-100 bg-gray-50" />
