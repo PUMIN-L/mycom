@@ -2,12 +2,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
 
-vi.mock("@/app/lib/salesDashboardStore", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/app/lib/salesDashboardStore")>();
+vi.mock("@/app/lib/salesDashboardStore", () => {
   return {
-    ...actual,
     getDashboardOverview: vi.fn().mockResolvedValue({ currentMonth: {}, previousMonth: {}, expiringWarranties: 0 }),
     getRevenueByMonth: vi.fn().mockResolvedValue([]),
+    getRevenueByDay: vi.fn().mockResolvedValue([]),
     getRevenueByQuarter: vi.fn().mockResolvedValue([]),
     getRevenueByCategory: vi.fn().mockResolvedValue([]),
     getTopProducts: vi.fn().mockResolvedValue([]),
@@ -20,6 +19,7 @@ vi.mock("@/app/lib/salesDashboardStore", async (importOriginal) => {
 import {
   getDashboardOverview,
   getRevenueByMonth,
+  getRevenueByDay,
 } from '@/app/lib/salesDashboardStore';
 
 vi.mock('@/app/lib/session', () => ({ getSession: vi.fn() }));
@@ -54,6 +54,6 @@ describe('Admin Dashboard API', () => {
     expect(json).toHaveProperty('topCustomers');
     expect(json).toHaveProperty('salespersonLeaderboard');
     expect(json).toHaveProperty('insights');
-    expect(getRevenueByMonth).toHaveBeenCalledWith('2026-08-01', '2026-09-01');
+    expect(getRevenueByDay).toHaveBeenCalledWith('2026-08-01', '2026-09-01');
   });
 });
