@@ -167,7 +167,15 @@ export default function DashboardPage() {
     
     if (form.deliveryRef && !form.invoiceRef) errors.invoiceRef = true;
 
-    if (showCostCalc && costItems.length > 0) {
+    const totalCost = costItems.reduce((acc, curr) => acc + curr.amount, 0);
+    if (!showCostCalc || costItems.length === 0 || totalCost <= 0) {
+      setCostSubmitError(true);
+      setShowCostCalc(true); 
+      if (costItems.length === 0) {
+        setCostItems([{ costType: "product_cost", label: "", amount: 0, note: "" }]);
+      }
+      errors.costItems = true;
+    } else {
       const hasEmptyCost = costItems.some(ci => !ci.amount || ci.amount <= 0);
       if (hasEmptyCost) {
         setCostSubmitError(true);
