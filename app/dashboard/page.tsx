@@ -300,6 +300,22 @@ export default function DashboardPage() {
     setDeleteTarget(null);
   };
 
+  // View — fetch full record (with serial numbers) before showing modal
+  const handleView = async (rec: SalesRecord) => {
+    try {
+      const res = await fetch(`/api/admin/sales/${rec.id}`);
+      if (res.ok) {
+        const fullRec = await res.json();
+        setViewingRecord(fullRec);
+      } else {
+        // Fallback to list record if fetch fails
+        setViewingRecord(rec);
+      }
+    } catch {
+      setViewingRecord(rec);
+    }
+  };
+
   // Edit
   const handleEdit = async (rec: SalesRecord) => {
     try {
@@ -387,7 +403,7 @@ export default function DashboardPage() {
       (r) => r.productId === p.id || stripHtml(r.productName) === cleanName
     );
     if (matching.length === 1) {
-      setViewingRecord(matching[0]);
+      handleView(matching[0]);
     } else {
       setRecordSearch(cleanName);
       setTimeout(() => {
@@ -402,7 +418,7 @@ export default function DashboardPage() {
       (r) => r.companyId === c.id || r.customerName === c.name || r.companyName === c.name
     );
     if (matching.length === 1) {
-      setViewingRecord(matching[0]);
+      handleView(matching[0]);
     } else {
       setRecordSearch(c.name === "ไม่ระบุ" ? "" : c.name);
       setTimeout(() => {
@@ -861,7 +877,7 @@ export default function DashboardPage() {
             setRecordSearch={setRecordSearch}
             recordMonth={recordMonth}
             setRecordMonth={setRecordMonth}
-            onView={setViewingRecord}
+            onView={handleView}
             onEdit={handleEdit}
             onDelete={handleDelete}
             onHide={() => setShowRecords(false)}
