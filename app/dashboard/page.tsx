@@ -142,7 +142,10 @@ export default function DashboardPage() {
   const chartData = useMemo(() => {
     if (!data) return [];
     if (chartMode === "monthly") {
-      return data.revenueMonthly.map((r, i) => ({ ...r, name: MONTHS_TH[i] }));
+      return data.revenueMonthly.map((r) => {
+        const monthIndex = parseInt(r.period.split("-")[1], 10) - 1;
+        return { ...r, name: MONTHS_TH[monthIndex] };
+      });
     }
     return data.revenueQuarterly.map((r) => ({ ...r, name: r.period.split("-")[1] }));
   }, [data, chartMode]);
