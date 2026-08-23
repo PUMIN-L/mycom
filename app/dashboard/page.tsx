@@ -587,14 +587,14 @@ export default function DashboardPage() {
             
             <button
               onClick={handleScrollToRecords}
-              className="px-4 py-2 text-gray-600 font-medium rounded-xl text-sm hover:bg-gray-50 transition-all flex items-center gap-2"
+              className="px-4 py-2 text-indigo-700 bg-indigo-50 font-semibold rounded-xl text-sm hover:bg-indigo-100 transition-all flex items-center gap-2"
             >
-              รายการขาย {salesRecords.length > 0 && <span className="bg-indigo-50 text-indigo-600 border border-indigo-100 text-xs px-2 py-0.5 rounded-full font-bold">{salesRecords.length}</span>}
+              รายการขาย {salesRecords.length > 0 && <span className="bg-white text-indigo-700 shadow-sm text-xs px-2 py-0.5 rounded-full font-bold">{salesRecords.length}</span>}
             </button>
-            <Link href="/customers?tab=equipment" className="px-4 py-2 text-gray-600 font-medium rounded-xl hover:bg-gray-50 transition-all text-sm">
+            <Link href="/customers?tab=equipment" className="px-4 py-2 text-purple-700 bg-purple-50 font-semibold rounded-xl hover:bg-purple-100 transition-all text-sm">
               อุปกรณ์ที่ขาย
             </Link>
-            <Link href="/expenses" className="px-4 py-2 text-gray-600 font-medium rounded-xl hover:bg-gray-50 transition-all text-sm">
+            <Link href="/expenses" className="px-4 py-2 text-rose-700 bg-rose-50 font-semibold rounded-xl hover:bg-rose-100 transition-all text-sm">
               บันทึกรายจ่าย
             </Link>
             
