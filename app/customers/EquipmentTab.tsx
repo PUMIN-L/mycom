@@ -272,6 +272,14 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
     subLabel: stripHtml(p.title_en),
   }));
 
+  if (editing && editing.id && !productOptions.some(o => o.value === editing.productId)) {
+    productOptions.unshift({
+      value: editing.productId || "_custom",
+      label: stripHtml(editing.productName) || "(สินค้าที่ระบุเอง)",
+      subLabel: "กำหนดชื่อเอง",
+    });
+  }
+
   // ── Filtered list ──────────────────────────────────────────────────────────
 
   const filtered = equipments.filter((eq) => {
@@ -635,7 +643,7 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
                     <td className="py-4">
                       <div className="flex items-center gap-1">
                         <button
-                          onClick={(e) => { e.stopPropagation(); setEditing(eq); setSubmitAttempted(false); setIsModalOpen(true); }}
+                          onClick={(e) => { e.stopPropagation(); setEditing({ ...eq, productId: eq.productId || "_custom" }); setSubmitAttempted(false); setIsModalOpen(true); }}
                           className="p-1.5 text-gray-400 hover:text-indigo-600 transition-colors rounded-lg hover:bg-indigo-50"
                           title="แก้ไขอุปกรณ์"
                         >
