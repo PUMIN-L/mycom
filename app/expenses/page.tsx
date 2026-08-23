@@ -38,9 +38,15 @@ export default function ExpensesPage() {
   const [toast, setToast] = useState<{ msg: string; type: "success" | "error" } | null>(null);
 
   // Filter states
-  const now = new Date();
-  const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-  const [filterMonth, setFilterMonth] = useState(currentMonth);
+  const [periodType, setPeriodType] = useState<"month" | "quarter" | "year">("month");
+  const [periodValue, setPeriodValue] = useState(`${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`);
+  const yearOptions = useMemo(() =>
+    [0, 1, 2, 3, 4].map((i) => {
+      const y = String(new Date().getFullYear() - i);
+      return { value: y, label: `ปี ${y}` };
+    }),
+    []
+  );
 
   // Form states
   const [showForm, setShowForm] = useState(false);
@@ -59,11 +65,26 @@ export default function ExpensesPage() {
   const fetchRecords = async () => {
     setLoading(true);
     try {
-      const year = filterMonth.split("-")[0];
-      const month = filterMonth.split("-")[1];
-      const lastDay = new Date(Number(year), Number(month), 0).getDate();
-      const dateFrom = `${filterMonth}-01`;
-      const dateTo = `${filterMonth}-${lastDay}`;
+      let dateFrom = "";
+      let dateTo = "";
+      
+      const year = periodValue.split("-")[0];
+      
+      if (periodType === "year") {
+        dateFrom = `${year}-01-01`;
+        dateTo = `${year}-12-31`;
+      } else if (periodType === "quarter") {
+        const q = periodValue.split("-")[1] || "Q1";
+        if (q === "Q1") { dateFrom = `${year}-01-01`; dateTo = `${year}-03-31`; }
+        else if (q === "Q2") { dateFrom = `${year}-04-01`; dateTo = `${year}-06-30`; }
+        else if (q === "Q3") { dateFrom = `${year}-07-01`; dateTo = `${year}-09-30`; }
+        else if (q === "Q4") { dateFrom = `${year}-10-01`; dateTo = `${year}-12-31`; }
+      } else {
+        const month = periodValue.split("-")[1];
+        const lastDay = new Date(Number(year), Number(month) || 1, 0).getDate();
+        dateFrom = `${periodValue}-01`;
+        dateTo = `${periodValue}-${String(lastDay).padStart(2, "0")}`;
+      }
 
       const res = await fetch(`/api/admin/expenses?dateFrom=${dateFrom}&dateTo=${dateTo}`);
       if (!res.ok) throw new Error("Failed to fetch");
@@ -85,7 +106,7 @@ export default function ExpensesPage() {
   useEffect(() => {
     fetchRecords();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filterMonth]);
+  }, [periodType, periodValue]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -159,13 +180,67 @@ export default function ExpensesPage() {
             <h1 className="text-3xl font-bold text-gray-800">💸 บันทึกรายจ่าย (Expenses)</h1>
             <p className="text-gray-500 mt-1">จัดการและบันทึกรายจ่ายทั่วไปของบริษัท</p>
           </div>
-          <div className="flex gap-3 flex-wrap">
-            <input
-              type="month"
-              value={filterMonth}
-              onChange={(e) => setFilterMonth(e.target.value)}
-              className="px-4 py-2 bg-white border border-gray-200 rounded-xl focus:outline-none focus:border-rose-500 focus:ring-1 focus:ring-rose-500"
-            />
+          <div className="flex gap-3 flex-wrap items-center">
+            <div className="flex items-center gap-2 mr-2">
+              <SearchableDropdown
+                options={[
+                  { value: "month", label: "รายเดือน" },
+                  { value: "quarter", label: "รายไตรมาส" },
+                  { value: "year", label: "รายปี" }
+                ]}
+                value={periodType}
+                onChange={(v) => {
+                  const type = v as "month" | "quarter" | "year";
+                  setPeriodType(type);
+                  const d = new Date();
+                  if (type === "year") setPeriodValue(d.getFullYear().toString());
+                  else if (type === "quarter") setPeriodValue(`${d.getFullYear()}-Q${Math.floor(d.getMonth() / 3) + 1}`);
+                  else setPeriodValue(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+                }}
+                className="w-32 bg-white rounded-xl"
+                buttonClassName="h-[42px] border-gray-200"
+              />
+              {periodType === "month" && (
+                <input
+                  type="month"
+                  value={periodValue}
+                  onChange={(e) => setPeriodValue(e.target.value)}
+                  className="px-4 py-2 bg-white border border-gray-200 rounded-xl focus:outline-none focus:border-rose-500 focus:ring-1 focus:ring-rose-500 h-[42px]"
+                />
+              )}
+              {periodType === "quarter" && (
+                <div className="flex gap-2">
+                  <SearchableDropdown
+                    options={[
+                      { value: "Q1", label: "Q1 (ม.ค. - มี.ค.)" },
+                      { value: "Q2", label: "Q2 (เม.ย. - มิ.ย.)" },
+                      { value: "Q3", label: "Q3 (ก.ค. - ก.ย.)" },
+                      { value: "Q4", label: "Q4 (ต.ค. - ธ.ค.)" }
+                    ]}
+                    value={periodValue.split('-')[1] || "Q1"}
+                    onChange={(v) => setPeriodValue(`${periodValue.split('-')[0]}-${v}`)}
+                    className="w-40 bg-white"
+                    buttonClassName="h-[42px] border-gray-200"
+                  />
+                  <SearchableDropdown
+                    options={yearOptions}
+                    value={periodValue.split('-')[0] || String(new Date().getFullYear())}
+                    onChange={(v) => setPeriodValue(`${v}-${periodValue.split('-')[1] || "Q1"}`)}
+                    className="w-32 bg-white"
+                    buttonClassName="h-[42px] border-gray-200"
+                  />
+                </div>
+              )}
+              {periodType === "year" && (
+                <SearchableDropdown
+                  options={yearOptions}
+                  value={periodValue}
+                  onChange={setPeriodValue}
+                  className="w-32 bg-white"
+                  buttonClassName="h-[42px] border-gray-200"
+                />
+              )}
+            </div>
             <button
               onClick={() => {
                 setEditingId(null);
@@ -188,7 +263,7 @@ export default function ExpensesPage() {
         {/* Summary Card with Chart */}
         <div className="bg-white rounded-3xl p-8 shadow-sm border border-gray-100 mb-8 flex flex-col md:flex-row gap-8 items-center justify-between">
           <div className="flex-1 w-full text-center md:text-left">
-            <h2 className="text-gray-500 font-medium text-lg">รวมรายจ่ายประจำเดือน {filterMonth}</h2>
+            <h2 className="text-gray-500 font-medium text-lg">รวมรายจ่าย {periodType === "month" ? `ประจำเดือน ${periodValue}` : periodType === "quarter" ? `ไตรมาส ${periodValue}` : `ปี ${periodValue}`}</h2>
             <p className="text-5xl font-black text-rose-600 mt-3">
               ฿{totalExpense.toLocaleString(undefined, { minimumFractionDigits: 2 })}
             </p>
