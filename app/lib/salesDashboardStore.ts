@@ -375,8 +375,13 @@ export async function getDashboardOverview(
 
   const curRevenue = Number(curRows[0]?.revenue || 0);
   const curCost = Number(curRows[0]?.cost || 0);
+  const curExp = Number(curExpRows[0]?.expenses || 0);
+  const totalCurCost = curCost + curExp;
+
   const prevRevenue = Number(prevRows[0]?.revenue || 0);
   const prevCostVal = Number(prevRows[0]?.cost || 0);
+  const prevExp = Number(prevExpRows[0]?.expenses || 0);
+  const totalPrevCost = prevCostVal + prevExp;
 
   return {
     currentPeriod: {
@@ -384,16 +389,16 @@ export async function getDashboardOverview(
       deals: Number(curRows[0]?.deals || 0),
       newCustomers: Number(curCust[0]?.cnt || 0),
       quotations: Number(curQuot[0]?.cnt || 0),
-      cost: curCost,
-      profit: curRevenue - curCost,
+      cost: totalCurCost,
+      profit: curRevenue - totalCurCost,
     },
     previousPeriod: {
       revenue: prevRevenue,
       deals: Number(prevRows[0]?.deals || 0),
       newCustomers: Number(prevCust[0]?.cnt || 0),
       quotations: Number(prevQuot[0]?.cnt || 0),
-      cost: prevCostVal,
-      profit: prevRevenue - prevCostVal,
+      cost: totalPrevCost,
+      profit: prevRevenue - totalPrevCost,
     },
     expiringWarranties: Number(expWarranty[0]?.cnt || 0),
   };
@@ -434,13 +439,14 @@ export async function getRevenueByMonth(dateFromRaw: string, dateToRaw: string):
     const exp = expMap.get(m);
     const rev = Number(r?.revenue || 0);
     const c = Number(r?.cost || 0);
-    const profit = rev - c;
+    const expAmount = Number(exp?.expenses || 0);
+    const profit = rev - c - expAmount;
     result.push({
       period: m,
       revenue: rev,
       deals: Number(r?.deals || 0),
       cost: c,
-      expense: Number(exp?.expenses || 0),
+      expense: expAmount,
       profit,
       margin: rev > 0 ? Math.round((profit / rev) * 10000) / 100 : 0,
     });
@@ -488,13 +494,14 @@ export async function getRevenueByQuarter(dateFromRaw: string, dateToRaw: string
       const exp = expMap.get(period);
       const rev = Number(r?.revenue || 0);
       const c = Number(r?.cost || 0);
-      const profit = rev - c;
+      const expAmount = Number(exp?.expenses || 0);
+      const profit = rev - c - expAmount;
       result.push({
         period,
         revenue: rev,
         deals: Number(r?.deals || 0),
         cost: c,
-        expense: Number(exp?.expenses || 0),
+        expense: expAmount,
         profit,
         margin: rev > 0 ? Math.round((profit / rev) * 10000) / 100 : 0,
       });

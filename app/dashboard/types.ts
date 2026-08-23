@@ -19,7 +19,7 @@ export interface DashboardData {
 }
 
 export interface ChartPeriod {
-  period: string; revenue: number; deals: number; cost: number; profit: number; margin: number;
+  period: string; revenue: number; deals: number; cost: number; expense: number; profit: number; margin: number;
 }
 
 export interface TopItem {
