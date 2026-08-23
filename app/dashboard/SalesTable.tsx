@@ -1,5 +1,5 @@
 "use client";
-import React from "react";
+import React, { useState, useEffect } from "react";
 import type { SalesRecord } from "../lib/types";
 import SearchableDropdown from "../components/SearchableDropdown";
 import { fmtDec, safeImageUrl, stripHtml, MONTHS_TH } from "./types";
@@ -43,6 +43,21 @@ export default function SalesTable({
     }
     return true;
   });
+
+  // Pagination
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 10;
+  const totalPages = Math.max(1, Math.ceil(filtered.length / itemsPerPage));
+
+  // Reset page when filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [recordSearch, recordMonth, records]);
+
+  const paginatedRecords = filtered.slice(
+    (currentPage - 1) * itemsPerPage,
+    currentPage * itemsPerPage
+  );
 
   return (
     <div id="sales-records-section" className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 mb-8 scroll-mt-6">
@@ -99,7 +114,7 @@ export default function SalesTable({
               </tr>
             </thead>
             <tbody>
-              {filtered.map((r) => (
+              {paginatedRecords.map((r) => (
                 <tr key={r.id} className="border-t border-gray-50 hover:bg-indigo-50/30 cursor-pointer transition-colors group" onClick={() => onView(r)}>
                   <td className="py-3 pr-3 text-sm text-gray-600">{r.saleDate}</td>
                   <td className="py-3 pr-3 text-sm font-medium text-gray-800">
@@ -155,7 +170,35 @@ export default function SalesTable({
               ))}
             </tbody>
           </table>
+          </table>
         </div>
+        {totalPages > 1 && (
+          <div className="flex justify-between items-center mt-6 border-t border-gray-100 pt-4">
+            <div className="text-sm text-gray-500">
+              แสดง {((currentPage - 1) * itemsPerPage) + 1} ถึง {Math.min(currentPage * itemsPerPage, filtered.length)} จาก {filtered.length} รายการ
+            </div>
+            <div className="flex items-center gap-1">
+              <button
+                disabled={currentPage === 1}
+                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                className="px-3 py-1.5 text-sm bg-white border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                ก่อนหน้า
+              </button>
+              <div className="px-4 text-sm font-medium text-gray-700">
+                หน้า {currentPage} / {totalPages}
+              </div>
+              <button
+                disabled={currentPage === totalPages}
+                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                className="px-3 py-1.5 text-sm bg-white border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                ถัดไป
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
       ) : (
         <div className="text-center text-gray-400 py-8 text-sm">ยังไม่มีรายการขาย</div>
       )}

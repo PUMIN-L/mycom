@@ -109,6 +109,14 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
   // Search
   const [searchText, setSearchText] = useState("");
 
+  // Pagination
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 10;
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchText, equipments]);
+
   // Double-submit guard
   const [isSaving, setIsSaving] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
@@ -294,6 +302,12 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
       eq.quotationNumber.toLowerCase().includes(q)
     );
   });
+
+  const paginatedEquipments = filtered.slice(
+    (currentPage - 1) * itemsPerPage,
+    currentPage * itemsPerPage
+  );
+  const totalPages = Math.max(1, Math.ceil(filtered.length / itemsPerPage));
 
   // ── Equipment CRUD handlers ────────────────────────────────────────────────
 
@@ -608,7 +622,7 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
                 </td>
               </tr>
             ) : (
-              filtered.map((eq) => {
+              paginatedEquipments.map((eq) => {
                 const daysLeft = warrantyDaysLeft(eq.warrantyEndDate);
                 return (
                   <tr
@@ -668,6 +682,32 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
           </tbody>
         </table>
       </div>
+      {totalPages > 1 && (
+        <div className="flex justify-between items-center mt-6">
+          <div className="text-sm text-gray-500">
+            แสดง {((currentPage - 1) * itemsPerPage) + 1} ถึง {Math.min(currentPage * itemsPerPage, filtered.length)} จาก {filtered.length} รายการ
+          </div>
+          <div className="flex items-center gap-1">
+            <button
+              disabled={currentPage === 1}
+              onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+              className="px-3 py-1.5 text-sm bg-white border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              ก่อนหน้า
+            </button>
+            <div className="px-4 text-sm font-medium text-gray-700">
+              หน้า {currentPage} / {totalPages}
+            </div>
+            <button
+              disabled={currentPage === totalPages}
+              onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+              className="px-3 py-1.5 text-sm bg-white border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              ถัดไป
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ── Equipment CRUD Modal ──────────────────────────────────────────── */}
       {isModalOpen && (
