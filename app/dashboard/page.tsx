@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef, Suspense } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import DatePicker from "../components/DatePicker";
@@ -28,9 +28,6 @@ import {
 // ── Main Component ───────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
-  const searchParams = useSearchParams();
-  const editIdFromUrl = searchParams.get("edit");
-  const editHandledRef = useRef(false);
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [periodType, setPeriodType] = useState<"month" | "quarter" | "year">("year");
@@ -117,17 +114,7 @@ export default function DashboardPage() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [showForm]);
 
-  // Auto-open edit form from URL param (?edit=<salesRecordId>)
-  useEffect(() => {
-    if (editIdFromUrl && salesRecords.length > 0 && !editHandledRef.current) {
-      editHandledRef.current = true;
-      const rec = salesRecords.find((r) => r.id === editIdFromUrl);
-      if (rec) {
-        handleEdit(rec);
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editIdFromUrl, salesRecords]);
+
 
   // Dropdown options
   const productOptions: SearchableDropdownOption[] = useMemo(() =>
@@ -500,6 +487,9 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100">
+      <Suspense fallback={null}>
+        <AutoEditHandler salesRecords={salesRecords} onEdit={handleEdit} />
+      </Suspense>
       {/* Delete Confirmation Dialog */}
       {deleteTarget && (
         <ConfirmDialog
@@ -1211,4 +1201,30 @@ export default function DashboardPage() {
       )}
     </div>
   );
+}
+
+// ── AutoEditHandler ──────────────────────────────────────────────────────────
+
+function AutoEditHandler({
+  salesRecords,
+  onEdit,
+}: {
+  salesRecords: SalesRecord[];
+  onEdit: (r: SalesRecord) => void;
+}) {
+  const searchParams = useSearchParams();
+  const editIdFromUrl = searchParams.get("edit");
+  const editHandledRef = useRef(false);
+
+  useEffect(() => {
+    if (editIdFromUrl && salesRecords.length > 0 && !editHandledRef.current) {
+      editHandledRef.current = true;
+      const rec = salesRecords.find((r) => r.id === editIdFromUrl);
+      if (rec) {
+        onEdit(rec);
+      }
+    }
+  }, [editIdFromUrl, salesRecords, onEdit]);
+
+  return null;
 }
