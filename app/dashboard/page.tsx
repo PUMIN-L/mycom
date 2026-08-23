@@ -512,23 +512,27 @@ export default function DashboardPage() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8">
         <div className="flex flex-col xl:flex-row justify-between items-start xl:items-end gap-6 mb-10">
           <div>
-            <h1 className="text-3xl sm:text-4xl font-extrabold text-gray-900 tracking-tight mb-2 flex items-center gap-3">
-              ภาพรวมยอดขาย
-              <span className="text-lg font-medium text-gray-400 bg-gray-100/80 px-3 py-1 rounded-full tracking-normal hidden sm:inline-block whitespace-nowrap">Sales Dashboard</span>
-            </h1>
-            <div className="flex flex-wrap items-center gap-3 text-sm font-medium">
-              <Link href="/showcase" className="text-gray-500 hover:text-indigo-600 transition-colors flex items-center gap-1">
+            <div className="flex items-center gap-3 mb-1.5">
+              <h1 className="text-3xl sm:text-4xl font-black text-gray-900 tracking-tight">
+                ภาพรวมยอดขาย
+              </h1>
+              <span className="px-3 py-1 bg-gray-900 text-white text-xs font-bold uppercase tracking-wider rounded-full shadow-sm hidden sm:inline-block whitespace-nowrap">
+                Sales Dashboard
+              </span>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 text-sm text-gray-500 font-medium">
+              <Link href="/showcase" className="hover:text-indigo-600 transition-colors flex items-center gap-1">
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/></svg>
                 กลับไประบบจัดการ
               </Link>
-              <span className="text-gray-300">|</span>
-              <span className="text-gray-500">ภาพรวมธุรกิจประจำปี</span>
+              <span className="text-gray-300">•</span>
+              <span>ภาพรวมธุรกิจประจำปี</span>
             </div>
           </div>
           
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="flex flex-wrap lg:flex-nowrap items-center gap-3 w-full lg:w-auto">
             {/* Filter Pill */}
-            <div className="flex items-center gap-2 bg-white p-1.5 rounded-[18px] shadow-sm border border-gray-100">
+            <div className="flex items-center bg-white rounded-full shadow-sm border border-gray-200/60 p-1 w-full sm:w-auto overflow-x-auto no-scrollbar">
               <SearchableDropdown
                 options={[
                   { value: "month", label: "รายเดือน" },
@@ -544,18 +548,20 @@ export default function DashboardPage() {
                   else if (type === "quarter") setPeriodValue(`${d.getFullYear()}-Q${Math.floor(d.getMonth() / 3) + 1}`);
                   else setPeriodValue(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
                 }}
-                className="w-32 border-none bg-gray-50 hover:bg-gray-100 transition-colors rounded-xl"
+                className="w-28 shrink-0 bg-transparent"
+                buttonClassName="h-[34px] border-none bg-transparent hover:bg-gray-50 rounded-full shadow-none font-medium text-sm text-gray-700"
               />
+              <div className="h-4 w-px bg-gray-200 mx-1 shrink-0"></div>
               {periodType === "month" && (
                 <input
                   type="month"
                   value={periodValue}
                   onChange={(e) => setPeriodValue(e.target.value)}
-                  className="px-3 py-2 border-none bg-gray-50 hover:bg-gray-100 transition-colors rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 outline-none h-[42px]"
+                  className="px-3 py-1 border-none bg-transparent hover:bg-gray-50 transition-colors rounded-full text-sm focus:ring-2 focus:ring-indigo-500 outline-none h-[34px] font-medium text-gray-700 shrink-0"
                 />
               )}
               {periodType === "quarter" && (
-                <div className="flex gap-1.5">
+                <div className="flex gap-1 shrink-0">
                   <SearchableDropdown
                     options={[
                       { value: "Q1", label: "Q1 (ม.ค. - มี.ค.)" },
@@ -565,13 +571,15 @@ export default function DashboardPage() {
                     ]}
                     value={periodValue.split('-')[1] || "Q1"}
                     onChange={(v) => setPeriodValue(`${periodValue.split('-')[0]}-${v}`)}
-                    className="w-40 border-none bg-gray-50 hover:bg-gray-100 transition-colors rounded-xl"
+                    className="w-32 bg-transparent"
+                    buttonClassName="h-[34px] border-none bg-transparent hover:bg-gray-50 rounded-full shadow-none font-medium text-sm text-gray-700"
                   />
                   <SearchableDropdown
                     options={yearOptions}
                     value={periodValue.split('-')[0] || String(new Date().getFullYear())}
                     onChange={(v) => setPeriodValue(`${v}-${periodValue.split('-')[1] || "Q1"}`)}
-                    className="w-28 border-none bg-gray-50 hover:bg-gray-100 transition-colors rounded-xl"
+                    className="w-24 bg-transparent"
+                    buttonClassName="h-[34px] border-none bg-transparent hover:bg-gray-50 rounded-full shadow-none font-medium text-sm text-gray-700"
                   />
                 </div>
               )}
@@ -580,36 +588,38 @@ export default function DashboardPage() {
                   options={yearOptions}
                   value={periodValue}
                   onChange={setPeriodValue}
-                  className="w-32 border-none bg-gray-50 hover:bg-gray-100 transition-colors rounded-xl"
+                  className="w-28 shrink-0 bg-transparent"
+                  buttonClassName="h-[34px] border-none bg-transparent hover:bg-gray-50 rounded-full shadow-none font-medium text-sm text-gray-700"
                 />
               )}
             </div>
 
             {/* Navigation Tabs Pill */}
-            <div className="flex flex-wrap items-center gap-2 bg-white p-1.5 rounded-[18px] shadow-sm border border-gray-100">
+            <div className="flex items-center bg-white rounded-full shadow-sm border border-gray-200/60 p-1 w-full sm:w-auto overflow-x-auto no-scrollbar">
               <button
                 onClick={handleScrollToRecords}
-                className="px-4 py-2 text-indigo-700 bg-indigo-50 font-semibold rounded-xl text-sm hover:bg-indigo-100 transition-all flex items-center gap-2"
+                className="px-4 py-1.5 text-indigo-700 bg-indigo-50 font-bold rounded-full text-sm hover:bg-indigo-100 transition-all flex items-center gap-2 whitespace-nowrap shrink-0"
               >
                 รายการขาย {salesRecords.length > 0 && <span className="bg-white text-indigo-700 shadow-sm text-xs px-2 py-0.5 rounded-full font-bold">{salesRecords.length}</span>}
               </button>
-              <Link href="/customers?tab=equipment" className="px-4 py-2 text-purple-700 bg-purple-50 font-semibold rounded-xl hover:bg-purple-100 transition-all text-sm">
+              <Link href="/customers?tab=equipment" className="px-4 py-1.5 text-purple-700 bg-purple-50 font-semibold rounded-full hover:bg-purple-100 transition-all text-sm whitespace-nowrap shrink-0 ml-1">
                 อุปกรณ์ที่ขาย
               </Link>
-              <Link href="/expenses" className="px-4 py-2 text-rose-700 bg-rose-50 font-semibold rounded-xl hover:bg-rose-100 transition-all text-sm">
+              <Link href="/expenses" className="px-4 py-1.5 text-rose-700 bg-rose-50 font-semibold rounded-full hover:bg-rose-100 transition-all text-sm whitespace-nowrap shrink-0 ml-1">
                 บันทึกรายจ่าย
               </Link>
               
-              <div className="h-6 w-px bg-gray-100 hidden sm:block mx-1"></div>
+              <div className="h-4 w-px bg-gray-200 mx-2 shrink-0"></div>
               
-              <button onClick={handleExport} className="p-2 text-gray-400 hover:text-gray-900 rounded-xl hover:bg-gray-50 transition-all" title="Export Excel">
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+              <button onClick={handleExport} className="p-1.5 text-gray-400 hover:text-gray-900 rounded-full hover:bg-gray-50 transition-all shrink-0" title="Export Excel">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
               </button>
             </div>
             
             {/* Action Button */}
-            <button onClick={() => { setShowForm(true); setEditingId(null); setForm(emptyForm()); setCostItems([]); setShowCostCalc(false); }} className="px-6 py-2.5 bg-green-700 text-white rounded-[18px] text-sm font-semibold hover:bg-green-800 transition-all shadow-md whitespace-nowrap h-[46px] flex items-center">
-              + บันทึกยอดขาย
+            <button onClick={() => { setShowForm(true); setEditingId(null); setForm(emptyForm()); setCostItems([]); setShowCostCalc(false); }} className="px-5 py-2 bg-emerald-600 text-white rounded-full text-sm font-bold hover:bg-emerald-700 transition-all shadow-sm flex items-center justify-center gap-1.5 whitespace-nowrap w-full sm:w-auto h-[42px] shrink-0">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"/></svg>
+              บันทึกยอดขาย
             </button>
           </div>
         </div>
