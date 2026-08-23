@@ -9,6 +9,7 @@ import {
   getTopCustomers,
   getSalespersonLeaderboard,
   getSmartInsights,
+  getPeriodDateRange
 } from "../../../lib/salesDashboardStore";
 
 // GET /api/admin/dashboard — aggregated stats for the dashboard page.
@@ -20,12 +21,13 @@ export const GET = withRoute(
     await requireAuth();
 
     const url = request.nextUrl;
-    const year = Number(url.searchParams.get("year")) || new Date().getFullYear();
-    const dateFrom = url.searchParams.get("dateFrom") || undefined;
-    const dateTo = url.searchParams.get("dateTo") || undefined;
+    const periodType = url.searchParams.get("periodType") || "month";
+    const periodValue = url.searchParams.get("periodValue") || undefined;
+    
+    const { curStart, curEnd, prevStart, prevEnd, periodLabel } = getPeriodDateRange(periodType, periodValue);
 
     const [
-      overview,
+      overviewData,
       revenueMonthly,
       revenueQuarterly,
       revenueByCategory,
@@ -34,15 +36,20 @@ export const GET = withRoute(
       salespersonLeaderboard,
       insights,
     ] = await Promise.all([
-      getDashboardOverview(),
-      getRevenueByMonth(year),
-      getRevenueByQuarter(year),
-      getRevenueByCategory(dateFrom, dateTo),
-      getTopProducts(10, dateFrom, dateTo),
-      getTopCustomers(10, dateFrom, dateTo),
-      getSalespersonLeaderboard(dateFrom, dateTo),
-      getSmartInsights(),
+      getDashboardOverview(curStart, curEnd, prevStart, prevEnd),
+      getRevenueByMonth(curStart, curEnd),
+      getRevenueByQuarter(curStart, curEnd),
+      getRevenueByCategory(curStart, curEnd),
+      getTopProducts(10, curStart, curEnd),
+      getTopCustomers(10, curStart, curEnd),
+      getSalespersonLeaderboard(curStart, curEnd),
+      getSmartInsights(curStart, curEnd, prevStart, prevEnd, periodLabel),
     ]);
+
+    const overview = {
+      ...overviewData,
+      periodLabel
+    };
 
     return NextResponse.json({
       overview,

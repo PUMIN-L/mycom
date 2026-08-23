@@ -19,9 +19,10 @@ export const COST_TYPE_LABELS: Record<string, string> = {
 };
 
 export interface DashboardOverview {
-  currentMonth: { revenue: number; deals: number; newCustomers: number; quotations: number; cost: number; profit: number };
-  previousMonth: { revenue: number; deals: number; newCustomers: number; quotations: number; cost: number; profit: number };
+  currentPeriod: { revenue: number; deals: number; newCustomers: number; quotations: number; cost: number; profit: number };
+  previousPeriod: { revenue: number; deals: number; newCustomers: number; quotations: number; cost: number; profit: number };
   expiringWarranties: number;
+  periodLabel: string;
 }
 
 export interface RevenueByPeriod {
@@ -267,16 +268,54 @@ export async function listSalesRecords(filters?: {
 
 // ── Aggregate Queries ────────────────────────────────────────────────────────
 
-export async function getDashboardOverview(): Promise<DashboardOverview> {
+export function getPeriodDateRange(periodType?: string, periodValue?: string) {
+  let curStart, curEnd, prevStart, prevEnd;
+  let periodLabel = "เดือนนี้";
   const now = new Date();
-  const year = now.getFullYear();
-  const month = now.getMonth(); // 0-indexed
-  const curStart = `${year}-${String(month + 1).padStart(2, "0")}-01`;
-  // Use Date constructor for safe month rollover (Dec → Jan next year)
-  const nextMonthDate = new Date(year, month + 1, 1);
-  const curEnd = `${nextMonthDate.getFullYear()}-${String(nextMonthDate.getMonth() + 1).padStart(2, "0")}-01`;
-  const prevDate = new Date(year, month - 1, 1);
-  const prevStart = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, "0")}-01`;
+
+  if (periodType === 'year') {
+    const y = parseInt(periodValue || now.getFullYear().toString(), 10);
+    curStart = `${y}-01-01`;
+    curEnd = `${y + 1}-01-01`;
+    prevStart = `${y - 1}-01-01`;
+    prevEnd = curStart;
+    periodLabel = `ปี ${y}`;
+  } else if (periodType === 'quarter') {
+    const parts = (periodValue || "").split('-Q');
+    const y = parseInt(parts[0], 10) || now.getFullYear();
+    const q = parseInt(parts[1], 10) || Math.floor(now.getMonth() / 3) + 1;
+    const startMonth = (q - 1) * 3;
+    curStart = `${y}-${String(startMonth + 1).padStart(2, "0")}-01`;
+    const curEndDate = new Date(y, startMonth + 3, 1);
+    curEnd = `${curEndDate.getFullYear()}-${String(curEndDate.getMonth() + 1).padStart(2, "0")}-01`;
+    const prevStartDate = new Date(y, startMonth - 3, 1);
+    prevStart = `${prevStartDate.getFullYear()}-${String(prevStartDate.getMonth() + 1).padStart(2, "0")}-01`;
+    prevEnd = curStart;
+    periodLabel = `ไตรมาส ${q} ปี ${y}`;
+  } else {
+    // month (default)
+    const parts = (periodValue || "").split('-');
+    const y = parseInt(parts[0], 10) || now.getFullYear();
+    const m = parts.length > 1 ? parseInt(parts[1], 10) - 1 : now.getMonth();
+    curStart = `${y}-${String(m + 1).padStart(2, "0")}-01`;
+    const nextMonth = new Date(y, m + 1, 1);
+    curEnd = `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, "0")}-01`;
+    const prevDate = new Date(y, m - 1, 1);
+    prevStart = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, "0")}-01`;
+    prevEnd = curStart;
+    const thaiMonths = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
+    periodLabel = `เดือน ${thaiMonths[m]} ${y}`;
+  }
+
+  return { curStart, curEnd, prevStart, prevEnd, periodLabel };
+}
+
+export async function getDashboardOverview(
+  curStart: string,
+  curEnd: string,
+  prevStart: string,
+  prevEnd: string
+): Promise<Omit<DashboardOverview, 'periodLabel'>> {
 
   // Current month
   const [curRows] = await query<RowDataPacket[]>(
@@ -291,37 +330,38 @@ export async function getDashboardOverview(): Promise<DashboardOverview> {
     [curStart, curEnd]
   );
 
-  // Previous month
+  // Previous period
   const [prevRows] = await query<RowDataPacket[]>(
     `SELECT COALESCE(SUM(totalAmount), 0) AS revenue, COUNT(*) AS deals,
             COALESCE(SUM(costAmount), 0) AS cost
      FROM sales_records WHERE saleDate >= ? AND saleDate < ?`,
-    [prevStart, curStart]
+    [prevStart, prevEnd]
   );
   const [prevExpRows] = await query<RowDataPacket[]>(
     `SELECT COALESCE(SUM(amount), 0) AS expenses
      FROM expenses WHERE expenseDate >= ? AND expenseDate < ?`,
-    [prevStart, curStart]
+    [prevStart, prevEnd]
   );
-  // New customers this month
+  // New customers this period
   const [curCust] = await query<RowDataPacket[]>(
-    `SELECT COUNT(*) AS cnt FROM customers WHERE createdAt >= ?`,
-    [curStart]
+    `SELECT COUNT(*) AS cnt FROM customers WHERE createdAt >= ? AND createdAt < ?`,
+    [curStart, curEnd]
   );
   const [prevCust] = await query<RowDataPacket[]>(
     `SELECT COUNT(*) AS cnt FROM customers WHERE createdAt >= ? AND createdAt < ?`,
-    [prevStart, curStart]
+    [prevStart, prevEnd]
   );
-  // Quotations (count from used_docnos since quotations themselves get purged)
+  // Quotations
   const [curQuot] = await query<RowDataPacket[]>(
-    `SELECT COUNT(*) AS cnt FROM used_docnos WHERE createdAt >= ?`,
-    [curStart]
+    `SELECT COUNT(*) AS cnt FROM used_docnos WHERE createdAt >= ? AND createdAt < ?`,
+    [curStart, curEnd]
   );
   const [prevQuot] = await query<RowDataPacket[]>(
     `SELECT COUNT(*) AS cnt FROM used_docnos WHERE createdAt >= ? AND createdAt < ?`,
-    [prevStart, curStart]
+    [prevStart, prevEnd]
   );
   // Expiring warranties (≤30 days)
+  const now = new Date();
   const thirtyDaysLater = formatLocalDate(
     new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000)
   );
@@ -339,7 +379,7 @@ export async function getDashboardOverview(): Promise<DashboardOverview> {
   const prevCostVal = Number(prevRows[0]?.cost || 0);
 
   return {
-    currentMonth: {
+    currentPeriod: {
       revenue: curRevenue,
       deals: Number(curRows[0]?.deals || 0),
       newCustomers: Number(curCust[0]?.cnt || 0),
@@ -347,7 +387,7 @@ export async function getDashboardOverview(): Promise<DashboardOverview> {
       cost: curCost,
       profit: curRevenue - curCost,
     },
-    previousMonth: {
+    previousPeriod: {
       revenue: prevRevenue,
       deals: Number(prevRows[0]?.deals || 0),
       newCustomers: Number(prevCust[0]?.cnt || 0),
@@ -359,38 +399,43 @@ export async function getDashboardOverview(): Promise<DashboardOverview> {
   };
 }
 
-export async function getRevenueByMonth(year: number): Promise<RevenueByPeriod[]> {
+export async function getRevenueByMonth(dateFromRaw: string, dateToRaw: string): Promise<RevenueByPeriod[]> {
+  const params: unknown[] = [dateFromRaw, dateToRaw];
   const [rows] = await query<RowDataPacket[]>(
     `SELECT DATE_FORMAT(saleDate, '%Y-%m') AS period,
             COALESCE(SUM(totalAmount), 0) AS revenue,
             COALESCE(SUM(costAmount), 0) AS cost,
             COUNT(*) AS deals
      FROM sales_records
-     WHERE YEAR(saleDate) = ?
+     WHERE saleDate >= ? AND saleDate < ?
      GROUP BY period ORDER BY period`,
-    [year]
+    params
   );
 
   const [expRows] = await query<RowDataPacket[]>(
     `SELECT DATE_FORMAT(expenseDate, '%Y-%m') AS period,
             COALESCE(SUM(amount), 0) AS expenses
      FROM expenses
-     WHERE YEAR(expenseDate) = ?
+     WHERE expenseDate >= ? AND expenseDate < ?
      GROUP BY period ORDER BY period`,
-    [year]
+    params
   );
 
-  // Fill all 12 months
   const map = new Map(rows.map((r) => [r.period, r]));
   const expMap = new Map(expRows.map((r) => [r.period, r]));
-  return Array.from({ length: 12 }, (_, i) => {
-    const m = `${year}-${String(i + 1).padStart(2, "0")}`;
+  
+  const start = new Date(dateFromRaw + "T00:00:00");
+  const end = new Date(dateToRaw + "T00:00:00");
+  const result: RevenueByPeriod[] = [];
+  let d = new Date(start);
+  while (d < end) {
+    const m = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
     const r = map.get(m);
     const exp = expMap.get(m);
     const rev = Number(r?.revenue || 0);
     const c = Number(r?.cost || 0);
     const profit = rev - c;
-    return {
+    result.push({
       period: m,
       revenue: rev,
       deals: Number(r?.deals || 0),
@@ -398,50 +443,66 @@ export async function getRevenueByMonth(year: number): Promise<RevenueByPeriod[]
       expense: Number(exp?.expenses || 0),
       profit,
       margin: rev > 0 ? Math.round((profit / rev) * 10000) / 100 : 0,
-    };
-  });
+    });
+    d.setMonth(d.getMonth() + 1);
+  }
+  return result;
 }
 
-export async function getRevenueByQuarter(year: number): Promise<RevenueByPeriod[]> {
+export async function getRevenueByQuarter(dateFromRaw: string, dateToRaw: string): Promise<RevenueByPeriod[]> {
+  const params: unknown[] = [dateFromRaw, dateToRaw];
   const [rows] = await query<RowDataPacket[]>(
     `SELECT CONCAT(YEAR(saleDate), '-Q', QUARTER(saleDate)) AS period,
             COALESCE(SUM(totalAmount), 0) AS revenue,
             COALESCE(SUM(costAmount), 0) AS cost,
             COUNT(*) AS deals
      FROM sales_records
-     WHERE YEAR(saleDate) = ?
+     WHERE saleDate >= ? AND saleDate < ?
      GROUP BY period ORDER BY period`,
-    [year]
+    params
   );
 
   const [expRows] = await query<RowDataPacket[]>(
     `SELECT CONCAT(YEAR(expenseDate), '-Q', QUARTER(expenseDate)) AS period,
             COALESCE(SUM(amount), 0) AS expenses
      FROM expenses
-     WHERE YEAR(expenseDate) = ?
+     WHERE expenseDate >= ? AND expenseDate < ?
      GROUP BY period ORDER BY period`,
-    [year]
+    params
   );
 
   const map = new Map(rows.map((r) => [r.period, r]));
   const expMap = new Map(expRows.map((r) => [r.period, r]));
-  return [1, 2, 3, 4].map((q) => {
-    const p = `${year}-Q${q}`;
-    const r = map.get(p);
-    const exp = expMap.get(p);
-    const rev = Number(r?.revenue || 0);
-    const c = Number(r?.cost || 0);
-    const profit = rev - c;
-    return {
-      period: p,
-      revenue: rev,
-      deals: Number(r?.deals || 0),
-      cost: c,
-      expense: Number(exp?.expenses || 0),
-      profit,
-      margin: rev > 0 ? Math.round((profit / rev) * 10000) / 100 : 0,
-    };
-  });
+
+  const start = new Date(dateFromRaw + "T00:00:00");
+  const end = new Date(dateToRaw + "T00:00:00");
+  const result: RevenueByPeriod[] = [];
+  let d = new Date(start);
+  while (d < end) {
+    const q = Math.floor(d.getMonth() / 3) + 1;
+    const period = `${d.getFullYear()}-Q${q}`;
+    
+    // Ensure we don't add duplicate quarters
+    if (!result.find(r => r.period === period)) {
+      const r = map.get(period);
+      const exp = expMap.get(period);
+      const rev = Number(r?.revenue || 0);
+      const c = Number(r?.cost || 0);
+      const profit = rev - c;
+      result.push({
+        period,
+        revenue: rev,
+        deals: Number(r?.deals || 0),
+        cost: c,
+        expense: Number(exp?.expenses || 0),
+        profit,
+        margin: rev > 0 ? Math.round((profit / rev) * 10000) / 100 : 0,
+      });
+    }
+    
+    d.setMonth(d.getMonth() + 3);
+  }
+  return result;
 }
 
 export async function getRevenueByCategory(
@@ -586,26 +647,23 @@ export async function getSalespersonLeaderboard(
 
 // ── Smart Insights (rule-based) ──────────────────────────────────────────────
 
-export async function getSmartInsights(): Promise<SmartInsight[]> {
+export async function getSmartInsights(
+  curStart: string,
+  curEnd: string,
+  prevStart: string,
+  prevEnd: string,
+  periodLabel: string
+): Promise<SmartInsight[]> {
   const insights: SmartInsight[] = [];
   const now = new Date();
-  const year = now.getFullYear();
-  const month = now.getMonth(); // 0-indexed
-
-  // 1. Month-over-month revenue comparison
-  const curStart = `${year}-${String(month + 1).padStart(2, "0")}-01`;
-  const nextMonth = new Date(year, month + 1, 1);
-  const curEnd = `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, "0")}-01`;
-  const prevDate = new Date(year, month - 1, 1);
-  const prevStart = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, "0")}-01`;
-
+  
   const [curRev] = await query<RowDataPacket[]>(
     `SELECT COALESCE(SUM(totalAmount), 0) AS rev FROM sales_records WHERE saleDate >= ? AND saleDate < ?`,
     [curStart, curEnd]
   );
   const [prevRev] = await query<RowDataPacket[]>(
     `SELECT COALESCE(SUM(totalAmount), 0) AS rev FROM sales_records WHERE saleDate >= ? AND saleDate < ?`,
-    [prevStart, curStart]
+    [prevStart, prevEnd]
   );
   const cur = Number(curRev[0]?.rev || 0);
   const prev = Number(prevRev[0]?.rev || 0);
@@ -614,8 +672,8 @@ export async function getSmartInsights(): Promise<SmartInsight[]> {
     if (pctChange > 0) {
       insights.push({
         type: "positive", icon: "📈",
-        title: `ยอดขายเดือนนี้เพิ่มขึ้น ${pctChange}%`,
-        description: `เทียบกับเดือนก่อน (${prev.toLocaleString()} → ${cur.toLocaleString()} บาท)`,
+        title: `ยอดขาย${periodLabel}เพิ่มขึ้น ${pctChange}%`,
+        description: `เทียบกับช่วงก่อนหน้า (${prev.toLocaleString()} → ${cur.toLocaleString()} บาท)`,
       });
     } else if (pctChange < -10) {
       insights.push({
@@ -632,6 +690,9 @@ export async function getSmartInsights(): Promise<SmartInsight[]> {
     });
   }
 
+  const year = now.getFullYear();
+  const month = now.getMonth();
+  
   // 2. Customers with no purchase in 6+ months
   const sixMonthsDate = new Date(year, month - 6, 1);
   const sixMonthsAgo = `${sixMonthsDate.getFullYear()}-${String(sixMonthsDate.getMonth() + 1).padStart(2, "0")}-01`;

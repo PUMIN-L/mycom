@@ -2,16 +2,21 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
 
-vi.mock('@/app/lib/salesDashboardStore', () => ({
-  getDashboardOverview: vi.fn().mockResolvedValue({ currentMonth: {}, previousMonth: {}, expiringWarranties: 0 }),
-  getRevenueByMonth: vi.fn().mockResolvedValue([]),
-  getRevenueByQuarter: vi.fn().mockResolvedValue([]),
-  getRevenueByCategory: vi.fn().mockResolvedValue([]),
-  getTopProducts: vi.fn().mockResolvedValue([]),
-  getTopCustomers: vi.fn().mockResolvedValue([]),
-  getSalespersonLeaderboard: vi.fn().mockResolvedValue([]),
-  getSmartInsights: vi.fn().mockResolvedValue([]),
-}));
+vi.mock("@/app/lib/salesDashboardStore", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/app/lib/salesDashboardStore")>();
+  return {
+    ...actual,
+    getDashboardOverview: vi.fn().mockResolvedValue({ currentMonth: {}, previousMonth: {}, expiringWarranties: 0 }),
+    getRevenueByMonth: vi.fn().mockResolvedValue([]),
+    getRevenueByQuarter: vi.fn().mockResolvedValue([]),
+    getRevenueByCategory: vi.fn().mockResolvedValue([]),
+    getTopProducts: vi.fn().mockResolvedValue([]),
+    getTopCustomers: vi.fn().mockResolvedValue([]),
+    getSalespersonLeaderboard: vi.fn().mockResolvedValue([]),
+    getSmartInsights: vi.fn().mockResolvedValue([]),
+    getPeriodDateRange: vi.fn().mockReturnValue({ curStart: '2026-08-01', curEnd: '2026-09-01', prevStart: '2026-07-01', prevEnd: '2026-08-01', periodLabel: 'เดือน ส.ค. 2026' }),
+  };
+});
 import {
   getDashboardOverview,
   getRevenueByMonth,
@@ -49,6 +54,6 @@ describe('Admin Dashboard API', () => {
     expect(json).toHaveProperty('topCustomers');
     expect(json).toHaveProperty('salespersonLeaderboard');
     expect(json).toHaveProperty('insights');
-    expect(getRevenueByMonth).toHaveBeenCalledWith(2026);
+    expect(getRevenueByMonth).toHaveBeenCalledWith('2026-08-01', '2026-09-01');
   });
 });

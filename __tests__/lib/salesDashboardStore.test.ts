@@ -178,7 +178,7 @@ describe('salesDashboardStore', () => {
           [{ period: '2026-01', expenses: 0 }],
         ] as any);
 
-      const months = await getRevenueByMonth(2026);
+      const months = await getRevenueByMonth('2026-01-01', '2027-01-01');
       expect(months.length).toBe(12);
       expect(months[0]).toEqual({ period: '2026-01', revenue: 50000, deals: 5, cost: 0, expense: 0, profit: 50000, margin: 100 });
       expect(months[1]).toEqual({ period: '2026-02', revenue: 0, deals: 0, cost: 0, expense: 0, profit: 0, margin: 0 });
@@ -193,7 +193,7 @@ describe('salesDashboardStore', () => {
           [{ period: '2026-Q1', expenses: 0 }],
         ] as any);
 
-      const quarters = await getRevenueByQuarter(2026);
+      const quarters = await getRevenueByQuarter('2026-01-01', '2027-01-01');
       expect(quarters.length).toBe(4);
       expect(quarters[0]).toEqual({ period: '2026-Q1', revenue: 150000, deals: 12, cost: 0, expense: 0, profit: 150000, margin: 100 });
       expect(quarters[1]).toEqual({ period: '2026-Q2', revenue: 0, deals: 0, cost: 0, expense: 0, profit: 0, margin: 0 });
@@ -224,7 +224,7 @@ describe('salesDashboardStore', () => {
         .mockResolvedValueOnce([[{ total: 10, repeaters: 4 }]] as any) // repeat rate
         .mockResolvedValueOnce([[{ cnt: 2 }]] as any);     // expiring warranties
 
-      const insights = await getSmartInsights();
+      const insights = await getSmartInsights('2026-08-01', '2026-09-01', '2026-07-01', '2026-08-01', 'เดือนนี้');
       expect(insights.some((i) => i.title.includes('เพิ่มขึ้น 25%'))).toBe(true);
       expect(insights.some((i) => i.title.includes('3 ลูกค้าไม่ได้ซื้อ'))).toBe(true);
       expect(insights.some((i) => i.title.includes('เครื่องชั่ง'))).toBe(true);

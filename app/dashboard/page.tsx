@@ -29,7 +29,10 @@ import {
 export default function DashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [year, setYear] = useState(new Date().getFullYear());
+  const [periodType, setPeriodType] = useState<"month" | "quarter" | "year">("month");
+  const [periodValue, setPeriodValue] = useState<string>(
+    `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`
+  );
   const [chartMode, setChartMode] = useState<"monthly" | "quarterly">("monthly");
 
   // Sales record form
@@ -70,11 +73,11 @@ export default function DashboardPage() {
   const fetchDashboard = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/admin/dashboard?year=${year}`);
+      const res = await fetch(`/api/admin/dashboard?periodType=${periodType}&periodValue=${periodValue}`);
       if (res.ok) setData(await res.json());
     } catch { /* ignore */ }
     setLoading(false);
-  }, [year]);
+  }, [periodType, periodValue]);
 
   // Fetch lookups
   const fetchLookups = useCallback(async () => {
@@ -425,8 +428,8 @@ export default function DashboardPage() {
 
   // Overview
   const ov = data?.overview;
-  const curM = ov?.currentMonth;
-  const prevM = ov?.previousMonth;
+  const curM = ov?.currentPeriod;
+  const prevM = ov?.previousPeriod;
 
   const conversionRate = curM && curM.quotations > 0
     ? Math.round((curM.deals / curM.quotations) * 100)
@@ -473,12 +476,61 @@ export default function DashboardPage() {
           </div>
           
           <div className="flex flex-wrap items-center gap-3 bg-white p-2 rounded-[20px] shadow-sm border border-gray-100">
-            <SearchableDropdown
-              options={yearOptions}
-              value={String(year)}
-              onChange={(v) => setYear(Number(v))}
-              className="w-32 border-none bg-gray-50 hover:bg-gray-100 transition-colors rounded-xl"
-            />
+            <div className="flex items-center gap-2">
+              <SearchableDropdown
+                options={[
+                  { value: "month", label: "รายเดือน" },
+                  { value: "quarter", label: "รายไตรมาส" },
+                  { value: "year", label: "รายปี" }
+                ]}
+                value={periodType}
+                onChange={(v) => {
+                  const type = v as "month" | "quarter" | "year";
+                  setPeriodType(type);
+                  const d = new Date();
+                  if (type === "year") setPeriodValue(d.getFullYear().toString());
+                  else if (type === "quarter") setPeriodValue(`${d.getFullYear()}-Q${Math.floor(d.getMonth() / 3) + 1}`);
+                  else setPeriodValue(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+                }}
+                className="w-32 border-none bg-gray-50 hover:bg-gray-100 transition-colors rounded-xl"
+              />
+              {periodType === "month" && (
+                <input
+                  type="month"
+                  value={periodValue}
+                  onChange={(e) => setPeriodValue(e.target.value)}
+                  className="px-3 py-2 border-none bg-gray-50 hover:bg-gray-100 transition-colors rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 outline-none h-[42px]"
+                />
+              )}
+              {periodType === "quarter" && (
+                <div className="flex gap-2">
+                  <select
+                    value={periodValue.split('-')[1] || "Q1"}
+                    onChange={(e) => setPeriodValue(`${periodValue.split('-')[0]}-${e.target.value}`)}
+                    className="px-3 py-2 border-none bg-gray-50 hover:bg-gray-100 transition-colors rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 outline-none h-[42px] cursor-pointer"
+                  >
+                    <option value="Q1">Q1 (ม.ค. - มี.ค.)</option>
+                    <option value="Q2">Q2 (เม.ย. - มิ.ย.)</option>
+                    <option value="Q3">Q3 (ก.ค. - ก.ย.)</option>
+                    <option value="Q4">Q4 (ต.ค. - ธ.ค.)</option>
+                  </select>
+                  <SearchableDropdown
+                    options={yearOptions}
+                    value={periodValue.split('-')[0] || String(new Date().getFullYear())}
+                    onChange={(v) => setPeriodValue(`${v}-${periodValue.split('-')[1] || "Q1"}`)}
+                    className="w-24 border-none bg-gray-50 hover:bg-gray-100 transition-colors rounded-xl"
+                  />
+                </div>
+              )}
+              {periodType === "year" && (
+                <SearchableDropdown
+                  options={yearOptions}
+                  value={periodValue}
+                  onChange={setPeriodValue}
+                  className="w-24 border-none bg-gray-50 hover:bg-gray-100 transition-colors rounded-xl"
+                />
+              )}
+            </div>
             <div className="h-6 w-px bg-gray-100 hidden sm:block"></div>
             
             <button
@@ -520,9 +572,9 @@ export default function DashboardPage() {
         ) : ov && curM && prevM && (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-5 mb-10">
             {[
-              { label: "ยอดขายเดือนนี้", value: `฿${fmt(curM.revenue)}`, change: pctChange(curM.revenue, prevM.revenue) },
+              { label: `ยอดขาย${ov.periodLabel}`, value: `฿${fmt(curM.revenue)}`, change: pctChange(curM.revenue, prevM.revenue) },
               { label: "ต้นทุนและรายจ่ายรวม", value: `฿${fmt(curM.cost)}`, change: pctChange(curM.cost, prevM.cost) },
-              { label: "กำไรเดือนนี้", value: `฿${fmt(curM.profit)}`, change: pctChange(curM.profit, prevM.profit) },
+              { label: `กำไร${ov.periodLabel}`, value: `฿${fmt(curM.profit)}`, change: pctChange(curM.profit, prevM.profit) },
               { label: "Profit Margin", value: curM.revenue > 0 ? `${Math.round((curM.profit / curM.revenue) * 100)}%` : "—", change: (() => { const curMargin = curM.revenue > 0 ? Math.round((curM.profit / curM.revenue) * 100) : 0; const prevMarginVal = prevM.revenue > 0 ? Math.round((prevM.profit / prevM.revenue) * 100) : 0; return pctChange(curMargin, prevMarginVal); })() },
               { label: "จำนวนดีล", value: String(curM.deals), change: pctChange(curM.deals, prevM.deals) },
               { label: "ลูกค้าใหม่", value: String(curM.newCustomers), change: pctChange(curM.newCustomers, prevM.newCustomers) },
@@ -543,7 +595,7 @@ export default function DashboardPage() {
           {/* Revenue Bar Chart */}
           <div className="lg:col-span-2 bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
             <div className="flex justify-between items-center mb-4">
-              <h2 className="text-lg font-bold text-gray-800">ยอดขาย {year}</h2>
+              <h2 className="text-lg font-bold text-gray-800">ยอดขาย {ov?.periodLabel || year}</h2>
               <div className="flex bg-gray-100 rounded-lg p-1">
                 <button onClick={() => setChartMode("monthly")} className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${chartMode === "monthly" ? "bg-white shadow-sm text-indigo-600" : "text-gray-500"}`}>
                   รายเดือน
