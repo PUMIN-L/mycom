@@ -1126,7 +1126,7 @@ export default function DashboardPage() {
                           type="text"
                           value={form.serialNumbers[i] || ""}
                           onChange={(e) => {
-                            const newSn = [...form.serialNumbers];
+                            const newSn = [...(form.serialNumbers || [])];
                             newSn[i] = e.target.value;
                             setForm({ ...form, serialNumbers: newSn });
                           }}
