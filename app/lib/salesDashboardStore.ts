@@ -42,6 +42,8 @@ export interface TopItem {
   qty: number;
   deals: number;
   percentage: number;
+  profit?: number;
+  profitMargin?: number;
 }
 
 export interface SalespersonStats {
@@ -685,6 +687,7 @@ export async function getSalespersonLeaderboard(
     `SELECT sr.salespersonId AS id,
             COALESCE(sp.name, sr.salespersonId) AS name,
             COALESCE(SUM(sr.totalAmount), 0) AS revenue,
+            COALESCE(SUM(sr.costAmount), 0) AS cost,
             COUNT(*) AS deals
      FROM sales_records sr
      LEFT JOIN salespeople sp ON sr.salespersonId = sp.id
