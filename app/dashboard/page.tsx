@@ -281,32 +281,36 @@ export default function DashboardPage() {
   // Edit
   const handleEdit = async (rec: SalesRecord) => {
     try {
+      const fullRes = await fetch(`/api/admin/sales/${rec.id}`);
+      if (!fullRes.ok) throw new Error("โหลดข้อมูลยอดขายไม่สำเร็จ");
+      const fullRec = await fullRes.json();
+
       const res = await fetch(`/api/admin/sales/${rec.id}/costs`);
       if (!res.ok) throw new Error("โหลดต้นทุนไม่สำเร็จ");
       const data = await res.json();
 
-      setEditingId(rec.id);
+      setEditingId(fullRec.id);
       setForm({
-        saleType: rec.saleType || "equipment",
-        salespersonId: rec.salespersonId || "",
-        customerId: rec.customerId || "",
-        companyId: rec.companyId || "",
-        productId: rec.productId || "",
-        productName: rec.productName || "",
-        categoryId: rec.categoryId,
-        qty: rec.qty || 1,
-        unitPrice: rec.unitPrice || 0,
-        totalAmount: rec.totalAmount || 0,
-        saleDate: rec.saleDate ? rec.saleDate.substring(0, 10) : "",
-        quotationRef: rec.quotationRef || "",
-        poRef: rec.poRef || "",
-        deliveryRef: rec.deliveryRef || "",
-        invoiceRef: rec.invoiceRef || "",
-        receiptRef: rec.receiptRef || "",
-        warrantyStartDate: rec.warrantyStartDate ? String(rec.warrantyStartDate).substring(0, 10) : "",
-        warrantyEndDate: rec.warrantyEndDate ? String(rec.warrantyEndDate).substring(0, 10) : "",
-        serialNumbers: Array.isArray(rec.serialNumbers) ? [...rec.serialNumbers] : [],
-        note: rec.note || "",
+        saleType: fullRec.saleType || "equipment",
+        salespersonId: fullRec.salespersonId || "",
+        customerId: fullRec.customerId || "",
+        companyId: fullRec.companyId || "",
+        productId: fullRec.productId || "",
+        productName: fullRec.productName || "",
+        categoryId: fullRec.categoryId,
+        qty: fullRec.qty || 1,
+        unitPrice: fullRec.unitPrice || 0,
+        totalAmount: fullRec.totalAmount || 0,
+        saleDate: fullRec.saleDate ? fullRec.saleDate.substring(0, 10) : "",
+        quotationRef: fullRec.quotationRef || "",
+        poRef: fullRec.poRef || "",
+        deliveryRef: fullRec.deliveryRef || "",
+        invoiceRef: fullRec.invoiceRef || "",
+        receiptRef: fullRec.receiptRef || "",
+        warrantyStartDate: fullRec.warrantyStartDate ? String(fullRec.warrantyStartDate).substring(0, 10) : "",
+        warrantyEndDate: fullRec.warrantyEndDate ? String(fullRec.warrantyEndDate).substring(0, 10) : "",
+        serialNumbers: Array.isArray(fullRec.serialNumbers) ? [...fullRec.serialNumbers] : [],
+        note: fullRec.note || "",
       });
 
       if (data.items && data.items.length > 0) {
