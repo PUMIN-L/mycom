@@ -335,9 +335,8 @@ function CustomersInner() {
               activeTab === "equipments" ? "bg-white text-orange-600 shadow-sm" : "text-gray-600 hover:text-gray-900 hover:bg-gray-200/50"
             }`}
           >
-            อุปกรณ์ (Equipments)
+            อุปกรณ์ที่ขาย
           </button>
-
         </div>
 
         {/* Content Area */}
