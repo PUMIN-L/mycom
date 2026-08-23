@@ -621,17 +621,17 @@ export default function DashboardPage() {
 
         {/* ── Overview Cards ──────────────────────────────────────────────── */}
         {loading ? (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-5 mb-10">
-            {Array.from({ length: 6 }).map((_, i) => (
-              <div key={i} className="bg-white rounded-2xl p-5 shadow-sm animate-pulse">
-                <div className="h-4 w-20 bg-gray-200 rounded mb-3" />
-                <div className="h-8 w-28 bg-gray-200 rounded mb-2" />
-                <div className="h-3 w-16 bg-gray-200 rounded" />
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+            {Array.from({ length: 8 }).map((_, i) => (
+              <div key={i} className="bg-white rounded-2xl p-4 shadow-sm animate-pulse border border-gray-100/50">
+                <div className="h-3 w-20 bg-gray-200 rounded mb-2" />
+                <div className="h-6 w-24 bg-gray-200 rounded mb-2" />
+                <div className="h-2 w-12 bg-gray-200 rounded" />
               </div>
             ))}
           </div>
         ) : ov && curM && prevM && (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-5 mb-10">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
             {[
               { label: `ยอดขาย${ov.periodLabel}`, value: `฿${fmt(curM.revenue)}`, change: pctChange(curM.revenue, prevM.revenue) },
               { label: "ต้นทุนและรายจ่ายรวม", value: `฿${fmt(curM.cost)}`, change: pctChange(curM.cost, prevM.cost) },
@@ -642,10 +642,10 @@ export default function DashboardPage() {
               { label: "Conversion Rate", value: `${conversionRate}%`, change: pctChange(conversionRate, prevConversionRate) },
               { label: "ประกันใกล้หมด", value: String(ov.expiringWarranties), change: { value: 0, label: "≤30 วัน", color: ov.expiringWarranties > 0 ? "text-amber-600" : "text-gray-400" } },
             ].map((card, i) => (
-              <div key={i} className="bg-white rounded-[24px] p-6 shadow-sm border border-gray-100/50 hover:shadow-md transition-shadow">
-                <div className="text-sm font-medium text-gray-500 mb-2">{card.label}</div>
-                <div className={`text-2xl font-bold tracking-tight ${i === 2 ? "text-emerald-600" : i === 3 ? "text-indigo-600" : "text-gray-900"}`}>{card.value}</div>
-                <div className={`text-xs font-medium mt-2 ${card.change.color}`}>{card.change.label}</div>
+              <div key={i} className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100/50 hover:shadow-md transition-shadow">
+                <div className="text-[13px] font-medium text-gray-500 mb-1">{card.label}</div>
+                <div className={`text-xl sm:text-2xl font-bold tracking-tight ${i === 2 ? "text-emerald-600" : i === 3 ? "text-indigo-600" : "text-gray-900"}`}>{card.value}</div>
+                <div className={`text-[11px] font-medium mt-1.5 ${card.change.color}`}>{card.change.label}</div>
               </div>
             ))}
           </div>
