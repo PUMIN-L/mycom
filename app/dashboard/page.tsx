@@ -622,7 +622,7 @@ export default function DashboardPage() {
         {/* ── Overview Cards ──────────────────────────────────────────────── */}
         {loading ? (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-            {Array.from({ length: 8 }).map((_, i) => (
+            {Array.from({ length: 7 }).map((_, i) => (
               <div key={i} className="bg-white rounded-2xl p-4 shadow-sm animate-pulse border border-gray-100/50">
                 <div className="h-3 w-20 bg-gray-200 rounded mb-2" />
                 <div className="h-6 w-24 bg-gray-200 rounded mb-2" />
@@ -640,7 +640,6 @@ export default function DashboardPage() {
               { label: "จำนวนดีล", value: String(curM.deals), change: pctChange(curM.deals, prevM.deals) },
               { label: "ลูกค้าใหม่", value: String(curM.newCustomers), change: pctChange(curM.newCustomers, prevM.newCustomers) },
               { label: "Conversion Rate", value: `${conversionRate}%`, change: pctChange(conversionRate, prevConversionRate) },
-              { label: "ประกันใกล้หมด", value: String(ov.expiringWarranties), change: { value: 0, label: "≤30 วัน", color: ov.expiringWarranties > 0 ? "text-amber-600" : "text-gray-400" } },
             ].map((card, i) => (
               <div key={i} className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100/50 hover:shadow-md transition-shadow flex flex-col justify-between">
                 <div>
