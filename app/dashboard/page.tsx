@@ -359,19 +359,10 @@ export default function DashboardPage() {
   // Quick click-to-edit from rankings
   const handleSalespersonClick = (s: SalespersonStat) => {
     setShowRecords(true);
-    const matching = salesRecords.filter((r) =>
-      s.name === "ไม่ระบุเซลล์"
-        ? !r.salespersonId || !r.salespersonName
-        : r.salespersonId === s.id || r.salespersonName === s.name
-    );
-    if (matching.length === 1) {
-      setViewingRecord(matching[0]);
-    } else {
-      setRecordSearch(s.name === "ไม่ระบุเซลล์" ? "" : s.name);
-      setTimeout(() => {
-        document.getElementById("sales-records-section")?.scrollIntoView({ behavior: "smooth" });
-      }, 50);
-    }
+    setRecordSearch(s.name === "ไม่ระบุเซลล์" ? "" : s.name);
+    setTimeout(() => {
+      document.getElementById("sales-records-section")?.scrollIntoView({ behavior: "smooth" });
+    }, 50);
   };
 
   const handleProductClick = (p: TopItem) => {
@@ -816,7 +807,7 @@ export default function DashboardPage() {
         {/* ── Salesperson Leaderboard ──────────────────────────────────────── */}
         <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 mb-8">
           <div className="flex justify-between items-center mb-4">
-            <h2 className="text-lg font-bold text-gray-800">ผลงานทีมขาย <span className="text-xs font-normal text-indigo-600 ml-2">(คลิกแถวเพื่อดู/แก้ไขยอดขาย)</span></h2>
+            <h2 className="text-lg font-bold text-gray-800">ผลงานทีมขาย <span className="text-xs font-normal text-indigo-600 ml-2">(คลิกแถวเพื่อดูประวัติการขาย)</span></h2>
           </div>
           {loading ? (
             <div className="space-y-4">{Array.from({ length: 3 }).map((_, i) => (
@@ -847,7 +838,7 @@ export default function DashboardPage() {
                       </td>
                       <td className="py-3 pr-4 font-medium text-gray-800 flex items-center gap-2">
                         {s.name}
-                        <span className="text-xs px-2 py-0.5 bg-indigo-50 text-indigo-600 rounded-full font-normal opacity-75 hover:opacity-100">แก้ไข</span>
+                        
                       </td>
                       <td className="py-3 pr-4 text-right font-semibold text-gray-800">฿{fmt(s.revenue)}</td>
                       <td className="py-3 pr-4 text-right text-gray-600">{s.deals}</td>
