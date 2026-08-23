@@ -79,10 +79,10 @@ function cleanEquipment(data: Partial<CustomerEquipment>) {
     warrantyCertNumber: sanitizePlainText(data.warrantyCertNumber || "").substring(0, 255),
     warrantyType: sanitizePlainText(data.warrantyType || "").substring(0, 255),
     warrantyStartDate: data.warrantyStartDate
-      ? sanitizePlainText(data.warrantyStartDate).substring(0, 20)
+      ? sanitizePlainText(String(data.warrantyStartDate)).substring(0, 10) || null
       : null,
     warrantyEndDate: data.warrantyEndDate
-      ? sanitizePlainText(data.warrantyEndDate).substring(0, 20)
+      ? sanitizePlainText(String(data.warrantyEndDate)).substring(0, 10) || null
       : null,
     status: data.status === "Expired" ? "Expired" : "Active",
   };

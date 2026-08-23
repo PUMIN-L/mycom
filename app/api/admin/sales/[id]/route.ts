@@ -53,8 +53,11 @@ export const PUT = withRoute(
     let equipmentWarning: string | null = null;
     if (body.saleType === "equipment" && Array.isArray(body.serialNumbers)) {
       const customerId = body.customerId || updated.customerId || "";
+      // Trim serial numbers to match qty (frontend may send stale entries beyond qty)
+      const qty = Math.max(1, Math.min(50, Number(body.qty || updated.qty) || 1));
+      const trimmedSerials = body.serialNumbers.slice(0, qty);
       try {
-        await syncEquipmentsForSalesRecord(id, body.serialNumbers, {
+        await syncEquipmentsForSalesRecord(id, trimmedSerials, {
           customerId,
           productId: body.productId || updated.productId || "",
           productName: body.productName || updated.productName || "",
@@ -68,6 +71,13 @@ export const PUT = withRoute(
       } catch (err: any) {
         console.error("syncEquipmentsForSalesRecord failed:", err);
         equipmentWarning = `บันทึกยอดขายสำเร็จ แต่ซิงค์อุปกรณ์ล้มเหลว: ${err.message}`;
+      }
+    } else if (body.saleType === "service") {
+      // Changed from equipment → service: clean up orphan equipment records
+      try {
+        await cleanupEquipmentsForSalesRecord(id);
+      } catch (err) {
+        console.error("Failed to cleanup equipments on type change:", err);
       }
     }
 

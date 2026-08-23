@@ -222,6 +222,10 @@ export default function DashboardPage() {
       // Do not send costAmount here. The sync endpoint will calculate and update it.
       // This prevents a ghost costAmount if the sync endpoint fails.
       const payload = { ...form };
+      // Trim serialNumbers to match qty (array may have stale entries beyond current qty)
+      if (payload.saleType === "equipment" && Array.isArray(payload.serialNumbers)) {
+        payload.serialNumbers = payload.serialNumbers.slice(0, Math.max(1, payload.qty || 1));
+      }
       const res = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       if (res.ok || res.status === 207) {
         // 207 = sales record saved but equipment partially failed
