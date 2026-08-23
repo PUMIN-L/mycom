@@ -76,7 +76,31 @@ export async function listExpenses(filters?: {
   dateTo?: string;
   category?: string;
 }): Promise<Expense[]> {
-  let sql = `SELECT *, DATE_FORMAT(expenseDate, '%Y-%m-%d') AS expenseDate FROM expenses WHERE 1=1`;
+  let sql = `
+    SELECT 
+      id, title, amount, DATE_FORMAT(expenseDate, '%Y-%m-%d') AS expenseDate, category, note, createdAt, source
+    FROM (
+      SELECT 
+        id, title, amount, expenseDate, category, note, createdAt, 'expense' AS source 
+      FROM expenses 
+      
+      UNION ALL 
+      
+      SELECT 
+        s.id, 
+        CONCAT(s.productName, ' (ต้นทุนขาย)') AS title,
+        s.costAmount AS amount,
+        s.saleDate AS expenseDate,
+        'ต้นทุนสินค้า' AS category,
+        CONCAT('อ้างอิงจากลูกค้า: ', IFNULL(c.name, 'ไม่ระบุ')) AS note,
+        s.createdAt,
+        'sale_cost' AS source
+      FROM sales_records s
+      LEFT JOIN customers c ON s.customerId = c.id
+      WHERE s.costAmount > 0
+    ) AS combined
+    WHERE 1=1
+  `;
   const params: unknown[] = [];
 
   if (filters?.dateFrom) {

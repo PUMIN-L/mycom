@@ -1,9 +1,10 @@
 "use client";
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import type { Expense } from "../lib/types";
 import ConfirmDialog from "../components/ConfirmDialog";
 import FormattedNumberInput from "../components/FormattedNumberInput";
+import { PieChart, Pie, Cell, Tooltip as RechartsTooltip, ResponsiveContainer, Legend } from "recharts";
 
 const EXPENSE_CATEGORIES = [
   "เงินเดือน",
@@ -15,6 +16,8 @@ const EXPENSE_CATEGORIES = [
   "ค่าอุปกรณ์สำนักงาน",
   "อื่นๆ"
 ];
+
+const COLORS = ['#ef4444', '#f97316', '#f59e0b', '#84cc16', '#10b981', '#06b6d4', '#3b82f6', '#8b5cf6', '#d946ef', '#f43f5e'];
 
 function emptyForm(): Partial<Expense> {
   const now = new Date();
@@ -74,6 +77,7 @@ export default function ExpensesPage() {
 
   useEffect(() => {
     fetchRecords();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filterMonth]);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -121,8 +125,20 @@ export default function ExpensesPage() {
 
   const totalExpense = records.reduce((sum, r) => sum + Number(r.amount), 0);
 
+  // Compute chart data
+  const chartData = useMemo(() => {
+    const grouped: Record<string, number> = {};
+    records.forEach(r => {
+      const cat = r.category || "อื่นๆ";
+      grouped[cat] = (grouped[cat] || 0) + Number(r.amount);
+    });
+    return Object.entries(grouped)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value);
+  }, [records]);
+
   return (
-    <div className="min-h-screen bg-gray-50/50 p-6 md:p-8">
+    <div className="min-h-screen bg-gray-50/50 p-6 md:p-8 pt-32">
       {/* Toast */}
       {toast && (
         <div className={`fixed top-6 right-6 z-[100] px-5 py-3 rounded-xl shadow-lg text-white font-semibold animate-fade-in ${toast.type === "success" ? "bg-emerald-500" : "bg-red-500"}`}>
@@ -162,13 +178,54 @@ export default function ExpensesPage() {
           </div>
         </div>
 
-        {/* Summary Card */}
-        <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 mb-8 flex flex-col sm:flex-row gap-6 items-center justify-between">
-          <div>
-            <h2 className="text-gray-500 font-medium">รวมรายจ่ายประจำเดือน {filterMonth}</h2>
-            <p className="text-4xl font-bold text-rose-600 mt-2">
+        {/* Summary Card with Chart */}
+        <div className="bg-white rounded-3xl p-8 shadow-sm border border-gray-100 mb-8 flex flex-col md:flex-row gap-8 items-center justify-between">
+          <div className="flex-1 w-full text-center md:text-left">
+            <h2 className="text-gray-500 font-medium text-lg">รวมรายจ่ายประจำเดือน {filterMonth}</h2>
+            <p className="text-5xl font-black text-rose-600 mt-3">
               ฿{totalExpense.toLocaleString(undefined, { minimumFractionDigits: 2 })}
             </p>
+            <div className="mt-6 flex flex-col gap-2">
+              {chartData.slice(0, 3).map((item, idx) => (
+                <div key={item.name} className="flex justify-between items-center text-sm border-b border-gray-50 pb-2">
+                  <div className="flex items-center gap-2 text-gray-600">
+                    <span className="w-3 h-3 rounded-full" style={{ backgroundColor: COLORS[idx % COLORS.length] }}></span>
+                    {item.name}
+                  </div>
+                  <span className="font-semibold text-gray-800">฿{item.value.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+          
+          <div className="w-full md:w-[400px] h-[250px]">
+            {chartData.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={chartData}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={60}
+                    outerRadius={80}
+                    paddingAngle={5}
+                    dataKey="value"
+                    stroke="none"
+                  >
+                    {chartData.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <RechartsTooltip 
+                    formatter={(value: number) => `฿${value.toLocaleString()}`}
+                    contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                  />
+                  <Legend verticalAlign="bottom" height={36} iconType="circle" wrapperStyle={{ fontSize: '12px' }} />
+                </PieChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="w-full h-full flex items-center justify-center text-gray-400">ไม่มีข้อมูลแสดงกราฟ</div>
+            )}
           </div>
         </div>
 
@@ -182,7 +239,7 @@ export default function ExpensesPage() {
                   <th className="p-4 font-semibold">รายการ (Title)</th>
                   <th className="p-4 font-semibold w-48">หมวดหมู่</th>
                   <th className="p-4 font-semibold text-right w-40">จำนวนเงิน</th>
-                  <th className="p-4 font-semibold text-center w-28">จัดการ</th>
+                  <th className="p-4 font-semibold text-center w-36">จัดการ</th>
                 </tr>
               </thead>
               <tbody>
@@ -204,41 +261,49 @@ export default function ExpensesPage() {
                   </tr>
                 ) : (
                   records.map((r) => (
-                    <tr key={r.id} className="border-b border-gray-50 hover:bg-gray-50/50 transition-colors">
-                      <td className="p-4 text-gray-600 whitespace-nowrap">{r.expenseDate}</td>
+                    <tr key={r.id} className={`border-b border-gray-50 transition-colors ${r.source === 'sale_cost' ? 'bg-orange-50/30' : 'hover:bg-gray-50/50'}`}>
+                      <td className="p-4 text-gray-600 whitespace-nowrap text-sm">{r.expenseDate}</td>
                       <td className="p-4 font-medium text-gray-800">
                         {r.title}
-                        {r.note && <p className="text-xs text-gray-400 font-normal mt-1">{r.note}</p>}
+                        {r.note && <p className="text-xs text-gray-500 font-normal mt-1">{r.note}</p>}
                       </td>
                       <td className="p-4">
-                        <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-rose-50 text-rose-700">
+                        <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${
+                          r.source === 'sale_cost' ? 'bg-orange-100 text-orange-700' : 'bg-rose-50 text-rose-700'
+                        }`}>
                           {r.category}
                         </span>
                       </td>
-                      <td className="p-4 text-right font-bold text-rose-600">
+                      <td className="p-4 text-right font-bold text-gray-700">
                         ฿{Number(r.amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </td>
                       <td className="p-4 text-center">
-                        <div className="flex items-center justify-center gap-2">
-                          <button
-                            onClick={() => {
-                              setForm(r);
-                              setEditingId(r.id);
-                              setShowForm(true);
-                            }}
-                            className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors"
-                            title="แก้ไข"
-                          >
-                            ✏️
-                          </button>
-                          <button
-                            onClick={() => setDeletingId(r.id)}
-                            className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
-                            title="ลบ"
-                          >
-                            🗑️
-                          </button>
-                        </div>
+                        {r.source === "sale_cost" ? (
+                          <span className="inline-flex items-center gap-1 text-xs font-semibold text-gray-400 bg-gray-100 px-3 py-1.5 rounded-lg whitespace-nowrap">
+                            🔒 เชื่อมโยงอัตโนมัติ
+                          </span>
+                        ) : (
+                          <div className="flex items-center justify-center gap-2">
+                            <button
+                              onClick={() => {
+                                setForm(r);
+                                setEditingId(r.id);
+                                setShowForm(true);
+                              }}
+                              className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors"
+                              title="แก้ไข"
+                            >
+                              ✏️
+                            </button>
+                            <button
+                              onClick={() => setDeletingId(r.id)}
+                              className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
+                              title="ลบ"
+                            >
+                              🗑️
+                            </button>
+                          </div>
+                        )}
                       </td>
                     </tr>
                   ))

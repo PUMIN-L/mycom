@@ -221,4 +221,5 @@ export interface Expense {
   category: string;
   note: string;
   createdAt: string;
+  source?: "expense" | "sale_cost";
 }
