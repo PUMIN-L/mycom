@@ -4,6 +4,7 @@ import Link from "next/link";
 import type { Expense } from "../lib/types";
 import ConfirmDialog from "../components/ConfirmDialog";
 import FormattedNumberInput from "../components/FormattedNumberInput";
+import SearchableDropdown from "../components/SearchableDropdown";
 import { PieChart, Pie, Cell, Tooltip as RechartsTooltip, ResponsiveContainer, Legend } from "recharts";
 
 const EXPENSE_CATEGORIES = [
