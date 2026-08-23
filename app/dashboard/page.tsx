@@ -1,6 +1,7 @@
 "use client";
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import DatePicker from "../components/DatePicker";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine,
@@ -27,6 +28,9 @@ import {
 // ── Main Component ───────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
+  const searchParams = useSearchParams();
+  const editIdFromUrl = searchParams.get("edit");
+  const editHandledRef = useRef(false);
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [periodType, setPeriodType] = useState<"month" | "quarter" | "year">("year");
@@ -112,6 +116,18 @@ export default function DashboardPage() {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [showForm]);
+
+  // Auto-open edit form from URL param (?edit=<salesRecordId>)
+  useEffect(() => {
+    if (editIdFromUrl && salesRecords.length > 0 && !editHandledRef.current) {
+      editHandledRef.current = true;
+      const rec = salesRecords.find((r) => r.id === editIdFromUrl);
+      if (rec) {
+        handleEdit(rec);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editIdFromUrl, salesRecords]);
 
   // Dropdown options
   const productOptions: SearchableDropdownOption[] = useMemo(() =>

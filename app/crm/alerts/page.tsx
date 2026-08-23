@@ -379,7 +379,7 @@ export default function AlertsPage() {
                       </td>
                       <td className="py-4">
                         <Link
-                          href="/customers"
+                          href={eq.salesRecordId ? `/dashboard?edit=${eq.salesRecordId}` : "/customers"}
                           className="px-4 py-2 bg-white border border-gray-200 text-gray-700 rounded-xl text-xs font-semibold hover:bg-gray-50 transition-colors shadow-sm inline-block"
                         >
                           ไปใส่ข้อมูล
@@ -474,7 +474,7 @@ export default function AlertsPage() {
                       </td>
                       <td className="py-4">
                         <Link
-                          href="/dashboard"
+                          href={`/dashboard?edit=${doc.id}`}
                           className="px-4 py-2 bg-white border border-gray-200 text-gray-700 rounded-xl text-xs font-semibold hover:bg-gray-50 transition-colors shadow-sm inline-block"
                         >
                           ไปใส่ข้อมูล
