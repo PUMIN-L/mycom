@@ -4,7 +4,7 @@ import type { QueryResult, FieldPacket, RowDataPacket } from "mysql2";
 
 // Bump whenever the schema below changes — a mismatch re-runs the (idempotent)
 // bump; a match lets returning cold instances skip it in one SELECT.
-const SCHEMA_VERSION = 25;
+const SCHEMA_VERSION = 26;
 
 type DbPool = ReturnType<typeof mysql.createPool>;
 
@@ -505,11 +505,11 @@ async function bootstrapSchemaOnce(): Promise<void> {
     } catch (e: any) {
       if (e.code !== "ER_DUP_FIELDNAME") console.warn("Failed to add productName to customer_equipments", e);
     }
+    // Drop fk_ce_customer so equipments can be created without a customer
+    // (serial numbers need to be saved even when no customer is selected)
     try {
-      // RESTRICT (like customers→companies): a customer with tracked equipment
-      // can't be deleted out from under their service history.
       await connection.query(
-        `ALTER TABLE customer_equipments ADD CONSTRAINT fk_ce_customer FOREIGN KEY (customerId) REFERENCES customers(id) ON DELETE RESTRICT`
+        `ALTER TABLE customer_equipments DROP FOREIGN KEY fk_ce_customer`
       );
     } catch (error) {
       if (!isBenignSchemaError(error)) throw error;
