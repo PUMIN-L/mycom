@@ -511,8 +511,9 @@ async function bootstrapSchemaOnce(): Promise<void> {
       await connection.query(
         `ALTER TABLE customer_equipments DROP FOREIGN KEY fk_ce_customer`
       );
-    } catch (error) {
-      if (!isBenignSchemaError(error)) throw error;
+    } catch (error: any) {
+      // ER_CANT_DROP_FIELD_OR_KEY = FK already dropped (idempotent)
+      if (error.code !== 'ER_CANT_DROP_FIELD_OR_KEY' && !isBenignSchemaError(error)) throw error;
     }
     // NOTE: productId is a loose reference on purpose (no FK) — deleting a
     // product from the catalog must not block on, or cascade-delete, the record
