@@ -170,7 +170,6 @@ export default function SalesTable({
               ))}
             </tbody>
           </table>
-          </table>
         </div>
         {totalPages > 1 && (
           <div className="flex justify-between items-center mt-6 border-t border-gray-100 pt-4">
