@@ -207,7 +207,9 @@ export default function AlertsPage() {
                         <div className="font-semibold text-gray-800">{s.customerName || "—"}</div>
                         <div className="text-xs text-gray-400">{s.companyName}</div>
                       </td>
-                      <td className="py-4 pr-4 text-sm text-gray-700">{s.productName || "—"}</td>
+                      <td className="py-4 pr-4 text-sm text-gray-700">
+                        {s.productName ? <div dangerouslySetInnerHTML={{ __html: s.productName }} /> : "—"}
+                      </td>
                       <td className="py-4 pr-4 text-sm text-gray-700">{s.scheduledDate}</td>
                       <td className="py-4 pr-4">
                         {s.overdue ? (
@@ -299,7 +301,9 @@ export default function AlertsPage() {
                           <div className="font-semibold text-gray-800">{eq.customerName || "—"}</div>
                           <div className="text-xs text-gray-400">{eq.companyName}</div>
                         </td>
-                        <td className="py-4 pr-4 text-sm text-gray-700">{eq.productName || "—"}</td>
+                        <td className="py-4 pr-4 text-sm text-gray-700">
+                          {eq.productName ? <div dangerouslySetInnerHTML={{ __html: eq.productName }} /> : "—"}
+                        </td>
                         <td className="py-4 pr-4 text-sm text-gray-600 font-mono">{eq.serialNumber || "—"}</td>
                         <td className="py-4 pr-4 text-sm text-gray-700">{eq.warrantyEndDate}</td>
                         <td className="py-4">
@@ -370,7 +374,9 @@ export default function AlertsPage() {
                         <div className="font-semibold text-gray-800">{eq.customerName || "—"}</div>
                         <div className="text-xs text-gray-400">{eq.companyName}</div>
                       </td>
-                      <td className="py-4 pr-4 text-sm text-gray-700">{eq.productName || "—"}</td>
+                      <td className="py-4 pr-4 text-sm text-gray-700">
+                        {eq.productName ? <div dangerouslySetInnerHTML={{ __html: eq.productName }} /> : "—"}
+                      </td>
                       <td className="py-4 pr-4 text-sm">
                         <div className="flex flex-col gap-1">
                           {!eq.serialNumber && <span className="text-red-600 font-medium">❌ ขาด Serial Number</span>}
@@ -456,7 +462,9 @@ export default function AlertsPage() {
                         <div className="text-sm font-medium text-gray-900">{doc.customerName || "—"}</div>
                         {doc.companyName && <div className="text-xs text-gray-500 mt-0.5">{doc.companyName}</div>}
                       </td>
-                      <td className="py-4 pr-4 text-sm text-gray-700">{doc.productName || "—"}</td>
+                      <td className="py-4 pr-4 text-sm text-gray-700">
+                        {doc.productName ? <div dangerouslySetInnerHTML={{ __html: doc.productName }} /> : "—"}
+                      </td>
                       <td className="py-4 pr-4 text-sm text-gray-700">{doc.saleDate}</td>
                       <td className="py-4 pr-4 text-sm">
                         <div className="flex flex-col gap-1">
