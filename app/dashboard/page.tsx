@@ -519,7 +519,7 @@ export default function DashboardPage() {
                     options={yearOptions}
                     value={periodValue.split('-')[0] || String(new Date().getFullYear())}
                     onChange={(v) => setPeriodValue(`${v}-${periodValue.split('-')[1] || "Q1"}`)}
-                    className="w-24 border-none bg-gray-50 hover:bg-gray-100 transition-colors rounded-xl"
+                    className="w-32 border-none bg-gray-50 hover:bg-gray-100 transition-colors rounded-xl"
                   />
                 </div>
               )}
@@ -528,7 +528,7 @@ export default function DashboardPage() {
                   options={yearOptions}
                   value={periodValue}
                   onChange={setPeriodValue}
-                  className="w-24 border-none bg-gray-50 hover:bg-gray-100 transition-colors rounded-xl"
+                  className="w-32 border-none bg-gray-50 hover:bg-gray-100 transition-colors rounded-xl"
                 />
               )}
             </div>
