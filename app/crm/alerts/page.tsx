@@ -24,6 +24,12 @@ export default function AlertsPage() {
     customerFeedback: "",
   });
 
+  // View Details Modal
+  const [selectedAlert, setSelectedAlert] = useState<{
+    type: "schedule" | "warranty" | "incomplete" | "missing_doc";
+    data: any;
+  } | null>(null);
+
   useEffect(() => {
     if (!authLoading && !isLoggedIn) router.replace("/login");
   }, [isLoggedIn, authLoading, router]);
@@ -232,7 +238,11 @@ export default function AlertsPage() {
                     </tr>
                   ) : (
                     alerts.upcomingSchedules.map((s) => (
-                      <tr key={s.id} className={`border-b border-gray-50 transition-colors ${s.overdue ? "bg-red-50/30 hover:bg-red-50/50" : "hover:bg-gray-50/50"}`}>
+                      <tr 
+                        key={s.id} 
+                        onClick={() => setSelectedAlert({ type: "schedule", data: s })}
+                        className={`border-b border-gray-50 transition-colors cursor-pointer ${s.overdue ? "bg-red-50/30 hover:bg-red-50/50" : "hover:bg-gray-50/50"}`}
+                      >
                         <td className="p-4">
                           {s.scheduleType === "service" ? (
                             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-full bg-blue-50 text-blue-700 border border-blue-100 whitespace-nowrap">
@@ -261,7 +271,8 @@ export default function AlertsPage() {
                         </td>
                         <td className="p-4 text-center">
                           <button
-                            onClick={() => {
+                            onClick={(e) => {
+                              e.stopPropagation();
                               setCompletingId(s.id);
                               setCompleteForm({
                                 serviceReportNumber: "",
@@ -334,7 +345,11 @@ export default function AlertsPage() {
                       const days = warrantyDaysLeft(eq.warrantyEndDate);
                       const isUrgent = days !== null && days <= 7;
                       return (
-                        <tr key={eq.id} className={`border-b border-gray-50 transition-colors ${isUrgent ? "bg-red-50/30 hover:bg-red-50/50" : "hover:bg-gray-50/50"}`}>
+                        <tr 
+                          key={eq.id} 
+                          onClick={() => setSelectedAlert({ type: "warranty", data: eq })}
+                          className={`border-b border-gray-50 transition-colors cursor-pointer ${isUrgent ? "bg-red-50/30 hover:bg-red-50/50" : "hover:bg-gray-50/50"}`}
+                        >
                           <td className="p-4">
                             <div className="font-medium text-gray-800">{eq.customerName || "—"}</div>
                             <div className="text-xs text-gray-500 mt-0.5">{eq.companyName}</div>
@@ -404,7 +419,11 @@ export default function AlertsPage() {
                     </tr>
                   ) : (
                     alerts.incompleteEquipments.map((eq) => (
-                      <tr key={eq.id} className="border-b border-gray-50 bg-rose-50/20 hover:bg-rose-50/40 transition-colors">
+                      <tr 
+                        key={eq.id} 
+                        onClick={() => setSelectedAlert({ type: "incomplete", data: eq })}
+                        className="border-b border-gray-50 bg-rose-50/20 hover:bg-rose-50/40 transition-colors cursor-pointer"
+                      >
                         <td className="p-4">
                           <div className="font-medium text-gray-800">{eq.customerName || "—"}</div>
                           <div className="text-xs text-gray-500 mt-0.5">{eq.companyName}</div>
@@ -421,6 +440,7 @@ export default function AlertsPage() {
                         <td className="p-4 text-center">
                           <Link
                             href={eq.salesRecordId ? `/dashboard?edit=${eq.salesRecordId}` : "/customers"}
+                            onClick={(e) => e.stopPropagation()}
                             className="px-4 py-1.5 bg-white border border-gray-200 text-gray-700 rounded-lg text-xs font-semibold hover:bg-gray-50 transition-colors shadow-sm inline-block"
                           >
                             ไปใส่ข้อมูล
@@ -488,7 +508,11 @@ export default function AlertsPage() {
                       const isMissingDelivery = !doc.deliveryRef && daysSinceSale >= 20;
                       const isMissingReceipt = doc.invoiceRef && !doc.receiptRef && daysSinceSale >= 30;
                       return (
-                      <tr key={doc.id} className="border-b border-gray-50 hover:bg-gray-50/50 transition-colors">
+                      <tr 
+                        key={doc.id} 
+                        onClick={() => setSelectedAlert({ type: "missing_doc", data: doc })}
+                        className="border-b border-gray-50 hover:bg-gray-50/50 transition-colors cursor-pointer"
+                      >
                         <td className="p-4 text-sm font-medium text-gray-600">{doc.salespersonName || "—"}</td>
                         <td className="p-4">
                           <div className="font-medium text-gray-800">{doc.customerName || "—"}</div>
@@ -515,6 +539,7 @@ export default function AlertsPage() {
                         <td className="p-4 text-center">
                           <Link
                             href={`/dashboard?edit=${doc.id}`}
+                            onClick={(e) => e.stopPropagation()}
                             className="px-4 py-1.5 bg-white border border-gray-200 text-gray-700 rounded-lg text-xs font-semibold hover:bg-gray-50 transition-colors shadow-sm inline-block"
                           >
                             ไปใส่ข้อมูล
@@ -607,6 +632,140 @@ export default function AlertsPage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── Alert Details Modal ─────────────────────────────────────────── */}
+      {selectedAlert && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm animate-in fade-in" onClick={() => setSelectedAlert(null)}>
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl overflow-hidden animate-in zoom-in-95" onClick={(e) => e.stopPropagation()}>
+            <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
+              <h2 className="text-lg font-bold text-gray-800">รายละเอียดแจ้งเตือน</h2>
+              <button
+                onClick={() => setSelectedAlert(null)}
+                className="p-2 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            
+            <div className="p-6 space-y-6">
+              <div className="grid grid-cols-2 gap-y-4 gap-x-6 text-sm">
+                <div>
+                  <div className="text-gray-500 mb-1">ลูกค้า</div>
+                  <div className="font-semibold text-gray-800">{selectedAlert.data.customerName || "—"}</div>
+                </div>
+                <div>
+                  <div className="text-gray-500 mb-1">บริษัท</div>
+                  <div className="font-semibold text-gray-800">{selectedAlert.data.companyName || "—"}</div>
+                </div>
+                <div className="col-span-2">
+                  <div className="text-gray-500 mb-1">สินค้า</div>
+                  <div className="font-semibold text-gray-800" dangerouslySetInnerHTML={{ __html: selectedAlert.data.productName || "—" }} />
+                </div>
+                
+                {selectedAlert.type === "schedule" && (
+                  <>
+                    <div>
+                      <div className="text-gray-500 mb-1">ประเภท</div>
+                      <div className="font-semibold text-gray-800">
+                        {selectedAlert.data.scheduleType === "service" ? "Service" : "โทรติดตาม"}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-gray-500 mb-1">กำหนดการ</div>
+                      <div className="font-semibold text-gray-800">{selectedAlert.data.scheduledDate}</div>
+                    </div>
+                    <div>
+                      <div className="text-gray-500 mb-1">สถานะ</div>
+                      <div className="font-semibold text-gray-800">
+                        {selectedAlert.data.overdue ? (
+                           <span className="text-red-600">⚠️ เกินกำหนด</span>
+                        ) : (
+                           <span className="text-amber-600">รอดำเนินการ</span>
+                        )}
+                      </div>
+                    </div>
+                    {selectedAlert.data.notes && (
+                      <div className="col-span-2">
+                        <div className="text-gray-500 mb-1">หมายเหตุ</div>
+                        <div className="text-gray-800 bg-gray-50 p-3 rounded-xl whitespace-pre-wrap">{selectedAlert.data.notes}</div>
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {selectedAlert.type === "warranty" && (
+                  <>
+                    <div>
+                      <div className="text-gray-500 mb-1">Serial Number</div>
+                      <div className="font-mono text-gray-800">{selectedAlert.data.serialNumber || "—"}</div>
+                    </div>
+                    <div>
+                      <div className="text-gray-500 mb-1">หมดประกัน</div>
+                      <div className="font-semibold text-gray-800">{selectedAlert.data.warrantyEndDate}</div>
+                    </div>
+                  </>
+                )}
+
+                {selectedAlert.type === "incomplete" && (
+                  <>
+                    <div className="col-span-2">
+                      <div className="text-gray-500 mb-1">สิ่งที่ขาด</div>
+                      <div className="flex flex-col gap-1.5 mt-1">
+                        {!selectedAlert.data.serialNumber && <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-white border border-rose-100 text-rose-700 w-fit">❌ ขาด Serial Number</span>}
+                        {!selectedAlert.data.warrantyStartDate && <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-white border border-rose-100 text-rose-700 w-fit">❌ ขาดวันเริ่มประกัน</span>}
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {selectedAlert.type === "missing_doc" && (
+                  <>
+                    <div>
+                      <div className="text-gray-500 mb-1">วันที่ขาย</div>
+                      <div className="font-semibold text-gray-800">{selectedAlert.data.saleDate}</div>
+                    </div>
+                    <div>
+                      <div className="text-gray-500 mb-1">พนักงานขาย</div>
+                      <div className="font-semibold text-gray-800">{selectedAlert.data.salespersonName || "—"}</div>
+                    </div>
+                    <div className="col-span-2">
+                      <div className="text-gray-500 mb-1">สถานะเอกสาร</div>
+                      <div className="flex flex-col gap-1.5 mt-1">
+                        {!selectedAlert.data.deliveryRef && (
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-red-50 text-red-700 w-fit">ขาดใบส่งสินค้า</span>
+                        )}
+                        {selectedAlert.data.invoiceRef && !selectedAlert.data.receiptRef && (
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-orange-50 text-orange-700 w-fit">ขาดใบเสร็จ</span>
+                        )}
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+
+            <div className="px-6 py-4 border-t border-gray-100 flex justify-end gap-3 bg-gray-50/50">
+              <button 
+                onClick={() => setSelectedAlert(null)} 
+                className="px-5 py-2.5 bg-white border border-gray-200 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 transition-all text-sm shadow-sm"
+              >
+                ปิด
+              </button>
+              <Link
+                href={
+                  (selectedAlert.type === "missing_doc" || selectedAlert.data.salesRecordId)
+                    ? `/dashboard?edit=${selectedAlert.data.id || selectedAlert.data.salesRecordId}`
+                    : "/customers?tab=equipment"
+                }
+                className="px-5 py-2.5 bg-indigo-600 text-white font-semibold rounded-xl hover:bg-indigo-700 transition-all text-sm shadow-sm flex items-center gap-2"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                ไปแก้ไขข้อมูล
+              </Link>
+            </div>
           </div>
         </div>
       )}

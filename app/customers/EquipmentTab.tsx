@@ -106,8 +106,9 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
     }
   }, [otpCountdown]);
 
-  // Search
+  // Search and Filter
   const [searchText, setSearchText] = useState("");
+  const [filterType, setFilterType] = useState("all");
 
   // Pagination
   const [currentPage, setCurrentPage] = useState(1);
@@ -115,7 +116,7 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchText, equipments]);
+  }, [searchText, filterType, equipments]);
 
   // Double-submit guard
   const [isSaving, setIsSaving] = useState(false);
@@ -292,15 +293,32 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
   // ── Filtered list ──────────────────────────────────────────────────────────
 
   const filtered = equipments.filter((eq) => {
-    if (!searchText) return true;
-    const q = searchText.toLowerCase();
-    return (
-      (eq.customerName || "").toLowerCase().includes(q) ||
-      (eq.companyName || "").toLowerCase().includes(q) ||
-      stripHtml(eq.productName).toLowerCase().includes(q) ||
-      eq.serialNumber.toLowerCase().includes(q) ||
-      eq.quotationNumber.toLowerCase().includes(q)
-    );
+    if (searchText) {
+      const q = searchText.toLowerCase();
+      const match = (
+        (eq.customerName || "").toLowerCase().includes(q) ||
+        (eq.companyName || "").toLowerCase().includes(q) ||
+        (eq.productName || "").replace(/<[^>]*>/g, "").toLowerCase().includes(q) ||
+        (eq.serialNumber || "").toLowerCase().includes(q) ||
+        (eq.quotationNumber || "").toLowerCase().includes(q)
+      );
+      if (!match) return false;
+    }
+
+    if (filterType !== "all") {
+      const daysLeft = warrantyDaysLeft(eq.warrantyEndDate);
+      const isExpired = eq.status === "Expired" || (daysLeft !== null && daysLeft < 0);
+      
+      if (filterType === "expired") {
+        if (!isExpired) return false;
+      } else if (filterType === "expiring_30") {
+        if (isExpired || daysLeft === null || daysLeft > 30) return false;
+      } else if (filterType === "expiring_60") {
+        if (isExpired || daysLeft === null || daysLeft <= 30 || daysLeft > 60) return false;
+      }
+    }
+    
+    return true;
   });
 
   const paginatedEquipments = filtered.slice(
@@ -505,14 +523,26 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
 
   const warrantyDaysLeft = (endDate: string | null) => {
     if (!endDate) return null;
-    const diff = Math.ceil((new Date(endDate).getTime() - Date.now()) / 86400000);
+    
+    // Parse as local midnight to avoid timezone offsets
+    const [year, month, day] = endDate.split("-").map(Number);
+    const end = new Date(year, month - 1, day).getTime();
+    
+    // Get today at local midnight
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    
+    const diff = Math.ceil((end - today) / 86400000);
     return diff;
   };
 
-  const statusBadge = (status: string) => {
-    if (status === "Active")
-      return <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-green-100 text-green-700">Active</span>;
-    return <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-red-100 text-red-700">Expired</span>;
+  const statusBadge = (eq: CustomerEquipment) => {
+    const daysLeft = warrantyDaysLeft(eq.warrantyEndDate);
+    const isExpired = eq.status === "Expired" || (daysLeft !== null && daysLeft < 0);
+
+    if (isExpired)
+      return <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-red-100 text-red-700">Expired</span>;
+    return <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-green-100 text-green-700">Active</span>;
   };
 
   const scheduleTypeBadge = (type: string) => {
@@ -568,15 +598,29 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
         </div>
       </div>
 
-      {/* Search */}
-      <div className="mb-6">
+      {/* Search and Filters */}
+      <div className="mb-6 flex flex-col sm:flex-row gap-4">
         <input
           type="text"
           value={searchText}
           onChange={(e) => setSearchText(e.target.value)}
           placeholder="ค้นหาลูกค้า, บริษัท, สินค้า, Serial Number..."
-          className="w-full sm:w-96 px-4 py-2.5 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-400 transition-all"
+          className="w-full sm:w-96 px-4 py-2.5 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-400 transition-all shrink-0"
         />
+        <div className="w-full sm:w-72 shrink-0 relative z-[5]">
+          <SearchableDropdown
+            options={[
+              { value: "all", label: "ทั้งหมด (All)" },
+              { value: "expired", label: "อุปกรณ์ที่หมดอายุ" },
+              { value: "expiring_30", label: "กำลังจะหมดอายุใน 30 วัน" },
+              { value: "expiring_60", label: "กำลังจะหมดอายุใน 31-60 วัน" }
+            ]}
+            value={filterType}
+            onChange={setFilterType}
+            searchable={false}
+            buttonClassName="h-full min-h-[46px] border-gray-200 bg-white"
+          />
+        </div>
       </div>
 
       {/* Table */}
@@ -656,7 +700,7 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
                         </div>
                       ) : <span className="text-gray-300">—</span>}
                     </td>
-                    <td className="py-4 pr-4">{statusBadge(eq.status)}</td>
+                    <td className="py-4 pr-4">{statusBadge(eq)}</td>
                     <td className="py-4">
                       <div className="flex items-center gap-1">
                         <button
