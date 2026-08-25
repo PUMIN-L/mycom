@@ -65,7 +65,7 @@ export default function EquipmentDetailsModal({
       const res = await fetch(`/api/admin/schedules?equipmentId=${eqId}`);
       if (res.ok) {
         const data = await res.json();
-        setSchedules(data.schedules || []);
+        setSchedules(Array.isArray(data) ? data : (data.schedules || []));
       }
     } catch (err) {
       console.error("Failed to fetch schedules", err);
@@ -77,7 +77,7 @@ export default function EquipmentDetailsModal({
       const res = await fetch(`/api/admin/schedules/${scheduleId}/logs`);
       if (res.ok) {
         const data = await res.json();
-        setLogs((prev) => ({ ...prev, [scheduleId]: data.logs || [] }));
+        setLogs((prev) => ({ ...prev, [scheduleId]: Array.isArray(data) ? data : (data.logs || []) }));
       }
     } catch (err) {
       console.error(err);
