@@ -3,8 +3,12 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "../../context/AuthContext";
 import Toast from "../../components/Toast";
-import Link from "next/link";
-import type { CrmAlerts } from "../../lib/types";
+import type { CrmAlerts, CustomerEquipment } from "../../lib/types";
+
+// Import Modals
+import EquipmentEditModal from "../../components/modals/EquipmentEditModal";
+import EquipmentDetailsModal from "../../components/modals/EquipmentDetailsModal";
+import SalesRecordEditModal from "../../components/modals/SalesRecordEditModal";
 
 export default function AlertsPage() {
   const router = useRouter();
@@ -15,6 +19,11 @@ export default function AlertsPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [activeTab, setActiveTab] = useState("all");
 
+  // Modals state
+  const [editingEquipment, setEditingEquipment] = useState<CustomerEquipment | null>(null);
+  const [viewingEquipmentDetails, setViewingEquipmentDetails] = useState<CustomerEquipment | null>(null);
+  const [editingSalesRecordId, setEditingSalesRecordId] = useState<string | null>(null);
+  
   // Complete modal
   const [completingId, setCompletingId] = useState<string | null>(null);
   const [completeForm, setCompleteForm] = useState({
@@ -88,6 +97,33 @@ export default function AlertsPage() {
     }
   };
 
+  const handleEditClick = async () => {
+    if (!selectedAlert) return;
+    
+    if (selectedAlert.type === "missing_doc") {
+      setEditingSalesRecordId(selectedAlert.data.id);
+      setSelectedAlert(null);
+    } else if (selectedAlert.type === "schedule") {
+      try {
+        const eqId = selectedAlert.data.equipmentId;
+        const res = await fetch(`/api/admin/equipments/${eqId}`);
+        if (res.ok) {
+          const eq = await res.json();
+          setViewingEquipmentDetails(eq);
+          setSelectedAlert(null);
+        } else {
+          showToast("โหลดข้อมูลอุปกรณ์ไม่สำเร็จ", "error");
+        }
+      } catch {
+        showToast("โหลดข้อมูลอุปกรณ์ไม่สำเร็จ", "error");
+      }
+    } else {
+      // warranty or incomplete -> selectedAlert.data IS the equipment
+      setEditingEquipment(selectedAlert.data);
+      setSelectedAlert(null);
+    }
+  };
+
   const warrantyDaysLeft = (endDate: string | null) => {
     if (!endDate) return null;
     return Math.ceil((new Date(endDate).getTime() - Date.now()) / 86400000);
@@ -101,492 +137,262 @@ export default function AlertsPage() {
     );
   }
 
-  const tabs = [
-    { 
-      id: "all", 
-      label: "รวมทั้งหมด", 
-      count: (alerts?.upcomingSchedules.length ?? 0) + (alerts?.expiringWarranties.length ?? 0) + (alerts?.incompleteEquipments.length ?? 0) + (alerts?.missingDocuments?.length ?? 0),
-      activeBg: "bg-indigo-600 text-white shadow-md border-indigo-600",
-      inactiveBg: "bg-white text-gray-600 hover:bg-indigo-50 hover:text-indigo-700 border-gray-200 hover:border-indigo-200",
-      activeBadge: "bg-white/20 text-white font-bold",
-      inactiveBadge: "bg-gray-100 text-gray-600 font-medium group-hover:bg-indigo-100 group-hover:text-indigo-700"
-    },
-    { 
-      id: "schedules", 
-      label: "กำหนดการ Service", 
-      count: alerts?.upcomingSchedules.length ?? 0,
-      activeBg: "bg-blue-600 text-white shadow-md border-blue-600",
-      inactiveBg: "bg-white text-gray-600 hover:bg-blue-50 hover:text-blue-700 border-gray-200 hover:border-blue-200",
-      activeBadge: "bg-white/20 text-white font-bold",
-      inactiveBadge: "bg-gray-100 text-gray-600 font-medium group-hover:bg-blue-100 group-hover:text-blue-700"
-    },
-    { 
-      id: "warranties", 
-      label: "ประกันใกล้หมดอายุ", 
-      count: alerts?.expiringWarranties.length ?? 0,
-      activeBg: "bg-amber-500 text-white shadow-md border-amber-500",
-      inactiveBg: "bg-white text-gray-600 hover:bg-amber-50 hover:text-amber-700 border-gray-200 hover:border-amber-200",
-      activeBadge: "bg-white/20 text-white font-bold",
-      inactiveBadge: "bg-gray-100 text-gray-600 font-medium group-hover:bg-amber-100 group-hover:text-amber-700"
-    },
-    { 
-      id: "incomplete", 
-      label: "อุปกรณ์ขาดข้อมูล", 
-      count: alerts?.incompleteEquipments.length ?? 0,
-      activeBg: "bg-rose-500 text-white shadow-md border-rose-500",
-      inactiveBg: "bg-white text-gray-600 hover:bg-rose-50 hover:text-rose-700 border-gray-200 hover:border-rose-200",
-      activeBadge: "bg-white/20 text-white font-bold",
-      inactiveBadge: "bg-gray-100 text-gray-600 font-medium group-hover:bg-rose-100 group-hover:text-rose-700"
-    },
-    { 
-      id: "missing_docs", 
-      label: "เอกสารอ้างอิงสูญหาย", 
-      count: alerts?.missingDocuments?.length ?? 0,
-      activeBg: "bg-red-500 text-white shadow-md border-red-500",
-      inactiveBg: "bg-white text-gray-600 hover:bg-red-50 hover:text-red-700 border-gray-200 hover:border-red-200",
-      activeBadge: "bg-white/20 text-white font-bold",
-      inactiveBadge: "bg-gray-100 text-gray-600 font-medium group-hover:bg-red-100 group-hover:text-red-700"
-    },
+  const allAlerts = alerts
+    ? [
+        ...(alerts.expiringWarranties || []).map((data) => ({ type: "warranty" as const, data })),
+        ...(alerts.incompleteEquipments || []).map((data) => ({ type: "incomplete" as const, data })),
+        ...(alerts.upcomingSchedules || []).map((data) => ({ type: "schedule" as const, data })),
+        ...(alerts.missingDocuments || []).map((data) => ({ type: "missing_doc" as const, data })),
+      ]
+    : [];
+
+  const filteredAlerts = allAlerts.filter((a) => (activeTab === "all" ? true : a.type === activeTab));
+  
+  // Custom sort to put overdue/urgent items first
+  filteredAlerts.sort((a, b) => {
+    // 1. Overdue schedules first
+    const aIsOverdue = a.type === "schedule" && a.data.overdue;
+    const bIsOverdue = b.type === "schedule" && b.data.overdue;
+    if (aIsOverdue && !bIsOverdue) return -1;
+    if (!aIsOverdue && bIsOverdue) return 1;
+
+    // 2. Missing docs next (these are already overdue per the SQL logic)
+    if (a.type === "missing_doc" && b.type !== "missing_doc") return -1;
+    if (a.type !== "missing_doc" && b.type === "missing_doc") return 1;
+
+    // 3. Expired warranties next
+    const aIsExp = a.type === "warranty" && warrantyDaysLeft(a.data.warrantyEndDate) !== null && warrantyDaysLeft(a.data.warrantyEndDate)! <= 0;
+    const bIsExp = b.type === "warranty" && warrantyDaysLeft(b.data.warrantyEndDate) !== null && warrantyDaysLeft(b.data.warrantyEndDate)! <= 0;
+    if (aIsExp && !bIsExp) return -1;
+    if (!aIsExp && bIsExp) return 1;
+
+    return 0;
+  });
+
+  const tabOptions = [
+    { id: "all", label: "ทั้งหมด", count: allAlerts.length, color: "bg-gray-100 text-gray-700" },
+    { id: "schedule", label: "กำหนดการ", count: alerts?.upcomingSchedules?.length || 0, color: "bg-blue-50 text-blue-700 border-blue-200" },
+    { id: "warranty", label: "ประกันใกล้หมด", count: alerts?.expiringWarranties?.length || 0, color: "bg-orange-50 text-orange-700 border-orange-200" },
+    { id: "incomplete", label: "ข้อมูลไม่ครบ", count: alerts?.incompleteEquipments?.length || 0, color: "bg-rose-50 text-rose-700 border-rose-200" },
+    { id: "missing_doc", label: "เอกสารค้าง", count: alerts?.missingDocuments?.length || 0, color: "bg-red-50 text-red-700 border-red-200" },
   ];
 
   return (
-    <div className="min-h-screen bg-gray-50/50 p-6 md:p-8 pt-32">
-      {toast && <Toast message={toast.message} type={toast.type} />}
-
-      <div className="max-w-6xl mx-auto">
-        {/* Header */}
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-800">🔔 แจ้งเตือน CRM</h1>
-            <p className="text-gray-500 mt-1">จัดการกำหนดการ, ประกันใกล้หมดอายุ และเอกสาร</p>
-          </div>
-          <Link
-            href="/customers"
-            className="px-4 py-2.5 bg-white border border-gray-200 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 transition-all text-sm flex items-center gap-2 shadow-sm"
-          >
-            <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
-            กลับไปหน้าลูกค้า
-          </Link>
+    <div className="min-h-screen bg-gray-50/50">
+      {/* Toast */}
+      {toast && (
+        <div className="fixed top-6 right-6 z-[100] animate-in slide-in-from-top-4 fade-in">
+          <Toast message={toast.message} type={toast.type} />
         </div>
+      )}
 
-        {/* Tabs */}
-        <div className="flex overflow-x-auto hide-scrollbar gap-2 mb-8 pb-2">
-          {tabs.map(tab => (
+      {/* Header */}
+      <div className="bg-white border-b border-gray-100 sticky top-0 z-30">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+            <div>
+              <div className="flex items-center gap-3 mb-1">
+                <div className="w-10 h-10 bg-rose-100 text-rose-600 rounded-xl flex items-center justify-center text-xl shadow-sm">
+                  🔔
+                </div>
+                <h1 className="text-2xl font-bold text-gray-900 tracking-tight">ศูนย์แจ้งเตือน CRM</h1>
+              </div>
+              <p className="text-sm text-gray-500 font-medium ml-13">รวมรายการที่ต้องติดตามและอัปเดต</p>
+            </div>
             <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`group px-5 py-2.5 rounded-xl font-semibold text-sm transition-all whitespace-nowrap flex items-center gap-2 border ${
-                activeTab === tab.id ? tab.activeBg : tab.inactiveBg
-              }`}
+              onClick={fetchAlerts}
+              className="px-4 py-2 bg-white border border-gray-200 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 hover:border-gray-300 transition-all text-sm shadow-sm flex items-center gap-2"
             >
-              {tab.label}
-              <span className={`px-2 py-0.5 rounded-full text-xs transition-colors ${
-                activeTab === tab.id ? tab.activeBadge : tab.inactiveBadge
-              }`}>
-                {tab.count}
-              </span>
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+              รีเฟรช
             </button>
-          ))}
+          </div>
+
+          {/* Tabs */}
+          <div className="flex gap-2 mt-8 overflow-x-auto pb-2 no-scrollbar">
+            {tabOptions.map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold whitespace-nowrap transition-all duration-200 border ${
+                  activeTab === tab.id
+                    ? "bg-gray-900 text-white border-gray-900 shadow-md"
+                    : `bg-white border-gray-200 text-gray-600 hover:bg-gray-50 hover:border-gray-300`
+                }`}
+              >
+                {tab.label}
+                <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${
+                  activeTab === tab.id ? "bg-white/20 text-white" : tab.color
+                }`}>
+                  {tab.count}
+                </span>
+              </button>
+            ))}
+          </div>
         </div>
+      </div>
 
-        {/* ── Section 2: Upcoming / Overdue Schedules ─────────────────────── */}
-        {(activeTab === "all" || activeTab === "schedules") && (
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden mb-8">
-            <div className="p-6 md:px-8 border-b border-gray-50">
-              <div className="flex items-center gap-3">
-                <div className="bg-blue-50 text-blue-600 p-2.5 rounded-xl">
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
-                </div>
-                <h2 className="text-xl font-bold text-gray-800">
-                  กำหนดการ Service / โทรติดตาม
-                  <span className="text-gray-400 text-base font-normal ml-2">
-                    ({alerts?.upcomingSchedules.length ?? 0} รายการ)
-                  </span>
-                </h2>
-              </div>
-            </div>
-
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="bg-gray-50/80 border-b border-gray-100 text-gray-600 text-sm">
-                    <th className="p-4 font-semibold w-24">ประเภท</th>
-                    <th className="p-4 font-semibold">ลูกค้า / บริษัท</th>
-                    <th className="p-4 font-semibold w-48">สินค้า</th>
-                    <th className="p-4 font-semibold w-32">กำหนด</th>
-                    <th className="p-4 font-semibold w-32">สถานะ</th>
-                    <th className="p-4 font-semibold text-center w-28">จัดการ</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {isLoading ? (
-                    Array.from({ length: 3 }).map((_, i) => (
-                      <tr key={i} className="border-b border-gray-50">
-                        <td className="p-4"><div className="h-5 bg-gray-200 rounded w-16 animate-pulse"></div></td>
-                        <td className="p-4"><div className="h-5 bg-gray-200 rounded w-36 animate-pulse"></div></td>
-                        <td className="p-4"><div className="h-5 bg-gray-200 rounded w-32 animate-pulse"></div></td>
-                        <td className="p-4"><div className="h-5 bg-gray-200 rounded w-24 animate-pulse"></div></td>
-                        <td className="p-4"><div className="h-5 bg-gray-200 rounded w-20 animate-pulse"></div></td>
-                        <td className="p-4"><div className="h-5 bg-gray-200 rounded w-16 mx-auto animate-pulse"></div></td>
-                      </tr>
-                    ))
-                  ) : !alerts?.upcomingSchedules.length ? (
-                    <tr>
-                      <td colSpan={6} className="p-12 text-center text-gray-400">
-                        ไม่มีกำหนดการที่ใกล้ถึง
-                      </td>
-                    </tr>
-                  ) : (
-                    alerts.upcomingSchedules.map((s) => (
-                      <tr 
-                        key={s.id} 
-                        onClick={() => setSelectedAlert({ type: "schedule", data: s })}
-                        className={`border-b border-gray-50 transition-colors cursor-pointer ${s.overdue ? "bg-red-50/30 hover:bg-red-50/50" : "hover:bg-gray-50/50"}`}
-                      >
-                        <td className="p-4">
-                          {s.scheduleType === "service" ? (
-                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-full bg-blue-50 text-blue-700 border border-blue-100 whitespace-nowrap">
-                              <span>🔧</span> Service
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-full bg-purple-50 text-purple-700 border border-purple-100 whitespace-nowrap">
-                              <span>📞</span> โทรติดตาม
-                            </span>
-                          )}
-                        </td>
-                        <td className="p-4">
-                          <div className="font-medium text-gray-800">{s.customerName || "—"}</div>
-                          <div className="text-xs text-gray-500 mt-0.5">{s.companyName}</div>
-                        </td>
-                        <td className="p-4 text-sm text-gray-700">
-                          {s.productName ? <div dangerouslySetInnerHTML={{ __html: s.productName }} /> : "—"}
-                        </td>
-                        <td className="p-4 text-sm text-gray-600">{s.scheduledDate}</td>
-                        <td className="p-4">
-                          {s.overdue ? (
-                            <span className="px-2.5 py-1 text-xs font-bold rounded-full bg-red-100 text-red-700">⚠️ เกินกำหนด</span>
-                          ) : (
-                            <span className="px-2.5 py-1 text-xs font-medium rounded-full bg-amber-100 text-amber-700">รอดำเนินการ</span>
-                          )}
-                        </td>
-                        <td className="p-4 text-center">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setCompletingId(s.id);
-                              setCompleteForm({
-                                serviceReportNumber: "",
-                                actionDate: new Date().toISOString().slice(0, 10),
-                                resultDetails: "",
-                                customerFeedback: "",
-                              });
-                            }}
-                            className="px-3 py-1.5 bg-emerald-50 text-emerald-600 border border-emerald-200 text-xs font-semibold rounded-lg hover:bg-emerald-100 transition-colors"
-                          >
-                            ✅ จบงาน
-                          </button>
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8">
+        {isLoading ? (
+          <div className="flex flex-col items-center justify-center py-20 text-gray-400">
+             <div className="w-10 h-10 border-4 border-gray-200 border-t-gray-500 rounded-full animate-spin mb-4"></div>
+             <p className="font-medium">กำลังโหลดข้อมูล...</p>
           </div>
-        )}
-
-        {/* ── Section 1: Expiring Warranties ──────────────────────────────── */}
-        {(activeTab === "all" || activeTab === "warranties") && (
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden mb-8">
-            <div className="p-6 md:px-8 border-b border-gray-50">
-              <div className="flex items-center gap-3">
-                <div className="bg-amber-50 text-amber-600 p-2.5 rounded-xl">
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
-                </div>
-                <h2 className="text-xl font-bold text-gray-800">
-                  ประกันใกล้หมดอายุ
-                  <span className="text-gray-400 text-base font-normal ml-2">
-                    (ภายใน 30 วัน — {alerts?.expiringWarranties.length ?? 0} รายการ)
-                  </span>
-                </h2>
-              </div>
-            </div>
-
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="bg-gray-50/80 border-b border-gray-100 text-gray-600 text-sm">
-                    <th className="p-4 font-semibold">ลูกค้า / บริษัท</th>
-                    <th className="p-4 font-semibold w-48">สินค้า</th>
-                    <th className="p-4 font-semibold w-40">S/N</th>
-                    <th className="p-4 font-semibold w-32">หมดประกัน</th>
-                    <th className="p-4 font-semibold w-28">เหลือ</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {isLoading ? (
-                    Array.from({ length: 3 }).map((_, i) => (
-                      <tr key={i} className="border-b border-gray-50">
-                        <td className="p-4"><div className="h-5 bg-gray-200 rounded w-36 animate-pulse"></div></td>
-                        <td className="p-4"><div className="h-5 bg-gray-200 rounded w-40 animate-pulse"></div></td>
-                        <td className="p-4"><div className="h-5 bg-gray-200 rounded w-20 animate-pulse"></div></td>
-                        <td className="p-4"><div className="h-5 bg-gray-200 rounded w-24 animate-pulse"></div></td>
-                        <td className="p-4"><div className="h-5 bg-gray-200 rounded w-16 animate-pulse"></div></td>
-                      </tr>
-                    ))
-                  ) : !alerts?.expiringWarranties.length ? (
-                    <tr>
-                      <td colSpan={5} className="p-12 text-center text-gray-400">
-                        ไม่มีอุปกรณ์ที่ประกันใกล้หมดอายุ
-                      </td>
-                    </tr>
-                  ) : (
-                    alerts.expiringWarranties.map((eq) => {
-                      const days = warrantyDaysLeft(eq.warrantyEndDate);
-                      const isUrgent = days !== null && days <= 7;
-                      return (
-                        <tr 
-                          key={eq.id} 
-                          onClick={() => setSelectedAlert({ type: "warranty", data: eq })}
-                          className={`border-b border-gray-50 transition-colors cursor-pointer ${isUrgent ? "bg-red-50/30 hover:bg-red-50/50" : "hover:bg-gray-50/50"}`}
-                        >
-                          <td className="p-4">
-                            <div className="font-medium text-gray-800">{eq.customerName || "—"}</div>
-                            <div className="text-xs text-gray-500 mt-0.5">{eq.companyName}</div>
-                          </td>
-                          <td className="p-4 text-sm text-gray-700">
-                            {eq.productName ? <div dangerouslySetInnerHTML={{ __html: eq.productName }} /> : "—"}
-                          </td>
-                          <td className="p-4 text-sm text-gray-600 font-mono">{eq.serialNumber || "—"}</td>
-                          <td className="p-4 text-sm text-gray-600">{eq.warrantyEndDate}</td>
-                          <td className="p-4">
-                            <span className={`px-2.5 py-1 text-xs font-bold rounded-full ${isUrgent ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"}`}>
-                              {days !== null ? `${days} วัน` : "—"}
-                            </span>
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
-            </div>
+        ) : filteredAlerts.length === 0 ? (
+          <div className="bg-white rounded-3xl border border-gray-100 p-16 text-center shadow-sm">
+            <div className="text-6xl mb-4 opacity-50">🎉</div>
+            <h3 className="text-xl font-bold text-gray-800 mb-2">ไม่มีแจ้งเตือน</h3>
+            <p className="text-gray-500">ทุกอย่างอัปเดตเรียบร้อยแล้วในหมวดหมู่นี้</p>
           </div>
-        )}
-
-        {/* ── Section 1.5: Incomplete Equipments ────────────────────────────── */}
-        {(activeTab === "all" || activeTab === "incomplete") && (
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden mb-8">
-            <div className="p-6 md:px-8 border-b border-gray-50">
-              <div className="flex items-center gap-3">
-                <div className="bg-rose-50 text-rose-600 p-2.5 rounded-xl">
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
-                </div>
-                <h2 className="text-xl font-bold text-gray-800">
-                  อุปกรณ์ขาดข้อมูลสำคัญ
-                  <span className="text-gray-400 text-base font-normal ml-2">
-                    (ยังไม่ระบุ S/N หรือประกัน — {alerts?.incompleteEquipments.length ?? 0} รายการ)
-                  </span>
-                </h2>
-              </div>
-            </div>
-
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="bg-gray-50/80 border-b border-gray-100 text-gray-600 text-sm">
-                    <th className="p-4 font-semibold">ลูกค้า / บริษัท</th>
-                    <th className="p-4 font-semibold w-48">สินค้า</th>
-                    <th className="p-4 font-semibold w-48">สิ่งที่ขาด</th>
-                    <th className="p-4 font-semibold text-center w-28">จัดการ</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {isLoading ? (
-                    Array.from({ length: 3 }).map((_, i) => (
-                      <tr key={i} className="border-b border-gray-50">
-                        <td className="p-4"><div className="h-5 bg-gray-200 rounded w-36 animate-pulse"></div></td>
-                        <td className="p-4"><div className="h-5 bg-gray-200 rounded w-40 animate-pulse"></div></td>
-                        <td className="p-4"><div className="h-5 bg-gray-200 rounded w-20 animate-pulse"></div></td>
-                        <td className="p-4"><div className="h-8 bg-gray-200 rounded-xl w-24 mx-auto animate-pulse"></div></td>
-                      </tr>
-                    ))
-                  ) : !alerts?.incompleteEquipments.length ? (
-                    <tr>
-                      <td colSpan={4} className="p-12 text-center text-gray-400">
-                        ข้อมูลอุปกรณ์ครบถ้วนสมบูรณ์
-                      </td>
-                    </tr>
-                  ) : (
-                    alerts.incompleteEquipments.map((eq) => (
-                      <tr 
-                        key={eq.id} 
-                        onClick={() => setSelectedAlert({ type: "incomplete", data: eq })}
-                        className="border-b border-gray-50 bg-rose-50/20 hover:bg-rose-50/40 transition-colors cursor-pointer"
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+            {filteredAlerts.map((alert, idx) => {
+              if (alert.type === "schedule") {
+                const isOverdue = alert.data.overdue;
+                return (
+                  <div key={idx} onClick={() => setSelectedAlert(alert)} className="bg-white rounded-2xl p-5 border border-gray-100 hover:border-blue-200 hover:shadow-lg transition-all cursor-pointer group relative overflow-hidden flex flex-col">
+                    <div className="absolute top-0 left-0 w-1 h-full bg-blue-500"></div>
+                    <div className="flex justify-between items-start mb-4">
+                      <div className={`px-2.5 py-1 rounded-md text-xs font-bold flex items-center gap-1.5 ${isOverdue ? "bg-red-50 text-red-700" : "bg-blue-50 text-blue-700"}`}>
+                        {alert.data.scheduleType === "service" ? "🔧 Service" : "📞 โทรติดตาม"}
+                      </div>
+                      <span className={`text-xs font-bold ${isOverdue ? "text-red-600 bg-red-50 px-2 py-0.5 rounded-full" : "text-gray-500"}`}>
+                        {alert.data.scheduledDate} {isOverdue && "(เลยกำหนด)"}
+                      </span>
+                    </div>
+                    
+                    <h4 className="font-bold text-gray-900 mb-1 line-clamp-1">{alert.data.customerName || "ลูกค้าทั่วไป"}</h4>
+                    <p className="text-sm text-gray-500 mb-4 line-clamp-1" dangerouslySetInnerHTML={{ __html: alert.data.productName || "ไม่ระบุสินค้า" }} />
+                    
+                    <div className="mt-auto pt-4 flex gap-2 w-full">
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); handleEditClick(); }}
+                        className="flex-1 px-3 py-2 bg-gray-50 text-gray-700 text-sm font-semibold rounded-xl hover:bg-gray-100 transition-colors flex items-center justify-center gap-1.5"
                       >
-                        <td className="p-4">
-                          <div className="font-medium text-gray-800">{eq.customerName || "—"}</div>
-                          <div className="text-xs text-gray-500 mt-0.5">{eq.companyName}</div>
-                        </td>
-                        <td className="p-4 text-sm text-gray-700">
-                          {eq.productName ? <div dangerouslySetInnerHTML={{ __html: eq.productName }} /> : "—"}
-                        </td>
-                        <td className="p-4 text-sm">
-                          <div className="flex flex-col gap-1.5">
-                            {!eq.serialNumber && <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-white border border-rose-100 text-rose-700 w-fit shadow-sm">❌ ขาด Serial Number</span>}
-                            {!eq.warrantyStartDate && <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-white border border-rose-100 text-rose-700 w-fit shadow-sm">❌ ขาดวันเริ่มประกัน</span>}
-                          </div>
-                        </td>
-                        <td className="p-4 text-center">
-                          <Link
-                            href={eq.salesRecordId ? `/dashboard?edit=${eq.salesRecordId}` : "/customers"}
-                            onClick={(e) => e.stopPropagation()}
-                            className="px-4 py-1.5 bg-white border border-gray-200 text-gray-700 rounded-lg text-xs font-semibold hover:bg-gray-50 transition-colors shadow-sm inline-block"
-                          >
-                            ไปใส่ข้อมูล
-                          </Link>
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {/* ── Section: Missing Documents ───────────────────────────────────────── */}
-        {(activeTab === "all" || activeTab === "missing_docs") && (
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden mb-8">
-            <div className="p-6 md:px-8 border-b border-gray-50">
-              <div className="flex items-center gap-3">
-                <div className="bg-red-50 text-red-600 p-2.5 rounded-xl">
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
-                </div>
-                <h2 className="text-xl font-bold text-gray-800">
-                  เอกสารอ้างอิงสูญหาย / เกินกำหนด
-                  <span className="text-gray-400 text-base font-normal ml-2">
-                    (ขาดใบส่งสินค้าหรือใบเสร็จ — {alerts?.missingDocuments?.length ?? 0} รายการ)
-                  </span>
-                </h2>
-              </div>
-            </div>
-
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="bg-gray-50/80 border-b border-gray-100 text-gray-600 text-sm">
-                    <th className="p-4 font-semibold w-24">พนักงานขาย</th>
-                    <th className="p-4 font-semibold">ลูกค้า / บริษัท</th>
-                    <th className="p-4 font-semibold w-48">สินค้า</th>
-                    <th className="p-4 font-semibold w-24">วันที่ขาย</th>
-                    <th className="p-4 font-semibold w-48">สถานะเอกสาร</th>
-                    <th className="p-4 font-semibold text-center w-28">จัดการ</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {isLoading ? (
-                    Array.from({ length: 3 }).map((_, i) => (
-                      <tr key={i} className="border-b border-gray-50">
-                        <td className="p-4"><div className="h-5 bg-gray-200 rounded w-16 animate-pulse"></div></td>
-                        <td className="p-4"><div className="h-5 bg-gray-200 rounded w-36 animate-pulse"></div></td>
-                        <td className="p-4"><div className="h-5 bg-gray-200 rounded w-40 animate-pulse"></div></td>
-                        <td className="p-4"><div className="h-5 bg-gray-200 rounded w-20 animate-pulse"></div></td>
-                        <td className="p-4"><div className="h-5 bg-gray-200 rounded w-24 animate-pulse"></div></td>
-                        <td className="p-4"><div className="h-8 bg-gray-200 rounded-xl w-24 mx-auto animate-pulse"></div></td>
-                      </tr>
-                    ))
-                  ) : !alerts?.missingDocuments?.length ? (
-                    <tr>
-                      <td colSpan={6} className="p-12 text-center text-gray-400">
-                        เอกสารอ้างอิงครบถ้วน
-                      </td>
-                    </tr>
-                  ) : (
-                    alerts.missingDocuments.map((doc) => {
-                      const daysSinceSale = Math.floor((new Date().getTime() - new Date(doc.saleDate).getTime()) / (1000 * 3600 * 24));
-                      const isMissingDelivery = !doc.deliveryRef && daysSinceSale >= 20;
-                      const isMissingReceipt = doc.invoiceRef && !doc.receiptRef && daysSinceSale >= 30;
-                      return (
-                      <tr 
-                        key={doc.id} 
-                        onClick={() => setSelectedAlert({ type: "missing_doc", data: doc })}
-                        className="border-b border-gray-50 hover:bg-gray-50/50 transition-colors cursor-pointer"
+                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                         แก้ไข
+                      </button>
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); setCompletingId(alert.data.id); }}
+                        className="flex-1 px-3 py-2 bg-emerald-50 text-emerald-700 text-sm font-semibold rounded-xl hover:bg-emerald-100 transition-colors flex items-center justify-center gap-1.5"
                       >
-                        <td className="p-4 text-sm font-medium text-gray-600">{doc.salespersonName || "—"}</td>
-                        <td className="p-4">
-                          <div className="font-medium text-gray-800">{doc.customerName || "—"}</div>
-                          {doc.companyName && <div className="text-xs text-gray-500 mt-0.5">{doc.companyName}</div>}
-                        </td>
-                        <td className="p-4 text-sm text-gray-700">
-                          {doc.productName ? <div dangerouslySetInnerHTML={{ __html: doc.productName }} /> : "—"}
-                        </td>
-                        <td className="p-4 text-sm text-gray-600">{doc.saleDate}</td>
-                        <td className="p-4 text-sm">
-                          <div className="flex flex-col gap-1.5">
-                            {isMissingDelivery && (
-                              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-red-50 text-red-700 w-fit">
-                                ขาดใบส่งสินค้า (เลย {daysSinceSale - 20} วัน)
-                              </span>
-                            )}
-                            {isMissingReceipt && (
-                              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-orange-50 text-orange-700 w-fit">
-                                ขาดใบเสร็จ (เลย {daysSinceSale - 30} วัน)
-                              </span>
-                            )}
-                          </div>
-                        </td>
-                        <td className="p-4 text-center">
-                          <Link
-                            href={`/dashboard?edit=${doc.id}`}
-                            onClick={(e) => e.stopPropagation()}
-                            className="px-4 py-1.5 bg-white border border-gray-200 text-gray-700 rounded-lg text-xs font-semibold hover:bg-gray-50 transition-colors shadow-sm inline-block"
-                          >
-                            ไปใส่ข้อมูล
-                          </Link>
-                        </td>
-                      </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
-            </div>
+                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" /></svg>
+                         เสร็จแล้ว
+                      </button>
+                    </div>
+                  </div>
+                );
+              }
+
+              if (alert.type === "warranty") {
+                const daysLeft = warrantyDaysLeft(alert.data.warrantyEndDate);
+                const isExp = daysLeft !== null && daysLeft <= 0;
+                return (
+                  <div key={idx} onClick={() => setSelectedAlert(alert)} className="bg-white rounded-2xl p-5 border border-gray-100 hover:border-orange-200 hover:shadow-lg transition-all cursor-pointer group relative overflow-hidden flex flex-col">
+                    <div className={`absolute top-0 left-0 w-1 h-full ${isExp ? "bg-red-500" : "bg-orange-500"}`}></div>
+                    <div className="flex justify-between items-start mb-4">
+                      <div className={`px-2.5 py-1 rounded-md text-xs font-bold ${isExp ? "bg-red-50 text-red-700" : "bg-orange-50 text-orange-700"}`}>
+                        🛡️ {isExp ? "หมดประกันแล้ว" : "ประกันใกล้หมด"}
+                      </div>
+                      <span className={`text-xs font-bold ${isExp ? "text-red-600 bg-red-50 px-2 py-0.5 rounded-full" : "text-orange-600 bg-orange-50 px-2 py-0.5 rounded-full"}`}>
+                        เหลือ {daysLeft} วัน
+                      </span>
+                    </div>
+                    
+                    <h4 className="font-bold text-gray-900 mb-1 line-clamp-1">{alert.data.customerName || "ลูกค้าทั่วไป"}</h4>
+                    <p className="text-sm text-gray-500 mb-1 line-clamp-1" dangerouslySetInnerHTML={{ __html: alert.data.productName || "ไม่ระบุสินค้า" }} />
+                    <p className="text-xs text-gray-400 font-mono mb-4">S/N: {alert.data.serialNumber || "—"}</p>
+                    
+                    <button className="mt-auto w-full px-3 py-2 bg-gray-50 text-gray-700 text-sm font-semibold rounded-xl hover:bg-gray-100 transition-colors flex items-center justify-center gap-1.5 opacity-0 group-hover:opacity-100">
+                      ดูรายละเอียด →
+                    </button>
+                  </div>
+                );
+              }
+
+              if (alert.type === "incomplete") {
+                return (
+                  <div key={idx} onClick={() => setSelectedAlert(alert)} className="bg-white rounded-2xl p-5 border border-gray-100 hover:border-rose-200 hover:shadow-lg transition-all cursor-pointer group relative overflow-hidden flex flex-col">
+                    <div className="absolute top-0 left-0 w-1 h-full bg-rose-500"></div>
+                    <div className="flex justify-between items-start mb-4">
+                      <div className="px-2.5 py-1 rounded-md text-xs font-bold bg-rose-50 text-rose-700">
+                        ⚠️ ข้อมูลไม่ครบ
+                      </div>
+                    </div>
+                    
+                    <h4 className="font-bold text-gray-900 mb-1 line-clamp-1">{alert.data.customerName || "ลูกค้าทั่วไป"}</h4>
+                    <p className="text-sm text-gray-500 mb-3 line-clamp-1" dangerouslySetInnerHTML={{ __html: alert.data.productName || "ไม่ระบุสินค้า" }} />
+                    
+                    <div className="flex flex-wrap gap-1 mb-4">
+                      {!alert.data.serialNumber && <span className="text-[10px] font-bold bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded uppercase">No S/N</span>}
+                      {!alert.data.warrantyStartDate && <span className="text-[10px] font-bold bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded uppercase">No Warranty Start</span>}
+                    </div>
+                    
+                    <button className="mt-auto w-full px-3 py-2 bg-rose-50 text-rose-700 text-sm font-semibold rounded-xl hover:bg-rose-100 transition-colors flex items-center justify-center gap-1.5">
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                      เพิ่มข้อมูล
+                    </button>
+                  </div>
+                );
+              }
+
+              if (alert.type === "missing_doc") {
+                return (
+                  <div key={idx} onClick={() => setSelectedAlert(alert)} className="bg-white rounded-2xl p-5 border border-gray-100 hover:border-red-200 hover:shadow-lg transition-all cursor-pointer group relative overflow-hidden flex flex-col">
+                    <div className="absolute top-0 left-0 w-1 h-full bg-red-500"></div>
+                    <div className="flex justify-between items-start mb-4">
+                      <div className="px-2.5 py-1 rounded-md text-xs font-bold bg-red-50 text-red-700 flex items-center gap-1.5">
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                        เอกสารค้าง
+                      </div>
+                      <span className="text-xs font-bold text-gray-400">{alert.data.saleDate}</span>
+                    </div>
+                    
+                    <h4 className="font-bold text-gray-900 mb-1 line-clamp-1">{alert.data.customerName || "ลูกค้าทั่วไป"}</h4>
+                    <p className="text-sm text-gray-500 mb-3 line-clamp-1" dangerouslySetInnerHTML={{ __html: alert.data.productName || "ไม่ระบุสินค้า" }} />
+                    
+                    <div className="flex flex-col gap-1 mb-4 text-xs font-medium text-gray-500">
+                       {!alert.data.deliveryRef && <div className="flex items-center gap-1.5"><span className="text-red-500">❌</span> ขาดใบส่งสินค้า (เกิน 20 วัน)</div>}
+                       {alert.data.invoiceRef && !alert.data.receiptRef && <div className="flex items-center gap-1.5"><span className="text-orange-500">⚠️</span> ขาดใบเสร็จ (เกิน 30 วัน)</div>}
+                    </div>
+                    
+                    <button className="mt-auto w-full px-3 py-2 bg-gray-900 text-white text-sm font-semibold rounded-xl hover:bg-gray-800 transition-colors flex items-center justify-center gap-1.5">
+                      ตามเอกสาร →
+                    </button>
+                  </div>
+                );
+              }
+            })}
           </div>
         )}
       </div>
 
-      {/* ── Complete Action Modal ─────────────────────────────────────────── */}
+      {/* ── Complete Schedule Modal ─────────────────────────────────────── */}
       {completingId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm animate-in fade-in" onClick={() => setCompletingId(null)}>
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg overflow-hidden animate-in zoom-in-95" onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm animate-in fade-in" onClick={() => setCompletingId(null)}>
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden animate-in zoom-in-95" onClick={(e) => e.stopPropagation()}>
             <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
               <h2 className="text-lg font-bold text-gray-800">✅ บันทึกผลการดำเนินงาน</h2>
               <button
                 onClick={() => setCompletingId(null)}
-                className="text-gray-400 hover:text-gray-600"
+                className="p-2 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors"
               >
-                ✕
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
               </button>
             </div>
-            <form onSubmit={handleComplete} className="p-6 space-y-5">
+            <form onSubmit={handleComplete} className="p-6 space-y-4">
               <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1">
-                  เลขที่ใบรายงานการซ่อม <span className="text-red-500">*</span>
-                </label>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">เลขที่ใบแจ้งซ่อม / Service Report</label>
                 <input
                   type="text"
-                  required
                   value={completeForm.serviceReportNumber}
                   onChange={(e) => setCompleteForm((prev) => ({ ...prev, serviceReportNumber: e.target.value }))}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
-                  placeholder="SR-XXXXX"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 font-mono"
+                  placeholder="เช่น SR-12345"
                 />
               </div>
               <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1">
-                  วันที่ดำเนินการ <span className="text-red-500">*</span>
-                </label>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">วันที่ดำเนินการ <span className="text-red-500">*</span></label>
                 <input
                   type="date"
                   required
@@ -754,23 +560,57 @@ export default function AlertsPage() {
               >
                 ปิด
               </button>
-              <Link
-                href={
-                  selectedAlert.type === "missing_doc"
-                    ? `/dashboard?edit=${selectedAlert.data.id}`
-                    : `/customers?tab=equipment&edit_eq=${
-                        selectedAlert.type === "schedule" ? selectedAlert.data.equipmentId : selectedAlert.data.id
-                      }&action=${selectedAlert.type === "schedule" ? "view" : "edit"}`
-                }
+              <button
+                onClick={handleEditClick}
                 className="px-5 py-2.5 bg-indigo-600 text-white font-semibold rounded-xl hover:bg-indigo-700 transition-all text-sm shadow-sm flex items-center gap-2"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
                 ไปแก้ไขข้อมูล
-              </Link>
+              </button>
             </div>
           </div>
         </div>
       )}
+      
+      {/* ── Extracted Modals ────────────────────────────────────────────── */}
+      {editingEquipment && (
+        <EquipmentEditModal
+          initialData={editingEquipment}
+          onClose={() => setEditingEquipment(null)}
+          onSaveSuccess={() => {
+            setEditingEquipment(null);
+            fetchAlerts();
+            showToast("บันทึกข้อมูลสำเร็จ", "success");
+          }}
+        />
+      )}
+      
+      {viewingEquipmentDetails && (
+        <EquipmentDetailsModal
+          equipment={viewingEquipmentDetails}
+          onClose={() => {
+            setViewingEquipmentDetails(null);
+            fetchAlerts(); // Fetch alerts in case a schedule was added/deleted
+          }}
+          onEditEquipment={(eq) => {
+            setViewingEquipmentDetails(null);
+            setEditingEquipment(eq);
+          }}
+        />
+      )}
+      
+      {editingSalesRecordId && (
+        <SalesRecordEditModal
+          editingId={editingSalesRecordId}
+          onClose={() => setEditingSalesRecordId(null)}
+          onSaveSuccess={() => {
+            setEditingSalesRecordId(null);
+            fetchAlerts();
+            showToast("บันทึกข้อมูลสำเร็จ", "success");
+          }}
+        />
+      )}
+      
     </div>
   );
 }
