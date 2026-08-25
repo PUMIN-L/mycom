@@ -97,15 +97,16 @@ export default function AlertsPage() {
     }
   };
 
-  const handleEditClick = async () => {
-    if (!selectedAlert) return;
+  const handleEditClick = async (alertTarget?: any) => {
+    const target = alertTarget || selectedAlert;
+    if (!target) return;
     
-    if (selectedAlert.type === "missing_doc") {
-      setEditingSalesRecordId(selectedAlert.data.id);
+    if (target.type === "missing_doc") {
+      setEditingSalesRecordId(target.data.id);
       setSelectedAlert(null);
-    } else if (selectedAlert.type === "schedule") {
+    } else if (target.type === "schedule") {
       try {
-        const eqId = selectedAlert.data.equipmentId;
+        const eqId = target.data.equipmentId;
         const res = await fetch(`/api/admin/equipments/${eqId}`);
         if (res.ok) {
           const eq = await res.json();
@@ -118,8 +119,8 @@ export default function AlertsPage() {
         showToast("โหลดข้อมูลอุปกรณ์ไม่สำเร็จ", "error");
       }
     } else {
-      // warranty or incomplete -> selectedAlert.data IS the equipment
-      setEditingEquipment(selectedAlert.data);
+      // warranty or incomplete -> target.data IS the equipment
+      setEditingEquipment(target.data);
       setSelectedAlert(null);
     }
   };
@@ -266,7 +267,7 @@ export default function AlertsPage() {
                     
                     <div className="mt-auto pt-4 flex gap-2 w-full">
                       <button 
-                        onClick={(e) => { e.stopPropagation(); handleEditClick(); }}
+                        onClick={(e) => { e.stopPropagation(); handleEditClick(alert); }}
                         className="flex-1 px-3 py-2 bg-gray-50 text-gray-700 text-sm font-semibold rounded-xl hover:bg-gray-100 transition-colors flex items-center justify-center gap-1.5"
                       >
                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
@@ -561,7 +562,7 @@ export default function AlertsPage() {
                 ปิด
               </button>
               <button
-                onClick={handleEditClick}
+                onClick={() => handleEditClick()}
                 className="px-5 py-2.5 bg-indigo-600 text-white font-semibold rounded-xl hover:bg-indigo-700 transition-all text-sm shadow-sm flex items-center gap-2"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
