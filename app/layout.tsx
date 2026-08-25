@@ -11,6 +11,7 @@ import {
   SITE_KEYWORDS,
 } from "./lib/site";
 import "./globals.css";
+import GlobalAdminBell from "./components/GlobalAdminBell";
 
 const cormorant = Cormorant_Garamond({
   variable: "--font-serif",
@@ -98,6 +99,7 @@ export default function RootLayout({
         <LanguageProvider>
           <AuthProvider>
             <NavProvider>{children}</NavProvider>
+            <GlobalAdminBell />
           </AuthProvider>
         </LanguageProvider>
         <div id="root-portal" />
