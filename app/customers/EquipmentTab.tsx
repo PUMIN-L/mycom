@@ -233,6 +233,25 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
     fetchEquipments();
   }, [fetchEquipments]);
 
+  useEffect(() => {
+    if (typeof window !== "undefined" && equipments.length > 0 && !isModalOpen) {
+      const params = new URLSearchParams(window.location.search);
+      const editEqId = params.get("edit_eq");
+      if (editEqId) {
+        const eq = equipments.find((e) => e.id === editEqId);
+        if (eq) {
+          setEditing({ ...eq, productId: eq.productId || "_custom" });
+          setSubmitAttempted(false);
+          setIsModalOpen(true);
+          
+          // Remove param from URL
+          const newUrl = window.location.pathname + "?tab=equipment";
+          window.history.replaceState({}, "", newUrl);
+        }
+      }
+    }
+  }, [equipments, isModalOpen]);
+
   const fetchSchedules = useCallback(async (equipmentId: string) => {
     setSchedules([]); // Clear immediately so stale data doesn't flash
     try {
@@ -521,19 +540,23 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
 
   // ── Helpers ────────────────────────────────────────────────────────────────
 
-  const warrantyDaysLeft = (endDate: string | null) => {
-    if (!endDate) return null;
+  const warrantyDaysLeft = (endDate: any) => {
+    if (!endDate || typeof endDate !== "string") return null;
+    
+    const parts = endDate.split("T")[0].split("-");
+    if (parts.length < 3) return null;
     
     // Parse as local midnight to avoid timezone offsets
-    const [year, month, day] = endDate.split("-").map(Number);
+    const [year, month, day] = parts.map(Number);
     const end = new Date(year, month - 1, day).getTime();
+    if (isNaN(end)) return null;
     
     // Get today at local midnight
     const now = new Date();
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
     
     const diff = Math.ceil((end - today) / 86400000);
-    return diff;
+    return isNaN(diff) ? null : diff;
   };
 
   const statusBadge = (eq: CustomerEquipment) => {
