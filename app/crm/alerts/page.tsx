@@ -758,7 +758,9 @@ export default function AlertsPage() {
                 href={
                   selectedAlert.type === "missing_doc"
                     ? `/dashboard?edit=${selectedAlert.data.id}`
-                    : `/customers?tab=equipment&edit_eq=${selectedAlert.type === "schedule" ? selectedAlert.data.equipmentId : selectedAlert.data.id}`
+                    : `/customers?tab=equipment&edit_eq=${
+                        selectedAlert.type === "schedule" ? selectedAlert.data.equipmentId : selectedAlert.data.id
+                      }&action=${selectedAlert.type === "schedule" ? "view" : "edit"}`
                 }
                 className="px-5 py-2.5 bg-indigo-600 text-white font-semibold rounded-xl hover:bg-indigo-700 transition-all text-sm shadow-sm flex items-center gap-2"
               >

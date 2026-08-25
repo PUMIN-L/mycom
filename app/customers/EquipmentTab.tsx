@@ -234,15 +234,21 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
   }, [fetchEquipments]);
 
   useEffect(() => {
-    if (typeof window !== "undefined" && equipments.length > 0 && !isModalOpen) {
+    if (typeof window !== "undefined" && equipments.length > 0 && !isModalOpen && !viewingEquipment) {
       const params = new URLSearchParams(window.location.search);
       const editEqId = params.get("edit_eq");
+      const action = params.get("action");
       if (editEqId) {
         const eq = equipments.find((e) => e.id === editEqId);
         if (eq) {
-          setEditing({ ...eq, productId: eq.productId || "_custom" });
-          setSubmitAttempted(false);
-          setIsModalOpen(true);
+          if (action === "view") {
+            setViewingEquipment(eq);
+            fetchSchedules(eq.id);
+          } else {
+            setEditing({ ...eq, productId: eq.productId || "_custom" });
+            setSubmitAttempted(false);
+            setIsModalOpen(true);
+          }
           
           // Remove param from URL
           const newUrl = window.location.pathname + "?tab=equipment";
@@ -250,7 +256,7 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
         }
       }
     }
-  }, [equipments, isModalOpen]);
+  }, [equipments, isModalOpen, viewingEquipment]);
 
   const fetchSchedules = useCallback(async (equipmentId: string) => {
     setSchedules([]); // Clear immediately so stale data doesn't flash
