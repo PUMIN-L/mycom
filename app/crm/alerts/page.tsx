@@ -195,7 +195,7 @@ export default function AlertsPage() {
             <div>
               <Link href="/dashboard" className="inline-flex items-center gap-1.5 text-sm font-semibold text-gray-500 hover:text-gray-800 transition-colors mb-3">
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" /></svg>
-                กลับไประบบจัดการ
+                กลับไป Dashboard
               </Link>
               <div className="flex items-center gap-3 mb-1">
                 <div className="w-10 h-10 bg-rose-100 text-rose-600 rounded-xl flex items-center justify-center text-xl shadow-sm">
@@ -205,13 +205,22 @@ export default function AlertsPage() {
               </div>
               <p className="text-sm text-gray-500 font-medium ml-13">รวมรายการที่ต้องติดตามและอัปเดต</p>
             </div>
-            <button
-              onClick={fetchAlerts}
-              className="px-4 py-2 bg-white border border-gray-200 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 hover:border-gray-300 transition-all text-sm shadow-sm flex items-center gap-2"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
-              รีเฟรช
-            </button>
+            <div className="flex items-center gap-3">
+              {/* ปุ่มกลับไประบบจัดการ — มุมขวาบน สไตล์เดียวกับหน้า admin อื่นๆ */}
+              <Link
+                href="/adminpanel"
+                className="px-4 py-2 bg-white border border-gray-200 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 hover:border-gray-300 transition-all text-sm shadow-sm whitespace-nowrap"
+              >
+                🏠 กลับไประบบจัดการ
+              </Link>
+              <button
+                onClick={fetchAlerts}
+                className="px-4 py-2 bg-white border border-gray-200 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 hover:border-gray-300 transition-all text-sm shadow-sm flex items-center gap-2"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                รีเฟรช
+              </button>
+            </div>
           </div>
 
           {/* Tabs */}
