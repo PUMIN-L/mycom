@@ -105,12 +105,13 @@ export default async function ShowcaseContentPage({
   const breadcrumbLd = {
     "@context": "https://schema.org",
     "@type": "BreadcrumbList",
+    // Two levels only — the /showcase list URL is now the admin panel
+    // (redirects to /adminpanel), so it must not appear in a public breadcrumb.
     itemListElement: [
       { "@type": "ListItem", position: 1, name: "Home", item: SITE_URL },
-      { "@type": "ListItem", position: 2, name: "Showcase", item: `${SITE_URL}/showcase` },
       {
         "@type": "ListItem",
-        position: 3,
+        position: 2,
         name: content.title,
         item: `${SITE_URL}/showcase/${content.id}`,
       },

@@ -59,7 +59,10 @@ export const config = {
     '/dashboard/:path*',
     '/expenses',
     '/expenses/:path*',
-    '/showcase',
-    '/showcase/:path*'
+    // Admin Panel hub (moved from /showcase). NOTE: /showcase/{id} content
+    // pages and /showcase/product/{pid} are PUBLIC — never add /showcase back
+    // here (doing so bounced customers + Google to /login).
+    '/adminpanel',
+    '/adminpanel/:path*'
   ],
 };

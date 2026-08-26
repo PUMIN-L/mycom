@@ -375,7 +375,7 @@ function CreateContentInner() {
           </div>
           <button
             type="button"
-            onClick={() => guardedNavigate("/showcase")}
+            onClick={() => guardedNavigate("/adminpanel")}
             className="px-5 py-2.5 bg-white border border-gray-300 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 transition shadow-sm self-start sm:self-auto flex items-center gap-1.5 text-sm"
           >
             🏠 กลับไปหน้าระบบจัดการ

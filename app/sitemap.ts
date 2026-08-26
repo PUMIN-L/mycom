@@ -17,8 +17,8 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   ];
 
   // PUBLIC content pages /showcase/{id} — the ones with Article JSON-LD that
-  // actually rank. (The /showcase LIST itself is blocked in robots and stays out
-  // of the sitemap; only the individual content pages belong here.) Each DB read
+  // actually rank. (The admin hub now lives at /adminpanel — robots-blocked and
+  // never in the sitemap; only the individual content pages belong here.) Each DB read
   // is best-effort: a hiccup falls back to the static routes rather than 500-ing
   // the sitemap (which Google reports as "couldn't fetch").
   let contentRoutes: MetadataRoute.Sitemap = [];

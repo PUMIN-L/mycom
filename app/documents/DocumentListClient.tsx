@@ -224,7 +224,7 @@ export default function DocumentListClient({
           </div>
           <div className="flex gap-3 flex-wrap">
             <Link
-              href="/showcase"
+              href="/adminpanel"
               className="px-5 py-2.5 bg-white border border-gray-300 text-gray-700 font-semibold rounded-lg hover:bg-gray-50 transition shadow-sm"
             >
               ← กลับไปหน้าระบบจัดการ

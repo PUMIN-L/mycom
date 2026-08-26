@@ -34,7 +34,7 @@ export default async function DocumentPreviewPage({ params }: { params: Promise<
       <div className="flex items-center justify-between px-6 py-4 bg-white border-b border-gray-200 shadow-sm shrink-0">
         <div className="flex items-center gap-4">
           <Link
-            href="/showcase"
+            href="/adminpanel"
             className="p-2 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition"
             title="กลับไปหน้าหลัก"
           >

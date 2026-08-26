@@ -490,7 +490,7 @@ export default function BillingPage() {
               </button>
             )}
             {isEditing && (
-              <button onClick={() => guardedNavigate("/showcase")} className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition">
+              <button onClick={() => guardedNavigate("/adminpanel")} className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition">
                 🏠 ระบบจัดการ
               </button>
             )}

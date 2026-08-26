@@ -889,7 +889,7 @@ export default function QuotationPage() {
                 ← กลับ
               </button>
             )}
-            <button onClick={() => guardedNavigate("/showcase")} className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition">
+            <button onClick={() => guardedNavigate("/adminpanel")} className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition">
               🏠 กลับไปหน้าระบบจัดการ
             </button>
             <button onClick={() => guardedNavigate("/billing/saved?tab=quotation")} className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition">

@@ -13,7 +13,7 @@ export default function LoginPage() {
   const [showPass, setShowPass] = useState(false);
 
   useEffect(() => {
-    if (!isLoading && isLoggedIn) router.replace("/showcase");
+    if (!isLoading && isLoggedIn) router.replace("/adminpanel");
   }, [isLoggedIn, isLoading]);
 
   async function handleSubmit(e: React.FormEvent) {
@@ -23,7 +23,7 @@ export default function LoginPage() {
     const result = await login(username, password);
     setSubmitting(false);
     if (result.success) {
-      router.push("/showcase");
+      router.push("/adminpanel");
     } else {
       setError(result.error ?? "เกิดข้อผิดพลาด");
     }

@@ -41,6 +41,17 @@ const nextConfig: NextConfig = {
       },
     ],
   },
+  async redirects() {
+    return [
+      {
+        // The Admin Panel hub moved from /showcase to /adminpanel. Exact path
+        // only — /showcase/{id} content pages are PUBLIC and must not redirect.
+        source: "/showcase",
+        destination: "/adminpanel",
+        permanent: false,
+      },
+    ];
+  },
   async headers() {
     return [
       {

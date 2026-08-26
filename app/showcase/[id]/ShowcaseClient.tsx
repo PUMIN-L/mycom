@@ -294,7 +294,7 @@ export default function ShowcaseClient({
           showToast("ลบ content สำเร็จ", "success");
         } else {
           showToast("ลบ content สำเร็จ", "success");
-          setTimeout(() => router.push("/showcase"), 1200);
+          setTimeout(() => router.push("/adminpanel"), 1200);
         }
       } else {
         showToast("เกิดข้อผิดพลาดในการลบ", "error");
@@ -1043,7 +1043,7 @@ export default function ShowcaseClient({
               )}
               {isLoggedIn && (
                 <p>
-                  <Link href="/showcase" className="text-orange-500 hover:text-orange-600 font-medium">
+                  <Link href="/adminpanel" className="text-orange-500 hover:text-orange-600 font-medium">
                     ← Back to All Contents
                   </Link>
                 </p>
@@ -1147,7 +1147,7 @@ export default function ShowcaseClient({
           images={orphanedImages}
           onComplete={() => {
             setOrphanedImages([]);
-            setTimeout(() => router.push("/showcase"), 500);
+            setTimeout(() => router.push("/adminpanel"), 500);
           }}
         />
       )}

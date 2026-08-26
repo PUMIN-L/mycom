@@ -13,11 +13,10 @@ export default function robots(): MetadataRoute.Robots {
         "/create-product",
         "/create-content",
         "/edit-product",
-        // Block ONLY the /showcase content-list page (the `$` anchors to exact) —
-        // the /showcase/{id} pages under it are PUBLIC content (viewable by
-        // everyone, with Article JSON-LD) and SHOULD be crawled + indexed, so
-        // they stay allowed and are listed in the sitemap.
-        "/showcase$",
+        // Admin Panel hub (moved from /showcase). /showcase/{id} content pages
+        // are PUBLIC (in the sitemap, Article JSON-LD) and stay fully crawlable —
+        // never add a /showcase rule back here.
+        "/adminpanel",
         "/customers",
         "/suppliers",
         "/product-specs",

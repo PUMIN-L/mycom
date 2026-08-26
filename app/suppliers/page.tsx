@@ -144,7 +144,7 @@ function SuppliersInner() {
           </div>
           <div className="flex items-center gap-3">
             <Link
-              href="/showcase"
+              href="/adminpanel"
               className="px-4 py-2.5 bg-white border border-gray-200 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 hover:shadow-sm transition-all text-sm flex items-center gap-1.5 shadow-sm"
             >
               🏠 กลับไปหน้าระบบจัดการ

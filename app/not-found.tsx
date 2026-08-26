@@ -22,10 +22,10 @@ export default function NotFound() {
           กลับหน้าแรก
         </Link>
         <Link
-          href="/showcase"
+          href="/catalog"
           className="px-6 py-3 rounded-lg font-semibold border border-gray-300 text-gray-700 bg-white hover:bg-gray-50 transition shadow-sm"
         >
-          ดูเนื้อหาทั้งหมด
+          ดูแคตตาล็อกสินค้า
         </Link>
       </div>
     </div>
