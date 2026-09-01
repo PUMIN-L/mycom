@@ -282,6 +282,53 @@ function CustomersInner() {
     s.name.toLowerCase().includes(searchSalespersonName.toLowerCase())
   );
 
+  const [isExportingCustomers, setIsExportingCustomers] = useState(false);
+
+  const handleExportCustomers = async () => {
+    if (isExportingCustomers) return;
+    if (filteredCustomers.length === 0) {
+      showToast("ไม่มีข้อมูลลูกค้าสำหรับส่งออก", "error");
+      return;
+    }
+    
+    setIsExportingCustomers(true);
+    try {
+      const XLSX = await import("xlsx");
+      
+      const rows = filteredCustomers.map((c) => ({
+        "ชื่อลูกค้า": c.name,
+        "บริษัท": c.companyName || "-",
+        "แผนก": c.department || "-",
+        "เบอร์โทร": c.phone || "-",
+        "อีเมล": c.email || "-",
+        "หมายเหตุ": c.note || "-"
+      }));
+      
+      const ws = XLSX.utils.json_to_sheet(rows);
+      
+      const wscols = [
+        { wch: 25 },
+        { wch: 30 },
+        { wch: 20 },
+        { wch: 15 },
+        { wch: 30 },
+        { wch: 40 },
+      ];
+      ws['!cols'] = wscols;
+
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Customers");
+      
+      XLSX.writeFile(wb, "customers_export.xlsx");
+      showToast("ส่งออกไฟล์ลูกค้าสำเร็จ", "success");
+    } catch (err) {
+      console.error(err);
+      showToast("เกิดข้อผิดพลาดในการส่งออกไฟล์", "error");
+    } finally {
+      setIsExportingCustomers(false);
+    }
+  };
+
   if (isLoading || !isLoggedIn) return null;
 
   return (
@@ -459,13 +506,27 @@ function CustomersInner() {
                   </div>
                   <h2 className="text-2xl font-bold text-gray-800">ลูกค้าทั้งหมด <span className="text-gray-400 text-lg font-normal">({filteredCustomers.length})</span></h2>
                 </div>
-                <button
-                  onClick={() => { setEditingCustomer({}); setCustomerSubmitAttempted(false); setIsCustomerModalOpen(true); }}
-                  className="bg-orange-500 hover:bg-orange-600 text-white px-5 py-2.5 rounded-xl font-medium transition-all shadow-sm hover:shadow-md hover:-translate-y-0.5 flex items-center gap-2"
-                >
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"></path></svg>
-                  เพิ่มลูกค้า
-                </button>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={handleExportCustomers}
+                    disabled={isExportingCustomers}
+                    className="bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 px-5 py-2.5 rounded-xl font-medium transition-all shadow-sm hover:shadow-md hover:-translate-y-0.5 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isExportingCustomers ? (
+                      <div className="w-5 h-5 border-2 border-gray-500 border-t-transparent rounded-full animate-spin"></div>
+                    ) : (
+                      <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                    )}
+                    Export
+                  </button>
+                  <button
+                    onClick={() => { setEditingCustomer({}); setCustomerSubmitAttempted(false); setIsCustomerModalOpen(true); }}
+                    className="bg-orange-500 hover:bg-orange-600 text-white px-5 py-2.5 rounded-xl font-medium transition-all shadow-sm hover:shadow-md hover:-translate-y-0.5 flex items-center gap-2"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"></path></svg>
+                    เพิ่มลูกค้า
+                  </button>
+                </div>
               </div>
 
               {/* Search Filters for Customers */}
