@@ -433,16 +433,20 @@ export default function DashboardPage() {
   };
 
   // Export Excel
+  const [isExporting, setIsExporting] = useState(false);
   const handleExport = async () => {
-    const selectedYear = periodValue.split('-')[0];
-    const yearRecords = salesRecords.filter(
-      (r) => r.saleDate && r.saleDate.startsWith(selectedYear)
-    );
-    const targetRecords = yearRecords.length > 0 ? yearRecords : salesRecords;
+    if (isExporting) return;
+    // Filter records to match the active table filters (year + month)
+    const targetRecords = salesRecords.filter((r) => {
+      if (recordYear && r.saleDate?.substring(0, 4) !== recordYear) return false;
+      if (recordMonth && r.saleDate?.substring(5, 7) !== recordMonth) return false;
+      return true;
+    });
     if (targetRecords.length === 0) {
       showToast("ไม่มีข้อมูลยอดขายสำหรับส่งออก", "error");
       return;
     }
+    setIsExporting(true);
     try {
       const XLSX = await import("xlsx");
       const rows = targetRecords.map((r) => ({
@@ -462,14 +466,18 @@ export default function DashboardPage() {
       }));
       const ws = XLSX.utils.json_to_sheet(rows);
       const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, `Sales ${selectedYear}`);
-      const filename = yearRecords.length > 0
-        ? `sales-report-${selectedYear}.xlsx`
-        : `sales-report-all.xlsx`;
+      const sheetLabel = recordYear ? `พ.ศ. ${Number(recordYear) + 543}` : "ทั้งหมด";
+      XLSX.utils.book_append_sheet(wb, ws, `Sales ${sheetLabel}`);
+      const parts = ["sales-report"];
+      if (recordYear) parts.push(recordYear);
+      if (recordMonth) parts.push(recordMonth);
+      const filename = parts.join("-") + ".xlsx";
       XLSX.writeFile(wb, filename);
       showToast(`ส่งออกไฟล์ ${filename} เรียบร้อยแล้ว`, "success");
     } catch {
       showToast("ไม่สามารถส่งออกไฟล์ Excel ได้", "error");
+    } finally {
+      setIsExporting(false);
     }
   };
 

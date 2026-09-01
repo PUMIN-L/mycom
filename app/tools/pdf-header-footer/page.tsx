@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import dynamic from "next/dynamic";
@@ -100,11 +100,15 @@ export default function PdfHeaderFooterPage() {
     }
   };
 
-  const onDocumentLoadSuccess = ({ numPages }: { numPages: number }) => {
-    setNumPages(numPages);
-    // Initialize all pages with no header/footer
+  const configsInitializedRef = useRef(false);
+
+  const onDocumentLoadSuccess = ({ numPages: n }: { numPages: number }) => {
+    setNumPages(n);
+    // Only initialize configs on first load — prevent reset when navigating back
+    if (configsInitializedRef.current) return;
+    configsInitializedRef.current = true;
     const configs: Record<number, PageConfig> = {};
-    for (let i = 1; i <= numPages; i++) {
+    for (let i = 1; i <= n; i++) {
       configs[i] = { header: false, footer: false };
     }
     setPageConfigs(configs);
@@ -158,22 +162,27 @@ export default function PdfHeaderFooterPage() {
       if (headerImage) {
         const hBytes = await headerImage.arrayBuffer();
         const uint8 = new Uint8Array(hBytes);
-        // Detect PNG vs JPG
-        if (uint8[0] === 0x89 && uint8[1] === 0x50) {
-          headerEmbed = await pdfDoc.embedPng(hBytes);
-        } else {
-          headerEmbed = await pdfDoc.embedJpg(hBytes);
+        const isPng = uint8[0] === 0x89 && uint8[1] === 0x50;
+        const isJpg = uint8[0] === 0xFF && uint8[1] === 0xD8;
+        if (!isPng && !isJpg) {
+          alert("รูปหัวกระดาษรองรับเฉพาะ PNG และ JPG เท่านั้น");
+          setIsGenerating(false);
+          return;
         }
+        headerEmbed = isPng ? await pdfDoc.embedPng(hBytes) : await pdfDoc.embedJpg(hBytes);
       }
 
       if (footerImage) {
         const fBytes = await footerImage.arrayBuffer();
         const uint8 = new Uint8Array(fBytes);
-        if (uint8[0] === 0x89 && uint8[1] === 0x50) {
-          footerEmbed = await pdfDoc.embedPng(fBytes);
-        } else {
-          footerEmbed = await pdfDoc.embedJpg(fBytes);
+        const isPng = uint8[0] === 0x89 && uint8[1] === 0x50;
+        const isJpg = uint8[0] === 0xFF && uint8[1] === 0xD8;
+        if (!isPng && !isJpg) {
+          alert("รูปท้ายกระดาษรองรับเฉพาะ PNG และ JPG เท่านั้น");
+          setIsGenerating(false);
+          return;
         }
+        footerEmbed = isPng ? await pdfDoc.embedPng(fBytes) : await pdfDoc.embedJpg(fBytes);
       }
 
       for (let i = 0; i < pages.length; i++) {
@@ -722,6 +731,7 @@ export default function PdfHeaderFooterPage() {
                     if (finalPdfUrl) URL.revokeObjectURL(finalPdfUrl);
                     if (headerPreview) URL.revokeObjectURL(headerPreview);
                     if (footerPreview) URL.revokeObjectURL(footerPreview);
+                    configsInitializedRef.current = false;
                     setPdfFile(null); setPdfBytes(null);
                     setHeaderImage(null); setFooterImage(null);
                     setHeaderPreview(""); setFooterPreview("");
