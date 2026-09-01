@@ -2,13 +2,24 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { useAuth } from "../../context/AuthContext";
-import { Document, Page, pdfjs } from "react-pdf";
-import "react-pdf/dist/Page/AnnotationLayer.css";
-import "react-pdf/dist/Page/TextLayer.css";
 
-// Set up pdf.js worker
-pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
+// Dynamically import react-pdf to avoid SSR issues (DOMMatrix not available in Node.js)
+const DynDocument = dynamic(
+  () => import("react-pdf").then((mod) => {
+    mod.pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${mod.pdfjs.version}/build/pdf.worker.min.mjs`;
+    return mod.Document;
+  }),
+  { ssr: false }
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+) as any;
+
+const DynPage = dynamic(
+  () => import("react-pdf").then((mod) => mod.Page),
+  { ssr: false }
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+) as any;
 
 type PageConfig = {
   header: boolean;
@@ -420,7 +431,7 @@ export default function PdfHeaderFooterPage() {
             </div>
 
             {/* Page grid */}
-            <Document file={{ data: pdfBytes }} onLoadSuccess={onDocumentLoadSuccess} loading={
+            <DynDocument file={{ data: pdfBytes }} onLoadSuccess={onDocumentLoadSuccess} loading={
               <div className="flex justify-center py-20"><div className="w-10 h-10 border-4 border-violet-200 border-t-violet-600 rounded-full animate-spin" /></div>
             }>
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-5">
@@ -430,7 +441,7 @@ export default function PdfHeaderFooterPage() {
                     <div key={pageNum} className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden group hover:shadow-md transition-all">
                       {/* Page thumbnail */}
                       <div className="relative bg-gray-100 flex justify-center items-start">
-                        <Page
+                        <DynPage
                           pageNumber={pageNum}
                           width={180}
                           renderTextLayer={false}
@@ -484,7 +495,7 @@ export default function PdfHeaderFooterPage() {
                   );
                 })}
               </div>
-            </Document>
+            </DynDocument>
 
             {/* Navigation */}
             <div className="flex justify-between pt-4">
@@ -672,17 +683,17 @@ export default function PdfHeaderFooterPage() {
                 <span className="text-xs text-gray-400">เลื่อนดูทุกหน้าได้</span>
               </div>
               <div className="max-h-[70vh] overflow-y-auto bg-gray-100 p-6">
-                <Document file={finalPdfUrl} loading={
+                <DynDocument file={finalPdfUrl} loading={
                   <div className="flex justify-center py-20"><div className="w-10 h-10 border-4 border-violet-200 border-t-violet-600 rounded-full animate-spin" /></div>
                 }>
                   <div className="flex flex-col items-center gap-6">
                     {Array.from({ length: numPages }, (_, i) => i + 1).map((pageNum) => (
                       <div key={pageNum} className="shadow-lg rounded-lg overflow-hidden">
-                        <Page pageNumber={pageNum} width={Math.min(700, typeof window !== "undefined" ? window.innerWidth - 80 : 700)} renderTextLayer={false} renderAnnotationLayer={false} />
+                        <DynPage pageNumber={pageNum} width={Math.min(700, typeof window !== "undefined" ? window.innerWidth - 80 : 700)} renderTextLayer={false} renderAnnotationLayer={false} />
                       </div>
                     ))}
                   </div>
-                </Document>
+                </DynDocument>
               </div>
             </div>
 
