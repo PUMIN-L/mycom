@@ -512,12 +512,14 @@ export default function DashboardPage() {
       {/* Header */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8">
         <div className="flex flex-col xl:flex-row justify-between items-start xl:items-end gap-6 mb-10">
-          <div>
-            <h1 className="text-3xl sm:text-4xl font-extrabold text-gray-900 tracking-tight mb-2">
+          <div className="shrink-0">
+            <h1 className="text-3xl sm:text-4xl font-black text-transparent bg-clip-text bg-gradient-to-r from-emerald-600 to-teal-500 tracking-tight mb-2 whitespace-nowrap drop-shadow-sm">
               ภาพรวมยอดขาย
             </h1>
-            <div className="flex flex-wrap items-center gap-2 text-sm text-gray-500 font-medium">
-              <span>ภาพรวมธุรกิจประจำปี</span>
+            <div className="flex flex-wrap items-center gap-2 text-sm font-medium whitespace-nowrap">
+              <span className="bg-emerald-50 text-emerald-700 px-3 py-1 rounded-full border border-emerald-100 shadow-sm">
+                ภาพรวมธุรกิจประจำปี
+              </span>
             </div>
           </div>
 
