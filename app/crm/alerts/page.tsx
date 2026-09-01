@@ -131,6 +131,11 @@ export default function AlertsPage() {
       }
       const d = new Date(snoozeDate);
       d.setHours(6, 0, 0, 0);
+      if (d <= new Date()) {
+        showToast("กรุณาเลือกวันที่ในอนาคต", "error");
+        setIsSnoozing(false);
+        return;
+      }
       snoozeUntilIso = d.toISOString();
     }
 
@@ -458,7 +463,7 @@ export default function AlertsPage() {
                         ตามเอกสาร →
                       </button>
                       <button 
-                        onClick={(e) => { e.stopPropagation(); setSnoozeAlertTarget({ type: "document", id: alert.data.id }); }}
+                        onClick={(e) => { e.stopPropagation(); setSnoozeAlertTarget({ type: "missing_doc", id: alert.data.id }); }}
                         className="px-3 py-2 bg-amber-50 text-amber-700 text-sm font-semibold rounded-xl hover:bg-amber-100 transition-colors flex items-center justify-center gap-1.5"
                         title="เลื่อนแจ้งเตือน"
                       >

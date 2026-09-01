@@ -545,7 +545,7 @@ export async function getAlerts(
      LEFT JOIN salespeople sp ON sr.salespersonId = sp.id
      LEFT JOIN customers c ON sr.customerId = c.id
      LEFT JOIN companies co ON sr.companyId = co.id
-     LEFT JOIN alert_snoozes sno ON sno.alertType = 'document' AND sno.referenceId = sr.id
+     LEFT JOIN alert_snoozes sno ON sno.alertType = 'missing_doc' AND sno.referenceId = sr.id
      WHERE 
        ((sr.saleType = 'equipment' AND sr.deliveryRef = '' AND DATEDIFF(?, sr.saleDate) >= 20)
        OR (sr.invoiceRef != '' AND sr.receiptRef = '' AND DATEDIFF(?, sr.saleDate) >= 30))

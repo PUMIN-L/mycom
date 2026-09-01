@@ -10,9 +10,13 @@ export default function GlobalAdminBell() {
   const [alertsCount, setAlertsCount] = useState<number>(0);
   const [isAlertsLoading, setIsAlertsLoading] = useState<boolean>(true);
 
-  // Poll alerts only if logged in
+  // Poll alerts only if logged in and on the dashboard
   useEffect(() => {
-    if (!isLoggedIn) return;
+    if (!isLoggedIn || pathname !== "/dashboard") {
+      setAlertsCount(0);
+      setIsAlertsLoading(true);
+      return;
+    }
     
     async function fetchAlerts() {
       try {
@@ -36,7 +40,7 @@ export default function GlobalAdminBell() {
     fetchAlerts();
     const interval = setInterval(fetchAlerts, 5 * 60 * 1000); // 5 min
     return () => clearInterval(interval);
-  }, [isLoggedIn]);
+  }, [isLoggedIn, pathname]);
 
   if (!isLoggedIn) return null;
 

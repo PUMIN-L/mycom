@@ -74,17 +74,27 @@ export default function PdfHeaderFooterPage() {
   // ── File handlers ──────────────────────────────────────────────────────
 
   const handlePdfUpload = async (file: File) => {
+    if (file.size > 50 * 1024 * 1024) {
+      alert("ไฟล์ PDF ขนาดใหญ่เกินไป (สูงสุด 50MB)");
+      return;
+    }
     setPdfFile(file);
     const bytes = await file.arrayBuffer();
     setPdfBytes(bytes);
   };
 
   const handleImageUpload = (file: File, type: "header" | "footer") => {
+    if (file.size > 10 * 1024 * 1024) {
+      alert("ไฟล์รูปภาพขนาดใหญ่เกินไป (สูงสุด 10MB)");
+      return;
+    }
     const url = URL.createObjectURL(file);
     if (type === "header") {
+      if (headerPreview) URL.revokeObjectURL(headerPreview);
       setHeaderImage(file);
       setHeaderPreview(url);
     } else {
+      if (footerPreview) URL.revokeObjectURL(footerPreview);
       setFooterImage(file);
       setFooterPreview(url);
     }
@@ -700,7 +710,7 @@ export default function PdfHeaderFooterPage() {
             {/* Action buttons */}
             <div className="flex flex-col sm:flex-row justify-between gap-4 pt-4">
               <button
-                onClick={() => { setFinalPdfUrl(""); setStep(3); }}
+                onClick={() => { if (finalPdfUrl) URL.revokeObjectURL(finalPdfUrl); setFinalPdfUrl(""); setStep(3); }}
                 className="px-6 py-2.5 bg-white border border-gray-200 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 transition-all text-sm shadow-sm"
               >
                 ← กลับไปแก้ไข
@@ -708,7 +718,10 @@ export default function PdfHeaderFooterPage() {
               <div className="flex gap-3">
                 <button
                   onClick={() => {
-                    // Reset everything
+                    // Reset everything — revoke object URLs first
+                    if (finalPdfUrl) URL.revokeObjectURL(finalPdfUrl);
+                    if (headerPreview) URL.revokeObjectURL(headerPreview);
+                    if (footerPreview) URL.revokeObjectURL(footerPreview);
                     setPdfFile(null); setPdfBytes(null);
                     setHeaderImage(null); setFooterImage(null);
                     setHeaderPreview(""); setFooterPreview("");
