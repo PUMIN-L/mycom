@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
 import { getContentByProductId } from "../../../lib/contentStore";
-import { getProduct } from "../../../lib/productStore";
+import { getProduct, isProductPublic } from "../../../lib/productStore";
 import { getSession } from "../../../lib/session";
 import { LINE_ID, LINE_URL, LINE_APP_URL, lineQrUrl } from "../../../lib/contact";
 
@@ -22,21 +22,33 @@ export default async function ProductContentGateway({
 }) {
   const { productId } = await params;
 
-  // Resolve on the server. If content exists, do a real (server) redirect so
-  // crawlers follow it and there is no client-side fetch → redirect → fetch hop.
-  const content = await getContentByProductId(productId);
-  if (content) {
+  // Resolve product + session + content together — the content redirect below
+  // must not fire for a hidden product unless the caller is logged in (the
+  // content page is effectively that product's marketing page).
+  const [content, product, session] = await Promise.all([
+    getContentByProductId(productId),
+    getProduct(productId),
+    getSession(),
+  ]);
+  const isLoggedIn = !!session;
+  const productVisible = isLoggedIn || (!!product && isProductPublic(product));
+
+  // Do a real (server) redirect so crawlers follow it and there is no
+  // client-side fetch → redirect → fetch hop.
+  if (content && productVisible) {
     redirect(`/showcase/${content.id}`);
   }
 
-  // No content linked yet. Branch on the (server-authoritative) session so we
-  // never flash the wrong UI: admins get a "create content" CTA, everyone else
-  // gets a LINE QR to ask for more info.
-  const [product, session] = await Promise.all([getProduct(productId), getSession()]);
-  const productTitle = product
-    ? product.title_th || product.title_en || product.title_zh
-    : productId;
-  const isLoggedIn = !!session;
+  // Either no content linked yet, or the linked product is hidden from this
+  // caller — treat both the same: admins get a "create content" CTA (only
+  // when content is genuinely missing), everyone else gets a LINE QR. Only
+  // show the product's own title when this caller may actually see the
+  // product — otherwise a guessed productId could still fish out a hidden
+  // product's name.
+  const productTitle =
+    product && productVisible
+      ? product.title_th || product.title_en || product.title_zh
+      : productId;
 
   return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4 py-12">

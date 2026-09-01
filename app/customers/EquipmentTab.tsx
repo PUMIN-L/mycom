@@ -1,5 +1,6 @@
 "use client";
 import DatePicker from "../components/DatePicker";
+import { toLocalDateString } from "../lib/dateFormat";
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import Link from "next/link";
 import SearchableDropdown from "../components/SearchableDropdown";
@@ -9,7 +10,6 @@ import type { SearchableDropdownOption } from "../components/SearchableDropdown"
 import type {
   CustomerEquipment,
   ServiceSchedule,
-  ServiceLog,
 } from "../lib/types";
 
 /** Strip HTML tags from rich-text product titles for plain-text display. */
@@ -74,39 +74,13 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
   const [editing, setEditing] = useState<Partial<CustomerEquipment> | null>(null);
   const [submitAttempted, setSubmitAttempted] = useState(false);
 
-  // Detail view (schedules + logs)
+  // Detail view — EquipmentDetailsModal owns all schedule/log state and
+  // fetching itself; this tab only tracks WHICH equipment is being viewed.
   const [viewingEquipment, setViewingEquipment] = useState<CustomerEquipment | null>(null);
-  const [schedules, setSchedules] = useState<ServiceSchedule[]>([]);
-  const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
-  const [viewingSchedule, setViewingSchedule] = useState<Partial<ServiceSchedule> | null>(null);
-  const [editingSchedule, setEditingSchedule] = useState<Partial<ServiceSchedule> | null>(null);
-  const [scheduleFormError, setScheduleFormError] = useState(false);
-  const [logs, setLogs] = useState<Record<string, ServiceLog[]>>({});
 
-  // Complete action modal
-  const [completingScheduleId, setCompletingScheduleId] = useState<string | null>(null);
-  const [completeForm, setCompleteForm] = useState({
-    serviceReportNumber: "",
-    actionDate: new Date().toISOString().slice(0, 10),
-    resultDetails: "",
-    customerFeedback: "",
-  });
-
-  // Delete confirm
+  // Delete confirm (equipment row delete — see the confirm dialog in the render
+  // section below)
   const [deleteConfirm, setDeleteConfirm] = useState<CustomerEquipment | null>(null);
-  const [deleteScheduleConfirm, setDeleteScheduleConfirm] = useState<ServiceSchedule | null>(null);
-  const [deleteCompletedSchedule, setDeleteCompletedSchedule] = useState<ServiceSchedule | null>(null);
-  const [deleteOtpCode, setDeleteOtpCode] = useState("");
-  const [deleteOtpEmail, setDeleteOtpEmail] = useState<string | null>(null);
-  const [isSendingOtp, setIsSendingOtp] = useState(false);
-  const [otpCountdown, setOtpCountdown] = useState(0);
-
-  useEffect(() => {
-    if (otpCountdown > 0) {
-      const timer = setTimeout(() => setOtpCountdown(otpCountdown - 1), 1000);
-      return () => clearTimeout(timer);
-    }
-  }, [otpCountdown]);
 
   // Search and Filter
   const [searchText, setSearchText] = useState("");
@@ -190,7 +164,7 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
       XLSX.utils.book_append_sheet(wb, ws1, "อุปกรณ์");
       XLSX.utils.book_append_sheet(wb, ws2, "นัดหมาย");
 
-      const dateStr = new Date().toISOString().slice(0, 10);
+      const dateStr = toLocalDateString(new Date());
       XLSX.writeFile(wb, `CRM_Equipment_Backup_${dateStr}.xlsx`);
       showToast("Export สำเร็จ", "success");
     } catch (err) {
@@ -223,6 +197,9 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
         const data = await prodRes.json();
         setProducts(Array.isArray(data) ? data : data.products || []);
       }
+      if (!eqRes.ok || !custRes.ok || !compRes.ok || !prodRes.ok) {
+        showToastRef.current("โหลดข้อมูลบางส่วนไม่สำเร็จ กรุณาลองใหม่", "error");
+      }
     } catch (err) {
       console.error(err);
       showToastRef.current("โหลดข้อมูลอุปกรณ์ไม่สำเร็จ", "error");
@@ -245,7 +222,6 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
         if (eq) {
           if (action === "view") {
             setViewingEquipment(eq);
-            fetchSchedules(eq.id);
           } else {
             setEditing({ ...eq, productId: eq.productId || "_custom" });
             setSubmitAttempted(false);
@@ -260,34 +236,6 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
     }
   }, [equipments, isModalOpen, viewingEquipment]);
 
-  const fetchSchedules = useCallback(async (equipmentId: string) => {
-    setSchedules([]); // Clear immediately so stale data doesn't flash
-    try {
-      const res = await fetch(`/api/admin/schedules?equipmentId=${equipmentId}`);
-      if (res.ok) {
-        const data = await res.json();
-        // Only apply if we're still viewing this equipment (prevents stale race).
-        setViewingEquipment((current) => {
-          if (current?.id === equipmentId) setSchedules(data);
-          return current;
-        });
-      }
-    } catch (err) {
-      console.error(err);
-    }
-  }, []);
-
-  const fetchLogs = useCallback(async (scheduleId: string) => {
-    try {
-      const res = await fetch(`/api/admin/schedules/${scheduleId}/logs`);
-      if (res.ok) {
-        const data = await res.json();
-        setLogs((prev) => ({ ...prev, [scheduleId]: data }));
-      }
-    } catch (err) {
-      console.error(err);
-    }
-  }, []);
 
   // ── Dropdown options ───────────────────────────────────────────────────────
 
@@ -407,144 +355,6 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
     }
   };
 
-  // ── Schedule handlers ──────────────────────────────────────────────────────
-
-  const handleSaveSchedule = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (isSaving) return;
-    if (!editingSchedule?.scheduledDate) {
-      setScheduleFormError(true);
-      showToast("กรุณาระบุวันที่นัดหมาย", "error");
-      return;
-    }
-    setScheduleFormError(false);
-    setIsSaving(true);
-    try {
-      const method = editingSchedule.id ? "PUT" : "POST";
-      const url = editingSchedule.id
-        ? `/api/admin/schedules/${editingSchedule.id}`
-        : "/api/admin/schedules";
-      const body = {
-        ...editingSchedule,
-        equipmentId: editingSchedule.equipmentId || viewingEquipment?.id,
-      };
-      const res = await fetch(url, {
-        method,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) throw new Error("Failed to save schedule");
-      showToast(editingSchedule.id ? "อัปเดตนัดหมายสำเร็จ" : "สร้างนัดหมายสำเร็จ", "success");
-      setIsScheduleModalOpen(false);
-      setEditingSchedule(null);
-      if (viewingEquipment) fetchSchedules(viewingEquipment.id);
-    } catch (err) {
-      console.error(err);
-      showToast("บันทึกนัดหมายไม่สำเร็จ", "error");
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  const executeDeleteSchedule = async () => {
-    if (!deleteScheduleConfirm || isSaving) return;
-    setIsSaving(true);
-    try {
-      const res = await fetch(`/api/admin/schedules/${deleteScheduleConfirm.id}`, { method: "DELETE" });
-      if (!res.ok) throw new Error("Failed to delete");
-      showToast("ลบนัดหมายสำเร็จ", "success");
-      setDeleteScheduleConfirm(null);
-      if (viewingEquipment) fetchSchedules(viewingEquipment.id);
-    } catch (err) {
-      console.error(err);
-      showToast("ลบนัดหมายไม่สำเร็จ", "error");
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  const handleSendDeleteOtp = async () => {
-    if (!deleteCompletedSchedule || isSendingOtp) return;
-    setIsSendingOtp(true);
-    try {
-      const res = await fetch(`/api/admin/schedules/${deleteCompletedSchedule.id}/delete-otp`, {
-        method: "POST",
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || "Failed to send OTP");
-      }
-      setDeleteOtpEmail(data.email || "อีเมลผู้ดูแลระบบ");
-      setOtpCountdown(60);
-      showToast(data.message || "ส่งรหัส OTP เรียบร้อยแล้ว", "success");
-    } catch (err: any) {
-      console.error(err);
-      showToast(err.message || "ไม่สามารถส่งรหัส OTP ได้", "error");
-    } finally {
-      setIsSendingOtp(false);
-    }
-  };
-
-  const executeDeleteCompletedSchedule = async () => {
-    if (!deleteCompletedSchedule || isSaving) return;
-    if (!deleteOtpCode || deleteOtpCode.length !== 6) {
-      showToast("กรุณากรอกรหัส OTP 6 หลัก", "error");
-      return;
-    }
-    setIsSaving(true);
-    try {
-      const res = await fetch(`/api/admin/schedules/${deleteCompletedSchedule.id}`, {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ otp: deleteOtpCode }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || "Failed to delete schedule");
-      }
-      showToast("ลบนัดหมายสำเร็จ", "success");
-      setDeleteCompletedSchedule(null);
-      setDeleteOtpCode("");
-      setDeleteOtpEmail(null);
-      if (viewingEquipment) fetchSchedules(viewingEquipment.id);
-    } catch (err: any) {
-      console.error(err);
-      showToast(err.message || "ลบนัดหมายไม่สำเร็จ", "error");
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  const handleComplete = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!completingScheduleId || isSaving) return;
-    setIsSaving(true);
-    try {
-      const res = await fetch(`/api/admin/schedules/${completingScheduleId}/logs`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(completeForm),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || "Failed");
-      }
-      showToast("บันทึกผลงานสำเร็จ", "success");
-      setCompletingScheduleId(null);
-      setCompleteForm({
-        serviceReportNumber: "",
-        actionDate: new Date().toISOString().slice(0, 10),
-        resultDetails: "",
-        customerFeedback: "",
-      });
-      if (viewingEquipment) fetchSchedules(viewingEquipment.id);
-    } catch (err) {
-      console.error(err);
-      showToast(err instanceof Error ? err.message : "บันทึกผลงานไม่สำเร็จ", "error");
-    } finally {
-      setIsSaving(false);
-    }
-  };
 
   // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -583,7 +393,7 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
   };
 
   const scheduleStatusBadge = (status: string, date: string) => {
-    const isOverdue = status === "pending" && date < new Date().toISOString().slice(0, 10);
+    const isOverdue = status === "pending" && date < toLocalDateString(new Date());
     if (status === "completed")
       return <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-green-100 text-green-700">✅ เสร็จแล้ว</span>;
     if (status === "cancelled")
@@ -703,7 +513,7 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
                   <tr
                     key={eq.id}
                     className="border-b border-gray-50 cursor-pointer hover:bg-gray-50/50 transition-colors"
-                    onClick={() => { setViewingEquipment(eq); setLogs({}); fetchSchedules(eq.id); }}
+                    onClick={() => setViewingEquipment(eq)}
                   >
                     <td className="py-4 pr-4">
                       <div className="font-semibold text-gray-800">{eq.customerName || "—"}</div>
@@ -813,6 +623,33 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
             setIsModalOpen(true);
           }}
         />
+      )}
+
+      {/* Delete Equipment Confirmation Modal — the row trash button only sets
+          deleteConfirm; the actual DELETE only happens if this is confirmed
+          (this dialog was lost in an earlier refactor, see
+          openspec/changes/fix-crm-data-integrity). */}
+      {deleteConfirm && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-gray-900/40 backdrop-blur-sm" onClick={() => setDeleteConfirm(null)}></div>
+          <div className="relative bg-white rounded-3xl shadow-2xl max-w-sm w-full p-6 text-center transform transition-all scale-100 opacity-100">
+            <div className="w-16 h-16 bg-red-100 text-red-500 rounded-full flex items-center justify-center mx-auto mb-4">
+              <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+            </div>
+            <h3 className="text-xl font-bold text-gray-900 mb-2">ยืนยันการลบอุปกรณ์</h3>
+            <p className="text-gray-500 mb-6">
+              คุณแน่ใจหรือไม่ที่จะลบอุปกรณ์ <strong>{stripHtml(deleteConfirm.productName) || deleteConfirm.productId}</strong>
+              {deleteConfirm.serialNumber ? <> (S/N: <strong>{deleteConfirm.serialNumber}</strong>)</> : null}?
+              ประวัตินัดหมาย/บันทึกผลงานของอุปกรณ์นี้จะถูกลบไปด้วย และไม่สามารถกู้คืนได้
+            </p>
+            <div className="flex gap-3 justify-center">
+              <button onClick={() => setDeleteConfirm(null)} className="px-5 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-800 font-semibold rounded-xl transition-colors flex-1">ยกเลิก</button>
+              <button onClick={executeDelete} disabled={isSaving} className="px-5 py-2.5 bg-red-500 hover:bg-red-600 text-white font-semibold rounded-xl transition-colors shadow-sm hover:shadow-md flex-1 disabled:opacity-50">
+                {isSaving ? "กำลังลบ..." : "ลบข้อมูล"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

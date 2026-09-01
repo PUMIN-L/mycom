@@ -40,9 +40,9 @@ process.env.DB_USER = 'tester';
 process.env.DB_PASSWORD = 'pw';
 process.env.DB_NAME = 'testdb';
 
-// A version SELECT result that MATCHES SCHEMA_VERSION (21) → bootstrap fast-path,
+// A version SELECT result that MATCHES SCHEMA_VERSION (27) → bootstrap fast-path,
 // i.e. skip the whole CREATE TABLE / seed block.
-const SCHEMA_MATCH: [Array<{ value: string }>, unknown[]] = [[{ value: '26' }], []];
+const SCHEMA_MATCH: [Array<{ value: string }>, unknown[]] = [[{ value: '27' }], []];
 // An empty result → no schema_version row / no admin row → full bootstrap.
 const EMPTY: [unknown[], unknown[]] = [[], []];
 
@@ -141,9 +141,71 @@ describe('db.ts', () => {
       // Schema version is recorded so future cold instances take the fast path
       expect(mockConnection.query).toHaveBeenCalledWith(
         expect.stringContaining("INSERT INTO settings"),
-        ['26'],
+        ['27'],
       );
       expect(mockConnection.release).toHaveBeenCalledTimes(1);
+    });
+
+    it('creates `products` BEFORE anything with a foreign key referencing it (fresh-DB bootstrap must not throw ER_FK_CANNOT_OPEN_PARENT)', async () => {
+      const db = await freshImport();
+      mockConnection.query.mockResolvedValue(EMPTY);
+
+      await db.getDbConnection();
+
+      const sqlOf = (call: unknown[]) => String(call[0]);
+      const indexOfMatch = (needle: string) =>
+        mockConnection.query.mock.calls.findIndex((c) => sqlOf(c).includes(needle));
+
+      const productsIdx = indexOfMatch('CREATE TABLE IF NOT EXISTS products');
+      const contentFkIdx = indexOfMatch('fk_content_product');
+      const productSpecsIdx = indexOfMatch('CREATE TABLE IF NOT EXISTS product_specs');
+
+      expect(productsIdx).toBeGreaterThanOrEqual(0);
+      expect(contentFkIdx).toBeGreaterThanOrEqual(0);
+      expect(productSpecsIdx).toBeGreaterThanOrEqual(0);
+      // Both statements reference products(id) via a foreign key, so `products`
+      // must exist first — on a real (FK-enforcing) database, creating either
+      // of these before `products` throws ER_FK_CANNOT_OPEN_PARENT and bootstrap
+      // never completes for a fresh install.
+      expect(productsIdx).toBeLessThan(contentFkIdx);
+      expect(productsIdx).toBeLessThan(productSpecsIdx);
+    });
+
+    it('propagates a REAL failure adding customer_equipments.salesRecordId instead of swallowing it', async () => {
+      const db = await freshImport();
+      const fatal = { code: 'ER_LOCK_WAIT_TIMEOUT', message: 'Lock wait timeout exceeded' };
+      mockConnection.query.mockImplementation((sql: string) => {
+        if (sql.includes('ADD COLUMN salesRecordId')) return Promise.reject(fatal);
+        return Promise.resolve(EMPTY);
+      });
+
+      // A genuine DDL failure must propagate — not be console.warn'd away — so
+      // schema_version is never stamped over a half-applied migration.
+      await expect(db.getDbConnection()).rejects.toBe(fatal);
+      const settingsCalls = mockConnection.query.mock.calls.filter((c) =>
+        String(c[0]).includes('INSERT INTO settings')
+      );
+      expect(settingsCalls).toHaveLength(0);
+    });
+
+    it('still swallows the benign "column already exists" case for salesRecordId/productName', async () => {
+      process.env.ADMIN_PASSWORD = 'pw';
+      const db = await freshImport();
+      const dup = { code: 'ER_DUP_FIELDNAME', message: 'Duplicate column name' };
+      mockConnection.query.mockImplementation((sql: string) => {
+        if (sql.includes('ADD COLUMN salesRecordId') || sql.includes('ADD COLUMN productName')) {
+          return Promise.reject(dup);
+        }
+        return Promise.resolve(EMPTY);
+      });
+
+      // Should complete normally — the benign duplicate-column error is not
+      // rethrown, and bootstrap still reaches the schema_version stamp.
+      await db.getDbConnection();
+      const settingsCalls = mockConnection.query.mock.calls.filter((c) =>
+        String(c[0]).includes('INSERT INTO settings')
+      );
+      expect(settingsCalls).toHaveLength(1);
     });
 
     it('SKIPS bootstrap entirely on a Vercel preview deploy (never mutates the shared prod DB)', async () => {

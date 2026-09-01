@@ -8,6 +8,7 @@ import {
   SCHEDULE_STATUSES,
 } from "../../../../lib/crmStore";
 import { getSetting, setSetting } from "../../../../lib/settingsStore";
+import { recordOtpFailure, clearOtpAttempts } from "../../../../lib/otpAttempts";
 
 // GET /api/admin/schedules/[id] — single schedule.
 export const GET = withRoute(
@@ -63,6 +64,18 @@ export const PUT = withRoute(
       );
     }
 
+    // A schedule can only become "completed" together with its result log, via
+    // POST .../logs -> completeScheduleWithLog (one transaction, guarantees the
+    // log<->completed invariant). Rejecting it here, not just in updateSchedule,
+    // means the generic edit form can never silently complete a job with no
+    // record of what was done.
+    if (data.status === "completed") {
+      return jsonError(
+        "ต้องบันทึกผลงานผ่านหน้าจบงานเท่านั้น (แนบ service log)",
+        400
+      );
+    }
+
     const updated = await updateSchedule(id, data);
     if (!updated) return jsonError("ไม่พบนัดหมาย", 404);
     return NextResponse.json(updated);
@@ -96,23 +109,35 @@ export const DELETE = withRoute(
         return jsonError("กรุณาระบุรหัส OTP 6 หลักที่ถูกต้องจากอีเมล", 400);
       }
 
-      const savedOtp = await getSetting(`schedule_delete_otp_${id}`);
-      const expiresAtStr = await getSetting(`schedule_delete_otp_expires_${id}`);
+      const otpKey = `schedule_delete_otp_${id}`;
+      const otpExpiresKey = `schedule_delete_otp_expires_${id}`;
+      const savedOtp = await getSetting(otpKey);
+      const expiresAtStr = await getSetting(otpExpiresKey);
 
       if (!savedOtp || otp !== savedOtp) {
+        if (savedOtp) {
+          const { locked } = await recordOtpFailure(otpKey, otpExpiresKey);
+          if (locked) {
+            return jsonError(
+              "กรอกรหัส OTP ผิดเกินจำนวนที่กำหนด กรุณาขอรหัสใหม่",
+              400
+            );
+          }
+        }
         return jsonError("รหัส OTP ไม่ถูกต้อง", 400);
       }
 
       const expiresAt = parseInt(expiresAtStr || "0", 10);
       if (Date.now() > expiresAt) {
-        await setSetting(`schedule_delete_otp_${id}`, "");
-        await setSetting(`schedule_delete_otp_expires_${id}`, "0");
+        await setSetting(otpKey, "");
+        await setSetting(otpExpiresKey, "0");
         return jsonError("รหัส OTP หมดอายุแล้ว กรุณาขอรหัสใหม่", 400);
       }
 
       // Clear used OTP
-      await setSetting(`schedule_delete_otp_${id}`, "");
-      await setSetting(`schedule_delete_otp_expires_${id}`, "0");
+      await setSetting(otpKey, "");
+      await setSetting(otpExpiresKey, "0");
+      await clearOtpAttempts(otpKey);
     }
 
     const deleted = await deleteSchedule(id);

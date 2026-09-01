@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useAuth } from "../../context/AuthContext";
 import Toast from "../../components/Toast";
 import type { CrmAlerts, CustomerEquipment } from "../../lib/types";
+import { toLocalDateString } from "../../lib/dateFormat";
 
 // Import Modals
 import EquipmentEditModal from "../../components/modals/EquipmentEditModal";
@@ -29,7 +30,7 @@ export default function AlertsPage() {
   const [completingId, setCompletingId] = useState<string | null>(null);
   const [completeForm, setCompleteForm] = useState({
     serviceReportNumber: "",
-    actionDate: new Date().toISOString().slice(0, 10),
+    actionDate: toLocalDateString(new Date()),
     resultDetails: "",
     customerFeedback: "",
   });
@@ -53,7 +54,13 @@ export default function AlertsPage() {
     setIsLoading(true);
     try {
       const res = await fetch("/api/admin/alerts");
-      if (res.ok) setAlerts(await res.json());
+      if (res.ok) {
+        setAlerts(await res.json());
+      } else if (res.status === 401) {
+        router.replace("/login");
+      } else {
+        showToast("โหลดข้อมูลแจ้งเตือนไม่สำเร็จ", "error");
+      }
     } catch (err) {
       console.error(err);
       showToast("โหลดข้อมูลแจ้งเตือนไม่สำเร็จ", "error");
@@ -85,7 +92,7 @@ export default function AlertsPage() {
       setCompletingId(null);
       setCompleteForm({
         serviceReportNumber: "",
-        actionDate: new Date().toISOString().slice(0, 10),
+        actionDate: toLocalDateString(new Date()),
         resultDetails: "",
         customerFeedback: "",
       });

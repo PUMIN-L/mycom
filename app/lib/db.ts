@@ -4,7 +4,7 @@ import type { QueryResult, FieldPacket, RowDataPacket } from "mysql2";
 
 // Bump whenever the schema below changes — a mismatch re-runs the (idempotent)
 // bump; a match lets returning cold instances skip it in one SELECT.
-const SCHEMA_VERSION = 26;
+const SCHEMA_VERSION = 27;
 
 type DbPool = ReturnType<typeof mysql.createPool>;
 
@@ -106,25 +106,12 @@ async function bootstrapSchemaOnce(): Promise<void> {
       if (!isBenignSchemaError(error)) throw error;
     }
 
-    try {
-      await connection.query(
-        `ALTER TABLE contents ADD CONSTRAINT fk_content_product FOREIGN KEY (productId) REFERENCES products(id) ON DELETE CASCADE`
-      );
-    } catch (error) {
-      if (!isBenignSchemaError(error)) throw error;
-    }
-
-    // ── Product Specs table ────────────────────────────────────────────────
-    await connection.query(`
-        CREATE TABLE IF NOT EXISTS product_specs (
-          id VARCHAR(255) PRIMARY KEY,
-          productId VARCHAR(255) NOT NULL,
-          name VARCHAR(255) NOT NULL,
-          detail TEXT NOT NULL,
-          createdAt VARCHAR(255) NOT NULL,
-          FOREIGN KEY (productId) REFERENCES products(id) ON DELETE CASCADE
-        )
-      `);
+    // NOTE: the FK from contents.productId -> products(id), and the
+    // product_specs table (which has an inline FK to products), are created
+    // further down — AFTER the `products` table exists (see below `products`
+    // block). Creating either before `products` exists throws
+    // ER_FK_CANNOT_OPEN_PARENT on a fresh database (errno 1824), which is not
+    // a benign error, so bootstrap would fail entirely for a first-time install.
 
     // ── Users table ────────────────────────────────────────────────────────
     await connection.query(`
@@ -350,6 +337,28 @@ async function bootstrapSchemaOnce(): Promise<void> {
       if (!isBenignSchemaError(error)) throw error;
     }
 
+    // ── contents -> products FK (moved here so `products` already exists) ───
+    try {
+      await connection.query(
+        `ALTER TABLE contents ADD CONSTRAINT fk_content_product FOREIGN KEY (productId) REFERENCES products(id) ON DELETE CASCADE`
+      );
+    } catch (error) {
+      if (!isBenignSchemaError(error)) throw error;
+    }
+
+    // ── Product Specs table (has an inline FK to products, so it must be
+    // created after `products` exists — see the NOTE near the contents table) ──
+    await connection.query(`
+        CREATE TABLE IF NOT EXISTS product_specs (
+          id VARCHAR(255) PRIMARY KEY,
+          productId VARCHAR(255) NOT NULL,
+          name VARCHAR(255) NOT NULL,
+          detail TEXT NOT NULL,
+          createdAt VARCHAR(255) NOT NULL,
+          FOREIGN KEY (productId) REFERENCES products(id) ON DELETE CASCADE
+        )
+      `);
+
     // ── Companies table ──────────────────────────────────────────────────────
     await connection.query(`
         CREATE TABLE IF NOT EXISTS companies (
@@ -497,13 +506,16 @@ async function bootstrapSchemaOnce(): Promise<void> {
       `);
     try {
       await connection.query("ALTER TABLE customer_equipments ADD COLUMN salesRecordId VARCHAR(255) DEFAULT ''");
-    } catch (e: any) {
-      if (e.code !== "ER_DUP_FIELDNAME") console.warn("Failed to add salesRecordId to customer_equipments", e);
+    } catch (error) {
+      // Same pattern as every other migration in this file: swallow only
+      // "already exists"; rethrow a REAL failure so it isn't silently skipped
+      // and schema_version never gets stamped over a broken migration.
+      if (!isBenignSchemaError(error)) throw error;
     }
     try {
       await connection.query("ALTER TABLE customer_equipments ADD COLUMN productName VARCHAR(255) DEFAULT ''");
-    } catch (e: any) {
-      if (e.code !== "ER_DUP_FIELDNAME") console.warn("Failed to add productName to customer_equipments", e);
+    } catch (error) {
+      if (!isBenignSchemaError(error)) throw error;
     }
     // Drop fk_ce_customer so equipments can be created without a customer
     // (serial numbers need to be saved even when no customer is selected)

@@ -1,19 +1,24 @@
 #!/usr/bin/env sh
-# Pre-push gate: run the unit-test suite before every push and BLOCK the push if
-# anything fails. Wired up via `git config core.hooksPath .githooks`, which the
-# package.json "prepare" script sets automatically on `npm install` — so this
-# hook is version-controlled and works for anyone who clones the repo.
+# Pre-push gate: run the unit-test suite (with coverage thresholds) before
+# every push and BLOCK the push if anything fails. Wired up via
+# `git config core.hooksPath .githooks`, which the package.json "prepare"
+# script sets automatically on `npm install` — so this hook is
+# version-controlled and works for anyone who clones the repo.
+#
+# `--coverage` is not optional here: the thresholds in vitest.config.ts are
+# meaningless decoration unless something actually runs them before code
+# reaches the remote. See ARCHITECTURE.md#testing.
 #
 # Emergency bypass (use sparingly):  git push --no-verify
 
-echo "▶ pre-push: running unit tests (vitest run)…"
+echo "▶ pre-push: running unit tests with coverage thresholds (vitest run --coverage)…"
 
 # `npm test` is watch mode in this project, so call the one-shot runner directly.
-if ! npx vitest run; then
+if ! npx vitest run --coverage; then
   echo ""
-  echo "✗ Tests failed — push aborted."
-  echo "  Fix the failures, or bypass with:  git push --no-verify"
+  echo "✗ Tests failed, or coverage dropped below threshold — push aborted."
+  echo "  Fix the failures/add tests, or bypass with:  git push --no-verify"
   exit 1
 fi
 
-echo "✓ All tests passed — continuing push."
+echo "✓ All tests passed and coverage thresholds met — continuing push."

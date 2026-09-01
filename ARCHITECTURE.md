@@ -404,7 +404,16 @@ Next.js validates handler signatures via generated types.
   shared components have targeted tests). Coverage is scoped via
   `coverage.include` in [`vitest.config.ts`](./vitest.config.ts), which makes v8
   report **every** matching file (even untested ones at 0%), gated by thresholds
-  (~95 stmts / 90 branch / 97 funcs / 96 lines).
+  set to just below the real, currently-measured numbers (see the comment next
+  to `thresholds` in `vitest.config.ts` for the exact figures and date — they
+  drift as tests are added, so treat that comment as the source of truth, not
+  this doc). Several stores/routes genuinely sit at 0% today (e.g.
+  `billingStore.ts`, `expenseStore.ts`, `supplierStore.ts`, the
+  `/api/suppliers`, `/api/salespeople` and `/api/product-specs` routes) —
+  the threshold is deliberately set low enough to pass with that gap still
+  open, rather than pretending otherwise. Closing it means adding real tests
+  and then raising the threshold in the same change; lowering the threshold
+  to make a failing push pass is not an acceptable fix.
 - **Patterns** (copy these):
   - Lib/route tests start with `// @vitest-environment node` and import via the
     `@/` alias.
@@ -415,11 +424,13 @@ Next.js validates handler signatures via generated types.
     resolves a tuple `[rows, fields]`.
   - Mutating route requests need matching `origin` + `host` headers (the CSRF
     guard). Dynamic params are passed as `{ params: Promise.resolve({ id }) }`.
-- **Pre-push gate:** [`.githooks/pre-push`](./.githooks/pre-push) runs the suite
-  before every push and **blocks** the push on any failure. It's wired via
-  `core.hooksPath` (set automatically by the `prepare` script on `npm install`),
-  so it's version-controlled — no husky needed. Emergency bypass:
-  `git push --no-verify`.
+- **Pre-push gate:** [`.githooks/pre-push`](./.githooks/pre-push) runs
+  `vitest run --coverage` before every push and **blocks** the push on any test
+  failure OR on a coverage threshold miss — the thresholds in
+  `vitest.config.ts` are not just documentation, this is where they're
+  actually enforced. It's wired via `core.hooksPath` (set automatically by the
+  `prepare` script on `npm install`), so it's version-controlled — no husky
+  needed. Emergency bypass: `git push --no-verify`.
 
 ---
 

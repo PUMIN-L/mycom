@@ -43,6 +43,17 @@ vi.mock('next/cache', () => ({ revalidateTag: vi.fn() }));
 vi.mock('@/app/lib/session', () => ({ getSession: vi.fn() }));
 import { getSession } from '@/app/lib/session';
 
+// Anonymous-visibility filtering (hides content linked to unpublished
+// products) reads through productStore — default to "no products, nothing
+// hidden" so existing tests don't have to know about this unless they're
+// specifically exercising the hidden-product path.
+vi.mock('@/app/lib/productStore', () => ({
+  getAllProducts: vi.fn(),
+  getProduct: vi.fn(),
+  isProductPublic: (p: any) => !!p && p.isPublished !== false && !p.pendingDeleteAt,
+}));
+import { getAllProducts, getProduct } from '@/app/lib/productStore';
+
 const adminSession = { userId: '1', username: 'admin', expiresAt: new Date() } as any;
 
 const sampleContent = {
@@ -67,6 +78,8 @@ describe('Contents API Routes', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(getSession).mockResolvedValue(null); // default: anonymous
+    vi.mocked(getAllProducts).mockResolvedValue([]); // default: nothing hidden
+    vi.mocked(getProduct).mockResolvedValue(undefined);
   });
 
   describe('POST /api/contents (create)', () => {
@@ -131,6 +144,46 @@ describe('Contents API Routes', () => {
       const res = await getById(getRequest(), { params: Promise.resolve({ id: 'missing' }) });
       expect(res.status).toBe(404);
       expect((await res.json()).error).toBe('Content not found');
+    });
+
+    it('filters out content linked to unpublished products for anonymous callers (id="all")', async () => {
+      const hiddenContent = { ...sampleContent, id: 'c-2', productId: 'p-hidden' };
+      vi.mocked(getAllContents).mockResolvedValue([sampleContent, hiddenContent]);
+      vi.mocked(getAllProducts).mockResolvedValue([
+        { id: 'p-1', isPublished: true, pendingDeleteAt: null } as any,
+        { id: 'p-hidden', isPublished: false, pendingDeleteAt: null } as any,
+      ]);
+      const res = await getById(getRequest(), { params: Promise.resolve({ id: 'all' }) });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual([sampleContent]);
+    });
+
+    it('does not filter content for a logged-in admin (id="all")', async () => {
+      const hiddenContent = { ...sampleContent, id: 'c-2', productId: 'p-hidden' };
+      vi.mocked(getSession).mockResolvedValue(adminSession);
+      vi.mocked(getAllContents).mockResolvedValue([sampleContent, hiddenContent]);
+      const res = await getById(getRequest(), { params: Promise.resolve({ id: 'all' }) });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual([sampleContent, hiddenContent]);
+      expect(getAllProducts).not.toHaveBeenCalled();
+    });
+
+    it('404s a single content whose linked product is unpublished, for anonymous callers', async () => {
+      vi.mocked(getContent).mockResolvedValue(sampleContent); // productId: 'p-1'
+      vi.mocked(getAllProducts).mockResolvedValue([
+        { id: 'p-1', isPublished: false, pendingDeleteAt: null } as any,
+      ]);
+      const res = await getById(getRequest(), { params: Promise.resolve({ id: 'c-1' }) });
+      expect(res.status).toBe(404);
+    });
+
+    it('still returns a single content whose linked product is unpublished, for a logged-in admin', async () => {
+      vi.mocked(getSession).mockResolvedValue(adminSession);
+      vi.mocked(getContent).mockResolvedValue(sampleContent);
+      const res = await getById(getRequest(), { params: Promise.resolve({ id: 'c-1' }) });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual(sampleContent);
+      expect(getAllProducts).not.toHaveBeenCalled();
     });
   });
 
@@ -247,6 +300,27 @@ describe('Contents API Routes', () => {
   describe('GET /api/contents/by-product/[productId]', () => {
     it('returns the content linked to a product (public)', async () => {
       vi.mocked(getContentByProductId).mockResolvedValue(sampleContent);
+      vi.mocked(getProduct).mockResolvedValue({ id: 'p-1', isPublished: true, pendingDeleteAt: null } as any);
+      const res = await getByProduct(getRequest(), {
+        params: Promise.resolve({ productId: 'p-1' }),
+      });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual(sampleContent);
+    });
+
+    it('hides content linked to an unpublished product from anonymous callers (404)', async () => {
+      vi.mocked(getContentByProductId).mockResolvedValue(sampleContent);
+      vi.mocked(getProduct).mockResolvedValue({ id: 'p-1', isPublished: false, pendingDeleteAt: null } as any);
+      const res = await getByProduct(getRequest(), {
+        params: Promise.resolve({ productId: 'p-1' }),
+      });
+      expect(res.status).toBe(404);
+    });
+
+    it('still returns content linked to an unpublished product to a logged-in admin', async () => {
+      vi.mocked(getSession).mockResolvedValue(adminSession);
+      vi.mocked(getContentByProductId).mockResolvedValue(sampleContent);
+      vi.mocked(getProduct).mockResolvedValue({ id: 'p-1', isPublished: false, pendingDeleteAt: null } as any);
       const res = await getByProduct(getRequest(), {
         params: Promise.resolve({ productId: 'p-1' }),
       });

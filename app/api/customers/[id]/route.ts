@@ -52,6 +52,25 @@ export const DELETE = withRoute(
 
     const { id } = await params;
 
+    // customer_equipments/sales_records reference customerId with no FK (loose
+    // reference by design — see db.ts), so deleting a customer that still has
+    // either would silently orphan its equipment/warranty/sales history. Check
+    // before deleting, the same way companies/[id]/route.ts guards on customers.
+    const [equipments] = (await query(
+      "SELECT id FROM customer_equipments WHERE customerId = ? LIMIT 1",
+      [id]
+    )) as any[];
+    if (equipments.length > 0) {
+      return jsonError("Cannot delete customer with linked equipment", 400);
+    }
+    const [salesRecords] = (await query(
+      "SELECT id FROM sales_records WHERE customerId = ? LIMIT 1",
+      [id]
+    )) as any[];
+    if (salesRecords.length > 0) {
+      return jsonError("Cannot delete customer with linked sales records", 400);
+    }
+
     await query("DELETE FROM customers WHERE id = ?", [id]);
     return NextResponse.json({ success: true });
   }

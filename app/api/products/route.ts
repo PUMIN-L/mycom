@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { revalidateTag } from "next/cache";
-import { getAllProducts, addProduct, ProductData } from "../../lib/productStore";
+import { getAllProducts, addProduct, isProductPublic, ProductData } from "../../lib/productStore";
 import { cleanupExpiredProducts } from "../../lib/productDeleter";
 import { requireAuth, withRoute } from "../../lib/apiHelpers";
 import { getSession } from "../../lib/session";
@@ -13,9 +13,7 @@ export const dynamic = "force-dynamic";
 export const GET = withRoute("Failed to fetch products", async () => {
   const products = await getAllProducts();
   const session = await getSession();
-  const visible = session
-    ? products
-    : products.filter((p) => p.isPublished !== false && !p.pendingDeleteAt);
+  const visible = session ? products : products.filter(isProductPublic);
   return NextResponse.json(visible);
 });
 

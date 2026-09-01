@@ -6,6 +6,7 @@ import {
 } from "../../../lib/cloudinaryHelper";
 import { getAllUsedImageUrls } from "../../../lib/imageUsageHelper";
 import { getSetting, setSetting } from "../../../lib/settingsStore";
+import { recordOtpFailure, clearOtpAttempts } from "../../../lib/otpAttempts";
 
 /**
  * GET /api/cloudinary/orphans  (admin only)
@@ -86,6 +87,18 @@ export const DELETE = withRoute(
     const expiresAt = expiresAtStr ? parseInt(expiresAtStr, 10) : 0;
 
     if (!savedOtp || otp !== savedOtp) {
+      if (savedOtp) {
+        const { locked } = await recordOtpFailure(
+          "orphan_delete_otp",
+          "orphan_delete_otp_expires"
+        );
+        if (locked) {
+          return NextResponse.json(
+            { error: "กรอกรหัสยืนยันผิดเกินจำนวนที่กำหนด กรุณาขอรหัสใหม่" },
+            { status: 403 }
+          );
+        }
+      }
       return NextResponse.json(
         { error: "รหัสยืนยันไม่ถูกต้อง" },
         { status: 403 }
@@ -105,6 +118,7 @@ export const DELETE = withRoute(
     // OTP is valid — clear it so it can't be reused
     await setSetting("orphan_delete_otp", "");
     await setSetting("orphan_delete_otp_expires", "0");
+    await clearOtpAttempts("orphan_delete_otp");
 
     // ── Deletion ──────────────────────────────────────────────────────────
     if (!Array.isArray(items) || items.length === 0) {

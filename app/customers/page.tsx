@@ -104,6 +104,9 @@ function CustomersInner() {
       if (compRes.ok) setCompanies(await compRes.json());
       if (custRes.ok) setCustomers(await custRes.json());
       if (salesRes.ok) setSalespeople(await salesRes.json());
+      if (!compRes.ok || !custRes.ok || !salesRes.ok) {
+        showToast("โหลดข้อมูลบางส่วนไม่สำเร็จ กรุณาลองใหม่", "error");
+      }
     } catch (err) {
       console.error(err);
       showToast("Error fetching data", "error");
@@ -1020,7 +1023,7 @@ function CustomersInner() {
                 </div>
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1.5">เบอร์โทรศัพท์</label>
-                  <input type="tel" pattern="[0-9]*" className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 focus:bg-white focus:ring-2 focus:ring-green-500 outline-none transition-all" placeholder="08XXXXXXXX" value={editingSalesperson?.phone || ""} onChange={e => setEditingSalesperson({...editingSalesperson, phone: e.target.value.replace(/\\D/g, "")})} />
+                  <input type="tel" pattern="[0-9]*" className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 focus:bg-white focus:ring-2 focus:ring-green-500 outline-none transition-all" placeholder="08XXXXXXXX" value={editingSalesperson?.phone || ""} onChange={e => setEditingSalesperson({...editingSalesperson, phone: e.target.value.replace(/\D/g, "")})} />
                 </div>
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1.5">อีเมล</label>

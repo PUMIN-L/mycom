@@ -13,6 +13,7 @@ import {
   nextBillingDocNo,
 } from "../lib/billingNumber";
 import type { BillingDocType } from "../lib/billingNumber";
+import { toLocalDateString } from "../lib/dateFormat";
 
 // ── Billing Document Builder ────────────────────────────────────────────────
 // Admin-only tool to create Invoice / Billing Note / Receipt.
@@ -78,7 +79,7 @@ const fmt = (n: number) =>
 
 const emptyState = (): BillingState => {
   const now = new Date();
-  const iso = now.toISOString().slice(0, 10);
+  const iso = toLocalDateString(now);
   return {
     id: crypto.randomUUID(),
     docType: "invoice",
@@ -136,7 +137,7 @@ export default function BillingPage() {
   const { isLoggedIn, isLoading } = useAuth();
   const [b, setB] = useState<BillingState>(emptyState);
   const [quotations, setQuotations] = useState<QuotationOption[]>([]);
-  const [existingDocs, setExistingDocs] = useState<{ docNo: string }[]>([]);
+  const [existingDocs, setExistingDocs] = useState<{ id: string; docNo: string }[]>([]);
   const [generating, setGenerating] = useState(false);
   const [saving, setSaving] = useState(false);
   const [loadingQuotation, setLoadingQuotation] = useState(false);
@@ -173,11 +174,23 @@ export default function BillingPage() {
       )
       .catch(() => {});
 
-    // Load existing docNos for duplicate check
-    fetch("/api/billing")
+    // Reserved document numbers (ledger, NOT the live /api/billing list) — for
+    // the duplicate warning and the auto-run next number. Survives deletion
+    // (separate `used_docnos` table), same pattern as the quotation builder:
+    // without this, deleting a document made its number look "free" again to
+    // the suggester while the ledger still held the reservation, so the very
+    // next auto-suggested number would 409 forever.
+    fetch("/api/billing/docnos")
       .then((r) => (r.ok ? r.json() : []))
       .then((list) =>
-        setExistingDocs(Array.isArray(list) ? list.map((x: any) => ({ docNo: x.docNo })) : [])
+        setExistingDocs(
+          Array.isArray(list)
+            ? list.map((x: { quotationId: string; docNo: string }) => ({
+                id: x.quotationId,
+                docNo: x.docNo,
+              }))
+            : []
+        )
       )
       .catch(() => {});
   }, [isLoggedIn]);
@@ -346,7 +359,7 @@ export default function BillingPage() {
   const trimmedDocNo = b.docNo.trim();
   const docNoDup =
     trimmedDocNo !== "" &&
-    existingDocs.some((d) => d.docNo === trimmedDocNo);
+    existingDocs.some((d) => d.docNo === trimmedDocNo && d.id !== b.id);
 
   // Save billing document
   async function handleSave() {

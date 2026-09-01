@@ -5,6 +5,7 @@ import {
   setSetting,
 } from "../../../../lib/settingsStore";
 import { isMailConfigured, sendOtpEmail } from "../../../../lib/mailer";
+import { resetOtpAttempts } from "../../../../lib/otpAttempts";
 
 // Rejects <>"',; too
 const EMAIL_RE = /^[^\s@<>"',;]+@[^\s@<>"',;]+\.[^\s@<>"',;]+$/;
@@ -52,6 +53,7 @@ export const POST = withRoute(
     await setSetting("contact_email_otp", otp);
     await setSetting("contact_email_otp_expires", expiresAt.toString());
     await setSetting("contact_email_pending", value);
+    await resetOtpAttempts("contact_email_otp");
 
     // Send the OTP to the CURRENT email
     await sendOtpEmail(currentEmail, otp, value);

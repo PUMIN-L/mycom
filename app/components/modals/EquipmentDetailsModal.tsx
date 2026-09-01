@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from "react";
 import DatePicker from "../DatePicker";
 import type { CustomerEquipment, ServiceSchedule } from "../../lib/types";
+import { toLocalDateString } from "../../lib/dateFormat";
 
 // Note: Local stripHtml function
 function stripHtml(html?: string): string {
@@ -29,7 +30,7 @@ export default function EquipmentDetailsModal({
   const [completingScheduleId, setCompletingScheduleId] = useState<string | null>(null);
   const [completeForm, setCompleteForm] = useState({
     serviceReportNumber: "",
-    actionDate: new Date().toISOString().slice(0, 10),
+    actionDate: toLocalDateString(new Date()),
     resultDetails: "",
     customerFeedback: "",
   });
@@ -153,7 +154,7 @@ export default function EquipmentDetailsModal({
       setCompletingScheduleId(null);
       setCompleteForm({
         serviceReportNumber: "",
-        actionDate: new Date().toISOString().slice(0, 10),
+        actionDate: toLocalDateString(new Date()),
         resultDetails: "",
         customerFeedback: "",
       });
@@ -222,7 +223,7 @@ export default function EquipmentDetailsModal({
   };
 
   const scheduleStatusBadge = (status: string, date: string) => {
-    const isOverdue = status === "pending" && date < new Date().toISOString().slice(0, 10);
+    const isOverdue = status === "pending" && date < toLocalDateString(new Date());
     if (status === "completed")
       return <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-green-100 text-green-700">✅ เสร็จแล้ว</span>;
     if (status === "cancelled")
@@ -310,7 +311,7 @@ export default function EquipmentDetailsModal({
                               ✏️ แก้ไข
                             </button>
                             <button
-                              onClick={(e) => { e.stopPropagation(); setCompletingScheduleId(s.id); setCompleteForm({ serviceReportNumber: "", actionDate: new Date().toISOString().slice(0, 10), resultDetails: "", customerFeedback: "" }); }}
+                              onClick={(e) => { e.stopPropagation(); setCompletingScheduleId(s.id); setCompleteForm({ serviceReportNumber: "", actionDate: toLocalDateString(new Date()), resultDetails: "", customerFeedback: "" }); }}
                               className="px-3 py-1.5 bg-green-500 text-white text-xs font-semibold rounded-lg hover:bg-green-600 transition-all"
                             >
                               ✅ จบงาน
@@ -405,7 +406,7 @@ export default function EquipmentDetailsModal({
                   selected={editingSchedule?.scheduledDate ? new Date(editingSchedule.scheduledDate) : null}
                   onChange={(date) => {
                     setScheduleFormError(false);
-                    setEditingSchedule((prev) => ({ ...prev, scheduledDate: date ? date.toISOString().split('T')[0] : "" }));
+                    setEditingSchedule((prev) => ({ ...prev, scheduledDate: date ? toLocalDateString(date) : "" }));
                   }}
                   className={scheduleFormError && !editingSchedule?.scheduledDate ? "!border-red-500 !bg-red-50 !ring-red-200" : ""}
                 />
@@ -422,12 +423,16 @@ export default function EquipmentDetailsModal({
                 />
               </div>
 
-              {/* Status */}
+              {/* Status — "completed" is NOT an option here on purpose: a job can
+                  only become completed together with its result log, via the
+                  separate "จบงาน" flow (handleComplete below), which calls
+                  completeScheduleWithLog in one transaction. The API also
+                  rejects status:"completed" from this generic edit endpoint. */}
               {editingSchedule?.id && (
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1.5">สถานะ</label>
                   <div className="flex gap-4">
-                    {["pending", "completed", "cancelled"].map((s) => (
+                    {["pending", "cancelled"].map((s) => (
                       <label key={s} className="flex items-center gap-2 cursor-pointer">
                         <input
                           type="radio"
@@ -437,7 +442,7 @@ export default function EquipmentDetailsModal({
                           className="accent-indigo-500"
                         />
                         <span className="text-sm text-gray-700">
-                          {s === "pending" ? "รอดำเนินการ" : s === "completed" ? "✅ เสร็จแล้ว" : "ยกเลิก"}
+                          {s === "pending" ? "รอดำเนินการ" : "ยกเลิก"}
                         </span>
                       </label>
                     ))}

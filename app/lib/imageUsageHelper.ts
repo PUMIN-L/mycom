@@ -3,7 +3,7 @@ import { RowDataPacket } from "mysql2";
 import { deleteCloudinaryImage, extractPublicId } from "./cloudinaryHelper";
 
 export type ExcludeSource = {
-  type: "product" | "content" | "document";
+  type: "product" | "content" | "document" | "quotation" | "billing";
   id: string;
 };
 
@@ -51,6 +51,33 @@ export async function isCloudinaryImageInUse(
   contentSql += " LIMIT 1";
   const [contentRows] = await query<RowDataPacket[]>(contentSql, contentParams);
   if (contentRows.length > 0) return true;
+
+  // 4. Check quotations table (uploadedImages JSON array — images uploaded
+  // specifically for a quote, e.g. a custom line-item photo; also referenced
+  // by an "แก้ไข New Ver." clone that reuses the same URL).
+  let quotationSql =
+    "SELECT id FROM quotations WHERE JSON_SEARCH(uploadedImages, 'one', ?) IS NOT NULL";
+  const quotationParams: any[] = [imageUrl];
+  if (excludeSource?.type === "quotation") {
+    quotationSql += " AND id != ?";
+    quotationParams.push(excludeSource.id);
+  }
+  quotationSql += " LIMIT 1";
+  const [quotationRows] = await query<RowDataPacket[]>(quotationSql, quotationParams);
+  if (quotationRows.length > 0) return true;
+
+  // 5. Check billing_documents table (the whole `data` blob — line items can
+  // carry an imageUrl anywhere inside it).
+  let billingSql =
+    "SELECT id FROM billing_documents WHERE JSON_SEARCH(data, 'one', ?) IS NOT NULL";
+  const billingParams: any[] = [imageUrl];
+  if (excludeSource?.type === "billing") {
+    billingSql += " AND id != ?";
+    billingParams.push(excludeSource.id);
+  }
+  billingSql += " LIMIT 1";
+  const [billingRows] = await query<RowDataPacket[]>(billingSql, billingParams);
+  if (billingRows.length > 0) return true;
 
   return false;
 }
@@ -152,6 +179,32 @@ export async function getAllUsedImageUrls(): Promise<Set<string>> {
     for (const u of imgs) {
       if (typeof u === "string" && u.includes("cloudinary.com")) urls.add(u);
     }
+  }
+
+  // 5. Billing document line-item images (scan the whole `data` blob — the
+  // shape of items is opaque/client-defined, same approach as quotations).
+  const [billingRows] = await query<RowDataPacket[]>(
+    "SELECT data FROM billing_documents WHERE data IS NOT NULL"
+  );
+  const collectCloudinaryUrls = (value: unknown): void => {
+    if (typeof value === "string") {
+      if (value.includes("cloudinary.com")) urls.add(value);
+      return;
+    }
+    if (Array.isArray(value)) {
+      for (const v of value) collectCloudinaryUrls(v);
+      return;
+    }
+    if (value && typeof value === "object") {
+      for (const v of Object.values(value as Record<string, unknown>)) collectCloudinaryUrls(v);
+    }
+  };
+  for (const row of billingRows) {
+    let data: unknown = row.data;
+    if (typeof data === "string") {
+      try { data = JSON.parse(data); } catch { data = null; }
+    }
+    collectCloudinaryUrls(data);
   }
 
   return urls;

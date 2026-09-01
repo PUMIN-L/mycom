@@ -5,7 +5,8 @@ import {
   getAllContentsMeta,
   ContentBlock,
 } from "../../lib/contentStore";
-import { getAllProducts, getAllCategories } from "../../lib/productStore";
+import { getAllProducts, getAllCategories, isProductPublic } from "../../lib/productStore";
+import { getSession } from "../../lib/session";
 import { SITE_URL, SITE_NAME } from "../../lib/site";
 import ShowcaseClient from "./ShowcaseClient";
 
@@ -25,15 +26,26 @@ function firstImage(blocks: ContentBlock[]): string | undefined {
   return blocks.find((b) => b.imageUrl)?.imageUrl;
 }
 
+// Content linked to a hidden (unpublished / pending-delete) product is
+// effectively that product's marketing page — anonymous callers must see it
+// exactly as if it doesn't exist (matches getProductsData.ts's public filter
+// and /api/contents' anonymous filter). Admins (session present) see it.
+async function isHiddenFromAnonymous(productId: string | null | undefined, hasSession: boolean): Promise<boolean> {
+  if (hasSession || !productId) return false;
+  const products = await getAllProducts();
+  const product = products.find((p) => p.id === productId);
+  return !!product && !isProductPublic(product);
+}
+
 export async function generateMetadata({
   params,
 }: {
   params: Promise<{ id: string }>;
 }): Promise<Metadata> {
   const { id } = await params;
-  const content = await getContent(id);
+  const [content, session] = await Promise.all([getContent(id), getSession()]);
 
-  if (!content) {
+  if (!content || (await isHiddenFromAnonymous(content.productId, !!session))) {
     return { title: "ไม่พบเนื้อหา", robots: { index: false, follow: false } };
   }
 
@@ -71,16 +83,36 @@ export default async function ShowcaseContentPage({
   // Fetch everything the editor needs on the server, in parallel. allContents is
   // metadata-only (no blocks) — it's used just for the "Other Contents" list and
   // the edit-mode product-link check, never for block bodies.
-  const [content, allContents, products, categories] = await Promise.all([
+  const [content, allContents, products, categories, session] = await Promise.all([
     getContent(id),
     getAllContentsMeta(),
     getAllProducts(),
     getAllCategories(),
+    getSession(),
   ]);
 
   if (!content) {
     notFound();
   }
+  if (await isHiddenFromAnonymous(content.productId, !!session)) {
+    notFound();
+  }
+
+  // Never ship unpublished products' full data (title/desc/image) to an
+  // anonymous client in the RSC payload — only used for the product badge and
+  // (while editing, admin-only) the product picker, but the raw prop reaches
+  // every visitor regardless of what the UI happens to render.
+  const visibleProducts = session ? products : products.filter(isProductPublic);
+
+  // Same reasoning for the "other contents" metadata list: content linked to
+  // a hidden product must not appear in an anonymous visitor's RSC payload.
+  const visibleAllContents = session
+    ? allContents
+    : allContents.filter((c) => {
+        if (!c.productId) return true;
+        const product = products.find((p) => p.id === c.productId);
+        return !product || isProductPublic(product);
+      });
 
   const description = plainTextFromBlocks(content.blocks).slice(0, 200);
   const image = firstImage(content.blocks);
@@ -130,8 +162,8 @@ export default async function ShowcaseContentPage({
       />
       <ShowcaseClient
         initialContent={content}
-        initialAllContents={allContents}
-        initialProducts={products}
+        initialAllContents={visibleAllContents}
+        initialProducts={visibleProducts}
         initialCategories={categories}
       />
     </>

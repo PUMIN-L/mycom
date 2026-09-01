@@ -4,6 +4,7 @@ import DatePicker from "../DatePicker";
 import SearchableDropdown from "../SearchableDropdown";
 import FormattedNumberInput from "../FormattedNumberInput";
 import type { SalesRecord } from "../../lib/types";
+import { toLocalDateString } from "../../lib/dateFormat";
 
 function stripHtml(html?: string): string {
   if (!html) return "";
@@ -32,7 +33,7 @@ const emptyForm = () => ({
   qty: 1,
   unitPrice: 0,
   totalAmount: 0,
-  saleDate: new Date().toISOString().substring(0, 10),
+  saleDate: toLocalDateString(new Date()),
   quotationRef: "",
   poRef: "",
   deliveryRef: "",
@@ -274,7 +275,7 @@ export default function SalesRecordEditModal({
                 <label className="block text-sm font-semibold text-gray-700 mb-1.5">วันที่ขาย <span className="text-red-500">*</span></label>
                 <DatePicker
                     selected={form.saleDate ? new Date(form.saleDate) : null}
-                    onChange={(date) => { const v = date ? date.toISOString().split('T')[0] : ""; setForm(prev => ({ ...prev, saleDate: v })); }}
+                    onChange={(date) => { const v = date ? toLocalDateString(date) : ""; setForm(prev => ({ ...prev, saleDate: v })); }}
                     className={`w-full px-4 py-2.5 border rounded-xl text-sm focus:outline-none focus:ring-2 transition-all ${formErrors.saleDate ? "border-red-500 bg-red-50 focus:border-red-500 focus:ring-red-200" : "bg-gray-50 border-gray-200 focus:ring-indigo-500/20 focus:border-indigo-500"}`}
                   />
               </div>
@@ -431,7 +432,7 @@ export default function SalesRecordEditModal({
                   <label className="block text-sm font-semibold text-gray-700 mb-1.5">วันเริ่มรับประกัน <span className="text-red-500">*</span></label>
                   <DatePicker
                     selected={form.warrantyStartDate ? new Date(form.warrantyStartDate) : null}
-                    onChange={(date) => { const v = date ? date.toISOString().split('T')[0] : ""; setForm(prev => ({ ...prev, warrantyStartDate: v })); }}
+                    onChange={(date) => { const v = date ? toLocalDateString(date) : ""; setForm(prev => ({ ...prev, warrantyStartDate: v })); }}
                     placeholderText="ไม่ระบุ"
                     isClearable
                     className={`w-full px-4 py-2.5 border rounded-xl text-sm focus:outline-none focus:ring-2 transition-all ${formErrors.warrantyStartDate ? "border-red-500 bg-red-50 focus:border-red-500 focus:ring-red-200" : "bg-gray-50 border-gray-200 focus:ring-indigo-500/20 focus:border-indigo-500"}`}
@@ -441,7 +442,7 @@ export default function SalesRecordEditModal({
                   <label className="block text-sm font-semibold text-gray-700 mb-1.5">วันหมดรับประกัน <span className="text-red-500">*</span></label>
                   <DatePicker
                     selected={form.warrantyEndDate ? new Date(form.warrantyEndDate) : null}
-                    onChange={(date) => { const v = date ? date.toISOString().split('T')[0] : ""; setForm(prev => ({ ...prev, warrantyEndDate: v })); }}
+                    onChange={(date) => { const v = date ? toLocalDateString(date) : ""; setForm(prev => ({ ...prev, warrantyEndDate: v })); }}
                     placeholderText="ไม่ระบุ"
                     isClearable
                     className={`w-full px-4 py-2.5 border rounded-xl text-sm focus:outline-none focus:ring-2 transition-all ${formErrors.warrantyEndDate ? "border-red-500 bg-red-50 focus:border-red-500 focus:ring-red-200" : "bg-gray-50 border-gray-200 focus:ring-indigo-500/20 focus:border-indigo-500"}`}

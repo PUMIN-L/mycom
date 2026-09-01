@@ -4,6 +4,7 @@ import DatePicker from "../DatePicker";
 import SearchableDropdown from "../SearchableDropdown";
 import type { SearchableDropdownOption } from "../SearchableDropdown";
 import type { CustomerEquipment } from "../../lib/types";
+import { toLocalDateString } from "../../lib/dateFormat";
 
 // Note: stripHtml is simplified here since we can't easily import it from the dashboard types without creating circular dependencies.
 function stripHtml(html?: string): string {
@@ -98,11 +99,19 @@ export default function EquipmentEditModal({
       const url = editing.id
         ? `/api/admin/equipments/${editing.id}`
         : "/api/admin/equipments";
-        
+
+      // "_custom" is a UI-only sentinel standing in for "no catalog product
+      // selected" (see productOptions above) — it must never reach the API/DB
+      // as a real productId.
+      const payload = {
+        ...editing,
+        productId: editing.productId === "_custom" ? "" : editing.productId,
+      };
+
       const res = await fetch(url, {
         method,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(editing),
+        body: JSON.stringify(payload),
       });
       
       if (!res.ok) throw new Error("Failed to save");
@@ -201,7 +210,7 @@ export default function EquipmentEditModal({
               <label className="block text-sm font-semibold text-gray-700 mb-1.5">วันเริ่มประกัน</label>
               <DatePicker
                 selected={editing?.warrantyStartDate ? new Date(editing.warrantyStartDate) : null}
-                onChange={(date) => setEditing((prev) => ({ ...prev, warrantyStartDate: date ? date.toISOString().split('T')[0] : "" }))}
+                onChange={(date) => setEditing((prev) => ({ ...prev, warrantyStartDate: date ? toLocalDateString(date) : "" }))}
                 placeholderText="ไม่ระบุ"
                 isClearable
               />
@@ -210,7 +219,7 @@ export default function EquipmentEditModal({
               <label className="block text-sm font-semibold text-gray-700 mb-1.5">วันหมดประกัน</label>
               <DatePicker
                 selected={editing?.warrantyEndDate ? new Date(editing.warrantyEndDate) : null}
-                onChange={(date) => setEditing((prev) => ({ ...prev, warrantyEndDate: date ? date.toISOString().split('T')[0] : "" }))}
+                onChange={(date) => setEditing((prev) => ({ ...prev, warrantyEndDate: date ? toLocalDateString(date) : "" }))}
                 placeholderText="ไม่ระบุ"
                 isClearable
               />

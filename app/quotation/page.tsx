@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useAuth } from "../context/AuthContext";
 import Toast from "../components/Toast";
 import { DOCNO_START, pad2, nextDocNo } from "../lib/quotationNumber";
+import { toLocalDateString } from "../lib/dateFormat";
 import { computeQuoteTotals } from "../lib/quotationTotals";
 import { stripHtml } from "../lib/stripHtml";
 import SearchableDropdown from "../components/SearchableDropdown";
@@ -242,7 +243,7 @@ export default function QuotationPage() {
   // render violate purity rules.
   useEffect(() => {
     const now = new Date();
-    const iso = now.toISOString().slice(0, 10);
+    const iso = toLocalDateString(now);
 
     const seedFresh = () => {
       isFreshRef.current = true;
@@ -818,7 +819,7 @@ export default function QuotationPage() {
           onConfirm={() => {
             setShowResetConfirm(false);
             localStorage.removeItem(DRAFT_KEY);
-            const iso = new Date().toISOString().slice(0, 10);
+            const iso = toLocalDateString(new Date());
             const prefix = `QT${iso.substring(2).replace(/-/g, "")}-`;
             isFreshRef.current = true;
             setQ({ ...emptyState(), id: crypto.randomUUID(), docDate: iso, docNo: nextDocNo(prefix, existingDocs.map((u) => u.docNo)), items: [newItem()] });

@@ -7,6 +7,7 @@ import {
   CONTACT_EMAIL_SETTING,
 } from "../../../lib/settingsStore";
 import { isMailConfigured, sendContactRecipientChangedEmail } from "../../../lib/mailer";
+import { recordOtpFailure, clearOtpAttempts } from "../../../lib/otpAttempts";
 
 // Rejects <>"',; too — this value ends up in an SMTP To: header (mailer.ts).
 const EMAIL_RE = /^[^\s@<>"',;]+@[^\s@<>"',;]+\.[^\s@<>"',;]+$/;
@@ -67,8 +68,16 @@ export const PUT = withRoute(
     }
 
     if (storedOtp !== providedOtp) {
+      const { locked } = await recordOtpFailure(
+        "contact_email_otp",
+        "contact_email_otp_expires"
+      );
       return NextResponse.json(
-        { error: "รหัส OTP ไม่ถูกต้อง" },
+        {
+          error: locked
+            ? "กรอกรหัส OTP ผิดเกินจำนวนที่กำหนด กรุณาขอรหัสใหม่"
+            : "รหัส OTP ไม่ถูกต้อง",
+        },
         { status: 400 }
       );
     }
@@ -82,11 +91,12 @@ export const PUT = withRoute(
 
     const previous = await getContactEmail();
     await setSetting(CONTACT_EMAIL_SETTING, value);
-    
+
     // Clear the OTP data
     await setSetting("contact_email_otp", "");
     await setSetting("contact_email_otp_expires", "0");
     await setSetting("contact_email_pending", "");
+    await clearOtpAttempts("contact_email_otp");
 
     // On a real change, alert BOTH the old and new addresses. Best-effort: a
     // notification failure (e.g. SMTP unconfigured) must not fail the save.

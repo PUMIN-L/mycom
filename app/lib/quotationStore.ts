@@ -28,30 +28,10 @@ function parseJson<T>(value: unknown, fallback: T): T {
 }
 
 /**
- * Every Cloudinary image URL currently referenced by a product or content —
- * i.e. shared/in-use assets that a quotation delete must NEVER destroy, even if
- * one slipped into `uploadedImages` (client bug or crafted request). This is the
- * server backstop for the image-deletion safety invariant.
- */
-async function getReferencedImageUrls(): Promise<Set<string>> {
-  const urls = new Set<string>();
-  const [products] = await query<RowDataPacket[]>("SELECT image FROM products");
-  for (const p of products) if (p.image) urls.add(String(p.image));
-  const [contents] = await query<RowDataPacket[]>("SELECT blocks FROM contents");
-  for (const c of contents) {
-    for (const b of parseJson<Array<Record<string, unknown>>>(c.blocks, [])) {
-      if (typeof b?.imageUrl === "string") urls.add(b.imageUrl);
-      if (Array.isArray(b?.imageUrls)) {
-        for (const u of b.imageUrls) if (typeof u === "string") urls.add(u);
-      }
-    }
-  }
-  return urls;
-}
-
-/** 
  * Previously deleted orphaned images. Now a no-op: images from quotation
- * cleanup will be picked up by the Orphan Scanner for manual review.
+ * cleanup will be picked up by the Orphan Scanner for manual review (which
+ * itself checks quotations/billing_documents/products/documents/contents
+ * before treating anything as deletable — see app/lib/imageUsageHelper.ts).
  * Cron jobs have no UI to show a confirmation dialog.
  */
 async function deleteQuoteImagesSafely(images: string[]): Promise<void> {

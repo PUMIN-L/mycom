@@ -17,6 +17,13 @@ function parseAllowedUrl(raw: string): URL | null {
   }
   if (url.protocol !== "https:") return null;
   if (!ALLOWED_HOSTS.has(url.hostname)) return null;
+  // Cloudinary is multi-tenant: every account shares the res.cloudinary.com
+  // hostname, distinguished only by the /<cloud_name>/ path segment. Without
+  // pinning that segment, this unauthenticated endpoint can be used to proxy
+  // (and force-download, under our own domain) any file from ANY Cloudinary
+  // account — not just ours.
+  const cloud = process.env.CLOUDINARY_CLOUD_NAME ?? "";
+  if (!cloud || !url.pathname.startsWith(`/${cloud}/`)) return null;
   return url;
 }
 

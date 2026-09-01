@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import { GET, POST } from '@/app/api/documents/route';
 import { DELETE, PUT } from '@/app/api/documents/[id]/route';
@@ -226,10 +226,21 @@ describe('Documents API Route', () => {
       );
     };
     const cloudUrl = 'https://res.cloudinary.com/demo/raw/upload/v1/doc.pdf';
+    let prevCloud: string | undefined;
 
     beforeEach(() => {
       fetchMock.mockReset();
       global.fetch = fetchMock as any;
+      // Cloudinary is multi-tenant (shared hostname, cloud distinguished by
+      // path segment) — pin this to match `cloudUrl`'s "demo" segment so the
+      // success-path tests below exercise our own cloud, not "any cloud".
+      prevCloud = process.env.CLOUDINARY_CLOUD_NAME;
+      process.env.CLOUDINARY_CLOUD_NAME = 'demo';
+    });
+
+    afterEach(() => {
+      if (prevCloud === undefined) delete process.env.CLOUDINARY_CLOUD_NAME;
+      else process.env.CLOUDINARY_CLOUD_NAME = prevCloud;
     });
 
     it('400s when the url param is missing', async () => {
@@ -250,6 +261,22 @@ describe('Documents API Route', () => {
       const res = await PROXY_GET(proxyRequest('http://res.cloudinary.com/x.pdf'));
       expect(res.status).toBe(400);
       expect(await res.text()).toBe('URL not allowed');
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('400s for a URL on a DIFFERENT Cloudinary cloud (cross-tenant proxy guard)', async () => {
+      const res = await PROXY_GET(
+        proxyRequest('https://res.cloudinary.com/someone-elses-cloud/raw/upload/v1/x.pdf')
+      );
+      expect(res.status).toBe(400);
+      expect(await res.text()).toBe('URL not allowed');
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('400s when CLOUDINARY_CLOUD_NAME is not configured (fail closed)', async () => {
+      delete process.env.CLOUDINARY_CLOUD_NAME;
+      const res = await PROXY_GET(proxyRequest(cloudUrl));
+      expect(res.status).toBe(400);
       expect(fetchMock).not.toHaveBeenCalled();
     });
 

@@ -7,6 +7,13 @@ import { saveRevision } from "./revisionStore";
 // Re-exported so existing callers can keep importing these from "./productStore".
 export type { ProductCategory, ProductData } from "./types";
 
+// Single source of truth for "may anonymous callers see this product" — used
+// everywhere a product (or something linked to one, like its CMS content)
+// gets exposed to a caller that might not be logged in.
+export function isProductPublic(product: Pick<ProductData, "isPublished" | "pendingDeleteAt">): boolean {
+  return product.isPublished !== false && !product.pendingDeleteAt;
+}
+
 // ── Categories ────────────────────────────────────────────────────────────────
 
 export async function getAllCategories(): Promise<ProductCategory[]> {

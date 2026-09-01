@@ -246,6 +246,38 @@ describe('Admin Schedules API', () => {
     expect(setSetting).toHaveBeenCalledWith('schedule_delete_otp_s1', '');
   });
 
+  it('locks out the completed-schedule OTP after 5 wrong attempts, even for the right code afterward', async () => {
+    vi.mocked(getSession).mockResolvedValue(admin);
+    vi.mocked(getSchedule).mockResolvedValue({ id: 's1', status: 'completed' } as any);
+
+    const state = new Map<string, string>([
+      ['schedule_delete_otp_s1', '123456'],
+      ['schedule_delete_otp_expires_s1', (Date.now() + 100000).toString()],
+    ]);
+    vi.mocked(getSetting).mockImplementation(async (key: string) => state.get(key) ?? '');
+    vi.mocked(setSetting).mockImplementation(async (key: string, value: string) => {
+      state.set(key, value);
+    });
+
+    let lastRes;
+    for (let i = 0; i < 5; i++) {
+      lastRes = await DELETE(
+        mutReq('http://localhost:3000/api/admin/schedules/s1', 'DELETE', { otp: '000000' }),
+        ctx('s1')
+      );
+    }
+    expect(lastRes!.status).toBe(400);
+    expect((await lastRes!.json()).error).toContain('เกินจำนวนที่กำหนด');
+
+    // Even the correct code no longer works once locked out.
+    const afterLockout = await DELETE(
+      mutReq('http://localhost:3000/api/admin/schedules/s1', 'DELETE', { otp: '123456' }),
+      ctx('s1')
+    );
+    expect(afterLockout.status).toBe(400);
+    expect(deleteSchedule).not.toHaveBeenCalled();
+  });
+
   // ── DELETE OTP POST ─────────────────────────────────────────────────────
 
   it('POST delete-otp sends 6-digit OTP for completed schedule', async () => {

@@ -27,6 +27,7 @@ import {
   getProductsByCategory,
   deleteProduct,
   updateProduct,
+  isProductPublic,
 } from '@/app/lib/productStore';
 import type { ProductData } from '@/app/lib/productStore';
 
@@ -478,6 +479,24 @@ describe('productStore', () => {
       // Two SELECTs in getProduct calls
       expect(conn.query).toHaveBeenCalledTimes(0);
       expect(result!.id).toBe('p1');
+    });
+  });
+
+  describe('isProductPublic', () => {
+    it('is public when published and no pending delete', () => {
+      expect(isProductPublic({ isPublished: true, pendingDeleteAt: null })).toBe(true);
+    });
+
+    it('is NOT public when isPublished is false', () => {
+      expect(isProductPublic({ isPublished: false, pendingDeleteAt: null })).toBe(false);
+    });
+
+    it('is NOT public when a delete is pending, even if still marked published', () => {
+      expect(isProductPublic({ isPublished: true, pendingDeleteAt: '2026-09-01' as any })).toBe(false);
+    });
+
+    it('treats a missing isPublished field as published (legacy rows)', () => {
+      expect(isProductPublic({ isPublished: undefined as any, pendingDeleteAt: null })).toBe(true);
     });
   });
 });

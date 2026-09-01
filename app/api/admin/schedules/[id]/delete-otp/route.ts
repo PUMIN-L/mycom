@@ -3,6 +3,7 @@ import { withRoute, requireAuth, jsonError } from "../../../../../lib/apiHelpers
 import { getSchedule, getEquipment } from "../../../../../lib/crmStore";
 import { getContactEmail, setSetting } from "../../../../../lib/settingsStore";
 import { isMailConfigured, sendScheduleDeleteOtpEmail } from "../../../../../lib/mailer";
+import { resetOtpAttempts } from "../../../../../lib/otpAttempts";
 
 // Generate a random 6-digit OTP
 function generateOtp(): string {
@@ -52,6 +53,7 @@ export const POST = withRoute(
 
     await setSetting(`schedule_delete_otp_${id}`, otp);
     await setSetting(`schedule_delete_otp_expires_${id}`, expiresAt.toString());
+    await resetOtpAttempts(`schedule_delete_otp_${id}`);
 
     let equipmentName: string | undefined;
     if (schedule.equipmentId) {

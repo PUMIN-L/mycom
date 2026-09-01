@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth, withRoute } from "../../../../lib/apiHelpers";
 import { getContactEmail, setSetting } from "../../../../lib/settingsStore";
 import { isMailConfigured, sendOrphanDeleteOtpEmail } from "../../../../lib/mailer";
+import { resetOtpAttempts } from "../../../../lib/otpAttempts";
 
 // Generate a random 5-digit OTP
 function generateOtp(): string {
@@ -41,6 +42,7 @@ export const POST = withRoute(
     // Save OTP to settings store
     await setSetting("orphan_delete_otp", otp);
     await setSetting("orphan_delete_otp_expires", expiresAt.toString());
+    await resetOtpAttempts("orphan_delete_otp");
 
     // Send OTP to the configured contact email
     const contactEmail = await getContactEmail();

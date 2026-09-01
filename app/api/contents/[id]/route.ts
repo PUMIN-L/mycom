@@ -8,22 +8,48 @@ import {
 } from "../../../lib/contentStore";
 import { collectContentImageUrls } from "../../../lib/cloudinaryHelper";
 import { requireAuth, withRoute, ApiError } from "../../../lib/apiHelpers";
+import { getAllProducts, isProductPublic } from "../../../lib/productStore";
+import { getSession } from "../../../lib/session";
+import type { ContentData } from "../../../lib/types";
 
 type Ctx = { params: Promise<{ id: string }> };
+
+// Content linked to a hidden (unpublished / pending-delete) product must not
+// be exposed to anonymous callers — it's effectively that product's
+// marketing page, so hiding the product but not the content defeats the
+// point of hiding it. Admins (session present) always see everything.
+async function isContentHiddenFromAnonymous(content: ContentData): Promise<boolean> {
+  if (!content.productId) return false;
+  const products = await getAllProducts();
+  const product = products.find((p) => p.id === content.productId);
+  return !!product && !isProductPublic(product);
+}
 
 // GET — single content, or all contents when id === "all" (public)
 export const GET = withRoute(
   "Failed to fetch content",
   async (_request: NextRequest, { params }: Ctx) => {
     const { id } = await params;
+    const session = await getSession();
 
     if (id === "all") {
       const contents = await getAllContents();
-      return NextResponse.json(contents);
+      if (session) return NextResponse.json(contents);
+      const products = await getAllProducts();
+      const hiddenProductIds = new Set(
+        products.filter((p) => !isProductPublic(p)).map((p) => p.id)
+      );
+      const visible = contents.filter(
+        (c) => !c.productId || !hiddenProductIds.has(c.productId)
+      );
+      return NextResponse.json(visible);
     }
 
     const content = await getContent(id);
     if (!content) {
+      return NextResponse.json({ error: "Content not found" }, { status: 404 });
+    }
+    if (!session && (await isContentHiddenFromAnonymous(content))) {
       return NextResponse.json({ error: "Content not found" }, { status: 404 });
     }
     return NextResponse.json(content);

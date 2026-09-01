@@ -71,8 +71,20 @@ function formatLocalDate(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
-function cleanDate(d?: string | null): string | undefined {
+function cleanDate(d?: string | Date | null): string | undefined {
   if (!d) return undefined;
+  // Defense-in-depth: if a raw Date object ever reaches here (e.g. a future
+  // query that forgets DATE_FORMAT on a DATE column), format it by its local
+  // Y-M-D instead of falling through to String(d).substring(0,10), which reads
+  // as "Wed Aug 26" and fails the regex below — silently discarding the date
+  // (the bug this replaced) instead of round-tripping it correctly.
+  if (d instanceof Date) {
+    if (isNaN(d.getTime())) return undefined;
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  }
   const s = String(d).trim().substring(0, 10);
   return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : undefined;
 }
@@ -121,6 +133,8 @@ function cleanInput(data: Partial<SalesRecord>) {
 const LIST_SELECT = `
   SELECT sr.*,
          DATE_FORMAT(sr.saleDate, '%Y-%m-%d') AS saleDate,
+         DATE_FORMAT(sr.warrantyStartDate, '%Y-%m-%d') AS warrantyStartDate,
+         DATE_FORMAT(sr.warrantyEndDate, '%Y-%m-%d') AS warrantyEndDate,
          sp.name AS salespersonName,
          c.name AS customerName,
          co.name AS companyName,

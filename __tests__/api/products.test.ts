@@ -7,6 +7,7 @@ import { GET, POST } from '@/app/api/products/route';
 vi.mock('@/app/lib/productStore', () => ({
   getAllProducts: vi.fn(),
   addProduct: vi.fn(),
+  isProductPublic: (p: any) => p.isPublished !== false && !p.pendingDeleteAt,
 }));
 import { getAllProducts, addProduct } from '@/app/lib/productStore';
 

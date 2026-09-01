@@ -69,10 +69,14 @@ export async function getEquipment(
 }
 
 function cleanEquipment(data: Partial<CustomerEquipment>) {
+  // "_custom" is a UI-only sentinel (EquipmentEditModal) for "no catalog
+  // product selected" — the client already maps it back to "" before sending,
+  // but treat it the same way here too in case any other caller forgets to.
+  const productId = data.productId === "_custom" ? "" : data.productId || "";
   return {
     salesRecordId: sanitizePlainText(data.salesRecordId || "").substring(0, 255),
     customerId: sanitizePlainText(data.customerId || "").substring(0, 255),
-    productId: sanitizePlainText(data.productId || "").substring(0, 255),
+    productId: sanitizePlainText(productId).substring(0, 255),
     productName: sanitizePlainText(data.productName || "").substring(0, 255),
     serialNumber: sanitizePlainText(data.serialNumber || "").substring(0, 255),
     quotationNumber: sanitizePlainText(data.quotationNumber || "").substring(0, 255),
@@ -119,52 +123,156 @@ export async function addEquipment(
   return (await getEquipment(id))!;
 }
 
+function normalizeSerial(s: string): string {
+  return String(s || "").trim().toLowerCase();
+}
+
+/**
+ * Sync the equipment rows linked to a sales record with the submitted serial
+ * list. NEVER deletes a row: matching is by SERIAL IDENTITY first (so
+ * reordering/editing the list can't silently mix up which physical unit owns
+ * which service history — the bug this replaced), falling back to positional
+ * pairing only for entries with no serial yet (so records that have never had
+ * a serial filled in don't explode into duplicates on every unrelated save).
+ * A submitted list shorter than before UNLINKS the leftover rows
+ * (`salesRecordId = ''`) instead of deleting them — the equipment and all its
+ * warranty/schedule/log history stay in the database, just no longer
+ * attached to this sale; they remain visible under the customer's equipment
+ * list. The whole sync runs in one transaction.
+ */
 export async function syncEquipmentsForSalesRecord(
   salesRecordId: string,
   serialNumbers: string[],
   baseEquipmentData: Partial<CustomerEquipment>
 ): Promise<void> {
   if (!salesRecordId) return;
-  
-  // 1. Fetch existing equipments for this sales record
-  const [existing] = await query<RowDataPacket[]>(
-    `SELECT id, serialNumber FROM customer_equipments WHERE salesRecordId = ? ORDER BY createdAt ASC`,
-    [salesRecordId]
-  );
-  
-  const existingEqs = existing as { id: string, serialNumber: string }[];
-  
-  // 2. Update existing or insert new
+
   const limit = Math.min(serialNumbers.length, 50);
-  for (let i = 0; i < limit; i++) {
-    const sn = String(serialNumbers[i] || "").trim();
-    if (i < existingEqs.length) {
-      // Update existing
-      await updateEquipment(existingEqs[i].id, {
-        ...baseEquipmentData,
-        serialNumber: sn
-      });
-    } else {
-      // Insert new
-      await addEquipment({
-        ...baseEquipmentData,
-        salesRecordId,
-        serialNumber: sn
-      });
+  const wanted = serialNumbers.slice(0, limit).map((sn) => String(sn || "").trim());
+
+  await withTransaction(async (conn) => {
+    const [existingRows] = await conn.query<RowDataPacket[]>(
+      `SELECT id, serialNumber FROM customer_equipments WHERE salesRecordId = ? ORDER BY createdAt ASC`,
+      [salesRecordId]
+    );
+    const existingEqs = existingRows as { id: string; serialNumber: string }[];
+
+    const existingUsed = new Set<string>();
+    const wantedUsed = new Set<number>();
+    const pairs: { existingId: string; serial: string }[] = [];
+
+    // Pass 1 — identity match: pair a submitted serial to the existing row
+    // that already has that exact (normalized) serial. This is what keeps a
+    // unit's history attached to the right physical unit when the list is
+    // reordered or another entry is added/removed.
+    for (let i = 0; i < wanted.length; i++) {
+      const key = normalizeSerial(wanted[i]);
+      if (!key) continue;
+      const match = existingEqs.find(
+        (eq) => !existingUsed.has(eq.id) && normalizeSerial(eq.serialNumber) === key
+      );
+      if (match) {
+        existingUsed.add(match.id);
+        wantedUsed.add(i);
+        pairs.push({ existingId: match.id, serial: wanted[i] });
+      }
     }
-  }
-  
-  // 3. Delete any excess equipments if qty was reduced
-  for (let i = limit; i < existingEqs.length; i++) {
-    await deleteEquipment(existingEqs[i].id);
-  }
+
+    // Pass 2 — positional fallback for whatever's left (blank serials, or a
+    // serial with no existing match): pair remaining submitted slots with
+    // remaining existing rows in original order. Preserves the old behavior
+    // for equipment that has no serial yet, so unrelated edits don't spawn
+    // duplicate rows.
+    const remainingExisting = existingEqs.filter((eq) => !existingUsed.has(eq.id));
+    let cursor = 0;
+    for (let i = 0; i < wanted.length; i++) {
+      if (wantedUsed.has(i)) continue;
+      if (cursor < remainingExisting.length) {
+        const eq = remainingExisting[cursor++];
+        existingUsed.add(eq.id);
+        wantedUsed.add(i);
+        pairs.push({ existingId: eq.id, serial: wanted[i] });
+      }
+    }
+
+    // Update every matched row (base fields + its resolved serial).
+    for (const { existingId, serial } of pairs) {
+      const v = cleanEquipment({ ...baseEquipmentData, serialNumber: serial });
+      await conn.query(
+        `UPDATE customer_equipments SET
+           customerId = ?, productId = ?, productName = ?, serialNumber = ?, quotationNumber = ?,
+           warrantyCertNumber = ?, warrantyType = ?, warrantyStartDate = ?,
+           warrantyEndDate = ?, status = ?
+         WHERE id = ?`,
+        [
+          v.customerId,
+          v.productId,
+          v.productName,
+          v.serialNumber,
+          v.quotationNumber,
+          v.warrantyCertNumber,
+          v.warrantyType,
+          v.warrantyStartDate,
+          v.warrantyEndDate,
+          v.status,
+          existingId,
+        ]
+      );
+    }
+
+    // Genuinely new entries (submitted slots with no pairing at all) → insert.
+    for (let i = 0; i < wanted.length; i++) {
+      if (wantedUsed.has(i)) continue;
+      const newId = crypto.randomUUID();
+      const now = new Date().toISOString();
+      const v = cleanEquipment({ ...baseEquipmentData, salesRecordId, serialNumber: wanted[i] });
+      await conn.query(
+        `INSERT INTO customer_equipments
+           (id, salesRecordId, customerId, productId, productName, serialNumber, quotationNumber,
+            warrantyCertNumber, warrantyType, warrantyStartDate, warrantyEndDate,
+            status, createdAt)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          newId,
+          v.salesRecordId,
+          v.customerId,
+          v.productId,
+          v.productName,
+          v.serialNumber,
+          v.quotationNumber,
+          v.warrantyCertNumber,
+          v.warrantyType,
+          v.warrantyStartDate,
+          v.warrantyEndDate,
+          v.status,
+          now,
+        ]
+      );
+    }
+
+    // Excess existing rows (not paired at all, e.g. qty was reduced) are
+    // UNLINKED from this sale — never deleted. Their warranty/schedule/log
+    // history is preserved intact under the customer.
+    const toUnlink = existingEqs.filter((eq) => !existingUsed.has(eq.id));
+    for (const eq of toUnlink) {
+      await conn.query(
+        "UPDATE customer_equipments SET salesRecordId = '' WHERE id = ?",
+        [eq.id]
+      );
+    }
+  });
 }
 
-/** Delete all equipments linked to a sales record (cascade cleanup). */
+/**
+ * Unlink every equipment row from a sales record (never deletes) — used when
+ * a sale changes from "equipment" to "service", or the sales record itself is
+ * removed. Equipment and all its warranty/schedule/log history remain in the
+ * database, still visible under the customer's equipment list.
+ */
 export async function cleanupEquipmentsForSalesRecord(salesRecordId: string): Promise<void> {
   if (!salesRecordId) return;
   await query(
-    `DELETE FROM customer_equipments WHERE salesRecordId = ?`,
+    `UPDATE customer_equipments SET salesRecordId = '' WHERE salesRecordId = ?`,
     [salesRecordId]
   );
 }
@@ -372,17 +480,24 @@ export async function completeScheduleWithLog(
  * - pending schedules due within `scheduleDays` (default 7) OR already overdue.
  * Date comparison is lexical on YYYY-MM-DD strings (sorts chronologically).
  */
+// The server runs at UTC (Vercel) but the team is in Thailand (UTC+7, no
+// DST) — shifting the instant forward by the offset before taking the UTC
+// calendar date gives Bangkok's wall-clock date instead of the server's.
+// Without this, "today" between 00:00-06:59 Thai time is still "yesterday"
+// server-side, so an overdue schedule/expired warranty from yesterday goes
+// unflagged for up to 7 hours every single day.
+const BANGKOK_OFFSET_MS = 7 * 60 * 60 * 1000;
+function bangkokDateString(date: Date): string {
+  return new Date(date.getTime() + BANGKOK_OFFSET_MS).toISOString().slice(0, 10);
+}
+
 export async function getAlerts(
   warrantyDays = 30,
   scheduleDays = 7
 ): Promise<CrmAlerts> {
-  const today = new Date().toISOString().slice(0, 10);
-  const warrantyCutoff = new Date(Date.now() + warrantyDays * 86400000)
-    .toISOString()
-    .slice(0, 10);
-  const scheduleCutoff = new Date(Date.now() + scheduleDays * 86400000)
-    .toISOString()
-    .slice(0, 10);
+  const today = bangkokDateString(new Date());
+  const warrantyCutoff = bangkokDateString(new Date(Date.now() + warrantyDays * 86400000));
+  const scheduleCutoff = bangkokDateString(new Date(Date.now() + scheduleDays * 86400000));
 
   const [warrantyRows] = await query<RowDataPacket[]>(
     `${EQUIPMENT_SELECT}

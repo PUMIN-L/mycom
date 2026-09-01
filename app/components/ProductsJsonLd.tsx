@@ -7,7 +7,7 @@ import {
   SITE_LEGAL_NAME,
   BRAND_ALT_NAMES,
 } from "../lib/site";
-import { CONTACT_EMAIL, LINE_URL } from "../lib/contact";
+import { CONTACT_EMAIL, LINE_URL, COMPANY_ADDRESS } from "../lib/contact";
 import { stripHtml } from "../lib/stripHtml";
 
 // Absolute URL for structured data (relative /images/... and Cloudinary URLs).
@@ -66,11 +66,7 @@ export default async function ProductsJsonLd() {
     telephone: "+66620129895", // 062-012-9895 in E.164 format
     address: {
       "@type": "PostalAddress",
-      streetAddress: "93 Soi Ngamwongwan 6 Yaek 19, Ngamwongwan Rd., Bang Khen",
-      addressLocality: "Mueang Nonthaburi",
-      addressRegion: "Nonthaburi",
-      postalCode: "11000",
-      addressCountry: "TH",
+      ...COMPANY_ADDRESS,
     },
     areaServed: "TH",
     sameAs: [LINE_URL],
@@ -156,8 +152,15 @@ export default async function ProductsJsonLd() {
       return {
         "@type": "ListItem",
         position: i + 1,
+        // Deliberately "Thing", not "Product": Google requires a Product to
+        // carry offers/review/aggregateRating to avoid a Search Console
+        // error, but this is a B2B catalog with no public pricing — every
+        // item would need a fabricated price to qualify, which risks a
+        // manual action for misleading structured data. "Thing" carries the
+        // same name/description/image/url for crawlability with no such
+        // requirement; it just isn't eligible for the Product rich snippet.
         item: {
-          "@type": "Product",
+          "@type": "Thing",
           name, // English-first so EN searches match
           alternateName: alternateName.length ? alternateName : undefined,
           description: stripHtml(p.desc_en || p.desc_th || p.desc_zh || "") || undefined,

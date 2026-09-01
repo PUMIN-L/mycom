@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useT } from "../i18n/LanguageContext";
 import { translations } from "../i18n/translations";
-import { LINE_ID, LINE_URL, LINE_APP_URL, CONTACT_EMAIL } from "../lib/contact";
+import { LINE_ID, LINE_URL, LINE_APP_URL, CONTACT_EMAIL, COMPANY_ADDRESS_QUERY } from "../lib/contact";
 
 import LineQrModal from "./LineQrModal";
 
@@ -156,15 +156,15 @@ export default function Contact() {
             </div>
 
             {/* Map Element */}
-            <a 
-              href="https://www.google.com/maps/search/?api=1&query=The+Mall+Lifestore+Ngamwongwan" 
-              target="_blank" 
-              rel="noopener noreferrer" 
+            <a
+              href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(COMPANY_ADDRESS_QUERY)}`}
+              target="_blank"
+              rel="noopener noreferrer"
               className="relative block h-72 bg-gray-50 border border-gray-100 overflow-hidden shadow-inner rounded-xl group cursor-pointer"
             >
-              <iframe 
-                src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d3874.0048123793613!2d100.5372332!3d13.8597022!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x30e29b139e1a0001%3A0xe0a174301542f026!2sThe%20Mall%20Lifestore%20Ngamwongwan!5e0!3m2!1sen!2sth!4v1715670000000!5m2!1sen!2sth" 
-                width="100%" 
+              <iframe
+                src={`https://www.google.com/maps?q=${encodeURIComponent(COMPANY_ADDRESS_QUERY)}&output=embed`}
+                width="100%"
                 height="100%" 
                 style={{ border: 0 }} 
                 loading="lazy" 

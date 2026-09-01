@@ -3,6 +3,7 @@ import { unstable_cache } from "next/cache";
 import {
   getAllCategories,
   getAllProducts,
+  isProductPublic,
   ProductCategory,
   ProductData,
 } from "./productStore";
@@ -21,7 +22,7 @@ const fetchProductsData = async (): Promise<ProductsData> => {
     // This result is cached and served to the PUBLIC (home grid SSR, JSON-LD,
     // sitemap). Unpublished products must never leak here — the admin UI
     // re-fetches the full list from the authenticated /api/products instead.
-    const publicProducts = products.filter((p) => p.isPublished !== false && !p.pendingDeleteAt);
+    const publicProducts = products.filter(isProductPublic);
     return { categories, products: publicProducts };
   } catch (error) {
     console.error("Error fetching products data:", error);

@@ -5,6 +5,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('@/app/lib/productStore', () => ({
   getAllCategories: vi.fn(),
   getAllProducts: vi.fn(),
+  isProductPublic: (p: any) => p.isPublished !== false && !p.pendingDeleteAt,
 }));
 import { getAllCategories, getAllProducts } from '@/app/lib/productStore';
 

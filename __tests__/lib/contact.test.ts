@@ -1,6 +1,13 @@
 // @vitest-environment node
 import { describe, it, expect } from 'vitest';
-import { LINE_ID, LINE_URL, CONTACT_EMAIL, lineQrUrl } from '@/app/lib/contact';
+import {
+  LINE_ID,
+  LINE_URL,
+  CONTACT_EMAIL,
+  lineQrUrl,
+  COMPANY_ADDRESS,
+  COMPANY_ADDRESS_QUERY,
+} from '@/app/lib/contact';
 
 describe('contact', () => {
   describe('constants', () => {
@@ -45,6 +52,24 @@ describe('contact', () => {
       // ':' and '/' must be escaped inside the query so the QR encodes the exact link.
       expect(url).toContain('data=https%3A%2F%2Fline.me%2Fti%2Fp%2F~puminkmutnb');
       expect(url).not.toContain('data=https://line.me');
+    });
+  });
+
+  describe('COMPANY_ADDRESS / COMPANY_ADDRESS_QUERY', () => {
+    it('is the single real address — the same fields the Organization JSON-LD needs', () => {
+      expect(COMPANY_ADDRESS).toEqual({
+        streetAddress: '93 Soi Ngamwongwan 6 Yaek 19, Ngamwongwan Rd., Bang Khen',
+        addressLocality: 'Mueang Nonthaburi',
+        addressRegion: 'Nonthaburi',
+        postalCode: '11000',
+        addressCountry: 'TH',
+      });
+    });
+
+    it('composes a single-line query string from every address field', () => {
+      expect(COMPANY_ADDRESS_QUERY).toBe(
+        '93 Soi Ngamwongwan 6 Yaek 19, Ngamwongwan Rd., Bang Khen, Mueang Nonthaburi, Nonthaburi 11000, TH'
+      );
     });
   });
 });

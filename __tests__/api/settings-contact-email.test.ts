@@ -77,6 +77,31 @@ describe('Settings contact-email API Route', () => {
       expect(sendContactRecipientChangedEmail).not.toHaveBeenCalled();
     });
 
+    it('locks out the OTP after 5 wrong attempts, even for the right code afterward', async () => {
+      vi.mocked(getSession).mockResolvedValue(adminSession);
+      vi.mocked(getContactEmail).mockResolvedValue('old@example.com');
+      const state = new Map<string, string>([
+        ['contact_email_otp', '123456'],
+        ['contact_email_otp_expires', String(Date.now() + 100000)],
+        ['contact_email_pending', 'new@example.com'],
+      ]);
+      vi.mocked(getSetting).mockImplementation(async (key: string) => state.get(key) ?? null);
+      vi.mocked(setSetting).mockImplementation(async (key: string, value: string) => {
+        state.set(key, value);
+      });
+
+      let lastRes;
+      for (let i = 0; i < 5; i++) {
+        lastRes = await PUT(putRequest({ email: 'new@example.com', otp: '000000' }));
+      }
+      expect(lastRes!.status).toBe(400);
+      expect((await lastRes!.json()).error).toContain('เกินจำนวนที่กำหนด');
+
+      const afterLockout = await PUT(putRequest({ email: 'new@example.com', otp: '123456' }));
+      expect(afterLockout.status).toBe(400);
+      expect(setSetting).not.toHaveBeenCalledWith('contact_email', 'new@example.com');
+    });
+
     it('persists a valid change and notifies both old and new addresses', async () => {
       vi.mocked(getSession).mockResolvedValue(adminSession);
       vi.mocked(getContactEmail).mockResolvedValue('old@example.com');
