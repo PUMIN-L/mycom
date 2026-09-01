@@ -27,6 +27,7 @@ export default function robots(): MetadataRoute.Robots {
         "/dashboard",
         "/crm",
         "/expenses",
+        "/tools",
       ],
     },
     sitemap: `${SITE_URL}/sitemap.xml`,

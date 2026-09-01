@@ -79,6 +79,13 @@ export default function DashboardActions() {
       icon: "⚙️",
       color: "bg-gray-50 text-gray-700 border-gray-200 hover:border-gray-400 hover:shadow-gray-100",
     },
+    {
+      href: "/tools/pdf-header-footer",
+      title: "เครื่องมือ PDF (หัว/ท้ายกระดาษ)",
+      description: "ใส่รูปหัวกระดาษและท้ายกระดาษลงใน PDF",
+      icon: "📄",
+      color: "bg-violet-50 text-violet-600 border-violet-200 hover:border-violet-400 hover:shadow-violet-100",
+    },
   ];
 
   return (
