@@ -51,6 +51,7 @@ export default function DashboardPage() {
   const [showRecords, setShowRecords] = useState(true);
   const [recordSearch, setRecordSearch] = useState("");
   const [recordMonth, setRecordMonth] = useState("");
+  const [recordYear, setRecordYear] = useState("");
   const [toast, setToast] = useState<{ msg: string; type: "success" | "error" } | null>(null);
   const [costItems, setCostItems] = useState<CostItemLocal[]>([]);
   const [showCostCalc, setShowCostCalc] = useState(false);
@@ -915,6 +916,8 @@ export default function DashboardPage() {
             setRecordSearch={setRecordSearch}
             recordMonth={recordMonth}
             setRecordMonth={setRecordMonth}
+            recordYear={recordYear}
+            setRecordYear={setRecordYear}
             onView={handleView}
             onEdit={handleEdit}
             onDelete={handleDelete}

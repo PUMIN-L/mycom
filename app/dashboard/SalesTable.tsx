@@ -10,6 +10,8 @@ interface SalesTableProps {
   setRecordSearch: (v: string) => void;
   recordMonth: string;
   setRecordMonth: (v: string) => void;
+  recordYear: string;
+  setRecordYear: (v: string) => void;
   onView: (r: SalesRecord) => void;
   onEdit: (r: SalesRecord) => void;
   onDelete: (id: string) => void;
@@ -22,13 +24,29 @@ export default function SalesTable({
   setRecordSearch,
   recordMonth,
   setRecordMonth,
+  recordYear,
+  setRecordYear,
   onView,
   onEdit,
   onDelete,
   onHide,
 }: SalesTableProps) {
+  // Compute available years from records
+  const availableYears = React.useMemo(() => {
+    const yearSet = new Set<string>();
+    records.forEach((r) => {
+      if (r.saleDate) yearSet.add(r.saleDate.substring(0, 4));
+    });
+    const sorted = Array.from(yearSet).sort((a, b) => b.localeCompare(a));
+    return sorted;
+  }, [records]);
+
   // Filter records
   const filtered = records.filter((r) => {
+    if (recordYear) {
+      const year = r.saleDate?.substring(0, 4);
+      if (year !== recordYear) return false;
+    }
     if (recordMonth) {
       const month = r.saleDate?.substring(5, 7);
       if (month !== recordMonth) return false;
@@ -52,7 +70,7 @@ export default function SalesTable({
   // Reset page when filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [recordSearch, recordMonth, records]);
+  }, [recordSearch, recordMonth, recordYear, records]);
 
   const paginatedRecords = filtered.slice(
     (currentPage - 1) * itemsPerPage,
@@ -67,6 +85,15 @@ export default function SalesTable({
           <p className="text-xs text-gray-500">คลิกที่แถวหรือกดปุ่ม &quot;แก้ไข&quot; เพื่อแก้ไขรายละเอียดของยอดขาย</p>
         </div>
         <div className="flex gap-2 w-full sm:w-auto items-center">
+          <SearchableDropdown
+            value={recordYear}
+            onChange={setRecordYear}
+            options={[
+              { value: "", label: "ทุกปี" },
+              ...availableYears.map((y) => ({ value: y, label: `พ.ศ. ${Number(y) + 543}` }))
+            ]}
+            className="w-36"
+          />
           <SearchableDropdown
             value={recordMonth}
             onChange={setRecordMonth}
