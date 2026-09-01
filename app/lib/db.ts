@@ -688,6 +688,18 @@ async function bootstrapSchemaOnce(): Promise<void> {
         )
       `);
 
+    // ── Alert Snoozes ──────────────────────────────────────────────────────────
+    await connection.query(`
+        CREATE TABLE IF NOT EXISTS alert_snoozes (
+          alertType VARCHAR(50) NOT NULL,
+          referenceId VARCHAR(255) NOT NULL,
+          snoozeUntil VARCHAR(255) NOT NULL,
+          createdAt VARCHAR(255) NOT NULL,
+          PRIMARY KEY (alertType, referenceId),
+          INDEX idx_alert_snoozes_until (snoozeUntil)
+        )
+      `);
+
     // ── Seed default admin user ────────────────────────────────────────────
     // Credentials come from the environment, never from source. If
     // ADMIN_PASSWORD is unset we skip the seed instead of creating a weak

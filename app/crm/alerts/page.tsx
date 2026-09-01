@@ -21,6 +21,13 @@ export default function AlertsPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [activeTab, setActiveTab] = useState("all");
 
+  // Snooze state
+  const [snoozeAlertTarget, setSnoozeAlertTarget] = useState<{ type: string; id: string } | null>(null);
+  const [snoozeMode, setSnoozeMode] = useState<"days" | "date">("days");
+  const [snoozeDays, setSnoozeDays] = useState<number>(3);
+  const [snoozeDate, setSnoozeDate] = useState<string>("");
+  const [isSnoozing, setIsSnoozing] = useState(false);
+
   // Modals state
   const [editingEquipment, setEditingEquipment] = useState<CustomerEquipment | null>(null);
   const [viewingEquipmentDetails, setViewingEquipmentDetails] = useState<CustomerEquipment | null>(null);
@@ -102,6 +109,49 @@ export default function AlertsPage() {
       showToast(err instanceof Error ? err.message : "บันทึกผลงานไม่สำเร็จ", "error");
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const handleSnooze = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!snoozeAlertTarget || isSnoozing) return;
+    setIsSnoozing(true);
+    
+    let snoozeUntilIso = "";
+    if (snoozeMode === "days") {
+      const d = new Date();
+      d.setDate(d.getDate() + snoozeDays);
+      d.setHours(6, 0, 0, 0); // 6 AM (local time)
+      snoozeUntilIso = d.toISOString();
+    } else {
+      if (!snoozeDate) {
+        showToast("กรุณาระบุวันที่", "error");
+        setIsSnoozing(false);
+        return;
+      }
+      const d = new Date(snoozeDate);
+      d.setHours(6, 0, 0, 0);
+      snoozeUntilIso = d.toISOString();
+    }
+
+    try {
+      const res = await fetch("/api/admin/alerts/snooze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          alertType: snoozeAlertTarget.type,
+          referenceId: snoozeAlertTarget.id,
+          snoozeUntil: snoozeUntilIso
+        }),
+      });
+      if (!res.ok) throw new Error("Failed to snooze");
+      showToast("เลื่อนการแจ้งเตือนสำเร็จ", "success");
+      setSnoozeAlertTarget(null);
+      fetchAlerts();
+    } catch (err) {
+      showToast("ไม่สามารถเลื่อนการแจ้งเตือนได้", "error");
+    } finally {
+      setIsSnoozing(false);
     }
   };
 
@@ -301,6 +351,13 @@ export default function AlertsPage() {
                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" /></svg>
                          เสร็จแล้ว
                       </button>
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); setSnoozeAlertTarget({ type: "schedule", id: alert.data.id }); }}
+                        className="px-3 py-2 bg-amber-50 text-amber-700 text-sm font-semibold rounded-xl hover:bg-amber-100 transition-colors flex items-center justify-center gap-1.5"
+                        title="เลื่อนแจ้งเตือน"
+                      >
+                         ⏱️
+                      </button>
                     </div>
                   </div>
                 );
@@ -325,9 +382,18 @@ export default function AlertsPage() {
                     <p className="text-sm text-gray-500 mb-1 line-clamp-1" dangerouslySetInnerHTML={{ __html: alert.data.productName || "ไม่ระบุสินค้า" }} />
                     <p className="text-xs text-gray-400 font-mono mb-4">S/N: {alert.data.serialNumber || "—"}</p>
                     
-                    <button className="mt-auto w-full px-3 py-2 bg-gray-50 text-gray-700 text-sm font-semibold rounded-xl hover:bg-gray-100 transition-colors flex items-center justify-center gap-1.5 opacity-0 group-hover:opacity-100">
-                      ดูรายละเอียด →
-                    </button>
+                    <div className="mt-auto flex gap-2 w-full opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button className="flex-1 px-3 py-2 bg-gray-50 text-gray-700 text-sm font-semibold rounded-xl hover:bg-gray-100 transition-colors flex items-center justify-center gap-1.5">
+                        ดูรายละเอียด →
+                      </button>
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); setSnoozeAlertTarget({ type: "warranty", id: alert.data.id }); }}
+                        className="px-3 py-2 bg-amber-50 text-amber-700 text-sm font-semibold rounded-xl hover:bg-amber-100 transition-colors flex items-center justify-center gap-1.5"
+                        title="เลื่อนแจ้งเตือน"
+                      >
+                         ⏱️
+                      </button>
+                    </div>
                   </div>
                 );
               }
@@ -350,10 +416,19 @@ export default function AlertsPage() {
                       {!alert.data.warrantyStartDate && <span className="text-[10px] font-bold bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded uppercase">No Warranty Start</span>}
                     </div>
                     
-                    <button className="mt-auto w-full px-3 py-2 bg-rose-50 text-rose-700 text-sm font-semibold rounded-xl hover:bg-rose-100 transition-colors flex items-center justify-center gap-1.5">
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
-                      เพิ่มข้อมูล
-                    </button>
+                    <div className="mt-auto flex gap-2 w-full">
+                      <button className="flex-1 px-3 py-2 bg-rose-50 text-rose-700 text-sm font-semibold rounded-xl hover:bg-rose-100 transition-colors flex items-center justify-center gap-1.5">
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                        เพิ่มข้อมูล
+                      </button>
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); setSnoozeAlertTarget({ type: "incomplete", id: alert.data.id }); }}
+                        className="px-3 py-2 bg-amber-50 text-amber-700 text-sm font-semibold rounded-xl hover:bg-amber-100 transition-colors flex items-center justify-center gap-1.5"
+                        title="เลื่อนแจ้งเตือน"
+                      >
+                         ⏱️
+                      </button>
+                    </div>
                   </div>
                 );
               }
@@ -378,9 +453,18 @@ export default function AlertsPage() {
                        {alert.data.invoiceRef && !alert.data.receiptRef && <div className="flex items-center gap-1.5"><span className="text-orange-500">⚠️</span> ขาดใบเสร็จ (เกิน 30 วัน)</div>}
                     </div>
                     
-                    <button className="mt-auto w-full px-3 py-2 bg-gray-900 text-white text-sm font-semibold rounded-xl hover:bg-gray-800 transition-colors flex items-center justify-center gap-1.5">
-                      ตามเอกสาร →
-                    </button>
+                    <div className="mt-auto flex gap-2 w-full">
+                      <button className="flex-1 px-3 py-2 bg-gray-900 text-white text-sm font-semibold rounded-xl hover:bg-gray-800 transition-colors flex items-center justify-center gap-1.5">
+                        ตามเอกสาร →
+                      </button>
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); setSnoozeAlertTarget({ type: "document", id: alert.data.id }); }}
+                        className="px-3 py-2 bg-amber-50 text-amber-700 text-sm font-semibold rounded-xl hover:bg-amber-100 transition-colors flex items-center justify-center gap-1.5"
+                        title="เลื่อนแจ้งเตือน"
+                      >
+                         ⏱️
+                      </button>
+                    </div>
                   </div>
                 );
               }
@@ -457,6 +541,95 @@ export default function AlertsPage() {
                   className="px-6 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white font-semibold rounded-xl shadow-sm disabled:opacity-50 transition-colors"
                 >
                   {isSaving ? "กำลังบันทึก..." : "บันทึกข้อมูล"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── Snooze Alert Modal ─────────────────────────────────────────── */}
+      {snoozeAlertTarget && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm animate-in fade-in" onClick={() => setSnoozeAlertTarget(null)}>
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm overflow-hidden animate-in zoom-in-95" onClick={(e) => e.stopPropagation()}>
+            <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
+              <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+                ⏱️ เลื่อนการแจ้งเตือน
+              </h2>
+              <button
+                onClick={() => setSnoozeAlertTarget(null)}
+                className="p-2 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            <form onSubmit={handleSnooze} className="p-6 space-y-5">
+              <div className="flex gap-4">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input 
+                    type="radio" 
+                    name="snoozeMode" 
+                    checked={snoozeMode === "days"} 
+                    onChange={() => setSnoozeMode("days")}
+                    className="w-4 h-4 text-amber-500 focus:ring-amber-500"
+                  />
+                  <span className="text-sm font-semibold text-gray-700">เลื่อนเป็นจำนวนวัน</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input 
+                    type="radio" 
+                    name="snoozeMode" 
+                    checked={snoozeMode === "date"} 
+                    onChange={() => setSnoozeMode("date")}
+                    className="w-4 h-4 text-amber-500 focus:ring-amber-500"
+                  />
+                  <span className="text-sm font-semibold text-gray-700">ระบุวันที่</span>
+                </label>
+              </div>
+
+              {snoozeMode === "days" ? (
+                <div>
+                  <label className="block text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">เลื่อนไปอีก (วัน)</label>
+                  <select 
+                    value={snoozeDays} 
+                    onChange={(e) => setSnoozeDays(Number(e.target.value))}
+                    className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 text-gray-700 bg-white"
+                  >
+                    <option value={1}>1 วัน</option>
+                    <option value={3}>3 วัน</option>
+                    <option value={7}>7 วัน</option>
+                    <option value={14}>14 วัน</option>
+                    <option value={30}>1 เดือน</option>
+                  </select>
+                </div>
+              ) : (
+                <div>
+                  <label className="block text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">เลือกวันที่ที่ต้องการให้เตือน</label>
+                  <input 
+                    type="date" 
+                    required 
+                    value={snoozeDate}
+                    onChange={(e) => setSnoozeDate(e.target.value)}
+                    className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 text-gray-700 bg-white"
+                  />
+                  <p className="mt-2 text-xs text-amber-600 font-medium">* ระบบจะแจ้งเตือนใหม่ในเวลา 6:00 น. ของวันที่เลือก</p>
+                </div>
+              )}
+
+              <div className="pt-2 flex justify-end gap-3">
+                <button 
+                  type="button" 
+                  onClick={() => setSnoozeAlertTarget(null)} 
+                  className="px-4 py-2 text-gray-600 font-medium hover:bg-gray-100 rounded-xl transition-colors text-sm"
+                >
+                  ยกเลิก
+                </button>
+                <button 
+                  type="submit" 
+                  disabled={isSnoozing} 
+                  className="px-5 py-2 bg-amber-500 hover:bg-amber-600 text-white font-semibold rounded-xl shadow-sm disabled:opacity-50 transition-colors text-sm flex items-center gap-1.5"
+                >
+                  {isSnoozing ? "กำลังบันทึก..." : "ยืนยัน"}
                 </button>
               </div>
             </form>

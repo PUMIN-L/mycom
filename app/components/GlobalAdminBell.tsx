@@ -40,18 +40,8 @@ export default function GlobalAdminBell() {
 
   if (!isLoggedIn) return null;
 
-  // Determine if it's an admin path
-  const isPublicPath = 
-    pathname === "/" ||
-    pathname === "/about" ||
-    pathname === "/contact" ||
-    pathname?.startsWith("/catalog") ||
-    pathname?.startsWith("/th") ||
-    pathname?.startsWith("/en") ||
-    pathname?.startsWith("/zh");
-
-  // Don't show on public pages, and don't show on the alerts page itself
-  if (isPublicPath || pathname === "/crm/alerts") {
+  // Show ONLY on the dashboard page
+  if (pathname !== "/dashboard") {
     return null;
   }
 

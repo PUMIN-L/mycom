@@ -499,18 +499,25 @@ export async function getAlerts(
   const warrantyCutoff = bangkokDateString(new Date(Date.now() + warrantyDays * 86400000));
   const scheduleCutoff = bangkokDateString(new Date(Date.now() + scheduleDays * 86400000));
 
+  const nowIso = new Date().toISOString();
+
   const [warrantyRows] = await query<RowDataPacket[]>(
     `${EQUIPMENT_SELECT}
+     LEFT JOIN alert_snoozes sno ON sno.alertType = 'warranty' AND sno.referenceId = e.id
      WHERE e.warrantyEndDate IS NOT NULL
        AND e.warrantyEndDate >= ? AND e.warrantyEndDate <= ?
+       AND (sno.snoozeUntil IS NULL OR sno.snoozeUntil <= ?)
      ORDER BY e.warrantyEndDate ASC`,
-    [today, warrantyCutoff]
+    [today, warrantyCutoff, nowIso]
   );
 
   const [incompleteRows] = await query<RowDataPacket[]>(
     `${EQUIPMENT_SELECT}
-     WHERE e.serialNumber = '' OR e.serialNumber IS NULL OR e.warrantyStartDate IS NULL
-     ORDER BY e.createdAt DESC LIMIT 100`
+     LEFT JOIN alert_snoozes sno ON sno.alertType = 'incomplete' AND sno.referenceId = e.id
+     WHERE (e.serialNumber = '' OR e.serialNumber IS NULL OR e.warrantyStartDate IS NULL)
+       AND (sno.snoozeUntil IS NULL OR sno.snoozeUntil <= ?)
+     ORDER BY e.createdAt DESC LIMIT 100`,
+    [nowIso]
   );
 
   const [scheduleRows] = await query<RowDataPacket[]>(
@@ -521,9 +528,11 @@ export async function getAlerts(
      LEFT JOIN customers c ON e.customerId = c.id
      LEFT JOIN companies co ON c.companyId = co.id
      LEFT JOIN products p ON e.productId = p.id
+     LEFT JOIN alert_snoozes sno ON sno.alertType = 'schedule' AND sno.referenceId = s.id
      WHERE s.status = 'pending' AND s.scheduledDate <= ?
+       AND (sno.snoozeUntil IS NULL OR sno.snoozeUntil <= ?)
      ORDER BY s.scheduledDate ASC`,
-    [scheduleCutoff]
+    [scheduleCutoff, nowIso]
   );
 
   const [missingDocRows] = await query<RowDataPacket[]>(
@@ -536,11 +545,13 @@ export async function getAlerts(
      LEFT JOIN salespeople sp ON sr.salespersonId = sp.id
      LEFT JOIN customers c ON sr.customerId = c.id
      LEFT JOIN companies co ON sr.companyId = co.id
+     LEFT JOIN alert_snoozes sno ON sno.alertType = 'document' AND sno.referenceId = sr.id
      WHERE 
-       (sr.saleType = 'equipment' AND sr.deliveryRef = '' AND DATEDIFF(?, sr.saleDate) >= 20)
-       OR (sr.invoiceRef != '' AND sr.receiptRef = '' AND DATEDIFF(?, sr.saleDate) >= 30)
+       ((sr.saleType = 'equipment' AND sr.deliveryRef = '' AND DATEDIFF(?, sr.saleDate) >= 20)
+       OR (sr.invoiceRef != '' AND sr.receiptRef = '' AND DATEDIFF(?, sr.saleDate) >= 30))
+       AND (sno.snoozeUntil IS NULL OR sno.snoozeUntil <= ?)
      ORDER BY sr.saleDate ASC`,
-    [today, today]
+    [today, today, nowIso]
   );
 
   return {
@@ -551,4 +562,21 @@ export async function getAlerts(
       (s) => ({ ...s, overdue: s.scheduledDate < today })
     ),
   };
+}
+
+/**
+ * Snoozes an alert until the specified ISO timestamp.
+ */
+export async function snoozeAlert(
+  alertType: string,
+  referenceId: string,
+  snoozeUntil: string
+): Promise<void> {
+  const now = new Date().toISOString();
+  await query(
+    `INSERT INTO alert_snoozes (alertType, referenceId, snoozeUntil, createdAt)
+     VALUES (?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE snoozeUntil = ?, createdAt = ?`,
+    [alertType, referenceId, snoozeUntil, now, snoozeUntil, now]
+  );
 }

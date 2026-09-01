@@ -285,7 +285,7 @@ describe('getAlerts — "today" must be Bangkok (UTC+7) time, not server UTC', (
     const missingDocCall = topQuery.mock.calls.find(([sql]) =>
       String(sql).includes('DATEDIFF')
     );
-    expect(missingDocCall![1]).toEqual(['2026-08-05', '2026-08-05']);
+    expect(missingDocCall![1]).toEqual(['2026-08-05', '2026-08-05', '2026-08-04T19:00:00.000Z']);
 
     const scheduleCall = topQuery.mock.calls.find(([sql]) =>
       String(sql).includes('service_schedules')
