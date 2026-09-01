@@ -553,7 +553,14 @@ export default function DashboardPage() {
                   type="month"
                   value={periodValue}
                   onChange={(e) => setPeriodValue(e.target.value)}
-                  className="px-3 py-1 border-none bg-transparent hover:bg-white transition-all rounded-full text-sm focus:ring-2 focus:ring-gray-300 outline-none h-8 font-medium text-gray-700 shrink-0"
+                  onClick={(e) => {
+                    try {
+                      if (typeof e.currentTarget.showPicker === 'function') {
+                        e.currentTarget.showPicker();
+                      }
+                    } catch { /* ignore */ }
+                  }}
+                  className="px-3 py-1 border-none bg-transparent hover:bg-white transition-all rounded-full text-sm focus:ring-2 focus:ring-gray-300 outline-none h-8 font-medium text-gray-700 shrink-0 cursor-pointer"
                 />
               )}
               {periodType === "quarter" && (
