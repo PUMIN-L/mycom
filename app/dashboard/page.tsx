@@ -512,12 +512,19 @@ export default function DashboardPage() {
       {/* Header */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8">
         <div className="flex flex-col xl:flex-row justify-between items-start xl:items-end gap-6 mb-10">
-          <div className="shrink-0">
-            <h1 className="text-3xl sm:text-4xl font-black text-transparent bg-clip-text bg-gradient-to-r from-emerald-600 to-teal-500 tracking-tight mb-2 whitespace-nowrap drop-shadow-sm">
-              ภาพรวมยอดขาย
-            </h1>
-            <div className="flex flex-wrap items-center gap-2 text-sm font-medium whitespace-nowrap">
-              <span className="bg-emerald-50 text-emerald-700 px-3 py-1 rounded-full border border-emerald-100 shadow-sm">
+          <div className="shrink-0 flex flex-col justify-center">
+            <div className="flex items-center gap-3 mb-2">
+              <img 
+                src="/images/profin-logo-3.png" 
+                alt="Profin Logo" 
+                className="h-10 sm:h-12 object-contain drop-shadow-sm"
+              />
+              <h1 className="text-3xl sm:text-4xl font-black text-transparent bg-clip-text bg-gradient-to-r from-[#170d3e] to-[#87704d] tracking-tight whitespace-nowrap drop-shadow-sm">
+                ภาพรวมยอดขาย
+              </h1>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 text-sm font-medium whitespace-nowrap pl-[52px] sm:pl-[60px]">
+              <span className="bg-[#f9f7f4] text-[#87704d] px-3 py-1 rounded-full border border-[#87704d]/20 shadow-sm">
                 ภาพรวมธุรกิจประจำปี
               </span>
             </div>
