@@ -199,7 +199,7 @@ export default function PdfHeaderFooterPage() {
       }
 
       const newPdfBytes = await pdfDoc.save();
-      const blob = new Blob([newPdfBytes], { type: "application/pdf" });
+      const blob = new Blob([newPdfBytes.buffer as ArrayBuffer], { type: "application/pdf" });
       const url = URL.createObjectURL(blob);
       setFinalPdfUrl(url);
       setStep(4);
