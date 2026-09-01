@@ -111,20 +111,41 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
       const schedRes = await fetch("/api/admin/schedules");
       const allSchedules: ServiceSchedule[] = schedRes.ok ? await schedRes.json() : [];
 
+      // Group schedules by equipmentId
+      const schedulesByEq = new Map<string, ServiceSchedule[]>();
+      allSchedules.forEach((s) => {
+        const arr = schedulesByEq.get(s.equipmentId) || [];
+        arr.push(s);
+        schedulesByEq.set(s.equipmentId, arr);
+      });
+
       // Sheet 1: Equipment
-      const eqData = equipments.map((eq) => ({
-        "ลูกค้า": eq.customerName || "",
-        "บริษัท": eq.companyName || "",
-        "สินค้า": stripHtml(eq.productName) || eq.productId,
-        "Serial Number": eq.serialNumber,
-        "เลขที่ใบเสนอราคา": eq.quotationNumber,
-        "เลขที่ใบรับประกัน": eq.warrantyCertNumber,
-        "ประเภทประกัน": eq.warrantyType,
-        "เริ่มประกัน": eq.warrantyStartDate || "",
-        "หมดประกัน": eq.warrantyEndDate || "",
-        "สถานะ": eq.status,
-        "วันที่บันทึก": eq.createdAt,
-      }));
+      const eqData = equipments.map((eq) => {
+        const eqSchedules = schedulesByEq.get(eq.id) || [];
+        // Sort schedules by date descending (newest first)
+        eqSchedules.sort((a, b) => new Date(b.scheduledDate).getTime() - new Date(a.scheduledDate).getTime());
+        
+        const scheduleText = eqSchedules.map(s => {
+          const type = s.scheduleType === "service" ? "Service" : "โทรติดตาม";
+          const status = s.status === "pending" ? "รอดำเนินการ" : s.status === "completed" ? "เสร็จแล้ว" : "ยกเลิก";
+          return `${s.scheduledDate}: ${type} (${status})`;
+        }).join(", ");
+
+        return {
+          "ลูกค้า": eq.customerName || "",
+          "บริษัท": eq.companyName || "",
+          "สินค้า": stripHtml(eq.productName) || eq.productId,
+          "Serial Number": eq.serialNumber,
+          "เลขที่ใบเสนอราคา": eq.quotationNumber,
+          "เลขที่ใบรับประกัน": eq.warrantyCertNumber,
+          "ประเภทประกัน": eq.warrantyType,
+          "เริ่มประกัน": eq.warrantyStartDate || "",
+          "หมดประกัน": eq.warrantyEndDate || "",
+          "สถานะ": eq.status,
+          "ประวัตินัดหมาย/ติดตาม": scheduleText || "-",
+          "วันที่บันทึก": eq.createdAt,
+        };
+      });
 
       // Sheet 2: Schedules (with equipment serial for reference)
       const eqMap = new Map(equipments.map((eq) => [eq.id, eq]));

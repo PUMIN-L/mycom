@@ -527,7 +527,7 @@ export default function DashboardPage() {
               🏠 กลับไประบบจัดการ
             </Link>
             {/* Filter Pill (Minimal) */}
-            <div className="flex items-center bg-gray-50/80 rounded-full p-1 border border-gray-200/60 w-full sm:w-auto overflow-x-auto no-scrollbar">
+            <div className="flex items-center flex-wrap sm:flex-nowrap justify-center bg-gray-50/80 rounded-2xl sm:rounded-full p-1 border border-gray-200/60 w-full sm:w-auto relative z-30">
               <SearchableDropdown
                 options={[
                   { value: "month", label: "รายเดือน" },
