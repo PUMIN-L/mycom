@@ -51,16 +51,24 @@ export default function PdfHeaderFooterPage() {
   // File states
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [pdfBytes, setPdfBytes] = useState<ArrayBuffer | null>(null);
-  // react-pdf reloads/re-renders the WHOLE document whenever `file` changes
-  // reference (it warns about this itself: "File prop passed to <Document />
-  // changed, but it's equal to the previous one ... Consider memoizing").
-  // Recreating `{ data: pdfBytes }` inline on every render — e.g. from a
-  // single page's header/footer toggle — caused a full document reload on
-  // every click. Memoize on pdfBytes so the reference is stable across
-  // unrelated re-renders.
+  // react-pdf (pdf.js) TRANSFERS the ArrayBuffer passed as `file.data` to its
+  // worker thread for zero-copy parsing — this DETACHES that exact ArrayBuffer
+  // in the main thread (byteLength becomes 0, unusable). If `pdfBytes` itself
+  // were handed to <Document>, the later pdf-lib step (`generatePdf`, which
+  // also reads `pdfBytes`) would crash with "Cannot perform Construct on a
+  // detached ArrayBuffer". So <Document> only ever gets a disposable `.slice(0)`
+  // copy, never the original — `pdfBytes` stays intact for pdf-lib.
+  //
+  // The copy must also be freshly made every time Step 2 is (re-)entered, not
+  // just once per upload — <Document> fully unmounts leaving Step 2, so
+  // going back to Step 2 a second time mounts a NEW <Document> that would
+  // otherwise reuse (and re-transfer) the SAME already-detached clone from
+  // the first visit. Keying the memo on `step` too (not just `pdfBytes`)
+  // still keeps the reference stable while simply toggling pages within one
+  // Step 2 visit — the fix for the reload-on-every-toggle bug is preserved.
   const pdfFileProp = useMemo(
-    () => (pdfBytes ? { data: pdfBytes } : null),
-    [pdfBytes]
+    () => (pdfBytes ? { data: pdfBytes.slice(0) } : null),
+    [pdfBytes, step]
   );
   const [headerImage, setHeaderImage] = useState<File | null>(null);
   const [footerImage, setFooterImage] = useState<File | null>(null);
@@ -72,6 +80,11 @@ export default function PdfHeaderFooterPage() {
 
   // Page config: which pages get header/footer
   const [pageConfigs, setPageConfigs] = useState<Record<number, PageConfig>>({});
+
+  // Native width (in PDF points) of the page shown in the Step 3 live
+  // preview — needed to scale marginTop/marginBottom (stored in the same
+  // point units generatePdf/pdf-lib uses) down to on-screen pixels.
+  const [previewPageWidthPt, setPreviewPageWidthPt] = useState<number | null>(null);
 
   // Image placement settings
   const [headerSettings, setHeaderSettings] = useState<ImageSettings>({
@@ -564,6 +577,67 @@ export default function PdfHeaderFooterPage() {
               <h2 className="text-xl font-bold text-gray-800 mb-2">ขั้นตอนที่ 3: ตกแต่งและปรับแต่ง</h2>
               <p className="text-gray-500">ปรับขนาด ตำแหน่ง และความทึบของรูปหัว/ท้ายกระดาษ</p>
             </div>
+
+            {/* Live preview — actual PDF page with header/footer overlaid at
+                the real widthPercent/align/margin/opacity, not just an
+                isolated image swatch. Uses the first page that has a
+                header/footer selected so the preview always shows something
+                relevant. */}
+            {pdfFileProp && (() => {
+              const previewPageNum =
+                Object.keys(pageConfigs)
+                  .map(Number)
+                  .sort((a, b) => a - b)
+                  .find((p) => pageConfigs[p]?.header || pageConfigs[p]?.footer) ?? 1;
+              const previewConfig = pageConfigs[previewPageNum] || { header: false, footer: false };
+              const PREVIEW_WIDTH = 320;
+              const scale = previewPageWidthPt ? PREVIEW_WIDTH / previewPageWidthPt : 1;
+              const justifyFor = (align: ImageSettings["align"]) =>
+                align === "left" ? "flex-start" : align === "right" ? "flex-end" : "center";
+
+              return (
+                <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-bold text-gray-800">ตัวอย่างจริง — หน้า {previewPageNum}</h3>
+                    <span className="text-xs text-gray-400">อัปเดตตามค่าที่ปรับด้านล่าง</span>
+                  </div>
+                  <div className="flex justify-center bg-gray-100 rounded-xl p-6">
+                    <div className="relative shadow-lg" style={{ width: PREVIEW_WIDTH }}>
+                      <DynDocument file={pdfFileProp} loading={
+                        <div className="flex justify-center py-20"><div className="w-8 h-8 border-4 border-violet-200 border-t-violet-600 rounded-full animate-spin" /></div>
+                      }>
+                        <DynPage
+                          pageNumber={previewPageNum}
+                          width={PREVIEW_WIDTH}
+                          renderTextLayer={false}
+                          renderAnnotationLayer={false}
+                          onLoadSuccess={(page: { width: number }) => setPreviewPageWidthPt(page.width)}
+                        />
+                      </DynDocument>
+                      {previewConfig.header && headerImage && (
+                        <div
+                          className="absolute left-0 right-0 flex pointer-events-none"
+                          style={{ top: headerSettings.marginTop * scale, justifyContent: justifyFor(headerSettings.align) }}
+                        >
+                          <img src={headerPreview} alt="" style={{ width: `${headerSettings.widthPercent}%`, opacity: headerSettings.opacity }} />
+                        </div>
+                      )}
+                      {previewConfig.footer && footerImage && (
+                        <div
+                          className="absolute left-0 right-0 flex pointer-events-none"
+                          style={{ bottom: footerSettings.marginBottom * scale, justifyContent: justifyFor(footerSettings.align) }}
+                        >
+                          <img src={footerPreview} alt="" style={{ width: `${footerSettings.widthPercent}%`, opacity: footerSettings.opacity }} />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  {!previewConfig.header && !previewConfig.footer && (
+                    <p className="text-center text-xs text-gray-400 mt-3">หน้านี้ยังไม่ได้เลือกใส่หัว/ท้ายกระดาษ</p>
+                  )}
+                </div>
+              );
+            })()}
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
               {/* Header Settings */}
