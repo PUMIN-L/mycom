@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { toLocalDateString } from '@/app/lib/dateFormat';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { toLocalDateString, bangkokDateAtHour, bangkokDateAtHourFromNow } from '@/app/lib/dateFormat';
 
 describe('toLocalDateString', () => {
   it('formats using local calendar getters, not toISOString', () => {
@@ -19,5 +19,41 @@ describe('toLocalDateString', () => {
     const morning = new Date(2026, 7, 5, 0, 0, 1);
     const night = new Date(2026, 7, 5, 23, 59, 59);
     expect(toLocalDateString(morning)).toBe(toLocalDateString(night));
+  });
+});
+
+describe('bangkokDateAtHour', () => {
+  it('computes the UTC instant for 6 AM Bangkok on a given date, independent of local timezone', () => {
+    // 06:00 +07:00 == 23:00 UTC the previous day. The computation must not
+    // read any local Date getter/setter, so this holds no matter what
+    // timezone the test runner itself is in.
+    const d = bangkokDateAtHour('2026-08-05', 6);
+    expect(d.toISOString()).toBe('2026-08-04T23:00:00.000Z');
+  });
+
+  it('handles an hour that keeps the same UTC calendar day (e.g. noon Bangkok)', () => {
+    const d = bangkokDateAtHour('2026-08-05', 12);
+    expect(d.toISOString()).toBe('2026-08-05T05:00:00.000Z');
+  });
+});
+
+describe('bangkokDateAtHourFromNow', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('lands on the Bangkok calendar date N days out, at the given Bangkok hour', () => {
+    // UTC 2026-08-04T19:00:00Z == Bangkok 2026-08-05 02:00. 3 days later in
+    // Bangkok terms is 2026-08-08; 6 AM there is 2026-08-07T23:00:00Z.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-04T19:00:00.000Z'));
+    const d = bangkokDateAtHourFromNow(3, 6);
+    expect(d.toISOString()).toBe('2026-08-07T23:00:00.000Z');
+  });
+
+  it('uses the Bangkok calendar date, not the server/runner UTC date, for "0 days from now"', () => {
+    // Still Bangkok 2026-08-05 (02:00) even though UTC says Aug 4.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-04T19:00:00.000Z'));
+    const d = bangkokDateAtHourFromNow(0, 6);
+    expect(d.toISOString()).toBe('2026-08-04T23:00:00.000Z'); // Aug 5 06:00 +07
   });
 });

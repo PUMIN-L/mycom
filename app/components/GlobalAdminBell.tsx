@@ -10,9 +10,14 @@ export default function GlobalAdminBell() {
   const [alertsCount, setAlertsCount] = useState<number>(0);
   const [isAlertsLoading, setIsAlertsLoading] = useState<boolean>(true);
 
-  // Poll alerts only if logged in and on the dashboard
+  // Hide only on the alerts page itself — a bell that deep-links to
+  // /crm/alerts is redundant (and a bit odd) while already viewing that page.
+  const hideBell = pathname?.startsWith("/crm/alerts") ?? false;
+
+  // Poll alerts on every admin page except the alerts page itself, as long as
+  // the admin is logged in.
   useEffect(() => {
-    if (!isLoggedIn || pathname !== "/dashboard") {
+    if (!isLoggedIn || hideBell) {
       setAlertsCount(0);
       setIsAlertsLoading(true);
       return;
@@ -40,14 +45,9 @@ export default function GlobalAdminBell() {
     fetchAlerts();
     const interval = setInterval(fetchAlerts, 5 * 60 * 1000); // 5 min
     return () => clearInterval(interval);
-  }, [isLoggedIn, pathname]);
+  }, [isLoggedIn, hideBell]);
 
-  if (!isLoggedIn) return null;
-
-  // Show ONLY on the dashboard page
-  if (pathname !== "/dashboard") {
-    return null;
-  }
+  if (!isLoggedIn || hideBell) return null;
 
   // Floating Action Button at Bottom-Left to avoid colliding with Toasts at Bottom-Right
   return (

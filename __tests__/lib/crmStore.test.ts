@@ -17,6 +17,7 @@ import {
   getAlerts,
   completeScheduleWithLog,
   ScheduleNotPendingError,
+  snoozeAlert,
 } from '@/app/lib/crmStore';
 
 beforeEach(() => {
@@ -306,5 +307,45 @@ describe('getAlerts — "today" must be Bangkok (UTC+7) time, not server UTC', (
 
     const alerts = await getAlerts();
     expect(alerts.upcomingSchedules[0].overdue).toBe(true);
+  });
+
+  it('excludes an alert whose snoozeUntil filter would match in the real query (SQL shape regression guard)', async () => {
+    // We can't exercise MySQL's actual filtering through a mocked query(), so
+    // this asserts the query TEXT joins alert_snoozes and compares against
+    // "now" for every alert type — the thing a future refactor could
+    // accidentally drop and still pass every other getAlerts test here.
+    await getAlerts();
+    const queries = topQuery.mock.calls.map(([sql]) => String(sql));
+    for (const sql of queries) {
+      expect(sql).toContain('LEFT JOIN alert_snoozes');
+      expect(sql).toContain('sno.snoozeUntil IS NULL OR sno.snoozeUntil <=');
+    }
+  });
+});
+
+describe('snoozeAlert', () => {
+  it('upserts a snooze row keyed on (alertType, referenceId)', async () => {
+    topQuery.mockResolvedValue([{ affectedRows: 1 }]);
+    await snoozeAlert('schedule', 's1', '2026-08-07T23:00:00.000Z');
+
+    expect(topQuery).toHaveBeenCalledTimes(1);
+    const [sql, params] = topQuery.mock.calls[0];
+    expect(sql).toContain('INSERT INTO alert_snoozes');
+    expect(sql).toContain('ON DUPLICATE KEY UPDATE');
+    expect(params[0]).toBe('schedule');
+    expect(params[1]).toBe('s1');
+    expect(params[2]).toBe('2026-08-07T23:00:00.000Z');
+    // The UPDATE branch's snoozeUntil must match the INSERT branch's, so a
+    // re-snooze of the same alert actually moves the date instead of no-op'ing.
+    expect(params[4]).toBe('2026-08-07T23:00:00.000Z');
+  });
+
+  it('works for every alert type the UI can snooze', async () => {
+    topQuery.mockResolvedValue([{ affectedRows: 1 }]);
+    for (const type of ['warranty', 'incomplete', 'schedule', 'missing_doc']) {
+      await snoozeAlert(type, 'ref-1', '2026-08-07T23:00:00.000Z');
+      const [, params] = topQuery.mock.calls.at(-1)!;
+      expect(params[0]).toBe(type);
+    }
   });
 });

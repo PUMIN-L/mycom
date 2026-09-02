@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useAuth } from "../../context/AuthContext";
 import Toast from "../../components/Toast";
 import type { CrmAlerts, CustomerEquipment } from "../../lib/types";
-import { toLocalDateString } from "../../lib/dateFormat";
+import { toLocalDateString, bangkokDateAtHour, bangkokDateAtHourFromNow } from "../../lib/dateFormat";
 
 // Import Modals
 import EquipmentEditModal from "../../components/modals/EquipmentEditModal";
@@ -119,18 +119,16 @@ export default function AlertsPage() {
     
     let snoozeUntilIso = "";
     if (snoozeMode === "days") {
-      const d = new Date();
-      d.setDate(d.getDate() + snoozeDays);
-      d.setHours(6, 0, 0, 0); // 6 AM (local time)
-      snoozeUntilIso = d.toISOString();
+      // 6:00 AM Bangkok time, `snoozeDays` days from now — NOT the admin's
+      // own device timezone (see bangkokDateAtHourFromNow's doc comment).
+      snoozeUntilIso = bangkokDateAtHourFromNow(snoozeDays, 6).toISOString();
     } else {
       if (!snoozeDate) {
         showToast("กรุณาระบุวันที่", "error");
         setIsSnoozing(false);
         return;
       }
-      const d = new Date(snoozeDate);
-      d.setHours(6, 0, 0, 0);
+      const d = bangkokDateAtHour(snoozeDate, 6);
       if (d <= new Date()) {
         showToast("กรุณาเลือกวันที่ในอนาคต", "error");
         setIsSnoozing(false);

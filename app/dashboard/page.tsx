@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import DatePicker from "../components/DatePicker";
 import { toLocalDateString } from "../lib/dateFormat";
+import { downloadExcel } from "../lib/xlsxExport";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine,
   PieChart, Pie, Cell, Legend,
@@ -448,7 +449,6 @@ export default function DashboardPage() {
     }
     setIsExporting(true);
     try {
-      const XLSX = await import("xlsx");
       const rows = targetRecords.map((r) => ({
         "วันที่": r.saleDate,
         "สินค้า": stripHtml(r.productName),
@@ -464,15 +464,12 @@ export default function DashboardPage() {
         "อ้างอิงใบเสนอราคา": r.quotationRef || "",
         "หมายเหตุ": r.note || "",
       }));
-      const ws = XLSX.utils.json_to_sheet(rows);
-      const wb = XLSX.utils.book_new();
       const sheetLabel = recordYear ? `พ.ศ. ${Number(recordYear) + 543}` : "ทั้งหมด";
-      XLSX.utils.book_append_sheet(wb, ws, `Sales ${sheetLabel}`);
       const parts = ["sales-report"];
       if (recordYear) parts.push(recordYear);
       if (recordMonth) parts.push(recordMonth);
       const filename = parts.join("-") + ".xlsx";
-      XLSX.writeFile(wb, filename);
+      await downloadExcel(filename, [{ name: `Sales ${sheetLabel}`, rows }]);
       showToast(`ส่งออกไฟล์ ${filename} เรียบร้อยแล้ว`, "success");
     } catch {
       showToast("ไม่สามารถส่งออกไฟล์ Excel ได้", "error");

@@ -1,14 +1,21 @@
 "use client";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useAuth } from "../../context/AuthContext";
 
-// Dynamically import react-pdf to avoid SSR issues (DOMMatrix not available in Node.js)
+// Dynamically import react-pdf to avoid SSR issues (DOMMatrix not available in Node.js).
+// Worker MUST be same-origin (bundled via import.meta.url), not the unpkg CDN — the
+// site's CSP script-src is 'self' only (see next.config.ts), so a CDN workerSrc gets
+// silently blocked by the browser and PDF rendering fails. Mirrors
+// app/document/[id]/PdfViewerClient.tsx, which already does this correctly.
 const DynDocument = dynamic(
   () => import("react-pdf").then((mod) => {
-    mod.pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${mod.pdfjs.version}/build/pdf.worker.min.mjs`;
+    mod.pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+      "pdfjs-dist/build/pdf.worker.min.mjs",
+      import.meta.url,
+    ).toString();
     return mod.Document;
   }),
   { ssr: false }
@@ -44,6 +51,17 @@ export default function PdfHeaderFooterPage() {
   // File states
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [pdfBytes, setPdfBytes] = useState<ArrayBuffer | null>(null);
+  // react-pdf reloads/re-renders the WHOLE document whenever `file` changes
+  // reference (it warns about this itself: "File prop passed to <Document />
+  // changed, but it's equal to the previous one ... Consider memoizing").
+  // Recreating `{ data: pdfBytes }` inline on every render — e.g. from a
+  // single page's header/footer toggle — caused a full document reload on
+  // every click. Memoize on pdfBytes so the reference is stable across
+  // unrelated re-renders.
+  const pdfFileProp = useMemo(
+    () => (pdfBytes ? { data: pdfBytes } : null),
+    [pdfBytes]
+  );
   const [headerImage, setHeaderImage] = useState<File | null>(null);
   const [footerImage, setFooterImage] = useState<File | null>(null);
   const [headerPreview, setHeaderPreview] = useState<string>("");
@@ -78,6 +96,13 @@ export default function PdfHeaderFooterPage() {
       alert("ไฟล์ PDF ขนาดใหญ่เกินไป (สูงสุด 50MB)");
       return;
     }
+    // A NEW document's page count/content has nothing to do with whatever was
+    // selected for the previous one — without this, going back to Step 1 and
+    // uploading a different PDF (without hitting "เริ่มใหม่") silently carries
+    // over the old file's per-page header/footer selections.
+    configsInitializedRef.current = false;
+    setPageConfigs({});
+    setNumPages(0);
     setPdfFile(file);
     const bytes = await file.arrayBuffer();
     setPdfBytes(bytes);
@@ -450,7 +475,7 @@ export default function PdfHeaderFooterPage() {
             </div>
 
             {/* Page grid */}
-            <DynDocument file={{ data: pdfBytes }} onLoadSuccess={onDocumentLoadSuccess} loading={
+            <DynDocument file={pdfFileProp} onLoadSuccess={onDocumentLoadSuccess} loading={
               <div className="flex justify-center py-20"><div className="w-10 h-10 border-4 border-violet-200 border-t-violet-600 rounded-full animate-spin" /></div>
             }>
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-5">

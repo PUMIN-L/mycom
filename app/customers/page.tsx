@@ -5,6 +5,7 @@ import { useAuth } from "../context/AuthContext";
 import Toast from "../components/Toast";
 import Link from "next/link";
 import EquipmentTab from "./EquipmentTab";
+import { downloadExcel } from "../lib/xlsxExport";
 
 interface Company {
   id: string;
@@ -293,8 +294,6 @@ function CustomersInner() {
     
     setIsExportingCustomers(true);
     try {
-      const XLSX = await import("xlsx");
-      
       const rows = filteredCustomers.map((c) => ({
         "ชื่อลูกค้า": c.name,
         "บริษัท": c.companyName || "-",
@@ -303,23 +302,10 @@ function CustomersInner() {
         "อีเมล": c.email || "-",
         "หมายเหตุ": c.note || "-"
       }));
-      
-      const ws = XLSX.utils.json_to_sheet(rows);
-      
-      const wscols = [
-        { wch: 25 },
-        { wch: 30 },
-        { wch: 20 },
-        { wch: 15 },
-        { wch: 30 },
-        { wch: 40 },
-      ];
-      ws['!cols'] = wscols;
 
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, "Customers");
-      
-      XLSX.writeFile(wb, "customers_export.xlsx");
+      await downloadExcel("customers_export.xlsx", [
+        { name: "Customers", rows, columnWidths: [25, 30, 20, 15, 30, 40] },
+      ]);
       showToast("ส่งออกไฟล์ลูกค้าสำเร็จ", "success");
     } catch (err) {
       console.error(err);

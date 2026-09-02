@@ -1,6 +1,7 @@
 "use client";
 import DatePicker from "../components/DatePicker";
 import { toLocalDateString } from "../lib/dateFormat";
+import { downloadExcel } from "../lib/xlsxExport";
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import Link from "next/link";
 import SearchableDropdown from "../components/SearchableDropdown";
@@ -104,9 +105,6 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
     if (isExporting) return;
     setIsExporting(true);
     try {
-      // Dynamic import — only load xlsx (7.2MB) when user actually exports
-      const XLSX = await import("xlsx");
-
       // Fetch all schedules for a complete backup
       const schedRes = await fetch("/api/admin/schedules");
       const allSchedules: ServiceSchedule[] = schedRes.ok ? await schedRes.json() : [];
@@ -162,31 +160,11 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
         };
       });
 
-      const wb = XLSX.utils.book_new();
-      const ws1 = XLSX.utils.json_to_sheet(eqData.length > 0 ? eqData : [{ "ไม่มีข้อมูล": "" }]);
-      const ws2 = XLSX.utils.json_to_sheet(schedData.length > 0 ? schedData : [{ "ไม่มีข้อมูล": "" }]);
-
-      // Auto-size columns
-      const autoSize = (ws: ReturnType<typeof XLSX.utils.json_to_sheet>, data: Record<string, unknown>[]) => {
-        if (data.length === 0) return;
-        const keys = Object.keys(data[0]);
-        ws["!cols"] = keys.map((k) => {
-          let maxLen = k.length;
-          for (const r of data) {
-            const len = String(r[k] || "").length;
-            if (len > maxLen) maxLen = len;
-          }
-          return { wch: maxLen + 2 };
-        });
-      };
-      autoSize(ws1, eqData);
-      autoSize(ws2, schedData);
-
-      XLSX.utils.book_append_sheet(wb, ws1, "อุปกรณ์");
-      XLSX.utils.book_append_sheet(wb, ws2, "นัดหมาย");
-
       const dateStr = toLocalDateString(new Date());
-      XLSX.writeFile(wb, `CRM_Equipment_Backup_${dateStr}.xlsx`);
+      await downloadExcel(`CRM_Equipment_Backup_${dateStr}.xlsx`, [
+        { name: "อุปกรณ์", rows: eqData, autoSizeColumns: true },
+        { name: "นัดหมาย", rows: schedData, autoSizeColumns: true },
+      ]);
       showToast("Export สำเร็จ", "success");
     } catch (err) {
       console.error(err);
