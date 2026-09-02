@@ -33,19 +33,20 @@ type PageConfig = {
   footer: boolean;
 };
 
-type ImageSettings = {
-  widthPercent: number;  // 10-100
-  align: "left" | "center" | "right";
-  marginTop: number;    // px offset from top edge for header
-  marginBottom: number; // px offset from bottom edge for footer
-  opacity: number;      // 0.1 - 1.0
+// No customize step anymore — header/footer images are always placed full
+// width, centered, flush to the edge, fully opaque.
+const PLACEMENT = {
+  widthPercent: 100,
+  marginTop: 0,
+  marginBottom: 0,
+  opacity: 1.0,
 };
 
 export default function PdfHeaderFooterPage() {
   const router = useRouter();
   const { isLoggedIn, isLoading: authLoading } = useAuth();
 
-  // Step management
+  // Step management: 1 = upload, 2 = select pages, 3 = download
   const [step, setStep] = useState(1);
 
   // File states
@@ -65,7 +66,7 @@ export default function PdfHeaderFooterPage() {
   // otherwise reuse (and re-transfer) the SAME already-detached clone from
   // the first visit. Keying the memo on `step` too (not just `pdfBytes`)
   // still keeps the reference stable while simply toggling pages within one
-  // Step 2 visit — the fix for the reload-on-every-toggle bug is preserved.
+  // Step 2 visit, so a single toggle doesn't reload the whole document.
   const pdfFileProp = useMemo(
     () => (pdfBytes ? { data: pdfBytes.slice(0) } : null),
     [pdfBytes, step]
@@ -80,19 +81,6 @@ export default function PdfHeaderFooterPage() {
 
   // Page config: which pages get header/footer
   const [pageConfigs, setPageConfigs] = useState<Record<number, PageConfig>>({});
-
-  // Native width (in PDF points) of the page shown in the Step 3 live
-  // preview — needed to scale marginTop/marginBottom (stored in the same
-  // point units generatePdf/pdf-lib uses) down to on-screen pixels.
-  const [previewPageWidthPt, setPreviewPageWidthPt] = useState<number | null>(null);
-
-  // Image placement settings
-  const [headerSettings, setHeaderSettings] = useState<ImageSettings>({
-    widthPercent: 100, align: "center", marginTop: 0, marginBottom: 0, opacity: 1.0,
-  });
-  const [footerSettings, setFooterSettings] = useState<ImageSettings>({
-    widthPercent: 100, align: "center", marginTop: 0, marginBottom: 0, opacity: 1.0,
-  });
 
   // Final PDF
   const [finalPdfUrl, setFinalPdfUrl] = useState<string>("");
@@ -233,35 +221,29 @@ export default function PdfHeaderFooterPage() {
 
         // Draw header
         if (config.header && headerEmbed) {
-          const imgW = (headerSettings.widthPercent / 100) * pageWidth;
+          const imgW = (PLACEMENT.widthPercent / 100) * pageWidth;
           const aspectRatio = headerEmbed.height / headerEmbed.width;
           const imgH = imgW * aspectRatio;
 
-          let x = 0;
-          if (headerSettings.align === "center") x = (pageWidth - imgW) / 2;
-          else if (headerSettings.align === "right") x = pageWidth - imgW;
-
-          const y = pageHeight - imgH - headerSettings.marginTop;
+          const x = (pageWidth - imgW) / 2; // always centered
+          const y = pageHeight - imgH - PLACEMENT.marginTop;
 
           page.drawImage(headerEmbed, {
-            x, y, width: imgW, height: imgH, opacity: headerSettings.opacity,
+            x, y, width: imgW, height: imgH, opacity: PLACEMENT.opacity,
           });
         }
 
         // Draw footer
         if (config.footer && footerEmbed) {
-          const imgW = (footerSettings.widthPercent / 100) * pageWidth;
+          const imgW = (PLACEMENT.widthPercent / 100) * pageWidth;
           const aspectRatio = footerEmbed.height / footerEmbed.width;
           const imgH = imgW * aspectRatio;
 
-          let x = 0;
-          if (footerSettings.align === "center") x = (pageWidth - imgW) / 2;
-          else if (footerSettings.align === "right") x = pageWidth - imgW;
-
-          const y = footerSettings.marginBottom;
+          const x = (pageWidth - imgW) / 2; // always centered
+          const y = PLACEMENT.marginBottom;
 
           page.drawImage(footerEmbed, {
-            x, y, width: imgW, height: imgH, opacity: footerSettings.opacity,
+            x, y, width: imgW, height: imgH, opacity: PLACEMENT.opacity,
           });
         }
       }
@@ -270,7 +252,7 @@ export default function PdfHeaderFooterPage() {
       const blob = new Blob([newPdfBytes.buffer as ArrayBuffer], { type: "application/pdf" });
       const url = URL.createObjectURL(blob);
       setFinalPdfUrl(url);
-      setStep(4);
+      setStep(3);
     } catch (err) {
       console.error("Failed to generate PDF:", err);
       alert("ไม่สามารถสร้าง PDF ได้ กรุณาตรวจสอบไฟล์อีกครั้ง");
@@ -329,8 +311,7 @@ export default function PdfHeaderFooterPage() {
               {[
                 { n: 1, label: "อัปโหลด" },
                 { n: 2, label: "เลือกหน้า" },
-                { n: 3, label: "ตกแต่ง" },
-                { n: 4, label: "ดาวน์โหลด" },
+                { n: 3, label: "ดาวน์โหลด" },
               ].map((s) => (
                 <div key={s.n} className="flex items-center gap-2">
                   <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold transition-all ${
@@ -339,7 +320,7 @@ export default function PdfHeaderFooterPage() {
                     {step > s.n ? "✓" : s.n}
                   </div>
                   <span className={`text-xs font-semibold ${step >= s.n ? "text-violet-600" : "text-gray-400"}`}>{s.label}</span>
-                  {s.n < 4 && <div className={`w-8 h-0.5 ${step > s.n ? "bg-violet-600" : "bg-gray-200"}`} />}
+                  {s.n < 3 && <div className={`w-8 h-0.5 ${step > s.n ? "bg-violet-600" : "bg-gray-200"}`} />}
                 </div>
               ))}
             </div>
@@ -560,218 +541,9 @@ export default function PdfHeaderFooterPage() {
                 ← ย้อนกลับ
               </button>
               <button
-                disabled={!hasAnySelection}
-                onClick={() => setStep(3)}
-                className="px-8 py-3 bg-violet-600 text-white font-bold rounded-xl hover:bg-violet-700 transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow-lg shadow-violet-200 text-sm"
-              >
-                ถัดไป: ตกแต่ง →
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* ════════════════════════ STEP 3: Customize ════════════════════════ */}
-        {step === 3 && (
-          <div className="space-y-8 animate-fade-in">
-            <div className="text-center mb-6">
-              <h2 className="text-xl font-bold text-gray-800 mb-2">ขั้นตอนที่ 3: ตกแต่งและปรับแต่ง</h2>
-              <p className="text-gray-500">ปรับขนาด ตำแหน่ง และความทึบของรูปหัว/ท้ายกระดาษ</p>
-            </div>
-
-            {/* Live preview — actual PDF page with header/footer overlaid at
-                the real widthPercent/align/margin/opacity, not just an
-                isolated image swatch. Uses the first page that has a
-                header/footer selected so the preview always shows something
-                relevant. */}
-            {pdfFileProp && (() => {
-              const previewPageNum =
-                Object.keys(pageConfigs)
-                  .map(Number)
-                  .sort((a, b) => a - b)
-                  .find((p) => pageConfigs[p]?.header || pageConfigs[p]?.footer) ?? 1;
-              const previewConfig = pageConfigs[previewPageNum] || { header: false, footer: false };
-              const PREVIEW_WIDTH = 320;
-              const scale = previewPageWidthPt ? PREVIEW_WIDTH / previewPageWidthPt : 1;
-              const justifyFor = (align: ImageSettings["align"]) =>
-                align === "left" ? "flex-start" : align === "right" ? "flex-end" : "center";
-
-              return (
-                <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
-                  <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-lg font-bold text-gray-800">ตัวอย่างจริง — หน้า {previewPageNum}</h3>
-                    <span className="text-xs text-gray-400">อัปเดตตามค่าที่ปรับด้านล่าง</span>
-                  </div>
-                  <div className="flex justify-center bg-gray-100 rounded-xl p-6">
-                    <div className="relative shadow-lg" style={{ width: PREVIEW_WIDTH }}>
-                      <DynDocument file={pdfFileProp} loading={
-                        <div className="flex justify-center py-20"><div className="w-8 h-8 border-4 border-violet-200 border-t-violet-600 rounded-full animate-spin" /></div>
-                      }>
-                        <DynPage
-                          pageNumber={previewPageNum}
-                          width={PREVIEW_WIDTH}
-                          renderTextLayer={false}
-                          renderAnnotationLayer={false}
-                          onLoadSuccess={(page: { width: number }) => setPreviewPageWidthPt(page.width)}
-                        />
-                      </DynDocument>
-                      {previewConfig.header && headerImage && (
-                        <div
-                          className="absolute left-0 right-0 flex pointer-events-none"
-                          style={{ top: headerSettings.marginTop * scale, justifyContent: justifyFor(headerSettings.align) }}
-                        >
-                          <img src={headerPreview} alt="" style={{ width: `${headerSettings.widthPercent}%`, opacity: headerSettings.opacity }} />
-                        </div>
-                      )}
-                      {previewConfig.footer && footerImage && (
-                        <div
-                          className="absolute left-0 right-0 flex pointer-events-none"
-                          style={{ bottom: footerSettings.marginBottom * scale, justifyContent: justifyFor(footerSettings.align) }}
-                        >
-                          <img src={footerPreview} alt="" style={{ width: `${footerSettings.widthPercent}%`, opacity: footerSettings.opacity }} />
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                  {!previewConfig.header && !previewConfig.footer && (
-                    <p className="text-center text-xs text-gray-400 mt-3">หน้านี้ยังไม่ได้เลือกใส่หัว/ท้ายกระดาษ</p>
-                  )}
-                </div>
-              );
-            })()}
-
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-              {/* Header Settings */}
-              {headerImage && (
-                <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
-                  <div className="flex items-center gap-3 mb-6">
-                    <div className="w-8 h-8 bg-blue-100 text-blue-600 rounded-lg flex items-center justify-center text-sm font-bold">H</div>
-                    <h3 className="text-lg font-bold text-gray-800">ตั้งค่าหัวกระดาษ (Header)</h3>
-                  </div>
-
-                  {/* Preview */}
-                  <div className="mb-6 bg-gray-50 rounded-xl p-4 flex justify-center">
-                    <img src={headerPreview} alt="Header preview" className="max-h-20 rounded shadow-sm" style={{ opacity: headerSettings.opacity }} />
-                  </div>
-
-                  {/* Width */}
-                  <div className="mb-5">
-                    <label className="flex justify-between text-sm font-semibold text-gray-600 mb-2">
-                      <span>ความกว้าง</span>
-                      <span className="text-violet-600">{headerSettings.widthPercent}%</span>
-                    </label>
-                    <input type="range" min="10" max="100" value={headerSettings.widthPercent}
-                      onChange={(e) => setHeaderSettings((p) => ({ ...p, widthPercent: Number(e.target.value) }))}
-                      className="w-full accent-violet-600" />
-                  </div>
-
-                  {/* Align */}
-                  <div className="mb-5">
-                    <label className="block text-sm font-semibold text-gray-600 mb-2">ตำแหน่งแนวนอน</label>
-                    <div className="flex gap-2">
-                      {(["left", "center", "right"] as const).map((a) => (
-                        <button key={a} onClick={() => setHeaderSettings((p) => ({ ...p, align: a }))}
-                          className={`flex-1 py-2 rounded-xl text-sm font-bold transition-all ${headerSettings.align === a ? "bg-violet-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
-                          {a === "left" ? "ซ้าย" : a === "center" ? "กลาง" : "ขวา"}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Margin */}
-                  <div className="mb-5">
-                    <label className="flex justify-between text-sm font-semibold text-gray-600 mb-2">
-                      <span>ระยะห่างจากขอบบน</span>
-                      <span className="text-violet-600">{headerSettings.marginTop} px</span>
-                    </label>
-                    <input type="range" min="0" max="150" value={headerSettings.marginTop}
-                      onChange={(e) => setHeaderSettings((p) => ({ ...p, marginTop: Number(e.target.value) }))}
-                      className="w-full accent-violet-600" />
-                  </div>
-
-                  {/* Opacity */}
-                  <div>
-                    <label className="flex justify-between text-sm font-semibold text-gray-600 mb-2">
-                      <span>ความทึบ (Opacity)</span>
-                      <span className="text-violet-600">{Math.round(headerSettings.opacity * 100)}%</span>
-                    </label>
-                    <input type="range" min="10" max="100" value={Math.round(headerSettings.opacity * 100)}
-                      onChange={(e) => setHeaderSettings((p) => ({ ...p, opacity: Number(e.target.value) / 100 }))}
-                      className="w-full accent-violet-600" />
-                  </div>
-                </div>
-              )}
-
-              {/* Footer Settings */}
-              {footerImage && (
-                <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
-                  <div className="flex items-center gap-3 mb-6">
-                    <div className="w-8 h-8 bg-emerald-100 text-emerald-600 rounded-lg flex items-center justify-center text-sm font-bold">F</div>
-                    <h3 className="text-lg font-bold text-gray-800">ตั้งค่าท้ายกระดาษ (Footer)</h3>
-                  </div>
-
-                  {/* Preview */}
-                  <div className="mb-6 bg-gray-50 rounded-xl p-4 flex justify-center">
-                    <img src={footerPreview} alt="Footer preview" className="max-h-20 rounded shadow-sm" style={{ opacity: footerSettings.opacity }} />
-                  </div>
-
-                  {/* Width */}
-                  <div className="mb-5">
-                    <label className="flex justify-between text-sm font-semibold text-gray-600 mb-2">
-                      <span>ความกว้าง</span>
-                      <span className="text-violet-600">{footerSettings.widthPercent}%</span>
-                    </label>
-                    <input type="range" min="10" max="100" value={footerSettings.widthPercent}
-                      onChange={(e) => setFooterSettings((p) => ({ ...p, widthPercent: Number(e.target.value) }))}
-                      className="w-full accent-violet-600" />
-                  </div>
-
-                  {/* Align */}
-                  <div className="mb-5">
-                    <label className="block text-sm font-semibold text-gray-600 mb-2">ตำแหน่งแนวนอน</label>
-                    <div className="flex gap-2">
-                      {(["left", "center", "right"] as const).map((a) => (
-                        <button key={a} onClick={() => setFooterSettings((p) => ({ ...p, align: a }))}
-                          className={`flex-1 py-2 rounded-xl text-sm font-bold transition-all ${footerSettings.align === a ? "bg-violet-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
-                          {a === "left" ? "ซ้าย" : a === "center" ? "กลาง" : "ขวา"}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Margin */}
-                  <div className="mb-5">
-                    <label className="flex justify-between text-sm font-semibold text-gray-600 mb-2">
-                      <span>ระยะห่างจากขอบล่าง</span>
-                      <span className="text-violet-600">{footerSettings.marginBottom} px</span>
-                    </label>
-                    <input type="range" min="0" max="150" value={footerSettings.marginBottom}
-                      onChange={(e) => setFooterSettings((p) => ({ ...p, marginBottom: Number(e.target.value) }))}
-                      className="w-full accent-violet-600" />
-                  </div>
-
-                  {/* Opacity */}
-                  <div>
-                    <label className="flex justify-between text-sm font-semibold text-gray-600 mb-2">
-                      <span>ความทึบ (Opacity)</span>
-                      <span className="text-violet-600">{Math.round(footerSettings.opacity * 100)}%</span>
-                    </label>
-                    <input type="range" min="10" max="100" value={Math.round(footerSettings.opacity * 100)}
-                      onChange={(e) => setFooterSettings((p) => ({ ...p, opacity: Number(e.target.value) / 100 }))}
-                      className="w-full accent-violet-600" />
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Navigation */}
-            <div className="flex justify-between pt-4">
-              <button onClick={() => setStep(2)} className="px-6 py-2.5 bg-white border border-gray-200 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 transition-all text-sm shadow-sm">
-                ← ย้อนกลับ
-              </button>
-              <button
+                disabled={!hasAnySelection || isGenerating}
                 onClick={generatePdf}
-                disabled={isGenerating}
-                className="px-8 py-3 bg-violet-600 text-white font-bold rounded-xl hover:bg-violet-700 transition-all disabled:opacity-60 shadow-lg shadow-violet-200 text-sm flex items-center gap-2"
+                className="px-8 py-3 bg-violet-600 text-white font-bold rounded-xl hover:bg-violet-700 transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow-lg shadow-violet-200 text-sm flex items-center gap-2"
               >
                 {isGenerating ? (
                   <>
@@ -779,46 +551,31 @@ export default function PdfHeaderFooterPage() {
                     กำลังสร้าง PDF...
                   </>
                 ) : (
-                  "สร้าง PDF และดูตัวอย่าง →"
+                  "สร้าง PDF →"
                 )}
               </button>
             </div>
           </div>
         )}
 
-        {/* ════════════════════════ STEP 4: Preview + Download ════════════════════════ */}
-        {step === 4 && finalPdfUrl && (
+        {/* ════════════════════════ STEP 3: Download ════════════════════════ */}
+        {step === 3 && finalPdfUrl && (
           <div className="space-y-6 animate-fade-in">
             <div className="text-center mb-6">
-              <h2 className="text-xl font-bold text-gray-800 mb-2">ขั้นตอนที่ 4: ดูตัวอย่าง & ดาวน์โหลด</h2>
-              <p className="text-gray-500">ตรวจสอบผลลัพธ์ หากพอใจสามารถดาวน์โหลดได้เลย</p>
+              <h2 className="text-xl font-bold text-gray-800 mb-2">ขั้นตอนที่ 3: ดาวน์โหลด</h2>
+              <p className="text-gray-500">สร้างไฟล์ PDF เรียบร้อยแล้ว ดาวน์โหลดได้เลย</p>
             </div>
 
-            {/* PDF Preview */}
-            <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
-              <div className="bg-gray-50 border-b border-gray-100 px-6 py-3 flex items-center justify-between">
-                <span className="text-sm font-bold text-gray-600">📄 ดูตัวอย่าง PDF</span>
-                <span className="text-xs text-gray-400">เลื่อนดูทุกหน้าได้</span>
-              </div>
-              <div className="max-h-[70vh] overflow-y-auto bg-gray-100 p-6">
-                <DynDocument file={finalPdfUrl} loading={
-                  <div className="flex justify-center py-20"><div className="w-10 h-10 border-4 border-violet-200 border-t-violet-600 rounded-full animate-spin" /></div>
-                }>
-                  <div className="flex flex-col items-center gap-6">
-                    {Array.from({ length: numPages }, (_, i) => i + 1).map((pageNum) => (
-                      <div key={pageNum} className="shadow-lg rounded-lg overflow-hidden">
-                        <DynPage pageNumber={pageNum} width={Math.min(700, typeof window !== "undefined" ? window.innerWidth - 80 : 700)} renderTextLayer={false} renderAnnotationLayer={false} />
-                      </div>
-                    ))}
-                  </div>
-                </DynDocument>
-              </div>
+            <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-10 flex flex-col items-center gap-4">
+              <div className="text-6xl">✅</div>
+              <p className="font-bold text-gray-700">{pdfFile?.name}</p>
+              <p className="text-sm text-gray-400">พร้อมดาวน์โหลด</p>
             </div>
 
             {/* Action buttons */}
             <div className="flex flex-col sm:flex-row justify-between gap-4 pt-4">
               <button
-                onClick={() => { if (finalPdfUrl) URL.revokeObjectURL(finalPdfUrl); setFinalPdfUrl(""); setStep(3); }}
+                onClick={() => { if (finalPdfUrl) URL.revokeObjectURL(finalPdfUrl); setFinalPdfUrl(""); setStep(2); }}
                 className="px-6 py-2.5 bg-white border border-gray-200 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 transition-all text-sm shadow-sm"
               >
                 ← กลับไปแก้ไข
