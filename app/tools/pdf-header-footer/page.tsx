@@ -83,6 +83,17 @@ export default function PdfHeaderFooterPage() {
   const [footerPreview, setFooterPreview] = useState<string>("");
   const [headerHeightPercent, setHeaderHeightPercent] = useState(DEFAULT_HEIGHT_PERCENT);
   const [footerHeightPercent, setFooterHeightPercent] = useState(DEFAULT_HEIGHT_PERCENT);
+  // The height slider's default should start at the image's OWN natural size
+  // (as if it were placed at full page width, aspect ratio preserved) rather
+  // than an arbitrary constant — this needs both the PDF's page size (points)
+  // and the image's native pixel size, which can arrive in either order.
+  const [pageSize, setPageSize] = useState<{ width: number; height: number } | null>(null);
+  const [headerNaturalRatio, setHeaderNaturalRatio] = useState<number | null>(null); // naturalHeight / naturalWidth
+  const [footerNaturalRatio, setFooterNaturalRatio] = useState<number | null>(null);
+  // Once the admin drags a slider, stop overwriting their choice — only a
+  // freshly (re-)uploaded image for that slot resets this.
+  const headerHeightTouchedRef = useRef(false);
+  const footerHeightTouchedRef = useRef(false);
 
   // PDF info
   const [numPages, setNumPages] = useState(0);
@@ -97,6 +108,22 @@ export default function PdfHeaderFooterPage() {
   useEffect(() => {
     if (!authLoading && !isLoggedIn) router.replace("/login");
   }, [isLoggedIn, authLoading, router]);
+
+  // Default each height slider to the image's natural size (as if placed at
+  // full page width, aspect ratio preserved) — recomputes whenever the piece
+  // that arrives last (page size vs. image ratio) becomes available, but
+  // never after the admin has manually adjusted the slider.
+  useEffect(() => {
+    if (!pageSize || headerNaturalRatio == null || headerHeightTouchedRef.current) return;
+    const percent = headerNaturalRatio * (pageSize.width / pageSize.height) * 100;
+    setHeaderHeightPercent(Math.min(MAX_HEIGHT_PERCENT, Math.max(MIN_HEIGHT_PERCENT, percent)));
+  }, [pageSize, headerNaturalRatio]);
+
+  useEffect(() => {
+    if (!pageSize || footerNaturalRatio == null || footerHeightTouchedRef.current) return;
+    const percent = footerNaturalRatio * (pageSize.width / pageSize.height) * 100;
+    setFooterHeightPercent(Math.min(MAX_HEIGHT_PERCENT, Math.max(MIN_HEIGHT_PERCENT, percent)));
+  }, [pageSize, footerNaturalRatio]);
 
   // ── File handlers ──────────────────────────────────────────────────────
 
@@ -115,6 +142,18 @@ export default function PdfHeaderFooterPage() {
     setPdfFile(file);
     const bytes = await file.arrayBuffer();
     setPdfBytes(bytes);
+
+    // Read page 1's size (points) so the height sliders can default to each
+    // image's natural size. pdf-lib doesn't transfer/detach `bytes` (only
+    // react-pdf's worker does — see pdfFileProp above), so reusing the same
+    // buffer here is safe.
+    try {
+      const { PDFDocument } = await import("pdf-lib");
+      const doc = await PDFDocument.load(bytes);
+      setPageSize(doc.getPage(0).getSize());
+    } catch {
+      setPageSize(null);
+    }
   };
 
   const handleImageUpload = (file: File, type: "header" | "footer") => {
@@ -127,11 +166,24 @@ export default function PdfHeaderFooterPage() {
       if (headerPreview) URL.revokeObjectURL(headerPreview);
       setHeaderImage(file);
       setHeaderPreview(url);
+      headerHeightTouchedRef.current = false;
+      setHeaderNaturalRatio(null);
     } else {
       if (footerPreview) URL.revokeObjectURL(footerPreview);
       setFooterImage(file);
       setFooterPreview(url);
+      footerHeightTouchedRef.current = false;
+      setFooterNaturalRatio(null);
     }
+    // Read the image's own pixel dimensions so the height default can match
+    // "this image at full page width, undistorted" rather than a guess.
+    const img = new Image();
+    img.onload = () => {
+      const ratio = img.naturalHeight / img.naturalWidth;
+      if (type === "header") setHeaderNaturalRatio(ratio);
+      else setFooterNaturalRatio(ratio);
+    };
+    img.src = url;
   };
 
   const configsInitializedRef = useRef(false);
@@ -408,7 +460,7 @@ export default function PdfHeaderFooterPage() {
                       min={MIN_HEIGHT_PERCENT}
                       max={MAX_HEIGHT_PERCENT}
                       value={headerHeightPercent}
-                      onChange={(e) => setHeaderHeightPercent(Number(e.target.value))}
+                      onChange={(e) => { headerHeightTouchedRef.current = true; setHeaderHeightPercent(Number(e.target.value)); }}
                       className="w-full accent-blue-600"
                     />
                   </div>
@@ -455,7 +507,7 @@ export default function PdfHeaderFooterPage() {
                       min={MIN_HEIGHT_PERCENT}
                       max={MAX_HEIGHT_PERCENT}
                       value={footerHeightPercent}
-                      onChange={(e) => setFooterHeightPercent(Number(e.target.value))}
+                      onChange={(e) => { footerHeightTouchedRef.current = true; setFooterHeightPercent(Number(e.target.value)); }}
                       className="w-full accent-emerald-600"
                     />
                   </div>
@@ -628,11 +680,16 @@ export default function PdfHeaderFooterPage() {
                     if (headerPreview) URL.revokeObjectURL(headerPreview);
                     if (footerPreview) URL.revokeObjectURL(footerPreview);
                     configsInitializedRef.current = false;
+                    headerHeightTouchedRef.current = false;
+                    footerHeightTouchedRef.current = false;
                     setPdfFile(null); setPdfBytes(null);
                     setHeaderImage(null); setFooterImage(null);
                     setHeaderPreview(""); setFooterPreview("");
                     setHeaderHeightPercent(DEFAULT_HEIGHT_PERCENT);
                     setFooterHeightPercent(DEFAULT_HEIGHT_PERCENT);
+                    setPageSize(null);
+                    setHeaderNaturalRatio(null);
+                    setFooterNaturalRatio(null);
                     setFinalPdfUrl(""); setNumPages(0);
                     setPageConfigs({});
                     setStep(1);
