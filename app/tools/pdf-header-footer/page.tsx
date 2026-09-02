@@ -33,20 +33,14 @@ type PageConfig = {
   footer: boolean;
 };
 
-// No full customize step anymore — header/footer images always span the
-// full page width, flush to the edge, fully opaque. Height is the one
-// adjustable setting (see headerHeightPercent/footerHeightPercent below),
-// independent of the image's own aspect ratio.
+// No customize step anymore — header/footer images are always placed full
+// width, centered, flush to the edge, fully opaque.
 const PLACEMENT = {
   widthPercent: 100,
   marginTop: 0,
   marginBottom: 0,
   opacity: 1.0,
 };
-
-const DEFAULT_HEIGHT_PERCENT = 8; // % of page height
-const MIN_HEIGHT_PERCENT = 2;
-const MAX_HEIGHT_PERCENT = 30;
 
 export default function PdfHeaderFooterPage() {
   const router = useRouter();
@@ -81,19 +75,6 @@ export default function PdfHeaderFooterPage() {
   const [footerImage, setFooterImage] = useState<File | null>(null);
   const [headerPreview, setHeaderPreview] = useState<string>("");
   const [footerPreview, setFooterPreview] = useState<string>("");
-  const [headerHeightPercent, setHeaderHeightPercent] = useState(DEFAULT_HEIGHT_PERCENT);
-  const [footerHeightPercent, setFooterHeightPercent] = useState(DEFAULT_HEIGHT_PERCENT);
-  // The height slider's default should start at the image's OWN natural size
-  // (as if it were placed at full page width, aspect ratio preserved) rather
-  // than an arbitrary constant — this needs both the PDF's page size (points)
-  // and the image's native pixel size, which can arrive in either order.
-  const [pageSize, setPageSize] = useState<{ width: number; height: number } | null>(null);
-  const [headerNaturalRatio, setHeaderNaturalRatio] = useState<number | null>(null); // naturalHeight / naturalWidth
-  const [footerNaturalRatio, setFooterNaturalRatio] = useState<number | null>(null);
-  // Once the admin drags a slider, stop overwriting their choice — only a
-  // freshly (re-)uploaded image for that slot resets this.
-  const headerHeightTouchedRef = useRef(false);
-  const footerHeightTouchedRef = useRef(false);
 
   // PDF info
   const [numPages, setNumPages] = useState(0);
@@ -108,22 +89,6 @@ export default function PdfHeaderFooterPage() {
   useEffect(() => {
     if (!authLoading && !isLoggedIn) router.replace("/login");
   }, [isLoggedIn, authLoading, router]);
-
-  // Default each height slider to the image's natural size (as if placed at
-  // full page width, aspect ratio preserved) — recomputes whenever the piece
-  // that arrives last (page size vs. image ratio) becomes available, but
-  // never after the admin has manually adjusted the slider.
-  useEffect(() => {
-    if (!pageSize || headerNaturalRatio == null || headerHeightTouchedRef.current) return;
-    const percent = headerNaturalRatio * (pageSize.width / pageSize.height) * 100;
-    setHeaderHeightPercent(Math.min(MAX_HEIGHT_PERCENT, Math.max(MIN_HEIGHT_PERCENT, percent)));
-  }, [pageSize, headerNaturalRatio]);
-
-  useEffect(() => {
-    if (!pageSize || footerNaturalRatio == null || footerHeightTouchedRef.current) return;
-    const percent = footerNaturalRatio * (pageSize.width / pageSize.height) * 100;
-    setFooterHeightPercent(Math.min(MAX_HEIGHT_PERCENT, Math.max(MIN_HEIGHT_PERCENT, percent)));
-  }, [pageSize, footerNaturalRatio]);
 
   // ── File handlers ──────────────────────────────────────────────────────
 
@@ -142,18 +107,6 @@ export default function PdfHeaderFooterPage() {
     setPdfFile(file);
     const bytes = await file.arrayBuffer();
     setPdfBytes(bytes);
-
-    // Read page 1's size (points) so the height sliders can default to each
-    // image's natural size. pdf-lib doesn't transfer/detach `bytes` (only
-    // react-pdf's worker does — see pdfFileProp above), so reusing the same
-    // buffer here is safe.
-    try {
-      const { PDFDocument } = await import("pdf-lib");
-      const doc = await PDFDocument.load(bytes);
-      setPageSize(doc.getPage(0).getSize());
-    } catch {
-      setPageSize(null);
-    }
   };
 
   const handleImageUpload = (file: File, type: "header" | "footer") => {
@@ -166,24 +119,11 @@ export default function PdfHeaderFooterPage() {
       if (headerPreview) URL.revokeObjectURL(headerPreview);
       setHeaderImage(file);
       setHeaderPreview(url);
-      headerHeightTouchedRef.current = false;
-      setHeaderNaturalRatio(null);
     } else {
       if (footerPreview) URL.revokeObjectURL(footerPreview);
       setFooterImage(file);
       setFooterPreview(url);
-      footerHeightTouchedRef.current = false;
-      setFooterNaturalRatio(null);
     }
-    // Read the image's own pixel dimensions so the height default can match
-    // "this image at full page width, undistorted" rather than a guess.
-    const img = new Image();
-    img.onload = () => {
-      const ratio = img.naturalHeight / img.naturalWidth;
-      if (type === "header") setHeaderNaturalRatio(ratio);
-      else setFooterNaturalRatio(ratio);
-    };
-    img.src = url;
   };
 
   const configsInitializedRef = useRef(false);
@@ -279,11 +219,13 @@ export default function PdfHeaderFooterPage() {
         const page = pages[i];
         const { width: pageWidth, height: pageHeight } = page.getSize();
 
-        // Draw header — full page width always; only height is adjustable
+        // Draw header
         if (config.header && headerEmbed) {
           const imgW = (PLACEMENT.widthPercent / 100) * pageWidth;
-          const imgH = (headerHeightPercent / 100) * pageHeight;
-          const x = 0;
+          const aspectRatio = headerEmbed.height / headerEmbed.width;
+          const imgH = imgW * aspectRatio;
+
+          const x = (pageWidth - imgW) / 2; // always centered
           const y = pageHeight - imgH - PLACEMENT.marginTop;
 
           page.drawImage(headerEmbed, {
@@ -291,11 +233,13 @@ export default function PdfHeaderFooterPage() {
           });
         }
 
-        // Draw footer — full page width always; only height is adjustable
+        // Draw footer
         if (config.footer && footerEmbed) {
           const imgW = (PLACEMENT.widthPercent / 100) * pageWidth;
-          const imgH = (footerHeightPercent / 100) * pageHeight;
-          const x = 0;
+          const aspectRatio = footerEmbed.height / footerEmbed.width;
+          const imgH = imgW * aspectRatio;
+
+          const x = (pageWidth - imgW) / 2; // always centered
           const y = PLACEMENT.marginBottom;
 
           page.drawImage(footerEmbed, {
@@ -421,97 +365,61 @@ export default function PdfHeaderFooterPage() {
             {/* Image Uploads */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {/* Header Image */}
-              <div>
-                <div
-                  onDrop={(e) => handleDrop(e, "header")}
-                  onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
-                  className={`border-2 border-dashed rounded-2xl p-6 text-center transition-all cursor-pointer hover:border-blue-400 hover:bg-blue-50/50 ${
-                    headerImage ? "border-blue-400 bg-blue-50/30" : "border-gray-300"
-                  }`}
-                  onClick={() => {
-                    const inp = document.createElement("input");
-                    inp.type = "file";
-                    inp.accept = "image/*";
-                    inp.onchange = (e) => {
-                      const f = (e.target as HTMLInputElement).files?.[0];
-                      if (f) handleImageUpload(f, "header");
-                    };
-                    inp.click();
-                  }}
-                >
-                  {headerPreview ? (
-                    <img src={headerPreview} alt="Header" className="max-h-24 mx-auto mb-3 rounded-lg shadow-sm" />
-                  ) : (
-                    <div className="text-4xl mb-3">🖼️</div>
-                  )}
-                  <p className="font-bold text-gray-700 mb-1">
-                    {headerImage ? headerImage.name : "รูปหัวกระดาษ (Header)"}
-                  </p>
-                  <p className="text-xs text-gray-400">PNG, JPG</p>
-                </div>
-                {headerImage && (
-                  <div className="mt-3 bg-white border border-gray-200 rounded-xl px-4 py-3">
-                    <label className="flex justify-between text-xs font-semibold text-gray-600 mb-1.5">
-                      <span>ความสูงของหัวกระดาษ</span>
-                      <span className="text-blue-600">{headerHeightPercent}% ของหน้ากระดาษ</span>
-                    </label>
-                    <input
-                      type="range"
-                      min={MIN_HEIGHT_PERCENT}
-                      max={MAX_HEIGHT_PERCENT}
-                      value={headerHeightPercent}
-                      onChange={(e) => { headerHeightTouchedRef.current = true; setHeaderHeightPercent(Number(e.target.value)); }}
-                      className="w-full accent-blue-600"
-                    />
-                  </div>
+              <div
+                onDrop={(e) => handleDrop(e, "header")}
+                onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                className={`border-2 border-dashed rounded-2xl p-6 text-center transition-all cursor-pointer hover:border-blue-400 hover:bg-blue-50/50 ${
+                  headerImage ? "border-blue-400 bg-blue-50/30" : "border-gray-300"
+                }`}
+                onClick={() => {
+                  const inp = document.createElement("input");
+                  inp.type = "file";
+                  inp.accept = "image/*";
+                  inp.onchange = (e) => {
+                    const f = (e.target as HTMLInputElement).files?.[0];
+                    if (f) handleImageUpload(f, "header");
+                  };
+                  inp.click();
+                }}
+              >
+                {headerPreview ? (
+                  <img src={headerPreview} alt="Header" className="max-h-24 mx-auto mb-3 rounded-lg shadow-sm" />
+                ) : (
+                  <div className="text-4xl mb-3">🖼️</div>
                 )}
+                <p className="font-bold text-gray-700 mb-1">
+                  {headerImage ? headerImage.name : "รูปหัวกระดาษ (Header)"}
+                </p>
+                <p className="text-xs text-gray-400">PNG, JPG</p>
               </div>
 
               {/* Footer Image */}
-              <div>
-                <div
-                  onDrop={(e) => handleDrop(e, "footer")}
-                  onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
-                  className={`border-2 border-dashed rounded-2xl p-6 text-center transition-all cursor-pointer hover:border-emerald-400 hover:bg-emerald-50/50 ${
-                    footerImage ? "border-emerald-400 bg-emerald-50/30" : "border-gray-300"
-                  }`}
-                  onClick={() => {
-                    const inp = document.createElement("input");
-                    inp.type = "file";
-                    inp.accept = "image/*";
-                    inp.onchange = (e) => {
-                      const f = (e.target as HTMLInputElement).files?.[0];
-                      if (f) handleImageUpload(f, "footer");
-                    };
-                    inp.click();
-                  }}
-                >
-                  {footerPreview ? (
-                    <img src={footerPreview} alt="Footer" className="max-h-24 mx-auto mb-3 rounded-lg shadow-sm" />
-                  ) : (
-                    <div className="text-4xl mb-3">🖼️</div>
-                  )}
-                  <p className="font-bold text-gray-700 mb-1">
-                    {footerImage ? footerImage.name : "รูปท้ายกระดาษ (Footer)"}
-                  </p>
-                  <p className="text-xs text-gray-400">PNG, JPG</p>
-                </div>
-                {footerImage && (
-                  <div className="mt-3 bg-white border border-gray-200 rounded-xl px-4 py-3">
-                    <label className="flex justify-between text-xs font-semibold text-gray-600 mb-1.5">
-                      <span>ความสูงของท้ายกระดาษ</span>
-                      <span className="text-emerald-600">{footerHeightPercent}% ของหน้ากระดาษ</span>
-                    </label>
-                    <input
-                      type="range"
-                      min={MIN_HEIGHT_PERCENT}
-                      max={MAX_HEIGHT_PERCENT}
-                      value={footerHeightPercent}
-                      onChange={(e) => { footerHeightTouchedRef.current = true; setFooterHeightPercent(Number(e.target.value)); }}
-                      className="w-full accent-emerald-600"
-                    />
-                  </div>
+              <div
+                onDrop={(e) => handleDrop(e, "footer")}
+                onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                className={`border-2 border-dashed rounded-2xl p-6 text-center transition-all cursor-pointer hover:border-emerald-400 hover:bg-emerald-50/50 ${
+                  footerImage ? "border-emerald-400 bg-emerald-50/30" : "border-gray-300"
+                }`}
+                onClick={() => {
+                  const inp = document.createElement("input");
+                  inp.type = "file";
+                  inp.accept = "image/*";
+                  inp.onchange = (e) => {
+                    const f = (e.target as HTMLInputElement).files?.[0];
+                    if (f) handleImageUpload(f, "footer");
+                  };
+                  inp.click();
+                }}
+              >
+                {footerPreview ? (
+                  <img src={footerPreview} alt="Footer" className="max-h-24 mx-auto mb-3 rounded-lg shadow-sm" />
+                ) : (
+                  <div className="text-4xl mb-3">🖼️</div>
                 )}
+                <p className="font-bold text-gray-700 mb-1">
+                  {footerImage ? footerImage.name : "รูปท้ายกระดาษ (Footer)"}
+                </p>
+                <p className="text-xs text-gray-400">PNG, JPG</p>
               </div>
             </div>
 
@@ -680,16 +588,9 @@ export default function PdfHeaderFooterPage() {
                     if (headerPreview) URL.revokeObjectURL(headerPreview);
                     if (footerPreview) URL.revokeObjectURL(footerPreview);
                     configsInitializedRef.current = false;
-                    headerHeightTouchedRef.current = false;
-                    footerHeightTouchedRef.current = false;
                     setPdfFile(null); setPdfBytes(null);
                     setHeaderImage(null); setFooterImage(null);
                     setHeaderPreview(""); setFooterPreview("");
-                    setHeaderHeightPercent(DEFAULT_HEIGHT_PERCENT);
-                    setFooterHeightPercent(DEFAULT_HEIGHT_PERCENT);
-                    setPageSize(null);
-                    setHeaderNaturalRatio(null);
-                    setFooterNaturalRatio(null);
                     setFinalPdfUrl(""); setNumPages(0);
                     setPageConfigs({});
                     setStep(1);
