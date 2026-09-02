@@ -33,12 +33,12 @@ type PageConfig = {
   footer: boolean;
 };
 
-// No full customize step anymore — header/footer images are always
-// centered, flush to the edge, fully opaque. Height is the one adjustable
-// setting (see headerHeightPercent/footerHeightPercent below); width is
-// then derived from height to keep the image's own proportions (never
-// stretched/distorted), capped to the page width.
+// No full customize step anymore — header/footer images always span the
+// full page width, flush to the edge, fully opaque. Height is the one
+// adjustable setting (see headerHeightPercent/footerHeightPercent below),
+// independent of the image's own aspect ratio.
 const PLACEMENT = {
+  widthPercent: 100,
   marginTop: 0,
   marginBottom: 0,
   opacity: 1.0,
@@ -47,27 +47,6 @@ const PLACEMENT = {
 const DEFAULT_HEIGHT_PERCENT = 8; // % of page height
 const MIN_HEIGHT_PERCENT = 2;
 const MAX_HEIGHT_PERCENT = 30;
-
-/**
- * Size an image by target height (as % of page height), deriving width from
- * the image's own aspect ratio so it's never stretched/distorted — then cap
- * to the page width for an unusually wide image at a large height setting.
- */
-function sizeByHeight(
-  heightPercent: number,
-  pageWidth: number,
-  pageHeight: number,
-  nativeWidth: number,
-  nativeHeight: number
-): { width: number; height: number } {
-  let height = (heightPercent / 100) * pageHeight;
-  let width = height * (nativeWidth / nativeHeight);
-  if (width > pageWidth) {
-    width = pageWidth;
-    height = width * (nativeHeight / nativeWidth);
-  }
-  return { width, height };
-}
 
 export default function PdfHeaderFooterPage() {
   const router = useRouter();
@@ -248,12 +227,11 @@ export default function PdfHeaderFooterPage() {
         const page = pages[i];
         const { width: pageWidth, height: pageHeight } = page.getSize();
 
-        // Draw header
+        // Draw header — full page width always; only height is adjustable
         if (config.header && headerEmbed) {
-          const { width: imgW, height: imgH } = sizeByHeight(
-            headerHeightPercent, pageWidth, pageHeight, headerEmbed.width, headerEmbed.height
-          );
-          const x = (pageWidth - imgW) / 2; // always centered
+          const imgW = (PLACEMENT.widthPercent / 100) * pageWidth;
+          const imgH = (headerHeightPercent / 100) * pageHeight;
+          const x = 0;
           const y = pageHeight - imgH - PLACEMENT.marginTop;
 
           page.drawImage(headerEmbed, {
@@ -261,12 +239,11 @@ export default function PdfHeaderFooterPage() {
           });
         }
 
-        // Draw footer
+        // Draw footer — full page width always; only height is adjustable
         if (config.footer && footerEmbed) {
-          const { width: imgW, height: imgH } = sizeByHeight(
-            footerHeightPercent, pageWidth, pageHeight, footerEmbed.width, footerEmbed.height
-          );
-          const x = (pageWidth - imgW) / 2; // always centered
+          const imgW = (PLACEMENT.widthPercent / 100) * pageWidth;
+          const imgH = (footerHeightPercent / 100) * pageHeight;
+          const x = 0;
           const y = PLACEMENT.marginBottom;
 
           page.drawImage(footerEmbed, {
