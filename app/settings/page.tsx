@@ -47,6 +47,9 @@ export default function SettingsPage() {
   const [companyLoadFailed, setCompanyLoadFailed] = useState(false);
   const [companySaving, setCompanySaving] = useState(false);
   const [showAddressDetails, setShowAddressDetails] = useState(false);
+  // Fields start disabled (grayed out) — must click "แก้ไข" before they can
+  // be typed into, so a stray click can't accidentally start editing.
+  const [companyEditing, setCompanyEditing] = useState(false);
   const [showCompanyOtpModal, setShowCompanyOtpModal] = useState(false);
   const [companyOtp, setCompanyOtp] = useState("");
 
@@ -228,6 +231,11 @@ export default function SettingsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLoggedIn]);
 
+  async function handleCancelCompanyEdit() {
+    setCompanyEditing(false);
+    await loadCompanyProfile(); // discard any unsaved edits
+  }
+
   async function handleRequestCompanyOtp(e: React.FormEvent) {
     e.preventDefault();
     setCompanySaving(true);
@@ -276,6 +284,7 @@ export default function SettingsPage() {
       });
       setShowCompanyOtpModal(false);
       setCompanyOtp("");
+      setCompanyEditing(false);
       showToast("บันทึกข้อมูลบริษัทแล้ว", "success");
     } catch {
       showToast("เกิดข้อผิดพลาด กรุณาลองใหม่", "error");
@@ -410,13 +419,27 @@ export default function SettingsPage() {
             Organization JSON-LD). Requires OTP confirmation to the contact
             email before changes are applied. */}
         <form onSubmit={handleRequestCompanyOtp} className="mt-8 bg-white rounded-lg shadow p-6 space-y-4">
-          <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
-            🏢 ข้อมูลบริษัท
-          </h2>
-          <p className="text-sm text-gray-600">
-            แสดงบนหน้าติดต่อเรา, ท้ายเว็บทุกหน้า และข้อมูลโครงสร้างสำหรับ Google — แก้ที่นี่แทนการแก้โค้ด
-            (การเปลี่ยนแปลงต้องยืนยันด้วยรหัส OTP ที่ส่งไปทางอีเมลก่อน)
-          </p>
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+                🏢 ข้อมูลบริษัท
+              </h2>
+              <p className="text-sm text-gray-600 mt-1">
+                แสดงบนหน้าติดต่อเรา, ท้ายเว็บทุกหน้า และข้อมูลโครงสร้างสำหรับ Google — แก้ที่นี่แทนการแก้โค้ด
+                (การเปลี่ยนแปลงต้องยืนยันด้วยรหัส OTP ที่ส่งไปทางอีเมลก่อน)
+              </p>
+            </div>
+            {!companyEditing && (
+              <button
+                type="button"
+                onClick={() => setCompanyEditing(true)}
+                disabled={companyLoading || companyLoadFailed}
+                className="shrink-0 px-4 py-2 rounded-lg border border-orange-400 text-orange-600 font-semibold hover:bg-orange-50 transition text-sm disabled:opacity-50"
+              >
+                ✏️ แก้ไข
+              </button>
+            )}
+          </div>
 
           <div>
             <label className="block text-sm font-semibold mb-2 text-gray-700">เบอร์โทรศัพท์</label>
@@ -425,9 +448,9 @@ export default function SettingsPage() {
               required
               value={companyLoading ? "" : companyProfile.phone}
               placeholder={companyLoading ? "กำลังโหลด..." : "062-012-9895"}
-              disabled={companyLoading || companyLoadFailed}
+              disabled={companyLoading || companyLoadFailed || !companyEditing}
               onChange={(e) => setCompanyProfile((p) => ({ ...p, phone: e.target.value }))}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 disabled:bg-gray-100"
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 disabled:bg-gray-100 disabled:text-gray-400"
             />
           </div>
 
@@ -440,9 +463,9 @@ export default function SettingsPage() {
               rows={2}
               value={companyLoading ? "" : companyProfile.addressDisplay}
               placeholder={companyLoading ? "กำลังโหลด..." : "93 ซอยงามวงศ์วาน 6 แยก 19 ..."}
-              disabled={companyLoading || companyLoadFailed}
+              disabled={companyLoading || companyLoadFailed || !companyEditing}
               onChange={(e) => setCompanyProfile((p) => ({ ...p, addressDisplay: e.target.value }))}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 disabled:bg-gray-100 resize-none"
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 disabled:bg-gray-100 disabled:text-gray-400 resize-none"
             />
           </div>
 
@@ -471,9 +494,9 @@ export default function SettingsPage() {
                 <input
                   type="text"
                   value={companyProfile.addressStreet}
-                  disabled={companyLoading || companyLoadFailed}
+                  disabled={companyLoading || companyLoadFailed || !companyEditing}
                   onChange={(e) => setCompanyProfile((p) => ({ ...p, addressStreet: e.target.value }))}
-                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 disabled:bg-gray-100"
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 disabled:bg-gray-100 disabled:text-gray-400"
                 />
               </div>
               <div>
@@ -481,9 +504,9 @@ export default function SettingsPage() {
                 <input
                   type="text"
                   value={companyProfile.addressLocality}
-                  disabled={companyLoading || companyLoadFailed}
+                  disabled={companyLoading || companyLoadFailed || !companyEditing}
                   onChange={(e) => setCompanyProfile((p) => ({ ...p, addressLocality: e.target.value }))}
-                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 disabled:bg-gray-100"
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 disabled:bg-gray-100 disabled:text-gray-400"
                 />
               </div>
               <div>
@@ -491,9 +514,9 @@ export default function SettingsPage() {
                 <input
                   type="text"
                   value={companyProfile.addressRegion}
-                  disabled={companyLoading || companyLoadFailed}
+                  disabled={companyLoading || companyLoadFailed || !companyEditing}
                   onChange={(e) => setCompanyProfile((p) => ({ ...p, addressRegion: e.target.value }))}
-                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 disabled:bg-gray-100"
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 disabled:bg-gray-100 disabled:text-gray-400"
                 />
               </div>
               <div>
@@ -501,9 +524,9 @@ export default function SettingsPage() {
                 <input
                   type="text"
                   value={companyProfile.addressPostalCode}
-                  disabled={companyLoading || companyLoadFailed}
+                  disabled={companyLoading || companyLoadFailed || !companyEditing}
                   onChange={(e) => setCompanyProfile((p) => ({ ...p, addressPostalCode: e.target.value }))}
-                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 disabled:bg-gray-100"
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 disabled:bg-gray-100 disabled:text-gray-400"
                 />
               </div>
               <div>
@@ -512,21 +535,33 @@ export default function SettingsPage() {
                   type="text"
                   maxLength={2}
                   value={companyProfile.addressCountry}
-                  disabled={companyLoading || companyLoadFailed}
+                  disabled={companyLoading || companyLoadFailed || !companyEditing}
                   onChange={(e) => setCompanyProfile((p) => ({ ...p, addressCountry: e.target.value.toUpperCase() }))}
-                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 disabled:bg-gray-100"
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 disabled:bg-gray-100 disabled:text-gray-400"
                 />
               </div>
             </div>
           )}
 
-          <button
-            type="submit"
-            disabled={companySaving || companyLoading || companyLoadFailed}
-            className="w-full px-6 py-3 bg-orange-500 text-white font-bold rounded-lg hover:bg-orange-600 transition disabled:opacity-50"
-          >
-            {companySaving ? "กำลังดำเนินการ..." : "💾 บันทึกข้อมูลบริษัท"}
-          </button>
+          {companyEditing && (
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={handleCancelCompanyEdit}
+                disabled={companySaving}
+                className="px-6 py-3 rounded-lg border border-gray-300 text-gray-700 font-semibold hover:bg-gray-50 transition disabled:opacity-50"
+              >
+                ยกเลิก
+              </button>
+              <button
+                type="submit"
+                disabled={companySaving || companyLoading || companyLoadFailed}
+                className="flex-1 px-6 py-3 bg-orange-500 text-white font-bold rounded-lg hover:bg-orange-600 transition disabled:opacity-50"
+              >
+                {companySaving ? "กำลังดำเนินการ..." : "💾 บันทึกข้อมูลบริษัท"}
+              </button>
+            </div>
+          )}
         </form>
 
         {/* Cloudinary Orphan Scanner */}
