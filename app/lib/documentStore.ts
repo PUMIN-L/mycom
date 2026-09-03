@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { query } from "./db";
 import type { DocumentData } from "./types";
 import type { RowDataPacket } from "mysql2";
@@ -25,14 +26,18 @@ export async function getAllDocuments(): Promise<DocumentData[]> {
   return rows.map(mapDocumentRow);
 }
 
-export async function getDocument(id: string): Promise<DocumentData | null> {
+// cache() de-dupes calls with the same id within a single request/render —
+// generateMetadata and the page component on /document/[id] both need it.
+export const getDocument = cache(async function getDocument(
+  id: string
+): Promise<DocumentData | null> {
   const [rows] = await query<RowDataPacket[]>(
     "SELECT * FROM documents WHERE id = ?",
     [id]
   );
   if (rows.length === 0) return null;
   return mapDocumentRow(rows[0]);
-}
+});
 
 export async function addDocument(doc: DocumentData): Promise<void> {
   const title = sanitizePlainText(doc.title).substring(0, 255);

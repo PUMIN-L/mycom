@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { query, withTransaction } from "./db";
 import { RowDataPacket, ResultSetHeader } from "mysql2";
 import type { ProductCategory, ProductData } from "./types";
@@ -194,12 +195,17 @@ export async function getProduct(id: string): Promise<ProductData | undefined> {
   return product;
 }
 
-export async function getAllProducts(): Promise<ProductData[]> {
+// cache() de-dupes calls within a single request/render — pages like
+// /showcase/[id] call this from several places (visibility checks, the
+// visible-products list) and would otherwise re-scan the whole table each time.
+export const getAllProducts = cache(async function getAllProducts(): Promise<
+  ProductData[]
+> {
   const [rows] = await query<RowDataPacket[]>(
     "SELECT * FROM products ORDER BY categoryId ASC, sortOrder ASC, createdAt ASC"
   );
   return rows.map(rowToProduct);
-}
+});
 
 export async function getProductsByCategory(categoryId: number): Promise<ProductData[]> {
   const [rows] = await query<RowDataPacket[]>(

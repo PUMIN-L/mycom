@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { query } from "./db";
 import { RowDataPacket, ResultSetHeader } from "mysql2";
 import type { ContentBlock, ContentData, ContentMeta } from "./types";
@@ -59,7 +60,12 @@ export async function addContent(content: ContentData): Promise<ContentData> {
   return { ...content, title: sanitizedTitle, blocks };
 }
 
-export async function getContent(id: string): Promise<ContentData | undefined> {
+// cache() de-dupes calls with the same id within a single request/render —
+// e.g. generateMetadata and the page component both need this content, and
+// without it each showcase pageview hit the DB for it twice.
+export const getContent = cache(async function getContent(
+  id: string
+): Promise<ContentData | undefined> {
   const [rows] = await query<RowDataPacket[]>(
     "SELECT * FROM contents WHERE id = ?",
     [id]
@@ -70,7 +76,7 @@ export async function getContent(id: string): Promise<ContentData | undefined> {
   }
 
   return rowToContent(rows[0]);
-}
+});
 
 export async function getAllContents(): Promise<ContentData[]> {
   const [rows] = await query<RowDataPacket[]>(
@@ -85,7 +91,9 @@ export async function getAllContents(): Promise<ContentData[]> {
 // never render block bodies. Avoids serializing ~120KB of blocks JSON to the
 // client. Note: still reads blocks from the DB to count them; the win is the
 // client payload, not the query.
-export async function getAllContentsMeta(): Promise<ContentMeta[]> {
+export const getAllContentsMeta = cache(async function getAllContentsMeta(): Promise<
+  ContentMeta[]
+> {
   const [rows] = await query<RowDataPacket[]>(
     "SELECT id, title, blocks, createdAt, productId FROM contents ORDER BY createdAt DESC"
   );
@@ -100,7 +108,7 @@ export async function getAllContentsMeta(): Promise<ContentMeta[]> {
       imageCount: blocks.filter((b) => b.type === "image").length,
     };
   });
-}
+});
 
 export async function getContentByProductId(
   productId: string

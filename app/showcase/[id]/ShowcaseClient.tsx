@@ -2,17 +2,26 @@
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import Image from "next/image";
+import dynamic from "next/dynamic";
 import { useAuth } from "../../context/AuthContext";
 import { useLanguage } from "../../i18n/LanguageContext";
 import Navbar from "../../components/Navbar";
 import Footer from "../../components/Footer";
 import ColorPickerDropdown from "../../components/ColorPickerDropdown";
-import ConfirmDialog from "../../components/ConfirmDialog";
 import Toast from "../../components/Toast";
-import RichTextEditor from "../../components/RichTextEditor";
-import BlockRangeControl from "../../components/BlockRangeControl";
-import ImageDeleteConfirmDialog, { type OrphanedImage } from "../../components/ImageDeleteConfirmDialog";
+import type { OrphanedImage } from "../../components/ImageDeleteConfirmDialog";
 import { stripHtml } from "../../lib/stripHtml";
+
+// These are only ever rendered inside admin-only states (isEditing,
+// showDeleteContentConfirm, pendingDeleteBlock, orphanedImages) that stay
+// false/empty for anonymous visitors — loading them via next/dynamic keeps
+// the rich-text editor (Quill), its CSS, and these dialogs out of the JS
+// every public showcase pageview has to download.
+const RichTextEditor = dynamic(() => import("../../components/RichTextEditor"), { ssr: false });
+const BlockRangeControl = dynamic(() => import("../../components/BlockRangeControl"), { ssr: false });
+const ConfirmDialog = dynamic(() => import("../../components/ConfirmDialog"), { ssr: false });
+const ImageDeleteConfirmDialog = dynamic(() => import("../../components/ImageDeleteConfirmDialog"), { ssr: false });
 
 interface ContentBlock {
   id: string;
@@ -67,6 +76,7 @@ interface ShowcaseClientProps {
   initialAllContents: ContentMeta[];
   initialProducts: ProductItem[];
   initialCategories: ProductCategory[];
+  companyInfo: { email: string; phone: string; address: string };
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
@@ -82,6 +92,7 @@ function GalleryViewer({
   galleryInputRef,
   contentId,
   onImageOrphaned,
+  isFirstBlock,
 }: {
   block: ContentBlock;
   isEditing: boolean;
@@ -91,6 +102,7 @@ function GalleryViewer({
   galleryInputRef: React.RefObject<HTMLInputElement | null>;
   contentId: string;
   onImageOrphaned?: (url: string, reason: string) => void;
+  isFirstBlock?: boolean;
 }) {
   const [localIndex, setLocalIndex] = useState(block.selectedImageIndex || 0);
   const activeIndex = isEditing ? (block.selectedImageIndex || 0) : localIndex;
@@ -110,11 +122,17 @@ function GalleryViewer({
       {/* Main Image */}
       <div className="w-full flex items-center justify-center bg-gray-50 rounded-lg p-4 min-h-[300px] border border-gray-200">
         {images.length > 0 ? (
-          <img
-            src={images[activeIndex]}
-            alt="Main Gallery"
-            className="max-w-full max-h-[500px] object-contain rounded-lg shadow-sm"
-          />
+          <div className="relative w-full h-100">
+            <Image
+              src={images[activeIndex]}
+              alt="Main Gallery"
+              fill
+              sizes="(max-width: 768px) 100vw, 700px"
+              className="object-contain rounded-lg shadow-sm"
+              priority={isFirstBlock}
+              loading={isFirstBlock ? undefined : "lazy"}
+            />
+          </div>
         ) : (
           <div className="flex flex-col items-center justify-center h-full text-gray-400">
             {uploadingBlockId === block.id ? (
@@ -137,13 +155,19 @@ function GalleryViewer({
         <div className="flex flex-wrap gap-3 justify-center w-full p-2">
           {images.map((url, idx) => (
             <div key={idx} className="relative group">
-              <img
-                src={url}
-                alt={`Thumbnail ${idx}`}
-                onClick={() => setIndex(idx)}
-                className={`w-24 h-24 object-cover rounded-md cursor-pointer border-4 ${activeIndex === idx ? "border-orange-500 shadow-md" : "border-transparent"
+              <div
+                className={`relative w-24 h-24 rounded-md overflow-hidden border-4 cursor-pointer ${activeIndex === idx ? "border-orange-500 shadow-md" : "border-transparent"
                   } hover:border-orange-300 transition-all`}
-              />
+                onClick={() => setIndex(idx)}
+              >
+                <Image
+                  src={url}
+                  alt={`Thumbnail ${idx}`}
+                  fill
+                  sizes="96px"
+                  className="object-cover"
+                />
+              </div>
               {isEditing && (
                 <button
                   onClick={async (e) => {
@@ -200,6 +224,7 @@ export default function ShowcaseClient({
   initialAllContents,
   initialProducts,
   initialCategories,
+  companyInfo,
 }: ShowcaseClientProps) {
   const router = useRouter();
   const { lang } = useLanguage();
@@ -809,7 +834,7 @@ export default function ShowcaseClient({
           )}
 
           <div>
-            {displayBlocks.map((block) => (
+            {displayBlocks.map((block, blockIndex) => (
               <div
                 key={block.id}
                 id={`block-${block.id}`}
@@ -840,6 +865,7 @@ export default function ShowcaseClient({
                     setGalleryUploadingId={setGalleryUploadingId}
                     galleryInputRef={galleryInputRef}
                     contentId={content.id}
+                    isFirstBlock={blockIndex === 0}
                     onImageOrphaned={(url, reason) => {
                       setOrphanedImages((prev) => [...prev, { url, reason }]);
                     }}
@@ -880,6 +906,8 @@ export default function ShowcaseClient({
                         <img
                           src={block.imageUrl}
                           alt="Content"
+                          loading={blockIndex === 0 ? "eager" : "lazy"}
+                          decoding="async"
                           className="h-auto"
                           style={{ width: `${block.imageWidth ?? 100}%` }}
                         />
@@ -943,6 +971,8 @@ export default function ShowcaseClient({
                           <img
                             src={block.imageUrl}
                             alt="Content"
+                            loading={blockIndex === 0 ? "eager" : "lazy"}
+                            decoding="async"
                             className="h-auto object-cover mx-auto"
                             style={{ width: `${block.imageWidth ?? 100}%` }}
                           />
@@ -1139,7 +1169,7 @@ export default function ShowcaseClient({
         .animate-slideUp { animation: slideUp 0.3s ease-out; }
       `}</style>
       </div>
-      <Footer />
+      <Footer email={companyInfo.email} phone={companyInfo.phone} address={companyInfo.address} />
 
       {/* Image deletion confirmation dialog */}
       {orphanedImages.length > 0 && (
