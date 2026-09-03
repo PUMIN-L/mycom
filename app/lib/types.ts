@@ -222,4 +222,19 @@ export interface Expense {
   note: string;
   createdAt: string;
   source?: "expense" | "sale_cost";
+  recurringExpenseId?: string | null;
+}
+
+/** A template for a monthly cost (rent, salary, ...) — see expenseStore.ts's
+ * generateExpensesForMonth for how this turns into real `expenses` rows. */
+export interface RecurringExpense {
+  id: string;
+  title: string;
+  amount: number;
+  category: string;
+  note: string;
+  active: boolean;
+  /** "YYYY-MM" of the last month this template was generated for, or null. */
+  lastGeneratedMonth: string | null;
+  createdAt: string;
 }

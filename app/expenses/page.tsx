@@ -1,11 +1,12 @@
 "use client";
 import React, { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
-import type { Expense } from "../lib/types";
+import type { Expense, RecurringExpense } from "../lib/types";
 import ConfirmDialog from "../components/ConfirmDialog";
 import FormattedNumberInput from "../components/FormattedNumberInput";
 import SearchableDropdown from "../components/SearchableDropdown";
 import { PieChart, Pie, Cell, Tooltip as RechartsTooltip, ResponsiveContainer, Legend } from "recharts";
+import { bangkokCurrentMonth } from "../lib/dateFormat";
 
 const EXPENSE_CATEGORIES = [
   "เงินเดือน",
@@ -32,6 +33,24 @@ function emptyForm(): Partial<Expense> {
   };
 }
 
+function emptyRecurringForm(): Partial<RecurringExpense> {
+  return {
+    title: "",
+    amount: 0,
+    category: EXPENSE_CATEGORIES[0],
+    note: "",
+    active: true,
+  };
+}
+
+// Bangkok time, not the admin's own device timezone — the server always
+// generates for the Bangkok "current month" (bangkokCurrentMonth()), so the
+// UI must agree on what month that is or the Generate button/badges can be
+// wrong right around a month boundary for an admin in a different timezone.
+function currentMonthStr(): string {
+  return bangkokCurrentMonth();
+}
+
 export default function ExpensesPage() {
   const [records, setRecords] = useState<Expense[]>([]);
   const [loading, setLoading] = useState(true);
@@ -56,6 +75,16 @@ export default function ExpensesPage() {
 
   // Delete state
   const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  // Recurring expense templates (e.g. rent/salary — same amount every month)
+  const [recurringTemplates, setRecurringTemplates] = useState<RecurringExpense[]>([]);
+  const [recurringLoading, setRecurringLoading] = useState(true);
+  const [showRecurringForm, setShowRecurringForm] = useState(false);
+  const [recurringForm, setRecurringForm] = useState<Partial<RecurringExpense>>(emptyRecurringForm());
+  const [editingRecurringId, setEditingRecurringId] = useState<string | null>(null);
+  const [recurringSubmitting, setRecurringSubmitting] = useState(false);
+  const [deletingRecurringId, setDeletingRecurringId] = useState<string | null>(null);
+  const [generating, setGenerating] = useState(false);
 
   const showToast = (msg: string, type: "success" | "error" = "success") => {
     setToast({ msg, type });
@@ -150,6 +179,109 @@ export default function ExpensesPage() {
       setDeletingId(null);
     }
   };
+
+  // ── Recurring expense templates ─────────────────────────────────────────
+  const fetchRecurringTemplates = async () => {
+    setRecurringLoading(true);
+    try {
+      const res = await fetch("/api/admin/expenses/recurring");
+      if (!res.ok) throw new Error("Failed to fetch");
+      setRecurringTemplates(await res.json());
+    } catch {
+      showToast("ดึงข้อมูลรายจ่ายประจำไม่สำเร็จ", "error");
+    } finally {
+      setRecurringLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchRecurringTemplates();
+  }, []);
+
+  const handleSubmitRecurring = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!recurringForm.title || !recurringForm.amount || recurringForm.amount <= 0) {
+      showToast("กรุณากรอกข้อมูลให้ครบถ้วนและจำนวนเงินต้องมากกว่า 0", "error");
+      return;
+    }
+    setRecurringSubmitting(true);
+    try {
+      const url = editingRecurringId
+        ? `/api/admin/expenses/recurring/${editingRecurringId}`
+        : "/api/admin/expenses/recurring";
+      const method = editingRecurringId ? "PUT" : "POST";
+      const res = await fetch(url, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(recurringForm),
+      });
+      if (!res.ok) {
+        const d = await res.json();
+        throw new Error(d.error || "บันทึกไม่สำเร็จ");
+      }
+      showToast("บันทึกรายการประจำเรียบร้อย");
+      setShowRecurringForm(false);
+      fetchRecurringTemplates();
+    } catch (err: any) {
+      showToast(err.message, "error");
+    } finally {
+      setRecurringSubmitting(false);
+    }
+  };
+
+  const handleDeleteRecurring = async () => {
+    if (!deletingRecurringId) return;
+    try {
+      const res = await fetch(`/api/admin/expenses/recurring/${deletingRecurringId}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("ลบไม่สำเร็จ");
+      showToast("ลบรายการประจำเรียบร้อย");
+      fetchRecurringTemplates();
+    } catch {
+      showToast("ไม่สามารถลบรายการได้", "error");
+    } finally {
+      setDeletingRecurringId(null);
+    }
+  };
+
+  const handleGenerate = async () => {
+    setGenerating(true);
+    try {
+      const res = await fetch("/api/admin/expenses/recurring/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "สร้างรายการไม่สำเร็จ");
+      const failedCount: number = data.failed?.length ?? 0;
+      if (data.generated.length === 0 && failedCount === 0) {
+        showToast("ไม่มีรายการที่ต้องสร้างสำหรับเดือนนี้ (สร้างไปแล้วทั้งหมด)", "success");
+      } else if (failedCount > 0) {
+        // Some templates errored mid-loop while others may have already
+        // succeeded — say exactly what happened instead of a blanket
+        // "failed", since retrying is safe (already-generated ones skip).
+        showToast(
+          `สร้างสำเร็จ ${data.generated.length} รายการ, ล้มเหลว ${failedCount} รายการ (${data.failed.join(", ")}) — ลองกด "สร้าง" อีกครั้งได้ รายการที่สำเร็จแล้วจะไม่ถูกสร้างซ้ำ`,
+          "error"
+        );
+      } else {
+        showToast(`สร้างรายจ่าย ${data.generated.length} รายการสำหรับเดือน ${data.month} เรียบร้อย`);
+      }
+      fetchRecurringTemplates();
+      fetchRecords();
+    } catch (err: any) {
+      showToast(err.message, "error");
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  // Client-display only (badge on each template) — the server independently
+  // computes the correct Bangkok month itself when generating.
+  const thisMonth = currentMonthStr();
+  const pendingCount = recurringTemplates.filter(
+    (t) => t.active && t.lastGeneratedMonth !== thisMonth
+  ).length;
 
   const totalExpense = records.reduce((sum, r) => sum + Number(r.amount), 0);
 
@@ -309,6 +441,98 @@ export default function ExpensesPage() {
               <div className="w-full h-full flex items-center justify-center text-gray-400">ไม่มีข้อมูลแสดงกราฟ</div>
             )}
           </div>
+        </div>
+
+        {/* Recurring expense templates */}
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 mb-8">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4">
+            <div>
+              <h2 className="text-lg font-bold text-gray-800">🔁 รายการประจำ (ค่าเช่า, เงินเดือน ฯลฯ)</h2>
+              <p className="text-sm text-gray-500 mt-0.5">
+                ตั้งไว้ครั้งเดียว แล้วกด &quot;สร้างรายการเดือนนี้&quot; ทุกเดือนแทนการกรอกซ้ำ
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => {
+                  setEditingRecurringId(null);
+                  setRecurringForm(emptyRecurringForm());
+                  setShowRecurringForm(true);
+                }}
+                className="px-4 py-2 bg-white border border-gray-200 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 transition-all text-sm"
+              >
+                + เพิ่มรายการประจำ
+              </button>
+              <button
+                onClick={handleGenerate}
+                disabled={generating || recurringLoading || pendingCount === 0}
+                className="px-4 py-2 bg-emerald-600 text-white font-semibold rounded-xl hover:bg-emerald-700 transition-all text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {generating
+                  ? "กำลังสร้าง..."
+                  : pendingCount > 0
+                    ? `▶ สร้างรายการเดือนนี้ (${pendingCount})`
+                    : "✓ สร้างครบทุกรายการแล้ว"}
+              </button>
+            </div>
+          </div>
+
+          {recurringLoading ? (
+            <p className="text-sm text-gray-400 py-4">กำลังโหลด...</p>
+          ) : recurringTemplates.length === 0 ? (
+            <p className="text-sm text-gray-400 py-4">ยังไม่มีรายการประจำ — เพิ่มค่าเช่าหรือเงินเดือนที่จ่ายเท่าเดิมทุกเดือนได้ที่นี่</p>
+          ) : (
+            <div className="space-y-2">
+              {recurringTemplates.map((t) => {
+                const generatedThisMonth = t.lastGeneratedMonth === thisMonth;
+                return (
+                  <div
+                    key={t.id}
+                    className={`flex items-center justify-between gap-3 p-3 rounded-xl border ${
+                      t.active ? "border-gray-100 bg-gray-50/50" : "border-gray-100 bg-gray-50/50 opacity-50"
+                    }`}
+                  >
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <p className="font-semibold text-gray-800 truncate">{t.title}</p>
+                        {!t.active && (
+                          <span className="text-xs font-semibold text-gray-400 bg-gray-200 px-2 py-0.5 rounded-full">ปิดใช้งาน</span>
+                        )}
+                        {t.active && (
+                          <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
+                            generatedThisMonth ? "text-emerald-700 bg-emerald-100" : "text-amber-700 bg-amber-100"
+                          }`}>
+                            {generatedThisMonth ? "สร้างแล้วเดือนนี้" : "ยังไม่สร้างเดือนนี้"}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-sm text-gray-500">{t.category} · ฿{Number(t.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}/เดือน</p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        onClick={() => {
+                          setEditingRecurringId(t.id);
+                          setRecurringForm(t);
+                          setShowRecurringForm(true);
+                        }}
+                        className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors"
+                        title="แก้ไข"
+                      >
+                        ✏️
+                      </button>
+                      <button
+                        onClick={() => setDeletingRecurringId(t.id)}
+                        className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
+                        title="ลบ"
+                      >
+                        🗑️
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         {/* List */}
@@ -501,6 +725,112 @@ export default function ExpensesPage() {
           cancelText="ยกเลิก"
           onConfirm={handleDelete}
           onCancel={() => setDeletingId(null)}
+        />
+      )}
+
+      {/* Recurring Form Modal */}
+      {showRecurringForm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg overflow-hidden animate-in zoom-in-95">
+            <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
+              <h2 className="text-lg font-bold text-gray-800">
+                {editingRecurringId ? "แก้ไขรายการประจำ" : "เพิ่มรายการประจำใหม่"}
+              </h2>
+              <button
+                onClick={() => setShowRecurringForm(false)}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                ✕
+              </button>
+            </div>
+            <form onSubmit={handleSubmitRecurring} className="p-6 space-y-5">
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">
+                  รายการ (Title) <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={recurringForm.title}
+                  onChange={(e) => setRecurringForm({ ...recurringForm, title: e.target.value })}
+                  placeholder="เช่น ค่าเช่าออฟฟิศ, เงินเดือนพนักงาน"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">
+                  จำนวนเงินต่อเดือน (บาท) <span className="text-red-500">*</span>
+                </label>
+                <FormattedNumberInput
+                  value={recurringForm.amount || 0}
+                  onChange={(val) => setRecurringForm({ ...recurringForm, amount: val })}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 text-emerald-600 font-bold"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">หมวดหมู่</label>
+                <SearchableDropdown
+                  options={EXPENSE_CATEGORIES.map(c => ({ value: c, label: c }))}
+                  value={recurringForm.category || ""}
+                  onChange={(v) => setRecurringForm({ ...recurringForm, category: v })}
+                  className="w-full"
+                  buttonClassName="h-[42px] border-gray-300 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">หมายเหตุ (ถ้ามี)</label>
+                <textarea
+                  value={recurringForm.note || ""}
+                  onChange={(e) => setRecurringForm({ ...recurringForm, note: e.target.value })}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 min-h-[70px] resize-y"
+                ></textarea>
+              </div>
+
+              {editingRecurringId && (
+                <label className="flex items-center gap-2 text-sm font-semibold text-gray-700">
+                  <input
+                    type="checkbox"
+                    checked={recurringForm.active !== false}
+                    onChange={(e) => setRecurringForm({ ...recurringForm, active: e.target.checked })}
+                    className="w-4 h-4 accent-emerald-600"
+                  />
+                  เปิดใช้งาน (ไม่ติ๊ก = หยุดสร้างรายการนี้ทุกเดือน แต่ไม่ลบประวัติเดิม)
+                </label>
+              )}
+
+              <div className="pt-4 flex gap-3 justify-end">
+                <button
+                  type="button"
+                  onClick={() => setShowRecurringForm(false)}
+                  className="px-5 py-2.5 text-gray-600 font-medium hover:bg-gray-100 rounded-xl transition-colors"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  type="submit"
+                  disabled={recurringSubmitting}
+                  className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-xl shadow-sm disabled:opacity-50 transition-colors"
+                >
+                  {recurringSubmitting ? "กำลังบันทึก..." : "บันทึกข้อมูล"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Recurring Delete Confirm */}
+      {!!deletingRecurringId && (
+        <ConfirmDialog
+          title="ยืนยันการลบรายการประจำ"
+          message="คุณต้องการลบรายการประจำนี้ใช่หรือไม่? รายจ่ายที่สร้างไปแล้วในอดีตจะไม่ถูกลบ มีผลแค่หยุดสร้างรายการใหม่ในเดือนถัดไป"
+          confirmText="ลบรายการประจำ"
+          cancelText="ยกเลิก"
+          onConfirm={handleDeleteRecurring}
+          onCancel={() => setDeletingRecurringId(null)}
         />
       )}
     </div>

@@ -40,9 +40,9 @@ process.env.DB_USER = 'tester';
 process.env.DB_PASSWORD = 'pw';
 process.env.DB_NAME = 'testdb';
 
-// A version SELECT result that MATCHES SCHEMA_VERSION (28) → bootstrap fast-path,
+// A version SELECT result that MATCHES SCHEMA_VERSION (29) → bootstrap fast-path,
 // skipping DDL. Value is a string because settings stores VARCHAR values.
-const SCHEMA_MATCH: [Array<{ value: string }>, unknown[]] = [[{ value: '28' }], []];
+const SCHEMA_MATCH: [Array<{ value: string }>, unknown[]] = [[{ value: '29' }], []];
 // An empty result → no schema_version row / no admin row → full bootstrap.
 const EMPTY: [unknown[], unknown[]] = [[], []];
 
@@ -141,7 +141,7 @@ describe('db.ts', () => {
       // Schema version is recorded so future cold instances take the fast path
       expect(mockConnection.query).toHaveBeenCalledWith(
         expect.stringContaining("INSERT INTO settings"),
-        ['28'],
+        ['29'],
       );
       expect(mockConnection.release).toHaveBeenCalledTimes(1);
     });
@@ -169,6 +169,24 @@ describe('db.ts', () => {
       // never completes for a fresh install.
       expect(productsIdx).toBeLessThan(contentFkIdx);
       expect(productsIdx).toBeLessThan(productSpecsIdx);
+    });
+
+    it('creates `recurring_expenses` BEFORE the expenses.recurringExpenseId FK referencing it', async () => {
+      const db = await freshImport();
+      mockConnection.query.mockResolvedValue(EMPTY);
+
+      await db.getDbConnection();
+
+      const sqlOf = (call: unknown[]) => String(call[0]);
+      const indexOfMatch = (needle: string) =>
+        mockConnection.query.mock.calls.findIndex((c) => sqlOf(c).includes(needle));
+
+      const recurringTableIdx = indexOfMatch('CREATE TABLE IF NOT EXISTS recurring_expenses');
+      const fkIdx = indexOfMatch('fk_exp_recurring');
+
+      expect(recurringTableIdx).toBeGreaterThanOrEqual(0);
+      expect(fkIdx).toBeGreaterThanOrEqual(0);
+      expect(recurringTableIdx).toBeLessThan(fkIdx);
     });
 
     it('propagates a REAL failure adding customer_equipments.salesRecordId instead of swallowing it', async () => {

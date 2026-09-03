@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { toLocalDateString, bangkokDateAtHour, bangkokDateAtHourFromNow } from '@/app/lib/dateFormat';
+import {
+  toLocalDateString,
+  bangkokDateAtHour,
+  bangkokDateAtHourFromNow,
+  bangkokCurrentMonth,
+} from '@/app/lib/dateFormat';
 
 describe('toLocalDateString', () => {
   it('formats using local calendar getters, not toISOString', () => {
@@ -55,5 +60,23 @@ describe('bangkokDateAtHourFromNow', () => {
     vi.setSystemTime(new Date('2026-08-04T19:00:00.000Z'));
     const d = bangkokDateAtHourFromNow(0, 6);
     expect(d.toISOString()).toBe('2026-08-04T23:00:00.000Z'); // Aug 5 06:00 +07
+  });
+});
+
+describe('bangkokCurrentMonth', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('returns the Bangkok calendar month, not the server UTC month, during the lag window', () => {
+    // UTC 2026-08-31T19:00:00Z == Bangkok 2026-09-01 02:00 — a naive
+    // server-UTC month would still say "2026-08".
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-31T19:00:00.000Z'));
+    expect(bangkokCurrentMonth()).toBe('2026-09');
+  });
+
+  it('pads a single-digit month', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-15T04:00:00.000Z')); // Bangkok: Jan 15, 11:00
+    expect(bangkokCurrentMonth()).toBe('2026-01');
   });
 });

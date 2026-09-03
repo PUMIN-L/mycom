@@ -4,7 +4,7 @@ import type { QueryResult, FieldPacket, RowDataPacket } from "mysql2";
 
 // Bump whenever the schema below changes — a mismatch re-runs the (idempotent)
 // bump; a match lets returning cold instances skip it in one SELECT.
-const SCHEMA_VERSION = 28;
+const SCHEMA_VERSION = 29;
 
 type DbPool = ReturnType<typeof mysql.createPool>;
 
@@ -699,6 +699,45 @@ async function bootstrapSchemaOnce(): Promise<void> {
           INDEX idx_alert_snoozes_until (snoozeUntil)
         )
       `);
+
+    // ── Recurring expense templates (v29) ────────────────────────────────────
+    // A template for a monthly cost (rent, salary, ...) that repeats every
+    // month with the same amount. Generation is a manual, explicit admin
+    // action (POST .../recurring/generate) — never a silent background cron
+    // — so a real `expenses` row only ever appears because someone clicked
+    // the button, matching the project-wide "never lose/silently mutate
+    // financial data" rule. lastGeneratedMonth ("YYYY-MM") prevents
+    // generating the same template twice for the same month.
+    await connection.query(`
+        CREATE TABLE IF NOT EXISTS recurring_expenses (
+          id VARCHAR(36) PRIMARY KEY,
+          title VARCHAR(255) NOT NULL,
+          amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+          category VARCHAR(100) NOT NULL DEFAULT '',
+          note TEXT,
+          active BOOLEAN NOT NULL DEFAULT TRUE,
+          lastGeneratedMonth VARCHAR(7),
+          createdAt VARCHAR(255) NOT NULL
+        )
+      `);
+
+    // Traceability only — which recurring template (if any) generated a given
+    // expense row. ON DELETE SET NULL: deleting a template must never delete
+    // (or otherwise touch) the real expense rows it already generated.
+    try {
+      await connection.query(
+        `ALTER TABLE expenses ADD COLUMN recurringExpenseId VARCHAR(36) DEFAULT NULL`
+      );
+    } catch (error) {
+      if (!isBenignSchemaError(error)) throw error;
+    }
+    try {
+      await connection.query(
+        `ALTER TABLE expenses ADD CONSTRAINT fk_exp_recurring FOREIGN KEY (recurringExpenseId) REFERENCES recurring_expenses(id) ON DELETE SET NULL`
+      );
+    } catch (error) {
+      if (!isBenignSchemaError(error)) throw error;
+    }
 
     // ── Seed default admin user ────────────────────────────────────────────
     // Credentials come from the environment, never from source. If

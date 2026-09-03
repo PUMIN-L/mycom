@@ -50,3 +50,12 @@ export function bangkokDateAtHourFromNow(daysFromNow: number, hour: number): Dat
   const { year, month, day } = bangkokParts(new Date());
   return new Date(Date.UTC(year, month, day + daysFromNow, hour - BANGKOK_OFFSET_HOURS, 0, 0, 0));
 }
+
+/** The current calendar month ("YYYY-MM") in Bangkok — used server-side to
+ * default "which month" for monthly-recurring generation without the
+ * server's UTC clock potentially naming the wrong month in the last few
+ * hours of the last day of a Bangkok month. */
+export function bangkokCurrentMonth(): string {
+  const { year, month } = bangkokParts(new Date());
+  return `${year}-${String(month + 1).padStart(2, "0")}`;
+}
