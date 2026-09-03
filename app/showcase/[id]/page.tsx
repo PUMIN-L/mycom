@@ -8,6 +8,7 @@ import {
 import { getAllProducts, getAllCategories, isProductPublic } from "../../lib/productStore";
 import { getSession } from "../../lib/session";
 import { SITE_URL, SITE_NAME } from "../../lib/site";
+import { getCompanyInfo } from "../../lib/companyInfo";
 import ShowcaseClient from "./ShowcaseClient";
 
 export const dynamic = "force-dynamic";
@@ -83,12 +84,13 @@ export default async function ShowcaseContentPage({
   // Fetch everything the editor needs on the server, in parallel. allContents is
   // metadata-only (no blocks) — it's used just for the "Other Contents" list and
   // the edit-mode product-link check, never for block bodies.
-  const [content, allContents, products, categories, session] = await Promise.all([
+  const [content, allContents, products, categories, session, companyInfo] = await Promise.all([
     getContent(id),
     getAllContentsMeta(),
     getAllProducts(),
     getAllCategories(),
     getSession(),
+    getCompanyInfo(),
   ]);
 
   if (!content) {
@@ -165,6 +167,7 @@ export default async function ShowcaseContentPage({
         initialAllContents={visibleAllContents}
         initialProducts={visibleProducts}
         initialCategories={categories}
+        companyInfo={{ email: companyInfo.email, phone: companyInfo.phone, address: companyInfo.address }}
       />
     </>
   );

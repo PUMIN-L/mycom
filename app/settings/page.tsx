@@ -32,6 +32,24 @@ export default function SettingsPage() {
   const [showOtpModal, setShowOtpModal] = useState(false);
   const [otp, setOtp] = useState("");
 
+  // Company profile (address/phone shown on the public site) — requires OTP
+  // confirmation to email, same as the contact-recipient email above.
+  const [companyProfile, setCompanyProfile] = useState({
+    phone: "",
+    addressDisplay: "",
+    addressStreet: "",
+    addressLocality: "",
+    addressRegion: "",
+    addressPostalCode: "",
+    addressCountry: "",
+  });
+  const [companyLoading, setCompanyLoading] = useState(true);
+  const [companyLoadFailed, setCompanyLoadFailed] = useState(false);
+  const [companySaving, setCompanySaving] = useState(false);
+  const [showAddressDetails, setShowAddressDetails] = useState(false);
+  const [showCompanyOtpModal, setShowCompanyOtpModal] = useState(false);
+  const [companyOtp, setCompanyOtp] = useState("");
+
   // Orphan Scanner State
   const [orphans, setOrphans] = useState<OrphanAsset[]>([]);
   const [orphanStats, setOrphanStats] = useState<{ total: number; inUse: number; orphanCount: number } | null>(null);
@@ -180,6 +198,92 @@ export default function SettingsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLoggedIn]);
 
+  async function loadCompanyProfile() {
+    setCompanyLoading(true);
+    setCompanyLoadFailed(false);
+    try {
+      const res = await fetch("/api/settings/company-profile");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setCompanyProfile({
+        phone: data.phone ?? "",
+        addressDisplay: data.addressDisplay ?? "",
+        addressStreet: data.addressStreet ?? "",
+        addressLocality: data.addressLocality ?? "",
+        addressRegion: data.addressRegion ?? "",
+        addressPostalCode: data.addressPostalCode ?? "",
+        addressCountry: data.addressCountry ?? "",
+      });
+    } catch {
+      setCompanyLoadFailed(true);
+      showToast("โหลดข้อมูลบริษัทไม่สำเร็จ กรุณาลองใหม่", "error");
+    } finally {
+      setCompanyLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!isLoggedIn) return;
+    loadCompanyProfile();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoggedIn]);
+
+  async function handleRequestCompanyOtp(e: React.FormEvent) {
+    e.preventDefault();
+    setCompanySaving(true);
+    try {
+      const res = await fetch("/api/settings/company-profile/otp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(companyProfile),
+      });
+      if (res.ok) {
+        setShowCompanyOtpModal(true);
+        showToast("ระบบส่งรหัส OTP ไปยังอีเมลติดต่อแล้ว", "success");
+      } else {
+        const data = await res.json().catch(() => null);
+        showToast(data?.error ?? "ไม่สามารถขอรหัส OTP ได้", "error");
+      }
+    } catch {
+      showToast("เกิดข้อผิดพลาด กรุณาลองใหม่", "error");
+    } finally {
+      setCompanySaving(false);
+    }
+  }
+
+  async function handleVerifyCompanyOtp(e: React.FormEvent) {
+    e.preventDefault();
+    setCompanySaving(true);
+    try {
+      const res = await fetch("/api/settings/company-profile", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ otp: companyOtp }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        showToast(data?.error ?? "รหัส OTP ไม่ถูกต้องหรือหมดอายุ", "error");
+        return;
+      }
+      setCompanyProfile({
+        phone: data.phone ?? "",
+        addressDisplay: data.addressDisplay ?? "",
+        addressStreet: data.addressStreet ?? "",
+        addressLocality: data.addressLocality ?? "",
+        addressRegion: data.addressRegion ?? "",
+        addressPostalCode: data.addressPostalCode ?? "",
+        addressCountry: data.addressCountry ?? "",
+      });
+      setShowCompanyOtpModal(false);
+      setCompanyOtp("");
+      showToast("บันทึกข้อมูลบริษัทแล้ว", "success");
+    } catch {
+      showToast("เกิดข้อผิดพลาด กรุณาลองใหม่", "error");
+    } finally {
+      setCompanySaving(false);
+    }
+  }
+
   function showToast(message: string, type: "success" | "error") {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3000);
@@ -301,6 +405,129 @@ export default function SettingsPage() {
           <code className="font-mono">SMTP_PASS</code> (Gmail App Password) ใน environment
           ของเซิร์ฟเวอร์ก่อน ระบบจึงจะส่งเมลได้จริง (ตรวจสอบได้ที่ <code className="font-mono">/api/health</code>)
         </div>
+
+        {/* Company profile — shown on the public site (Contact page, Footer,
+            Organization JSON-LD). Requires OTP confirmation to the contact
+            email before changes are applied. */}
+        <form onSubmit={handleRequestCompanyOtp} className="mt-8 bg-white rounded-lg shadow p-6 space-y-4">
+          <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+            🏢 ข้อมูลบริษัท
+          </h2>
+          <p className="text-sm text-gray-600">
+            แสดงบนหน้าติดต่อเรา, ท้ายเว็บทุกหน้า และข้อมูลโครงสร้างสำหรับ Google — แก้ที่นี่แทนการแก้โค้ด
+            (การเปลี่ยนแปลงต้องยืนยันด้วยรหัส OTP ที่ส่งไปทางอีเมลก่อน)
+          </p>
+
+          <div>
+            <label className="block text-sm font-semibold mb-2 text-gray-700">เบอร์โทรศัพท์</label>
+            <input
+              type="text"
+              required
+              value={companyLoading ? "" : companyProfile.phone}
+              placeholder={companyLoading ? "กำลังโหลด..." : "062-012-9895"}
+              disabled={companyLoading || companyLoadFailed}
+              onChange={(e) => setCompanyProfile((p) => ({ ...p, phone: e.target.value }))}
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 disabled:bg-gray-100"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-semibold mb-2 text-gray-700">
+              ที่อยู่ (แสดงบนหน้าติดต่อเราและท้ายเว็บ)
+            </label>
+            <textarea
+              required
+              rows={2}
+              value={companyLoading ? "" : companyProfile.addressDisplay}
+              placeholder={companyLoading ? "กำลังโหลด..." : "93 ซอยงามวงศ์วาน 6 แยก 19 ..."}
+              disabled={companyLoading || companyLoadFailed}
+              onChange={(e) => setCompanyProfile((p) => ({ ...p, addressDisplay: e.target.value }))}
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 disabled:bg-gray-100 resize-none"
+            />
+          </div>
+
+          {companyLoadFailed && (
+            <button
+              type="button"
+              onClick={loadCompanyProfile}
+              className="text-sm font-semibold text-orange-600 hover:text-orange-700"
+            >
+              ↻ โหลดค่าปัจจุบันอีกครั้ง
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={() => setShowAddressDetails((v) => !v)}
+            className="text-sm font-semibold text-gray-500 hover:text-gray-700 flex items-center gap-1"
+          >
+            {showAddressDetails ? "▾" : "▸"} ที่อยู่แบบละเอียด (สำหรับ Google Maps และ SEO)
+          </button>
+
+          {showAddressDetails && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 p-4 bg-gray-50 rounded-lg">
+              <div className="sm:col-span-2">
+                <label className="block text-xs font-semibold mb-1 text-gray-600">ถนน/ซอย (ภาษาอังกฤษ)</label>
+                <input
+                  type="text"
+                  value={companyProfile.addressStreet}
+                  disabled={companyLoading || companyLoadFailed}
+                  onChange={(e) => setCompanyProfile((p) => ({ ...p, addressStreet: e.target.value }))}
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 disabled:bg-gray-100"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold mb-1 text-gray-600">อำเภอ/เขต</label>
+                <input
+                  type="text"
+                  value={companyProfile.addressLocality}
+                  disabled={companyLoading || companyLoadFailed}
+                  onChange={(e) => setCompanyProfile((p) => ({ ...p, addressLocality: e.target.value }))}
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 disabled:bg-gray-100"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold mb-1 text-gray-600">จังหวัด</label>
+                <input
+                  type="text"
+                  value={companyProfile.addressRegion}
+                  disabled={companyLoading || companyLoadFailed}
+                  onChange={(e) => setCompanyProfile((p) => ({ ...p, addressRegion: e.target.value }))}
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 disabled:bg-gray-100"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold mb-1 text-gray-600">รหัสไปรษณีย์</label>
+                <input
+                  type="text"
+                  value={companyProfile.addressPostalCode}
+                  disabled={companyLoading || companyLoadFailed}
+                  onChange={(e) => setCompanyProfile((p) => ({ ...p, addressPostalCode: e.target.value }))}
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 disabled:bg-gray-100"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold mb-1 text-gray-600">รหัสประเทศ (2 ตัวอักษร)</label>
+                <input
+                  type="text"
+                  maxLength={2}
+                  value={companyProfile.addressCountry}
+                  disabled={companyLoading || companyLoadFailed}
+                  onChange={(e) => setCompanyProfile((p) => ({ ...p, addressCountry: e.target.value.toUpperCase() }))}
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 disabled:bg-gray-100"
+                />
+              </div>
+            </div>
+          )}
+
+          <button
+            type="submit"
+            disabled={companySaving || companyLoading || companyLoadFailed}
+            className="w-full px-6 py-3 bg-orange-500 text-white font-bold rounded-lg hover:bg-orange-600 transition disabled:opacity-50"
+          >
+            {companySaving ? "กำลังดำเนินการ..." : "💾 บันทึกข้อมูลบริษัท"}
+          </button>
+        </form>
 
         {/* Cloudinary Orphan Scanner */}
         <div className="mt-8 bg-white rounded-lg shadow p-6 space-y-4">
@@ -489,6 +716,51 @@ export default function SettingsPage() {
                   className="flex-1 px-4 py-2 bg-orange-500 text-white font-bold rounded-lg hover:bg-orange-600 transition disabled:opacity-50"
                 >
                   {saving ? "กำลังยืนยัน..." : "ยืนยัน"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Company Profile OTP Modal */}
+      {showCompanyOtpModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-sm animate-in fade-in zoom-in duration-200">
+            <h2 className="text-xl font-bold text-gray-900 mb-2">ยืนยันตัวตนด้วยรหัส OTP</h2>
+            <p className="text-sm text-gray-600 mb-4">
+              ระบบได้ส่งรหัสผ่านชั่วคราวไปยังอีเมลติดต่อของคุณแล้ว กรุณานำมากรอกเพื่อยืนยันการเปลี่ยนข้อมูลบริษัท
+            </p>
+            <form onSubmit={handleVerifyCompanyOtp} className="space-y-4">
+              <div>
+                <input
+                  type="text"
+                  required
+                  maxLength={6}
+                  value={companyOtp}
+                  onChange={(e) => setCompanyOtp(e.target.value.replace(/\D/g, ""))}
+                  placeholder="รหัสยืนยัน"
+                  className="w-full px-4 py-3 text-center text-2xl tracking-widest border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 font-mono"
+                />
+              </div>
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowCompanyOtpModal(false);
+                    setCompanyOtp("");
+                  }}
+                  disabled={companySaving}
+                  className="flex-1 px-4 py-2 bg-gray-100 text-gray-700 font-semibold rounded-lg hover:bg-gray-200 transition disabled:opacity-50"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  type="submit"
+                  disabled={companySaving || companyOtp.length !== 6}
+                  className="flex-1 px-4 py-2 bg-orange-500 text-white font-bold rounded-lg hover:bg-orange-600 transition disabled:opacity-50"
+                >
+                  {companySaving ? "กำลังยืนยัน..." : "ยืนยัน"}
                 </button>
               </div>
             </form>

@@ -12,23 +12,12 @@ export const LINE_URL = "https://line.me/ti/p/~puminkmutnb";
 /** LINE direct protocol link to forcefully open the app instead of a web browser. */
 export const LINE_APP_URL = "line://ti/p/~puminkmutnb";
 
+// Fallback default only — the live, admin-editable value is
+// settingsStore.getContactEmail(). Company address/phone used to live here
+// too (COMPANY_ADDRESS/COMPANY_ADDRESS_QUERY) but are now fully owned by
+// app/lib/settingsStore.ts (getCompanyProfile) / app/lib/companyInfo.ts
+// (cached public read), editable from /settings.
 export const CONTACT_EMAIL = "ampumin@gmail.com";
-
-// Physical address — single source for the Organization JSON-LD
-// (ProductsJsonLd.tsx) AND the Contact page's Google Maps link/embed, so the
-// two can never drift out of sync again. (They previously did: the Maps link
-// pointed at an unrelated shopping mall while this address was shown as text
-// right next to it.)
-export const COMPANY_ADDRESS = {
-  streetAddress: "93 Soi Ngamwongwan 6 Yaek 19, Ngamwongwan Rd., Bang Khen",
-  addressLocality: "Mueang Nonthaburi",
-  addressRegion: "Nonthaburi",
-  postalCode: "11000",
-  addressCountry: "TH",
-};
-
-/** Single-line address for a Google Maps text-search query / embed. */
-export const COMPANY_ADDRESS_QUERY = `${COMPANY_ADDRESS.streetAddress}, ${COMPANY_ADDRESS.addressLocality}, ${COMPANY_ADDRESS.addressRegion} ${COMPANY_ADDRESS.postalCode}, ${COMPANY_ADDRESS.addressCountry}`;
 
 /** A scannable QR image (rendered via next/image, `unoptimized`) for LINE_URL. */
 export function lineQrUrl(size = 220): string {

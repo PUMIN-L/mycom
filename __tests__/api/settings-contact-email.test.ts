@@ -23,6 +23,9 @@ import { isMailConfigured, sendContactRecipientChangedEmail } from '@/app/lib/ma
 vi.mock('@/app/lib/session', () => ({ getSession: vi.fn() }));
 import { getSession } from '@/app/lib/session';
 
+vi.mock('next/cache', () => ({ revalidateTag: vi.fn() }));
+import { revalidateTag } from 'next/cache';
+
 const adminSession = { userId: '1', username: 'admin', expiresAt: new Date() } as any;
 
 // State-changing PUT flows through the real same-origin (CSRF) guard, so
@@ -126,6 +129,9 @@ describe('Settings contact-email API Route', () => {
         'old@example.com',
         'new@example.com'
       );
+      // Public pages read this email through a cache tagged "company-info" —
+      // a real change must actually bust it, or the site shows it stale.
+      expect(revalidateTag).toHaveBeenCalledWith('company-info', { expire: 0 });
     });
 
     it('still saves (200) even if the notification email fails to send', async () => {

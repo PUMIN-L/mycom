@@ -156,6 +156,21 @@ export async function sendOtpEmail(
   });
 }
 
+/** Send a 6-digit OTP to `to` to authorize a company-profile (address/phone) change. */
+export async function sendCompanyProfileOtpEmail(
+  to: string,
+  otp: string,
+  changesSummary: string
+): Promise<void> {
+  const transport = createTransport();
+  await transport.sendMail({
+    from: { name: "ระบบเว็บไซต์ (Profin Lab Scale)", address: process.env.SMTP_USER ?? "" },
+    to: { name: "", address: to },
+    subject: `[รหัส OTP] ยืนยันการเปลี่ยนข้อมูลบริษัท`,
+    text: `มีการขอเปลี่ยนข้อมูลบริษัท (ที่แสดงบนหน้าเว็บสาธารณะ) ดังนี้:\n\n${changesSummary}\n\nหากคุณเป็นผู้ดำเนินการ กรุณานำรหัสยืนยันด้านล่างนี้ไปกรอกในหน้าตั้งค่า:\n\nรหัสยืนยัน: ${otp}\n\n(รหัสนี้มีอายุ 15 นาที)\n\nหากคุณไม่ได้เป็นผู้ดำเนินการ กรุณาเพิกเฉยต่ออีเมลฉบับนี้ และตรวจสอบความปลอดภัยของบัญชีผู้ดูแลระบบทันที`,
+  });
+}
+
 /** Send a 5-digit OTP to `to` to authorize deleting orphaned Cloudinary images. */
 export async function sendOrphanDeleteOtpEmail(
   to: string,

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { revalidateTag } from "next/cache";
 import { withRoute, requireAuth } from "../../../lib/apiHelpers";
 import {
   getContactEmail,
@@ -91,6 +92,9 @@ export const PUT = withRoute(
 
     const previous = await getContactEmail();
     await setSetting(CONTACT_EMAIL_SETTING, value);
+    // Public pages (Footer/Contact/Organization JSON-LD) read a cached copy
+    // (app/lib/companyInfo.ts) that bundles this email in — refresh it too.
+    if (value !== previous) revalidateTag("company-info", { expire: 0 });
 
     // Clear the OTP data
     await setSetting("contact_email_otp", "");

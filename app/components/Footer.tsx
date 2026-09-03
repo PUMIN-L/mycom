@@ -5,7 +5,16 @@ import { useT } from "../i18n/LanguageContext";
 import { translations } from "../i18n/translations";
 import { useAuth } from "../context/AuthContext";
 
-export default function Footer() {
+interface FooterProps {
+  /** Live values from Settings (app/lib/companyInfo.ts) — this is a client
+   * component, so the parent server component fetches them and passes them
+   * down as props rather than this component reading them directly. */
+  email: string;
+  phone: string;
+  address: string;
+}
+
+export default function Footer({ email, phone, address }: FooterProps) {
   const t = useT();
   const { isLoggedIn, user, logout } = useAuth();
 
@@ -78,13 +87,13 @@ export default function Footer() {
               {t(translations.footer.contactInfo)}
             </h3>
             <div className="space-y-6 text-white/70 text-base font-light">
-              <p className="leading-relaxed">{t(translations.contact.address)}</p>
+              <p className="leading-relaxed">{address}</p>
               <div className="space-y-2">
                 <p className="flex items-center gap-3">
-                  <span className="text-[var(--accent)]">P:</span> {t(translations.contact.phone)}
+                  <span className="text-[var(--accent)]">P:</span> {phone}
                 </p>
                 <p className="flex items-center gap-3">
-                  <span className="text-[var(--accent)]">E:</span> ampumin@gmail.com
+                  <span className="text-[var(--accent)]">E:</span> {email}
                 </p>
                 <p className="flex items-center gap-3">
                   <span className="text-[var(--accent)]">L:</span> @puminkmutnb
@@ -109,7 +118,7 @@ export default function Footer() {
                 </svg>
               </a>
               <a
-                href="mailto:ampumin@gmail.com"
+                href={`mailto:${email}`}
                 className="w-12 h-12 border border-white/20 flex items-center justify-center hover:bg-white hover:text-footer transition-all"
                 aria-label="Email"
               >

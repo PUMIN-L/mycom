@@ -3,11 +3,21 @@
 import { useEffect, useRef, useState } from "react";
 import { useT } from "../i18n/LanguageContext";
 import { translations } from "../i18n/translations";
-import { LINE_ID, LINE_URL, LINE_APP_URL, CONTACT_EMAIL, COMPANY_ADDRESS_QUERY } from "../lib/contact";
+import { LINE_ID, LINE_URL, LINE_APP_URL } from "../lib/contact";
 
 import LineQrModal from "./LineQrModal";
 
-export default function Contact() {
+interface ContactProps {
+  /** Live values from Settings (app/lib/settingsStore.ts) — this is a client
+   * component, so the parent server component fetches them and passes them
+   * down as props rather than this component reading them directly. */
+  email: string;
+  phone: string;
+  address: string;
+  addressMapsQuery: string;
+}
+
+export default function Contact({ email, phone, address, addressMapsQuery }: ContactProps) {
   const t = useT();
   const [isLineModalOpen, setIsLineModalOpen] = useState(false);
   const [formState, setFormState] = useState({
@@ -116,7 +126,7 @@ export default function Contact() {
                   {t(translations.contact.addressLabel)}
                 </h4>
                 <p className="text-lg text-[var(--text-secondary)] leading-relaxed font-normal">
-                  {t(translations.contact.address)}
+                  {address}
                 </p>
               </div>
 
@@ -126,7 +136,7 @@ export default function Contact() {
                   {t(translations.contact.phoneLabel)}
                 </h4>
                 <p className="text-lg text-[var(--text-secondary)] font-normal">
-                  {t(translations.contact.phone)}
+                  {phone}
                 </p>
               </div>
 
@@ -135,8 +145,8 @@ export default function Contact() {
                 <h4 className="text-sm font-bold uppercase tracking-widest text-[var(--accent)]">
                   {t(translations.contact.emailLabel)}
                 </h4>
-                <a href={`mailto:${CONTACT_EMAIL}`} className="text-lg text-[var(--text-secondary)] hover:text-[var(--accent)] transition-colors font-normal">
-                  {CONTACT_EMAIL}
+                <a href={`mailto:${email}`} className="text-lg text-[var(--text-secondary)] hover:text-[var(--accent)] transition-colors font-normal">
+                  {email}
                 </a>
               </div>
 
@@ -157,13 +167,13 @@ export default function Contact() {
 
             {/* Map Element */}
             <a
-              href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(COMPANY_ADDRESS_QUERY)}`}
+              href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addressMapsQuery)}`}
               target="_blank"
               rel="noopener noreferrer"
               className="relative block h-72 bg-gray-50 border border-gray-100 overflow-hidden shadow-inner rounded-xl group cursor-pointer"
             >
               <iframe
-                src={`https://www.google.com/maps?q=${encodeURIComponent(COMPANY_ADDRESS_QUERY)}&output=embed`}
+                src={`https://www.google.com/maps?q=${encodeURIComponent(addressMapsQuery)}&output=embed`}
                 width="100%"
                 height="100%" 
                 style={{ border: 0 }} 

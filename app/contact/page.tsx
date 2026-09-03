@@ -2,6 +2,7 @@ import Navbar from "../components/Navbar";
 import Contact from "../components/Contact";
 import Footer from "../components/Footer";
 import { SITE_URL } from "../lib/site";
+import { getCompanyInfo } from "../lib/companyInfo";
 
 export const metadata = {
   title: "ติดต่อเรา",
@@ -18,7 +19,8 @@ const breadcrumbLd = {
   ],
 };
 
-export default function ContactPage() {
+export default async function ContactPage() {
+  const info = await getCompanyInfo();
   return (
     <>
       <script
@@ -27,9 +29,14 @@ export default function ContactPage() {
       />
       <Navbar />
       <main className="pt-20">
-        <Contact />
+        <Contact
+          email={info.email}
+          phone={info.phone}
+          address={info.address}
+          addressMapsQuery={info.addressMapsQuery}
+        />
       </main>
-      <Footer />
+      <Footer email={info.email} phone={info.phone} address={info.address} />
     </>
   );
 }

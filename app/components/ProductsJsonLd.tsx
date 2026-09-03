@@ -7,7 +7,9 @@ import {
   SITE_LEGAL_NAME,
   BRAND_ALT_NAMES,
 } from "../lib/site";
-import { CONTACT_EMAIL, LINE_URL, COMPANY_ADDRESS } from "../lib/contact";
+import { LINE_URL } from "../lib/contact";
+import { toThaiE164 } from "../lib/settingsStore";
+import { getCompanyInfo } from "../lib/companyInfo";
 import { stripHtml } from "../lib/stripHtml";
 
 // Absolute URL for structured data (relative /images/... and Cloudinary URLs).
@@ -24,9 +26,10 @@ function absUrl(u: string): string {
 export default async function ProductsJsonLd() {
   // getContentsMeta is best-effort enrichment (deep-links); a failure must never
   // break the page, so fall back to an empty map (→ gateway URLs).
-  const [{ products }, contentsMeta] = await Promise.all([
+  const [{ products }, contentsMeta, companyInfo] = await Promise.all([
     getProductsData(),
     getAllContentsMeta().catch(() => []),
+    getCompanyInfo(),
   ]);
 
   // Map each product to its canonical, INDEXABLE content page so the ItemList
@@ -46,9 +49,10 @@ export default async function ProductsJsonLd() {
 
   // Rich Organization + Store (a LocalBusiness subtype) node: logo, physical
   // address, contact + LINE, so a real B2B supplier is eligible for the Google
-  // knowledge panel / local results, not just a bare name. (Phone is omitted —
-  // the stored number is still a placeholder; a wrong tel in structured data is
-  // worse than none.)
+  // knowledge panel / local results, not just a bare name. Email/phone/address
+  // are admin-editable from /settings (getContactEmail/getCompanyProfile) —
+  // this used to read hardcoded constants that never reflected a Settings-page
+  // change.
   const organization = {
     "@context": "https://schema.org",
     "@type": ["Organization", "Store"],
@@ -62,11 +66,15 @@ export default async function ProductsJsonLd() {
     description: SITE_DESCRIPTION,
     logo: `${SITE_URL}/icon.png`,
     image: `${SITE_URL}/icon.png`,
-    email: CONTACT_EMAIL,
-    telephone: "+66620129895", // 062-012-9895 in E.164 format
+    email: companyInfo.email,
+    telephone: toThaiE164(companyInfo.profile.phone),
     address: {
       "@type": "PostalAddress",
-      ...COMPANY_ADDRESS,
+      streetAddress: companyInfo.profile.addressStreet,
+      addressLocality: companyInfo.profile.addressLocality,
+      addressRegion: companyInfo.profile.addressRegion,
+      postalCode: companyInfo.profile.addressPostalCode,
+      addressCountry: companyInfo.profile.addressCountry,
     },
     areaServed: "TH",
     sameAs: [LINE_URL],

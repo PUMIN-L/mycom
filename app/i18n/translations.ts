@@ -119,21 +119,6 @@ export const translations = {
       en: "Reach us through any channel. We're happy to assist.",
       zh: "通过任何渠道联系我们，我们很乐意为您提供帮助。",
     },
-    address: {
-      th: "93 ซอยงามวงศ์วาน 6 แยก 19 ถนนงามวงศ์วาน ตำบลบางเขน อำเภอเมืองนนทบุรี จ.นนทบุรี 11000",
-      en: "93 Soi Ngamwongwan 6 Yaek 19, Ngamwongwan Rd., Bang Khen, Mueang Nonthaburi, Nonthaburi 11000, Thailand",
-      zh: "泰国暖武里府暖武里市邦肯，岸旺翁路6巷19号93号 11000",
-    },
-    phone: {
-      th: "062-012-9895",
-      en: "062-012-9895",
-      zh: "062-012-9895",
-    },
-    email: {
-      th: "ampumin@gmail.com",
-      en: "ampumin@gmail.com",
-      zh: "ampumin@gmail.com",
-    },
     form: {
       name: { th: "ชื่อ-นามสกุล", en: "Full Name", zh: "姓名" },
       email: { th: "อีเมล", en: "Email", zh: "电子邮件" },

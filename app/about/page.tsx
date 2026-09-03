@@ -3,6 +3,7 @@ import Navbar from "../components/Navbar";
 import Footer from "../components/Footer";
 import AboutSection from "../components/AboutSection";
 import { SITE_URL } from "../lib/site";
+import { getCompanyInfo } from "../lib/companyInfo";
 
 export const metadata: Metadata = {
   title: "เกี่ยวกับเรา",
@@ -20,7 +21,8 @@ const breadcrumbLd = {
   ],
 };
 
-export default function AboutPage() {
+export default async function AboutPage() {
+  const info = await getCompanyInfo();
   return (
     <>
       <script
@@ -31,7 +33,7 @@ export default function AboutPage() {
       <main className="bg-white">
         <AboutSection />
       </main>
-      <Footer />
+      <Footer email={info.email} phone={info.phone} address={info.address} />
     </>
   );
 }
