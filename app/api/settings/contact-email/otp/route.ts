@@ -1,3 +1,4 @@
+import { randomInt } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { withRoute, requireAuth } from "../../../../lib/apiHelpers";
 import {
@@ -12,7 +13,7 @@ const EMAIL_RE = /^[^\s@<>"',;]+@[^\s@<>"',;]+\.[^\s@<>"',;]+$/;
 
 // Generate a random 6-digit OTP
 function generateOtp(): string {
-  return Math.floor(100000 + Math.random() * 900000).toString();
+  return randomInt(100000, 1000000).toString();
 }
 
 export const POST = withRoute(

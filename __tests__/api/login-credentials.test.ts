@@ -5,7 +5,15 @@ import { NextRequest } from 'next/server';
 // path is exercised end to end.
 import bcrypt from 'bcryptjs';
 
-vi.mock('@/app/lib/db', () => ({ query: vi.fn(), getDbConnection: vi.fn() }));
+// recordLoginFailure locks/reads/writes the failure counter through
+// withTransaction — these tests don't care about the counter's value, so a
+// generic connection stub that answers every query the same way is enough.
+const conn = { query: vi.fn().mockResolvedValue([[{ value: '0|0' }]]) };
+vi.mock('@/app/lib/db', () => ({
+  query: vi.fn(),
+  getDbConnection: vi.fn(),
+  withTransaction: vi.fn(async (fn: (c: typeof conn) => Promise<unknown>) => fn(conn)),
+}));
 import { query } from '@/app/lib/db';
 
 vi.mock('@/app/lib/session', () => ({

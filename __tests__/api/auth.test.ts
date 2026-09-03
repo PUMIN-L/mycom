@@ -5,10 +5,14 @@ import { GET as getMe } from '@/app/api/auth/me/route';
 import { POST as login } from '@/app/api/auth/login/route';
 import { POST as logout } from '@/app/api/auth/logout/route';
 
-// Mock DB
+// Mock DB. recordLoginFailure locks/reads/writes its counter through
+// withTransaction — these tests don't care about the counter's value, so a
+// generic connection stub that answers every query the same way is enough.
+const conn = { query: vi.fn().mockResolvedValue([[{ value: '0|0' }]]) };
 vi.mock('@/app/lib/db', () => ({
   query: vi.fn(),
-  getDbConnection: vi.fn()
+  getDbConnection: vi.fn(),
+  withTransaction: vi.fn(async (fn: (c: typeof conn) => Promise<unknown>) => fn(conn)),
 }));
 import { query } from '@/app/lib/db';
 
@@ -102,58 +106,10 @@ describe('Auth API Routes', () => {
       expect(createSession).toHaveBeenCalledWith('1', 'ok-user');
     });
 
-    it('enforces rate limiting after 5 failed attempts (per username, ignoring spoofable IP)', async () => {
-      vi.mocked(query).mockResolvedValue([[]] as any);
-      (bcrypt.compare as any).mockResolvedValue(false);
-
-      for (let i = 0; i < 5; i++) {
-        await login(mockRequest({ username: 'brute-target', password: 'bad' }));
-      }
-      const res = await login(mockRequest({ username: 'brute-target', password: 'bad' }));
-      expect(res.status).toBe(429);
-      expect((await res.json()).error).toContain('เข้าสู่ระบบผิดพลาดหลายครั้งเกินไป');
-    });
-
-    it('clears the block after the 15-minute window expires', async () => {
-      // Fake only Date (not timers) so request/promise I/O keeps working.
-      vi.useFakeTimers({ toFake: ['Date'] });
-      vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
-      try {
-        vi.mocked(query).mockResolvedValue([[]] as any);
-        (bcrypt.compare as any).mockResolvedValue(false);
-
-        for (let i = 0; i < 5; i++) {
-          await login(mockRequest({ username: 'expire-user', password: 'bad' }));
-        }
-        expect((await login(mockRequest({ username: 'expire-user', password: 'bad' }))).status).toBe(429);
-
-        // Advance past the 15-minute block window.
-        vi.setSystemTime(new Date('2026-01-01T00:16:00Z'));
-        expect((await login(mockRequest({ username: 'expire-user', password: 'bad' }))).status).toBe(401);
-      } finally {
-        vi.useRealTimers();
-      }
-    });
-
-    it('resets the failure counter after a successful login', async () => {
-      // 4 failures (not yet blocked)
-      vi.mocked(query).mockResolvedValue([[]] as any);
-      (bcrypt.compare as any).mockResolvedValue(false);
-      for (let i = 0; i < 4; i++) {
-        await login(mockRequest({ username: 'reset-user', password: 'bad' }));
-      }
-      // A successful login clears the counter.
-      vi.mocked(query).mockResolvedValue([[{ id: '9', username: 'reset-user', passwordHash: 'hash' }]] as any);
-      (bcrypt.compare as any).mockResolvedValue(true);
-      expect((await login(mockRequest({ username: 'reset-user', password: 'ok' }))).status).toBe(200);
-
-      // Counter is reset: the next 4 failures are 401 (not immediately 429).
-      vi.mocked(query).mockResolvedValue([[]] as any);
-      (bcrypt.compare as any).mockResolvedValue(false);
-      for (let i = 0; i < 4; i++) {
-        const res = await login(mockRequest({ username: 'reset-user', password: 'bad' }));
-        expect(res.status).toBe(401);
-      }
-    });
+    // Rate-limit lockout/expiry/reset behavior is covered in
+    // login-rate-limit.test.ts, which mocks settingsStore's getSetting/
+    // setSetting directly (the lockout counter is persisted there, shared
+    // across serverless instances) — that mock needs to be stateful, which
+    // this file's plain db.query stub isn't, so those cases don't belong here.
   });
 });

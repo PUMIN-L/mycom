@@ -1,3 +1,4 @@
+import { randomInt } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { withRoute, requireAuth, jsonError } from "../../../../../lib/apiHelpers";
 import { getSchedule, getEquipment } from "../../../../../lib/crmStore";
@@ -7,7 +8,7 @@ import { resetOtpAttempts } from "../../../../../lib/otpAttempts";
 
 // Generate a random 6-digit OTP
 function generateOtp(): string {
-  return Math.floor(100000 + Math.random() * 900000).toString();
+  return randomInt(100000, 1000000).toString();
 }
 
 /**
