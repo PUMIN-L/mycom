@@ -4,7 +4,7 @@ import type { QueryResult, FieldPacket, RowDataPacket } from "mysql2";
 
 // Bump whenever the schema below changes — a mismatch re-runs the (idempotent)
 // bump; a match lets returning cold instances skip it in one SELECT.
-const SCHEMA_VERSION = 29;
+const SCHEMA_VERSION = 30;
 
 type DbPool = ReturnType<typeof mysql.createPool>;
 
@@ -220,7 +220,9 @@ async function bootstrapSchemaOnce(): Promise<void> {
     // ── Used quotation numbers ledger ─────────────────────────────────────
     // Records every issued quotation docNo so a number can't be reused even
     // after its quotation is deleted. docNo starts with the date, so numbers
-    // roll over daily; this ledger is purged after ~2 days by the cleanup cron.
+    // roll over daily. NOTE: no longer purged (kept for conversion-rate
+    // analytics), so it only grows — the createdAt index below is what keeps
+    // listRecentDocNos()'s `WHERE createdAt >= ?` fast as it does.
     await connection.query(`
         CREATE TABLE IF NOT EXISTS used_docnos (
           docNo VARCHAR(255) PRIMARY KEY,
@@ -228,6 +230,13 @@ async function bootstrapSchemaOnce(): Promise<void> {
           createdAt VARCHAR(255) NOT NULL
         )
       `);
+    try {
+      await connection.query(
+        `CREATE INDEX idx_used_docnos_createdAt ON used_docnos (createdAt)`
+      );
+    } catch (error) {
+      if (!isBenignSchemaError(error)) throw error;
+    }
 
     // ── Product categories table ──────────────────────────────────────────
 
@@ -402,6 +411,14 @@ async function bootstrapSchemaOnce(): Promise<void> {
 
     try {
       await connection.query(
+        `CREATE INDEX idx_customers_createdAt ON customers (createdAt)`
+      );
+    } catch (error) {
+      if (!isBenignSchemaError(error)) throw error;
+    }
+
+    try {
+      await connection.query(
         `ALTER TABLE customers ADD CONSTRAINT fk_customer_company FOREIGN KEY (companyId) REFERENCES companies(id) ON DELETE RESTRICT`
       );
     } catch (error) {
@@ -504,6 +521,13 @@ async function bootstrapSchemaOnce(): Promise<void> {
           INDEX idx_ce_warrantyEnd (warrantyEndDate)
         )
       `);
+    try {
+      await connection.query(
+        `CREATE INDEX idx_ce_createdAt ON customer_equipments (createdAt)`
+      );
+    } catch (error) {
+      if (!isBenignSchemaError(error)) throw error;
+    }
     try {
       await connection.query("ALTER TABLE customer_equipments ADD COLUMN salesRecordId VARCHAR(255) DEFAULT ''");
     } catch (error) {

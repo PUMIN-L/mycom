@@ -6,6 +6,16 @@ import {
   listBillingDocuments,
 } from "../../lib/billingStore";
 import type { BillingDocType } from "../../lib/billingNumber";
+import { sanitizePlainText } from "../../lib/sanitizeHtml";
+
+// Matches the DB columns (paymentMethod VARCHAR(50), paymentDate VARCHAR(20),
+// paymentRef VARCHAR(255)) and strips HTML — every other free-text field in
+// this codebase is sanitized on write; these three were being stored raw.
+function cleanOptionalField(value: unknown, maxLen: number): string | null {
+  if (value == null) return null;
+  const cleaned = sanitizePlainText(String(value)).substring(0, maxLen);
+  return cleaned || null;
+}
 
 // GET /api/billing (login required) — list saved billing documents.
 // Optional ?docType=invoice|billing_note|receipt filter.
@@ -54,9 +64,9 @@ export const POST = withRoute(
         docNo,
         linkedQuotationId,
         data: body?.data ?? {},
-        paymentMethod: body?.paymentMethod ?? null,
-        paymentDate: body?.paymentDate ?? null,
-        paymentRef: body?.paymentRef ?? null,
+        paymentMethod: cleanOptionalField(body?.paymentMethod, 50),
+        paymentDate: cleanOptionalField(body?.paymentDate, 20),
+        paymentRef: cleanOptionalField(body?.paymentRef, 255),
         createdAt,
       });
     } catch (err) {

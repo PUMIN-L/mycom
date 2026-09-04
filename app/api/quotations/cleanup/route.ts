@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withRoute } from "../../../lib/apiHelpers";
 import { purgeExpiredQuotations, purgeOldDocNos } from "../../../lib/quotationStore";
-import { purgeExpiredBillingDocuments } from "../../../lib/billingStore";
 
 // GET /api/quotations/cleanup — invoked daily by Vercel Cron (see vercel.json)
 // to delete quotations older than 30 days plus their uploaded Cloudinary images.
@@ -25,7 +24,13 @@ export const GET = withRoute(
     }
     try {
       const deleted = await purgeExpiredQuotations(RETENTION_DAYS);
-      const billingDeleted = await purgeExpiredBillingDocuments(RETENTION_DAYS);
+      // Billing documents (invoice/billing note/receipt) are real financial
+      // and tax records, unlike throwaway quotation drafts — they must NEVER
+      // be auto-deleted, so there is no purge call for them here anymore
+      // (the function that did this was removed from billingStore.ts).
+      // `billingDeleted` is kept in the response shape for compatibility
+      // with anything parsing this cron's JSON output.
+      const billingDeleted = 0;
       const docNosPurged = 0; // Legacy: docNos are no longer purged to preserve conversion rate analytics.
       // Structured success line so a MISSING nightly run is detectable in logs.
       console.log(

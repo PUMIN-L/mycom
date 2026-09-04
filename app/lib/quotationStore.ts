@@ -82,19 +82,42 @@ export class DocNoConflictError extends Error {
  * two holes: (1) if the save committed but the reserve failed, the quote lived
  * with NO ledger entry, so a later quote saw the number as free and reused it;
  * (2) two concurrent saves of the same new number both read owner=null and both
- * won. Here we lock the ledger row `FOR UPDATE`, reject a different-owner docNo
- * (409), then upsert the quote and the reservation together — so the invariant
- * "one live quotation number" actually holds under failure and concurrency.
+ * won — this second hole was NOT actually closed by a prior fix that locked the
+ * ledger row `FOR UPDATE` before checking it, because TiDB does not take a gap
+ * lock via `SELECT ... FOR UPDATE` on a row that doesn't exist yet (verified
+ * against TiDB's docs) — so that lock was a no-op for a brand-new docNo and two
+ * concurrent saves could still both pass the check.
+ *
+ * The actual fix: claim the docNo via an INSERT into `used_docnos`, whose
+ * PRIMARY KEY on `docNo` is a real constraint the DB always enforces — a
+ * concurrent duplicate INSERT genuinely fails with ER_DUP_ENTRY, no gap lock
+ * required. Only once the row is known to already exist does `FOR UPDATE`
+ * reliably take a lock (existing-row locks work fine on TiDB), so the
+ * ownership check below is race-safe there.
  */
 export async function saveQuotationAtomic(rec: QuotationRecord): Promise<void> {
   await withTransaction(async (conn) => {
     if (rec.docNo) {
-      const [rows] = await conn.query<RowDataPacket[]>(
-        "SELECT quotationId FROM used_docnos WHERE docNo = ? FOR UPDATE",
-        [rec.docNo]
-      );
-      if (rows.length > 0 && String(rows[0].quotationId) !== rec.id) {
-        throw new DocNoConflictError(rec.docNo);
+      try {
+        await conn.query(
+          "INSERT INTO used_docnos (docNo, quotationId, createdAt) VALUES (?, ?, ?)",
+          [rec.docNo, rec.id, rec.createdAt]
+        );
+      } catch (err) {
+        if ((err as { code?: string })?.code !== "ER_DUP_ENTRY") throw err;
+        // Someone already claimed this docNo (possibly this same quote on an
+        // earlier save) — the row now genuinely exists, so this lock is real.
+        const [rows] = await conn.query<RowDataPacket[]>(
+          "SELECT quotationId FROM used_docnos WHERE docNo = ? FOR UPDATE",
+          [rec.docNo]
+        );
+        if (rows.length === 0 || String(rows[0].quotationId) !== rec.id) {
+          throw new DocNoConflictError(rec.docNo);
+        }
+        await conn.query(
+          "UPDATE used_docnos SET createdAt = ? WHERE docNo = ?",
+          [rec.createdAt, rec.docNo]
+        );
       }
     }
     await conn.query(
@@ -111,14 +134,6 @@ export async function saveQuotationAtomic(rec: QuotationRecord): Promise<void> {
         rec.createdAt,
       ]
     );
-    if (rec.docNo) {
-      await conn.query(
-        `INSERT INTO used_docnos (docNo, quotationId, createdAt) VALUES (?, ?, ?)
-         ON DUPLICATE KEY UPDATE
-           quotationId = VALUES(quotationId), createdAt = VALUES(createdAt)`,
-        [rec.docNo, rec.id, rec.createdAt]
-      );
-    }
   });
 }
 
@@ -207,9 +222,17 @@ function summarize(data: QuoteDataLite): { customer: string; total: number } {
   };
 }
 
+// Quotations are auto-purged after 30 days (see purgeExpiredQuotations), so
+// this table never holds more than ~30 days of drafts under normal
+// operation — the LIMIT here is a generous safety cap (in case the cleanup
+// cron is ever misconfigured/failing), not the real bound. It used to be a
+// tight 200, which meant more than ~7 quotations/day would silently push
+// still-live (not yet purged) drafts off the bottom of the list.
+const LIST_SAFETY_LIMIT = 2000;
+
 export async function listQuotations(): Promise<QuotationSummary[]> {
   const [rows] = await query<RowDataPacket[]>(
-    "SELECT id, docNo, data, createdAt FROM quotations ORDER BY createdAt DESC LIMIT 200"
+    `SELECT id, docNo, data, createdAt FROM quotations ORDER BY createdAt DESC LIMIT ${LIST_SAFETY_LIMIT}`
   );
   return rows.map((r) => {
     const { customer, total } = summarize(parseJson<QuoteDataLite>(r.data, {}));

@@ -2,6 +2,19 @@ import { query } from "./db";
 import { sanitizePlainText } from "./sanitizeHtml";
 import type { Supplier } from "./types";
 
+// Matches the DB columns (companyName/contactName/phone VARCHAR(255), note
+// TEXT) — without this, a value longer than the column allows throws an
+// uncaught DB error (500) instead of just being clipped, unlike every
+// sibling store in this codebase.
+function cleanSupplier(data: Partial<Supplier>) {
+  return {
+    companyName: sanitizePlainText(data.companyName || "").substring(0, 255),
+    contactName: sanitizePlainText(data.contactName || "").substring(0, 255),
+    phone: sanitizePlainText(data.phone || "").substring(0, 255),
+    note: sanitizePlainText(data.note || "").substring(0, 5000),
+  };
+}
+
 export async function getAllSuppliers(): Promise<Supplier[]> {
   const [rows] = await query<any[]>("SELECT * FROM suppliers ORDER BY createdAt DESC");
   
@@ -44,41 +57,36 @@ export async function getSupplier(id: string): Promise<Supplier | null> {
 export async function createSupplier(data: Partial<Supplier>): Promise<Supplier> {
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
-  
+  const v = cleanSupplier(data);
+
   await query(
     `INSERT INTO suppliers (id, companyName, contactName, phone, note, createdAt)
      VALUES (?, ?, ?, ?, ?, ?)`,
-    [
-      id,
-      sanitizePlainText(data.companyName || ""),
-      sanitizePlainText(data.contactName || ""),
-      sanitizePlainText(data.phone || ""),
-      sanitizePlainText(data.note || ""),
-      now
-    ]
+    [id, v.companyName, v.contactName, v.phone, v.note, now]
   );
-  
+
   return (await getSupplier(id))!;
 }
 
 export async function updateSupplier(id: string, data: Partial<Supplier>): Promise<Supplier | null> {
+  const v = cleanSupplier(data);
   const sets: string[] = [];
   const values: unknown[] = [];
-  
+
   const set = (col: string, val: unknown) => {
     sets.push(`${col} = ?`);
     values.push(val);
   };
-  
-  if (data.companyName !== undefined) set("companyName", sanitizePlainText(data.companyName));
-  if (data.contactName !== undefined) set("contactName", sanitizePlainText(data.contactName));
-  if (data.phone !== undefined) set("phone", sanitizePlainText(data.phone));
-  if (data.note !== undefined) set("note", sanitizePlainText(data.note));
-  
+
+  if (data.companyName !== undefined) set("companyName", v.companyName);
+  if (data.contactName !== undefined) set("contactName", v.contactName);
+  if (data.phone !== undefined) set("phone", v.phone);
+  if (data.note !== undefined) set("note", v.note);
+
   if (sets.length > 0) {
     await query(`UPDATE suppliers SET ${sets.join(", ")} WHERE id = ?`, [...values, id]);
   }
-  
+
   return await getSupplier(id);
 }
 
