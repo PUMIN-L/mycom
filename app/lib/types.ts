@@ -111,6 +111,12 @@ export interface DocumentData {
 
 // ── CRM: Sold Equipment & Warranty Tracking ─────────────────────────────────
 
+/** A calibration is valid for 1 year — the "next due" date shown to admins
+ * (and the DB alert query, which fires 2 months before this anniversary) are
+ * both computed from this. Lives here (not crmStore.ts) so client components
+ * can import it without pulling in server-only DB code. */
+export const CALIBRATION_VALIDITY_MONTHS = 12;
+
 export const SCHEDULE_TYPES = ["service", "phone_call"] as const;
 export type ScheduleType = (typeof SCHEDULE_TYPES)[number];
 

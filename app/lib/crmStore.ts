@@ -11,7 +11,7 @@ import type {
   CrmAlerts,
   SalesRecord,
 } from "./types";
-import { SCHEDULE_TYPES, SCHEDULE_STATUSES } from "./types";
+import { SCHEDULE_TYPES, SCHEDULE_STATUSES, CALIBRATION_VALIDITY_MONTHS } from "./types";
 
 // Re-exported so callers can keep importing from "./crmStore".
 export type { CustomerEquipment, ServiceSchedule, ServiceLog, CrmAlerts } from "./types";
@@ -537,15 +537,18 @@ export async function completeScheduleWithLog(
 // unflagged for up to 7 hours every single day. (bangkokDateString lives in
 // dateFormat.ts, shared with salesDashboardStore.ts's identical need.)
 
+// The alert starts CALIBRATION_ALERT_LEAD_MONTHS before the 1-year
+// (CALIBRATION_VALIDITY_MONTHS) calibration anniversary — i.e. once 10
+// months (12 - 2) have passed since the last calibrationDate.
+const CALIBRATION_ALERT_LEAD_MONTHS = 2;
+
 export async function getAlerts(
   warrantyDays = 30,
-  scheduleDays = 7,
-  calibrationDays = 30
+  scheduleDays = 7
 ): Promise<CrmAlerts> {
   const today = bangkokDateString(new Date());
   const warrantyCutoff = bangkokDateString(new Date(Date.now() + warrantyDays * 86400000));
   const scheduleCutoff = bangkokDateString(new Date(Date.now() + scheduleDays * 86400000));
-  const calibrationCutoff = bangkokDateString(new Date(Date.now() + calibrationDays * 86400000));
 
   const nowIso = new Date().toISOString();
 
@@ -560,18 +563,19 @@ export async function getAlerts(
     [today, warrantyCutoff, nowIso]
   );
 
-  // Calibration is due 10 months after the last calibrationDate — computed in
-  // SQL (DATE_ADD) rather than stored, so it always reflects the current
-  // calibrationDate value with no separate column to keep in sync.
+  // Fires once today is within CALIBRATION_ALERT_LEAD_MONTHS of the 1-year
+  // due date, i.e. calibrationDate + (12 - 2) months <= today. No upper bound:
+  // unlike warranty (silenced by status='Expired'), nothing marks a
+  // calibration "done" except recording a NEW calibrationDate, so an already
+  // overdue one must keep alerting indefinitely, not just while approaching.
   const [calibrationRows] = await query<RowDataPacket[]>(
     `${EQUIPMENT_SELECT}
      LEFT JOIN alert_snoozes sno ON sno.alertType = 'calibration' AND sno.referenceId = e.id
      WHERE e.calibrationDate IS NOT NULL
-       AND DATE_ADD(e.calibrationDate, INTERVAL 10 MONTH) >= ?
-       AND DATE_ADD(e.calibrationDate, INTERVAL 10 MONTH) <= ?
+       AND DATE_ADD(e.calibrationDate, INTERVAL ? MONTH) <= ?
        AND (sno.snoozeUntil IS NULL OR sno.snoozeUntil <= ?)
      ORDER BY e.calibrationDate ASC`,
-    [today, calibrationCutoff, nowIso]
+    [CALIBRATION_VALIDITY_MONTHS - CALIBRATION_ALERT_LEAD_MONTHS, today, nowIso]
   );
 
   const [incompleteRows] = await query<RowDataPacket[]>(

@@ -35,17 +35,17 @@ describe('Admin Alerts API', () => {
     const res = await GET(new NextRequest('http://localhost:3000/api/admin/alerts'));
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual(data);
-    expect(getAlerts).toHaveBeenCalledWith(30, 7, 30);
+    expect(getAlerts).toHaveBeenCalledWith(30, 7);
   });
 
-  it('accepts custom warrantyDays, scheduleDays and calibrationDays', async () => {
+  it('accepts custom warrantyDays and scheduleDays', async () => {
     vi.mocked(getSession).mockResolvedValue(admin);
     vi.mocked(getAlerts).mockResolvedValue({ expiringWarranties: [], upcomingSchedules: [] } as any);
 
     await GET(
-      new NextRequest('http://localhost:3000/api/admin/alerts?warrantyDays=60&scheduleDays=14&calibrationDays=45')
+      new NextRequest('http://localhost:3000/api/admin/alerts?warrantyDays=60&scheduleDays=14')
     );
-    expect(getAlerts).toHaveBeenCalledWith(60, 14, 45);
+    expect(getAlerts).toHaveBeenCalledWith(60, 14);
   });
 
   it('clamps day windows to [1, 365]', async () => {
@@ -54,8 +54,8 @@ describe('Admin Alerts API', () => {
 
     // -5 → parseInt gives -5 (truthy), Math.max(-5, 1) = 1; 999 → Math.min(999, 365) = 365
     await GET(
-      new NextRequest('http://localhost:3000/api/admin/alerts?warrantyDays=-5&scheduleDays=999&calibrationDays=999')
+      new NextRequest('http://localhost:3000/api/admin/alerts?warrantyDays=-5&scheduleDays=999')
     );
-    expect(getAlerts).toHaveBeenCalledWith(1, 365, 365);
+    expect(getAlerts).toHaveBeenCalledWith(1, 365);
   });
 });

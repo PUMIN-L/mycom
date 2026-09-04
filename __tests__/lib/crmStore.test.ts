@@ -513,15 +513,27 @@ describe('getAlerts — "today" must be Bangkok (UTC+7) time, not server UTC', (
     expect(String(warrantyCall![0])).toContain("e.status != 'Expired'");
   });
 
-  it('computes the calibration-due cutoff (calibrationDate + 10 months) using Bangkok "today", not server UTC', async () => {
+  it('alerts starting 2 months before the 1-year calibration anniversary (i.e. 10 months after calibrationDate), compared against Bangkok "today"', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-08-04T19:00:00.000Z')); // Bangkok: Aug 5, 02:00
 
-    await getAlerts(30, 7, 30);
+    await getAlerts(30, 7);
 
     const calibrationCall = topQuery.mock.calls.find(([sql]) => String(sql).includes('calibrationDate'));
-    expect(calibrationCall![0]).toContain('DATE_ADD(e.calibrationDate, INTERVAL 10 MONTH)');
-    expect(calibrationCall![1]).toEqual(['2026-08-05', '2026-09-04', '2026-08-04T19:00:00.000Z']);
+    expect(calibrationCall![0]).toContain('DATE_ADD(e.calibrationDate, INTERVAL ? MONTH)');
+    // 12 (1-year validity) - 2 (alert lead time) = 10 months; compared against
+    // Bangkok "today" with no upper bound (see the next test for why).
+    expect(calibrationCall![1]).toEqual([10, '2026-08-05', '2026-08-04T19:00:00.000Z']);
+  });
+
+  it('still surfaces a calibration that is already overdue, not just ones approaching', async () => {
+    // Unlike warranty (silenced by status='Expired'), nothing marks a
+    // calibration as "done" except recording a NEW calibrationDate — so an
+    // overdue one must keep alerting indefinitely, not just while it's still
+    // within the upcoming window.
+    await getAlerts();
+    const calibrationCall = topQuery.mock.calls.find(([sql]) => String(sql).includes('calibrationDate'));
+    expect(String(calibrationCall![0])).not.toMatch(/DATE_ADD\(e\.calibrationDate, INTERVAL \? MONTH\)\s*>=/);
   });
 
   it('returns nearingCalibration rows separately from expiringWarranties', async () => {

@@ -17,10 +17,6 @@ export const GET = withRoute(
       Math.max(parseInt(url.searchParams.get("scheduleDays") || "7") || 7, 1),
       365
     );
-    const calibrationDays = Math.min(
-      Math.max(parseInt(url.searchParams.get("calibrationDays") || "30") || 30, 1),
-      365
-    );
-    return NextResponse.json(await getAlerts(warrantyDays, scheduleDays, calibrationDays));
+    return NextResponse.json(await getAlerts(warrantyDays, scheduleDays));
   }
 );

@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useAuth } from "../../context/AuthContext";
 import Toast from "../../components/Toast";
 import ConfirmDialog from "../../components/ConfirmDialog";
-import type { CrmAlerts, CustomerEquipment } from "../../lib/types";
+import { CALIBRATION_VALIDITY_MONTHS, type CrmAlerts, type CustomerEquipment } from "../../lib/types";
 import { toLocalDateString, bangkokDateAtHour, bangkokDateAtHourFromNow, addMonthsToDateString } from "../../lib/dateFormat";
 
 // Import Modals
@@ -215,10 +215,11 @@ export default function AlertsPage() {
     return Math.ceil((new Date(endDate).getTime() - Date.now()) / 86400000);
   };
 
-  // Calibration is due 10 months after the last calibrationDate (no separate
-  // stored due-date column — see getAlerts() in crmStore.ts).
+  // A calibration is valid for 1 year (no separate stored due-date column —
+  // see getAlerts() in crmStore.ts, which alerts starting 2 months before
+  // this same anniversary).
   const calibrationDueDate = (calibrationDate: string | null | undefined) =>
-    calibrationDate ? addMonthsToDateString(calibrationDate, 10) : null;
+    calibrationDate ? addMonthsToDateString(calibrationDate, CALIBRATION_VALIDITY_MONTHS) : null;
   const calibrationDaysLeft = (calibrationDate: string | null | undefined) => {
     const due = calibrationDueDate(calibrationDate);
     if (!due) return null;
@@ -451,7 +452,7 @@ export default function AlertsPage() {
                         🔧 {isOverdue ? "เลยกำหนดสอบเทียบ" : "ใกล้ถึงกำหนดสอบเทียบ"}
                       </div>
                       <span className={`text-xs font-bold ${isOverdue ? "text-red-600 bg-red-50 px-2 py-0.5 rounded-full" : "text-cyan-600 bg-cyan-50 px-2 py-0.5 rounded-full"}`}>
-                        เหลือ {daysLeft} วัน
+                        {isOverdue ? `เลยมาแล้ว ${Math.abs(daysLeft!)} วัน` : `เหลือ ${daysLeft} วัน`}
                       </span>
                     </div>
 
