@@ -4,7 +4,7 @@ import type { QueryResult, FieldPacket, RowDataPacket } from "mysql2";
 
 // Bump whenever the schema below changes — a mismatch re-runs the (idempotent)
 // bump; a match lets returning cold instances skip it in one SELECT.
-const SCHEMA_VERSION = 32;
+const SCHEMA_VERSION = 33;
 
 type DbPool = ReturnType<typeof mysql.createPool>;
 
@@ -397,6 +397,7 @@ async function bootstrapSchemaOnce(): Promise<void> {
           phone VARCHAR(255),
           email VARCHAR(255),
           note TEXT,
+          customerLog TEXT,
           createdAt VARCHAR(255) NOT NULL
         )
       `);
@@ -420,6 +421,16 @@ async function bootstrapSchemaOnce(): Promise<void> {
     try {
       await connection.query(
         `ALTER TABLE customers ADD CONSTRAINT fk_customer_company FOREIGN KEY (companyId) REFERENCES companies(id) ON DELETE RESTRICT`
+      );
+    } catch (error) {
+      if (!isBenignSchemaError(error)) throw error;
+    }
+
+    // v33: "customerLog" — a plain free-text field distinct from "note",
+    // labeled "บันทึกลูกค้า" in the UI. Just editable text, no other logic.
+    try {
+      await connection.query(
+        `ALTER TABLE customers ADD COLUMN IF NOT EXISTS customerLog TEXT NULL`
       );
     } catch (error) {
       if (!isBenignSchemaError(error)) throw error;

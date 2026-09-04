@@ -25,10 +25,11 @@ export const PUT = withRoute(
     const phone = sanitizePlainText(data.phone || "").substring(0, 255);
     const email = sanitizePlainText(data.email || "").substring(0, 255);
     const note = sanitizePlainText(data.note || "").substring(0, 2000);
+    const customerLog = sanitizePlainText(data.customerLog || "").substring(0, 2000);
 
     await query(
-      `UPDATE customers SET 
-        companyId = ?, name = ?, department = ?, phone = ?, email = ?, note = ?
+      `UPDATE customers SET
+        companyId = ?, name = ?, department = ?, phone = ?, email = ?, note = ?, customerLog = ?
        WHERE id = ?`,
       [
         companyId,
@@ -37,6 +38,7 @@ export const PUT = withRoute(
         phone,
         email,
         note,
+        customerLog,
         id,
       ]
     );

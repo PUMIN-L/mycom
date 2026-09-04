@@ -41,10 +41,11 @@ export const POST = withRoute(
     const phone = sanitizePlainText(data.phone || "").substring(0, 255);
     const email = sanitizePlainText(data.email || "").substring(0, 255);
     const note = sanitizePlainText(data.note || "").substring(0, 2000);
+    const customerLog = sanitizePlainText(data.customerLog || "").substring(0, 2000);
 
     await query(
-      `INSERT INTO customers (id, companyId, name, department, phone, email, note, createdAt)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO customers (id, companyId, name, department, phone, email, note, customerLog, createdAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
         companyId,
@@ -53,6 +54,7 @@ export const POST = withRoute(
         phone,
         email,
         note,
+        customerLog,
         now,
       ]
     );

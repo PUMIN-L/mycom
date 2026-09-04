@@ -32,6 +32,7 @@ interface Customer {
   phone: string;
   email: string;
   note: string;
+  customerLog: string;
 }
 
 interface Salesperson {
@@ -189,6 +190,10 @@ function CustomersInner() {
     }
     if ((editingCustomer.note || "").length > 2000) {
       showToast("หมายเหตุต้องไม่เกิน 2000 ตัวอักษร", "error");
+      return;
+    }
+    if ((editingCustomer.customerLog || "").length > 2000) {
+      showToast("บันทึกลูกค้าต้องไม่เกิน 2000 ตัวอักษร", "error");
       return;
     }
 
@@ -809,6 +814,13 @@ function CustomersInner() {
                 </div>
               )}
 
+              {viewingCustomer.customerLog && (
+                <div className="bg-gray-50 rounded-2xl p-5 border border-gray-100 mt-4">
+                  <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-2">บันทึกลูกค้า</h3>
+                  <p className="text-gray-800 whitespace-pre-wrap">{viewingCustomer.customerLog}</p>
+                </div>
+              )}
+
               <CustomerCallScheduleSection customerId={viewingCustomer.id} />
             </div>
           </div>
@@ -984,6 +996,10 @@ function CustomersInner() {
                 <div className="md:col-span-2">
                   <label className="block text-sm font-semibold text-gray-700 mb-1.5">หมายเหตุ</label>
                   <textarea rows={2} className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 focus:bg-white focus:ring-2 focus:ring-orange-500 outline-none transition-all resize-none" placeholder="ข้อมูลเพิ่มเติม..." value={editingCustomer?.note || ""} onChange={e => setEditingCustomer({...editingCustomer, note: e.target.value})}></textarea>
+                </div>
+                <div className="md:col-span-2">
+                  <label className="block text-sm font-semibold text-gray-700 mb-1.5">บันทึกลูกค้า</label>
+                  <textarea rows={2} className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 focus:bg-white focus:ring-2 focus:ring-orange-500 outline-none transition-all resize-none" placeholder="บันทึกลูกค้า..." value={editingCustomer?.customerLog || ""} onChange={e => setEditingCustomer({...editingCustomer, customerLog: e.target.value})}></textarea>
                 </div>
               </form>
             </div>
