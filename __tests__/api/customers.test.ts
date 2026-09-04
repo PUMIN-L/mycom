@@ -37,32 +37,29 @@ beforeEach(() => {
 });
 
 describe('POST /api/customers', () => {
-  it('inserts customerLog alongside note (both plain free-text fields, distinct columns)', async () => {
+  it('inserts note (the "บันทึกลูกค้า" field, stored as the note column)', async () => {
     vi.mocked(query).mockResolvedValueOnce([{ affectedRows: 1 }] as any);
     const res = await POST(postReq({
       companyId: 'co-1',
       name: 'สมชาย',
-      note: 'หมายเหตุ',
-      customerLog: 'บันทึกลูกค้า',
+      note: 'บันทึกลูกค้า',
     }));
     expect(res.status).toBe(200);
     const [sql, params] = vi.mocked(query).mock.calls[0];
     expect(sql).toContain('INSERT INTO customers');
-    expect(sql).toContain('customerLog');
-    expect(params).toContain('หมายเหตุ');
     expect(params).toContain('บันทึกลูกค้า');
   });
 
-  it('truncates customerLog to 2000 characters like note', async () => {
+  it('truncates note to 2000 characters', async () => {
     vi.mocked(query).mockResolvedValueOnce([{ affectedRows: 1 }] as any);
-    const longLog = 'a'.repeat(3000);
-    await POST(postReq({ companyId: 'co-1', name: 'สมชาย', customerLog: longLog }));
+    const longNote = 'a'.repeat(3000);
+    await POST(postReq({ companyId: 'co-1', name: 'สมชาย', note: longNote }));
     const [, params] = vi.mocked(query).mock.calls[0];
-    const savedLog = (params as unknown[]).find((p) => typeof p === 'string' && p.startsWith('aaa'));
-    expect((savedLog as string).length).toBe(2000);
+    const savedNote = (params as unknown[]).find((p) => typeof p === 'string' && p.startsWith('aaa'));
+    expect((savedNote as string).length).toBe(2000);
   });
 
-  it('defaults customerLog to an empty string when omitted', async () => {
+  it('defaults note to an empty string when omitted', async () => {
     vi.mocked(query).mockResolvedValueOnce([{ affectedRows: 1 }] as any);
     await POST(postReq({ companyId: 'co-1', name: 'สมชาย' }));
     const [, params] = vi.mocked(query).mock.calls[0];
@@ -71,18 +68,17 @@ describe('POST /api/customers', () => {
 });
 
 describe('PUT /api/customers/[id]', () => {
-  it('updates customerLog alongside the other customer fields', async () => {
+  it('updates note alongside the other customer fields', async () => {
     vi.mocked(query).mockResolvedValueOnce([{ affectedRows: 1 }] as any);
     const res = await PUT(putReq('cust-1', {
       companyId: 'co-1',
       name: 'สมชาย',
-      customerLog: 'อัปเดตบันทึก',
+      note: 'อัปเดตบันทึก',
     }), ctx('cust-1'));
     expect(res.status).toBe(200);
     const [sql, params] = vi.mocked(query).mock.calls[0];
     expect(sql).toContain('UPDATE customers SET');
-    expect(sql).toContain('customerLog = ?');
-    expect(params).toEqual(['co-1', 'สมชาย', '', '', '', '', 'อัปเดตบันทึก', 'cust-1']);
+    expect(params).toEqual(['co-1', 'สมชาย', '', '', '', 'อัปเดตบันทึก', 'cust-1']);
   });
 });
 

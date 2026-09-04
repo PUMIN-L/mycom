@@ -32,7 +32,6 @@ interface Customer {
   phone: string;
   email: string;
   note: string;
-  customerLog: string;
 }
 
 interface Salesperson {
@@ -74,6 +73,12 @@ function CustomersInner() {
   const [viewingCustomer, setViewingCustomer] = useState<Customer | null>(null);
   const [viewingSalesperson, setViewingSalesperson] = useState<Salesperson | null>(null);
 
+  // Inline "บันทึกลูกค้า" editing directly inside the Viewing Customer modal —
+  // no need to close it and reopen the separate edit-customer modal.
+  const [isEditingCustomerNote, setIsEditingCustomerNote] = useState(false);
+  const [customerNoteDraft, setCustomerNoteDraft] = useState("");
+  const [isSavingCustomerNote, setIsSavingCustomerNote] = useState(false);
+
   const [deleteConfirmCompany, setDeleteConfirmCompany] = useState<Company | null>(null);
   const [deleteConfirmCustomer, setDeleteConfirmCustomer] = useState<Customer | null>(null);
   const [deleteConfirmSalesperson, setDeleteConfirmSalesperson] = useState<Salesperson | null>(null);
@@ -95,6 +100,39 @@ function CustomersInner() {
       router.replace("/login");
     }
   }, [isLoggedIn, isLoading, router]);
+
+  // Reset inline note-editing whenever a different customer is opened (or
+  // the modal is closed), so stale draft text never leaks between customers.
+  useEffect(() => {
+    setIsEditingCustomerNote(false);
+  }, [viewingCustomer?.id]);
+
+  const handleSaveCustomerNote = async () => {
+    if (!viewingCustomer || isSavingCustomerNote) return;
+    if (customerNoteDraft.length > 2000) {
+      showToast("บันทึกลูกค้าต้องไม่เกิน 2000 ตัวอักษร", "error");
+      return;
+    }
+    setIsSavingCustomerNote(true);
+    try {
+      const res = await fetch(`/api/customers/${viewingCustomer.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...viewingCustomer, note: customerNoteDraft }),
+      });
+      if (!res.ok) throw new Error("Failed to save");
+      const updated = { ...viewingCustomer, note: customerNoteDraft };
+      setViewingCustomer(updated);
+      setCustomers((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+      setIsEditingCustomerNote(false);
+      showToast("บันทึกข้อมูลลูกค้าสำเร็จ", "success");
+    } catch (err) {
+      console.error(err);
+      showToast("เกิดข้อผิดพลาดในการบันทึก", "error");
+    } finally {
+      setIsSavingCustomerNote(false);
+    }
+  };
 
   const fetchData = async () => {
     setIsLoadingData(true);
@@ -189,14 +227,9 @@ function CustomersInner() {
       return;
     }
     if ((editingCustomer.note || "").length > 2000) {
-      showToast("หมายเหตุต้องไม่เกิน 2000 ตัวอักษร", "error");
-      return;
-    }
-    if ((editingCustomer.customerLog || "").length > 2000) {
       showToast("บันทึกลูกค้าต้องไม่เกิน 2000 ตัวอักษร", "error");
       return;
     }
-
     try {
       const method = editingCustomer.id ? "PUT" : "POST";
       const url = editingCustomer.id ? `/api/customers/${editingCustomer.id}` : "/api/customers";
@@ -306,7 +339,7 @@ function CustomersInner() {
         "แผนก": c.department || "-",
         "เบอร์โทร": c.phone || "-",
         "อีเมล": c.email || "-",
-        "หมายเหตุ": c.note || "-"
+        "บันทึกลูกค้า": c.note || "-"
       }));
 
       await downloadExcel("customers_export.xlsx", [
@@ -807,19 +840,54 @@ function CustomersInner() {
                 </div>
               </div>
 
-              {viewingCustomer.note && (
-                <div className="bg-orange-50 rounded-2xl p-5 border border-orange-100 mt-4">
-                  <h3 className="text-sm font-semibold text-orange-400 uppercase tracking-wider mb-2">หมายเหตุ</h3>
-                  <p className="text-orange-900">{viewingCustomer.note}</p>
+              <div className="bg-orange-50 rounded-2xl p-5 border border-orange-100 mt-4">
+                <div className="flex justify-between items-center mb-2">
+                  <h3 className="text-sm font-semibold text-orange-400 uppercase tracking-wider">บันทึกลูกค้า</h3>
+                  {!isEditingCustomerNote && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCustomerNoteDraft(viewingCustomer.note || "");
+                        setIsEditingCustomerNote(true);
+                      }}
+                      className="text-xs font-semibold text-orange-600 hover:text-orange-700"
+                    >
+                      ✏️ แก้ไข
+                    </button>
+                  )}
                 </div>
-              )}
-
-              {viewingCustomer.customerLog && (
-                <div className="bg-gray-50 rounded-2xl p-5 border border-gray-100 mt-4">
-                  <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-2">บันทึกลูกค้า</h3>
-                  <p className="text-gray-800 whitespace-pre-wrap">{viewingCustomer.customerLog}</p>
-                </div>
-              )}
+                {isEditingCustomerNote ? (
+                  <div className="space-y-2">
+                    <textarea
+                      rows={3}
+                      autoFocus
+                      className="w-full bg-white border border-orange-200 rounded-xl px-4 py-2.5 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-orange-500 resize-none"
+                      value={customerNoteDraft}
+                      onChange={(e) => setCustomerNoteDraft(e.target.value)}
+                    />
+                    <div className="flex justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setIsEditingCustomerNote(false)}
+                        disabled={isSavingCustomerNote}
+                        className="px-3 py-1.5 text-xs font-semibold text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50 transition-colors"
+                      >
+                        ยกเลิก
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleSaveCustomerNote}
+                        disabled={isSavingCustomerNote}
+                        className="px-3 py-1.5 text-xs font-semibold text-white bg-orange-600 rounded-lg hover:bg-orange-700 disabled:opacity-50 transition-colors"
+                      >
+                        {isSavingCustomerNote ? "กำลังบันทึก..." : "บันทึก"}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-orange-900 whitespace-pre-wrap">{viewingCustomer.note || "-"}</p>
+                )}
+              </div>
 
               <CustomerCallScheduleSection customerId={viewingCustomer.id} />
             </div>
@@ -994,12 +1062,8 @@ function CustomersInner() {
                   <input type="email" className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 focus:bg-white focus:ring-2 focus:ring-orange-500 outline-none transition-all" placeholder="example@email.com" value={editingCustomer?.email || ""} onChange={e => setEditingCustomer({...editingCustomer, email: e.target.value})} />
                 </div>
                 <div className="md:col-span-2">
-                  <label className="block text-sm font-semibold text-gray-700 mb-1.5">หมายเหตุ</label>
-                  <textarea rows={2} className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 focus:bg-white focus:ring-2 focus:ring-orange-500 outline-none transition-all resize-none" placeholder="ข้อมูลเพิ่มเติม..." value={editingCustomer?.note || ""} onChange={e => setEditingCustomer({...editingCustomer, note: e.target.value})}></textarea>
-                </div>
-                <div className="md:col-span-2">
                   <label className="block text-sm font-semibold text-gray-700 mb-1.5">บันทึกลูกค้า</label>
-                  <textarea rows={2} className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 focus:bg-white focus:ring-2 focus:ring-orange-500 outline-none transition-all resize-none" placeholder="บันทึกลูกค้า..." value={editingCustomer?.customerLog || ""} onChange={e => setEditingCustomer({...editingCustomer, customerLog: e.target.value})}></textarea>
+                  <textarea rows={2} className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 focus:bg-white focus:ring-2 focus:ring-orange-500 outline-none transition-all resize-none" placeholder="บันทึกลูกค้า..." value={editingCustomer?.note || ""} onChange={e => setEditingCustomer({...editingCustomer, note: e.target.value})}></textarea>
                 </div>
               </form>
             </div>
