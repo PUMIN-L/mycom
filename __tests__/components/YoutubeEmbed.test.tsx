@@ -1,4 +1,4 @@
-import { render, screen, act } from '@testing-library/react';
+import { render, screen, act, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import YoutubeEmbed from '@/app/components/YoutubeEmbed';
 
@@ -113,5 +113,47 @@ describe('YoutubeEmbed', () => {
     fireIntersection(false);
     fireIntersection(true);
     expect(disconnectSpy).not.toHaveBeenCalled();
+  });
+
+  it('has no unmute button before the video has ever autoplayed', () => {
+    render(<YoutubeEmbed url="https://www.youtube.com/watch?v=dQw4w9WgXcQ" />);
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+  });
+
+  it('shows an unmute button once autoplaying; clicking it unmutes via postMessage without touching the iframe src', () => {
+    render(<YoutubeEmbed url="https://www.youtube.com/watch?v=dQw4w9WgXcQ" />);
+    fireIntersection(true); // loads, starts muted
+
+    const iframe = screen.getByTitle('YouTube video player') as HTMLIFrameElement;
+    const postMessageSpy = vi.fn();
+    Object.defineProperty(iframe, 'contentWindow', { value: { postMessage: postMessageSpy }, configurable: true });
+    const srcBeforeUnmute = iframe.src;
+
+    fireEvent.click(screen.getByRole('button', { name: 'เปิดเสียง' }));
+
+    expect(postMessageSpy).toHaveBeenCalledWith(
+      JSON.stringify({ event: 'command', func: 'unMute', args: [] }),
+      '*'
+    );
+    expect(iframe.src).toBe(srcBeforeUnmute); // unmuting must not reload/restart the video
+    expect(screen.getByRole('button', { name: 'ปิดเสียง' })).toBeInTheDocument();
+  });
+
+  it('re-mutes on a second click', () => {
+    render(<YoutubeEmbed url="https://www.youtube.com/watch?v=dQw4w9WgXcQ" />);
+    fireIntersection(true);
+
+    const iframe = screen.getByTitle('YouTube video player') as HTMLIFrameElement;
+    const postMessageSpy = vi.fn();
+    Object.defineProperty(iframe, 'contentWindow', { value: { postMessage: postMessageSpy }, configurable: true });
+
+    fireEvent.click(screen.getByRole('button', { name: 'เปิดเสียง' })); // unmute
+    fireEvent.click(screen.getByRole('button', { name: 'ปิดเสียง' })); // mute again
+
+    expect(postMessageSpy).toHaveBeenLastCalledWith(
+      JSON.stringify({ event: 'command', func: 'mute', args: [] }),
+      '*'
+    );
+    expect(screen.getByRole('button', { name: 'เปิดเสียง' })).toBeInTheDocument();
   });
 });
