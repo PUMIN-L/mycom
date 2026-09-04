@@ -467,14 +467,20 @@ function buildRevenuePeriodRow(
 ): RevenueByPeriod {
   const revenue = Number(salesRow?.revenue || 0);
   const cost = Number(salesRow?.cost || 0);
-  const expense = Number(expenseRow?.expenses || 0);
-  const profit = revenue - cost - expense;
+  const rawExpense = Number(expenseRow?.expenses || 0);
+  const profit = revenue - cost - rawExpense;
   return {
     period,
     revenue,
     deals: Number(salesRow?.deals || 0),
     cost,
-    expense,
+    // The dashboard chart's "รายจ่าย" series is meant to read as total
+    // company outflow (matching the "ต้นทุนและรายจ่ายรวม" figure on the
+    // overview card and the combined total shown on the Expenses page),
+    // so it includes sales_records.costAmount here too — profit above is
+    // still derived from the raw cost/expense values so nothing is
+    // double-counted.
+    expense: cost + rawExpense,
     profit,
     margin: revenue > 0 ? Math.round((profit / revenue) * 10000) / 100 : 0,
   };

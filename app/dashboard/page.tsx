@@ -731,9 +731,9 @@ export default function DashboardPage() {
                   </ResponsiveContainer>
                 </div>
                 
-                {/* Chart 2: Profit vs Expense */}
+                {/* Chart 2: Revenue vs Expense */}
                 <div className="h-[280px] border-t border-gray-100 pt-6 pb-4">
-                  <h3 className="text-sm font-bold text-gray-800 mb-4 text-center">กำไร & รายจ่ายบริษัท</h3>
+                  <h3 className="text-sm font-bold text-gray-800 mb-4 text-center">รายรับ & รายจ่ายบริษัท</h3>
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={chartData} margin={{ bottom: 20 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
@@ -746,20 +746,16 @@ export default function DashboardPage() {
                           return (
                             <div className="bg-white rounded-[16px] border border-gray-100 p-4 shadow-[0_4px_20px_-4px_rgba(0,0,0,0.1)] text-sm">
                               <div className="font-semibold text-gray-900 mb-2">{label}</div>
-                              <div className="text-emerald-600 font-medium">กำไร: ฿{fmtDec(d?.profit || 0)}</div>
+                              <div className="text-indigo-600 font-medium">รายรับ: ฿{fmtDec(d?.revenue || 0)}</div>
                               <div className="text-rose-500 font-medium">รายจ่าย: ฿{fmtDec(d?.expense || 0)}</div>
                             </div>
                           );
                         }}
                       />
-                      <Legend formatter={(value: string) => value === "expense" ? "รายจ่าย" : "กำไร"} wrapperStyle={{ paddingTop: "10px" }} />
+                      <Legend formatter={(value: string) => value === "expense" ? "รายจ่าย" : "รายรับ"} wrapperStyle={{ paddingTop: "10px" }} />
                       <Bar dataKey="expense" fill="#f43f5e" radius={[4, 4, 0, 0]} name="expense" maxBarSize={40} />
                       <ReferenceLine y={0} stroke="#cbd5e1" />
-                      <Bar dataKey="profit" name="profit" maxBarSize={40} radius={4} fill="#10b981">
-                        {chartData.map((entry, index) => (
-                          <Cell key={`cell-2-${index}`} fill={entry.profit < 0 ? "#ef4444" : "#10b981"} />
-                        ))}
-                      </Bar>
+                      <Bar dataKey="revenue" name="revenue" maxBarSize={40} radius={[4, 4, 0, 0]} fill="#6366f1" />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>

@@ -408,9 +408,12 @@ describe('salesDashboardStore', () => {
         ] as any);
 
       const months = await getRevenueByMonth('2026-01-01', '2026-02-01');
-      // profit = revenue - cost - expense = 50000 - 10000 - 5000 = 35000
+      // profit = revenue - cost - rawExpense = 50000 - 10000 - 5000 = 35000
       // margin = round(35000 / 50000 * 10000) / 100 = 70
-      expect(months[0]).toEqual({ period: '2026-01', revenue: 50000, deals: 5, cost: 10000, expense: 5000, profit: 35000, margin: 70 });
+      // the "expense" field combines cost + rawExpense (10000 + 5000 = 15000)
+      // so the dashboard chart's "รายจ่าย" series reads as total company
+      // outflow, matching the overview card and the Expenses page total.
+      expect(months[0]).toEqual({ period: '2026-01', revenue: 50000, deals: 5, cost: 10000, expense: 15000, profit: 35000, margin: 70 });
     });
 
     it('getRevenueByMonth queries with a %Y-%m period format', async () => {
@@ -432,7 +435,8 @@ describe('salesDashboardStore', () => {
 
       const days = await getRevenueByDay('2026-08-01', '2026-08-03');
       expect(days.length).toBe(2);
-      expect(days[0]).toEqual({ period: '2026-08-01', revenue: 1000, deals: 1, cost: 200, expense: 100, profit: 700, margin: 70 });
+      // expense field = cost + rawExpense = 200 + 100 = 300 (combined total)
+      expect(days[0]).toEqual({ period: '2026-08-01', revenue: 1000, deals: 1, cost: 200, expense: 300, profit: 700, margin: 70 });
       expect(days[1]).toEqual({ period: '2026-08-02', revenue: 0, deals: 0, cost: 0, expense: 0, profit: 0, margin: 0 });
     });
 
