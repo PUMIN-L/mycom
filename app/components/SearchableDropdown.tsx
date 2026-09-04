@@ -1,5 +1,14 @@
 "use client";
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
+
+// The panel previously always opened downward with a fixed max-height,
+// regardless of how close the trigger sat to the bottom of its scroll
+// container (e.g. a modal) — it would spill past that boundary instead of
+// shrinking to fit or flipping upward. These bound how tall the panel is
+// allowed to get, and how little space below counts as "not enough".
+const MAX_PANEL_HEIGHT = 288; // matches the previous fixed max-h-72
+const MIN_USABLE_HEIGHT = 150;
+const VIEWPORT_MARGIN = 8;
 
 export interface SearchableDropdownOption {
   value: string;
@@ -29,9 +38,30 @@ export default function SearchableDropdown({
 }: SearchableDropdownProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState("");
+  const [panel, setPanel] = useState<{ direction: "down" | "up"; maxHeight: number }>({
+    direction: "down",
+    maxHeight: MAX_PANEL_HEIGHT,
+  });
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   const selectedOption = options.find((opt) => opt.value === value);
+
+  // Measures space around the trigger and picks a direction/height that
+  // keeps the panel inside the viewport (and whatever scroll container it's
+  // in, e.g. a modal) instead of spilling past the bottom edge.
+  const recalcPanelPosition = useCallback(() => {
+    const el = dropdownRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const spaceBelow = window.innerHeight - rect.bottom - VIEWPORT_MARGIN;
+    const spaceAbove = rect.top - VIEWPORT_MARGIN;
+
+    if (spaceBelow < MIN_USABLE_HEIGHT && spaceAbove > spaceBelow) {
+      setPanel({ direction: "up", maxHeight: Math.min(MAX_PANEL_HEIGHT, Math.max(spaceAbove, 100)) });
+    } else {
+      setPanel({ direction: "down", maxHeight: Math.min(MAX_PANEL_HEIGHT, Math.max(spaceBelow, 100)) });
+    }
+  }, []);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -46,6 +76,18 @@ export default function SearchableDropdown({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
+  // Re-measure on resize, and on scroll anywhere (capture phase catches a
+  // scrollable modal body too, not just the window) while the panel is open.
+  useEffect(() => {
+    if (!isOpen) return;
+    window.addEventListener("resize", recalcPanelPosition);
+    window.addEventListener("scroll", recalcPanelPosition, true);
+    return () => {
+      window.removeEventListener("resize", recalcPanelPosition);
+      window.removeEventListener("scroll", recalcPanelPosition, true);
+    };
+  }, [isOpen, recalcPanelPosition]);
+
   const filteredOptions = options.filter(
     (opt) =>
       opt.label.toLowerCase().includes(search.toLowerCase()) ||
@@ -58,6 +100,10 @@ export default function SearchableDropdown({
         type="button"
         className={`w-full bg-white border border-gray-300 rounded-lg px-3 py-1.5 text-left text-sm text-gray-700 flex justify-between items-center shadow-sm hover:bg-gray-50 transition ${buttonClassName}`}
         onClick={() => {
+          // Measure before the panel first renders (same event handler, so
+          // React batches this with the isOpen update) — avoids a flash of
+          // the wrong direction/height on open.
+          if (!isOpen) recalcPanelPosition();
           setIsOpen(!isOpen);
           setSearch("");
         }}
@@ -83,7 +129,12 @@ export default function SearchableDropdown({
       </button>
 
       {isOpen && (
-        <div className="absolute z-50 w-[300px] sm:w-full mt-1 bg-white border border-gray-200 rounded-xl shadow-xl max-h-72 flex flex-col left-0">
+        <div
+          className={`absolute z-50 w-[300px] sm:w-full bg-white border border-gray-200 rounded-xl shadow-xl flex flex-col left-0 ${
+            panel.direction === "up" ? "bottom-full mb-1" : "top-full mt-1"
+          }`}
+          style={{ maxHeight: panel.maxHeight }}
+        >
           {searchable && (
             <div className="p-2 border-b border-gray-100 bg-gray-50/50 rounded-t-xl shrink-0">
               <div className="relative">

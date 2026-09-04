@@ -2,7 +2,7 @@ import { cache } from "react";
 import { query, withTransaction } from "./db";
 import { RowDataPacket, ResultSetHeader } from "mysql2";
 import type { ContentBlock, ContentData, ContentMeta } from "./types";
-import { sanitizeRichText } from "./sanitizeHtml";
+import { sanitizeRichText, sanitizePlainText } from "./sanitizeHtml";
 import { saveRevision } from "./revisionStore";
 
 // Re-exported so existing callers can keep importing these from "./contentStore".
@@ -20,10 +20,21 @@ export class ContentProductConflictError extends Error {
 
 // Sanitize the rich-text HTML on every block before it is stored, so content
 // rendered later with dangerouslySetInnerHTML on public pages is always safe.
+// youtubeUrl is never rendered as HTML (it's parsed into a video id and set as
+// an iframe src attribute — see app/components/YoutubeEmbed.tsx), but it's
+// still free text a client controls, so strip any tags and cap its length
+// like every other plain-text field in this codebase.
 function sanitizeBlocks(blocks: ContentBlock[]): ContentBlock[] {
-  return blocks.map((b) =>
-    b.content !== undefined ? { ...b, content: sanitizeRichText(b.content) } : b
-  );
+  return blocks.map((b) => {
+    let block = b;
+    if (block.content !== undefined) {
+      block = { ...block, content: sanitizeRichText(block.content) };
+    }
+    if (block.youtubeUrl !== undefined) {
+      block = { ...block, youtubeUrl: sanitizePlainText(block.youtubeUrl).substring(0, 500) };
+    }
+    return block;
+  });
 }
 
 // `blocks` is stored as a JSON column. mysql2 may hand it back already parsed

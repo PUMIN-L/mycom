@@ -12,6 +12,8 @@ import ColorPickerDropdown from "../../components/ColorPickerDropdown";
 import Toast from "../../components/Toast";
 import type { OrphanedImage } from "../../components/ImageDeleteConfirmDialog";
 import { stripHtml } from "../../lib/stripHtml";
+import type { ContentBlock } from "../../lib/types";
+import YoutubeEmbed from "../../components/YoutubeEmbed";
 
 // These are only ever rendered inside admin-only states (isEditing,
 // showDeleteContentConfirm, pendingDeleteBlock, orphanedImages) that stay
@@ -22,22 +24,6 @@ const RichTextEditor = dynamic(() => import("../../components/RichTextEditor"), 
 const BlockRangeControl = dynamic(() => import("../../components/BlockRangeControl"), { ssr: false });
 const ConfirmDialog = dynamic(() => import("../../components/ConfirmDialog"), { ssr: false });
 const ImageDeleteConfirmDialog = dynamic(() => import("../../components/ImageDeleteConfirmDialog"), { ssr: false });
-
-interface ContentBlock {
-  id: string;
-  type: "text" | "image" | "text-image" | "gallery";
-  content?: string;
-  imageUrl?: string;
-  imageUrls?: string[];
-  imagePosition?: "left" | "right";
-  fontSize?: string;
-  fontWeight?: string;
-  textAlign?: string;
-  textColor?: string;
-  selectedImageIndex?: number;
-  imageWidth?: number; // image display width % (25–100); undefined = 100
-  spacingBelow?: number; // extra gap below the block in px (0–100)
-}
 
 interface ContentData {
   id: string;
@@ -466,6 +452,26 @@ export default function ShowcaseClient({
     );
   }
 
+  // ── Reorder blocks ─────────────────────────────────────────────────────────
+  // Persists immediately (like delete) rather than waiting for "บันทึก" —
+  // order is a structural change, not in-progress text, so there's nothing to
+  // lose by saving it right away.
+  async function moveBlock(id: string, direction: "up" | "down") {
+    const prev = editBlocksRef.current;
+    const index = prev.findIndex((b) => b.id === id);
+    const swapIndex = direction === "up" ? index - 1 : index + 1;
+    if (index === -1 || swapIndex < 0 || swapIndex >= prev.length) return;
+
+    const newBlocks = [...prev];
+    [newBlocks[index], newBlocks[swapIndex]] = [newBlocks[swapIndex], newBlocks[index]];
+    setEditBlocks(newBlocks);
+    try {
+      await saveBlocks(newBlocks);
+    } catch {
+      showToast("เกิดข้อผิดพลาดในการเรียงลำดับบล็อก", "error");
+    }
+  }
+
   const scrollToBlock = (id: string) => {
     setTimeout(() => {
       document.getElementById(`block-${id}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -583,6 +589,17 @@ export default function ShowcaseClient({
       type: "gallery",
       imageUrls: [],
       selectedImageIndex: 0,
+    };
+    setEditBlocks((prev) => [...prev, newBlock]);
+    scrollToBlock(newBlock.id);
+  }
+
+  // ── Add new YouTube block ──────────────────────────────────────────────────
+  function addYoutubeBlock() {
+    const newBlock: ContentBlock = {
+      id: crypto.randomUUID(),
+      type: "youtube",
+      youtubeUrl: "",
     };
     setEditBlocks((prev) => [...prev, newBlock]);
     scrollToBlock(newBlock.id);
@@ -793,7 +810,7 @@ export default function ShowcaseClient({
                 🖊️ โหมดแก้ไข — แก้ไขข้อความในแต่ละบล็อกได้โดยตรง กดปุ่ม ✕ เพื่อลบบล็อก
               </div>
               {/* Add block toolbar */}
-              <div className="flex gap-3">
+              <div className="flex flex-wrap gap-3">
                 <button
                   onClick={addTextBlock}
                   className="flex items-center gap-2 px-4 py-2 rounded-lg border-2 border-dashed border-gray-300 text-gray-600 hover:border-orange-400 hover:text-orange-600 hover:bg-orange-50 transition text-sm font-semibold"
@@ -829,6 +846,12 @@ export default function ShowcaseClient({
                 >
                   🖼️🖼️ เพิ่มแกลลอรี่ (Gallery)
                 </button>
+                <button
+                  onClick={addYoutubeBlock}
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg border-2 border-dashed border-gray-300 text-gray-600 hover:border-orange-400 hover:text-orange-600 hover:bg-orange-50 transition text-sm font-semibold"
+                >
+                  ▶️ เพิ่มลิงก์ YouTube
+                </button>
               </div>
             </div>
           )}
@@ -847,13 +870,33 @@ export default function ShowcaseClient({
               >
                 {/* Delete block button (shown in edit mode or on hover when editing) */}
                 {isEditing && (
-                  <button
-                    onClick={() => setPendingDeleteBlock(block)}
-                    title="ลบบล็อกนี้"
-                    className="absolute -top-3 -right-3 z-10 w-8 h-8 rounded-full bg-red-100 text-red-500 hover:bg-red-500 hover:text-white transition flex items-center justify-center text-sm font-bold shadow-md"
-                  >
-                    ✕
-                  </button>
+                  <>
+                    <div className="absolute -top-3 left-3 z-10 flex gap-1">
+                      <button
+                        onClick={() => moveBlock(block.id, "up")}
+                        disabled={blockIndex === 0}
+                        title="เลื่อนบล็อกขึ้น"
+                        className="w-8 h-8 rounded-full bg-white border border-gray-200 text-gray-500 hover:bg-orange-50 hover:text-orange-600 disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-white disabled:hover:text-gray-500 transition flex items-center justify-center text-sm font-bold shadow-md"
+                      >
+                        ▲
+                      </button>
+                      <button
+                        onClick={() => moveBlock(block.id, "down")}
+                        disabled={blockIndex === displayBlocks.length - 1}
+                        title="เลื่อนบล็อกลง"
+                        className="w-8 h-8 rounded-full bg-white border border-gray-200 text-gray-500 hover:bg-orange-50 hover:text-orange-600 disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-white disabled:hover:text-gray-500 transition flex items-center justify-center text-sm font-bold shadow-md"
+                      >
+                        ▼
+                      </button>
+                    </div>
+                    <button
+                      onClick={() => setPendingDeleteBlock(block)}
+                      title="ลบบล็อกนี้"
+                      className="absolute -top-3 -right-3 z-10 w-8 h-8 rounded-full bg-red-100 text-red-500 hover:bg-red-500 hover:text-white transition flex items-center justify-center text-sm font-bold shadow-md"
+                    >
+                      ✕
+                    </button>
+                  </>
                 )}
 
                 {block.type === "gallery" ? (
@@ -936,7 +979,7 @@ export default function ShowcaseClient({
                       </div>
                     )}
                   </div>
-                ) : (
+                ) : block.type === "text-image" ? (
                   <div className={`flex flex-col-reverse md:flex-row gap-8 items-center ${block.imagePosition === 'left' ? 'md:flex-row-reverse' : ''}`}>
                     <div className="flex-1 w-full min-w-0">
                       {isEditing ? (
@@ -1031,6 +1074,25 @@ export default function ShowcaseClient({
                         </div>
                       )}
                     </div>
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-3">
+                    {isEditing && (
+                      <input
+                        type="url"
+                        value={block.youtubeUrl ?? ""}
+                        onChange={(e) => updateBlock(block.id, { youtubeUrl: e.target.value })}
+                        placeholder="วางลิงก์ YouTube ที่นี่ เช่น https://www.youtube.com/watch?v=..."
+                        className="w-full px-4 py-2.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-orange-400"
+                      />
+                    )}
+                    {block.youtubeUrl ? (
+                      <YoutubeEmbed url={block.youtubeUrl} />
+                    ) : isEditing ? (
+                      <div className="aspect-video w-full rounded-lg bg-gray-50 border-2 border-dashed border-gray-300 flex items-center justify-center text-sm text-gray-400">
+                        วางลิงก์ YouTube ด้านบนเพื่อดูตัวอย่าง
+                      </div>
+                    ) : null}
                   </div>
                 )}
 

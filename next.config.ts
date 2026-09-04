@@ -2,14 +2,15 @@ import type { NextConfig } from "next";
 
 // Content-Security-Policy — enforced. Tuned against production traffic to
 // allow Next.js inline scripts/styles, Quill editor, react-pdf blob workers,
-// and the Google Maps embed on the Contact page. Anything outside this set
-// (unknown scripts, event handlers, iframes from other origins) is blocked.
+// the Google Maps embed on the Contact page, and the YouTube embed content
+// block. Anything outside this set (unknown scripts, event handlers, iframes
+// from other origins) is blocked.
 const contentSecurityPolicy = [
   "default-src 'self'",
   "base-uri 'self'",
   "object-src 'none'",
   "frame-ancestors 'none'",
-  "frame-src https://www.google.com",
+  "frame-src https://www.google.com https://www.youtube-nocookie.com",
   "form-action 'self'",
   "img-src 'self' data: blob: https://res.cloudinary.com https://images.unsplash.com https://flagcdn.com https://api.qrserver.com",
   "media-src 'self' https://res.cloudinary.com",

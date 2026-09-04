@@ -121,6 +121,33 @@ describe('contentStore', () => {
       expect(result.blocks[0]).toEqual(imageBlock); // image block passes through unchanged
     });
 
+    it('sanitizes and truncates a youtube block\'s URL instead of storing it raw', async () => {
+      stubNoConflict();
+
+      const result = await addContent({
+        ...base,
+        blocks: [
+          { id: 'yt-1', type: 'youtube', youtubeUrl: '<b>https://youtu.be/dQw4w9WgXcQ</b>' + 'x'.repeat(600) },
+        ],
+      });
+
+      const storedBlocks = JSON.parse(connInsertCall()[1][2] as string);
+      expect(storedBlocks[0].youtubeUrl).not.toContain('<b>');
+      expect(storedBlocks[0].youtubeUrl.length).toBe(500);
+      expect(result.blocks[0].youtubeUrl).not.toContain('<b>');
+    });
+
+    it('leaves a youtube block with no youtubeUrl field untouched', async () => {
+      stubNoConflict();
+
+      const result = await addContent({
+        ...base,
+        blocks: [{ id: 'yt-1', type: 'youtube' }],
+      });
+
+      expect(result.blocks[0]).toEqual({ id: 'yt-1', type: 'youtube' });
+    });
+
     it('rejects when the product already has a DIFFERENT content linked (race-safe check)', async () => {
       conn.query.mockReset();
       conn.query.mockImplementation(async (sql: string) => {

@@ -1061,8 +1061,8 @@ export default function Products({ dataPromise }: ProductsProps) {
                     </div>
 
                     <div className={`flex flex-col flex-1 p-6 relative z-10 ${item.isPublished === false ? "bg-gray-50" : "bg-white"}`}>
-                      <h3 
-                        className={`text-lg font-bold text-[var(--text-primary)] mb-1 transition-colors line-clamp-2 [&_p]:inline [&_p]:m-0 ${item.isPublished === false ? "" : "group-hover:text-[var(--accent)]"}`}
+                      <h3
+                        className={`text-lg font-bold text-[var(--text-primary)] mb-1 transition-colors line-clamp-2 [&_p]:m-0 ${item.isPublished === false ? "" : "group-hover:text-[var(--accent)]"}`}
                         dangerouslySetInnerHTML={{ __html: getTitle(item) }}
                       />
                       {/* Show the English name too when viewing another language:

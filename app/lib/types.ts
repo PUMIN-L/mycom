@@ -59,7 +59,7 @@ export interface ProductSpec {
 
 export interface ContentBlock {
   id: string;
-  type: "text" | "image" | "text-image" | "gallery";
+  type: "text" | "image" | "text-image" | "gallery" | "youtube";
   content?: string;
   imageUrl?: string;
   imageUrls?: string[];
@@ -73,6 +73,8 @@ export interface ContentBlock {
   imageWidth?: number;
   /** Extra vertical gap below this block in px (0–100). Undefined = default spacing. */
   spacingBelow?: number;
+  /** The pasted YouTube URL for a "youtube" block (watch/youtu.be/shorts/embed — see app/lib/youtube.ts). */
+  youtubeUrl?: string;
 }
 
 export interface ContentData {

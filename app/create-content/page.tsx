@@ -9,22 +9,8 @@ import Toast from "../components/Toast";
 import ErrorModal from "../components/ErrorModal";
 import { stripHtml } from "../lib/stripHtml";
 import { useLeaveGuard, LeaveGuardModal } from "../components/LeaveGuard";
-
-interface ContentBlock {
-  id: string;
-  type: "text" | "image" | "text-image" | "gallery";
-  content?: string;
-  imageUrl?: string;
-  imageUrls?: string[];
-  imagePosition?: "left" | "right";
-  fontSize?: string;
-  fontWeight?: string;
-  textAlign?: string;
-  textColor?: string;
-  selectedImageIndex?: number;
-  imageWidth?: number; // image display width % (25–100); undefined = 100
-  spacingBelow?: number; // extra gap below the block in px (0–100)
-}
+import YoutubeEmbed from "../components/YoutubeEmbed";
+import type { ContentBlock } from "../lib/types";
 
 interface ProductCategory {
   id: number;
@@ -160,6 +146,16 @@ function CreateContentInner() {
       type: "gallery",
       imageUrls: [],
       selectedImageIndex: 0,
+    };
+    setBlocks((prev) => [...prev, newBlock]);
+    scrollToBlock(newBlock.id);
+  };
+
+  const addYoutubeBlock = () => {
+    const newBlock: ContentBlock = {
+      id: crypto.randomUUID(),
+      type: "youtube",
+      youtubeUrl: "",
     };
     setBlocks((prev) => [...prev, newBlock]);
     scrollToBlock(newBlock.id);
@@ -431,7 +427,7 @@ function CreateContentInner() {
 
         {/* Add block toolbar */}
         <div className="mb-6 space-y-3">
-          <div className="flex gap-3">
+          <div className="flex flex-wrap gap-3">
             <button
               onClick={addTextBlock}
               className="flex items-center gap-2 px-4 py-2 rounded-lg border-2 border-dashed border-gray-300 text-gray-600 hover:border-orange-400 hover:text-orange-600 hover:bg-orange-50 transition text-sm font-semibold"
@@ -467,6 +463,12 @@ function CreateContentInner() {
             >
               🖼️🖼️ เพิ่มแกลลอรี่ (Gallery)
             </button>
+            <button
+              onClick={addYoutubeBlock}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg border-2 border-dashed border-gray-300 text-gray-600 hover:border-orange-400 hover:text-orange-600 hover:bg-orange-50 transition text-sm font-semibold"
+            >
+              ▶️ เพิ่มลิงก์ YouTube
+            </button>
           </div>
           <input
             ref={fileInputRef}
@@ -499,7 +501,7 @@ function CreateContentInner() {
               <p className="text-gray-500">ไม่มีบล็อกใดแล้ว</p>
             </div>
           ) : (
-            blocks.map((block) => (
+            blocks.map((block, index) => (
               <div
                 key={block.id}
                 id={`block-${block.id}`}
@@ -507,6 +509,24 @@ function CreateContentInner() {
                 style={{ marginBottom: block.spacingBelow ?? 16 }}
                 className="relative group transition-all duration-300 bg-white rounded-xl p-6 border-2 border-dashed border-gray-200 hover:border-orange-400"
               >
+                <div className="absolute -top-3 left-3 z-10 flex gap-1">
+                  <button
+                    onClick={() => moveBlock(block.id, "up")}
+                    disabled={index === 0}
+                    title="เลื่อนบล็อกขึ้น"
+                    className="w-8 h-8 rounded-full bg-white border border-gray-200 text-gray-500 hover:bg-orange-50 hover:text-orange-600 disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-white disabled:hover:text-gray-500 transition flex items-center justify-center text-sm font-bold shadow-md"
+                  >
+                    ▲
+                  </button>
+                  <button
+                    onClick={() => moveBlock(block.id, "down")}
+                    disabled={index === blocks.length - 1}
+                    title="เลื่อนบล็อกลง"
+                    className="w-8 h-8 rounded-full bg-white border border-gray-200 text-gray-500 hover:bg-orange-50 hover:text-orange-600 disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-white disabled:hover:text-gray-500 transition flex items-center justify-center text-sm font-bold shadow-md"
+                  >
+                    ▼
+                  </button>
+                </div>
                 <button
                   onClick={() => deleteBlock(block.id)}
                   title="ลบบล็อกนี้"
@@ -644,7 +664,7 @@ function CreateContentInner() {
                       />
                     </div>
                   </div>
-                ) : (
+                ) : block.type === "text-image" ? (
                   <div className={`flex flex-col-reverse md:flex-row gap-8 items-center ${block.imagePosition === 'left' ? 'md:flex-row-reverse' : ''}`}>
                     <div className="flex-1 w-full min-w-0">
                       <div className="flex flex-col gap-4">
@@ -717,6 +737,23 @@ function CreateContentInner() {
                         )}
                       </div>
                     </div>
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-3">
+                    <input
+                      type="url"
+                      value={block.youtubeUrl ?? ""}
+                      onChange={(e) => updateBlock(block.id, { youtubeUrl: e.target.value })}
+                      placeholder="วางลิงก์ YouTube ที่นี่ เช่น https://www.youtube.com/watch?v=..."
+                      className="w-full px-4 py-2.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-orange-400"
+                    />
+                    {block.youtubeUrl ? (
+                      <YoutubeEmbed url={block.youtubeUrl} />
+                    ) : (
+                      <div className="aspect-video w-full rounded-lg bg-gray-50 border-2 border-dashed border-gray-300 flex items-center justify-center text-sm text-gray-400">
+                        วางลิงก์ YouTube ด้านบนเพื่อดูตัวอย่าง
+                      </div>
+                    )}
                   </div>
                 )}
 
