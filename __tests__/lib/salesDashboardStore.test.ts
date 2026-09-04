@@ -11,6 +11,7 @@ import {
   listSalesRecords,
   getDashboardOverview,
   getRevenueByMonth,
+  getRevenueByDay,
   getRevenueByQuarter,
   getRevenueByCategory,
   getTopProducts,
@@ -184,7 +185,52 @@ describe('salesDashboardStore', () => {
       expect(months[1]).toEqual({ period: '2026-02', revenue: 0, deals: 0, cost: 0, expense: 0, profit: 0, margin: 0 });
     });
 
-    it('getRevenueByQuarter returns 4 quarters', async () => {
+    it('getRevenueByMonth computes profit/margin correctly with non-zero cost AND expense', async () => {
+      vi.mocked(query)
+        .mockResolvedValueOnce([
+          [{ period: '2026-01', revenue: 50000, cost: 10000, deals: 5 }],
+        ] as any)
+        .mockResolvedValueOnce([
+          [{ period: '2026-01', expenses: 5000 }],
+        ] as any);
+
+      const months = await getRevenueByMonth('2026-01-01', '2026-02-01');
+      // profit = revenue - cost - expense = 50000 - 10000 - 5000 = 35000
+      // margin = round(35000 / 50000 * 10000) / 100 = 70
+      expect(months[0]).toEqual({ period: '2026-01', revenue: 50000, deals: 5, cost: 10000, expense: 5000, profit: 35000, margin: 70 });
+    });
+
+    it('getRevenueByMonth queries with a %Y-%m period format', async () => {
+      vi.mocked(query).mockResolvedValue([[]] as any);
+      await getRevenueByMonth('2026-01-01', '2026-02-01');
+      const salesSql = vi.mocked(query).mock.calls[0][0] as string;
+      expect(salesSql).toContain("DATE_FORMAT(saleDate, '%Y-%m')");
+      expect(salesSql).not.toContain('%Y-%m-%d');
+    });
+
+    it('getRevenueByDay returns one row per calendar day with correct profit/margin', async () => {
+      vi.mocked(query)
+        .mockResolvedValueOnce([
+          [{ period: '2026-08-01', revenue: 1000, cost: 200, deals: 1 }],
+        ] as any)
+        .mockResolvedValueOnce([
+          [{ period: '2026-08-01', expenses: 100 }],
+        ] as any);
+
+      const days = await getRevenueByDay('2026-08-01', '2026-08-03');
+      expect(days.length).toBe(2);
+      expect(days[0]).toEqual({ period: '2026-08-01', revenue: 1000, deals: 1, cost: 200, expense: 100, profit: 700, margin: 70 });
+      expect(days[1]).toEqual({ period: '2026-08-02', revenue: 0, deals: 0, cost: 0, expense: 0, profit: 0, margin: 0 });
+    });
+
+    it('getRevenueByDay queries with a %Y-%m-%d period format', async () => {
+      vi.mocked(query).mockResolvedValue([[]] as any);
+      await getRevenueByDay('2026-08-01', '2026-08-02');
+      const salesSql = vi.mocked(query).mock.calls[0][0] as string;
+      expect(salesSql).toContain("DATE_FORMAT(saleDate, '%Y-%m-%d')");
+    });
+
+    it('getRevenueByQuarter returns 4 quarters with no duplicate period labels', async () => {
       vi.mocked(query)
         .mockResolvedValueOnce([
           [{ period: '2026-Q1', revenue: 150000, cost: 0, deals: 12 }],
@@ -197,6 +243,94 @@ describe('salesDashboardStore', () => {
       expect(quarters.length).toBe(4);
       expect(quarters[0]).toEqual({ period: '2026-Q1', revenue: 150000, deals: 12, cost: 0, expense: 0, profit: 150000, margin: 100 });
       expect(quarters[1]).toEqual({ period: '2026-Q2', revenue: 0, deals: 0, cost: 0, expense: 0, profit: 0, margin: 0 });
+      expect(new Set(quarters.map((q) => q.period)).size).toBe(quarters.length);
+    });
+
+    it('getRevenueByQuarter queries with a YEAR/QUARTER period format', async () => {
+      vi.mocked(query).mockResolvedValue([[]] as any);
+      await getRevenueByQuarter('2026-01-01', '2026-04-01');
+      const salesSql = vi.mocked(query).mock.calls[0][0] as string;
+      expect(salesSql).toContain("CONCAT(YEAR(saleDate), '-Q', QUARTER(saleDate))");
+    });
+
+    it('getRevenueByCategory computes percentages and applies date filters', async () => {
+      vi.mocked(query).mockResolvedValueOnce([
+        [
+          { id: 1, name: 'เครื่องชั่ง', revenue: 80000, qty: 10, deals: 4 },
+          { id: 2, name: 'อะไหล่', revenue: 20000, qty: 5, deals: 2 },
+        ],
+      ] as any);
+
+      const categories = await getRevenueByCategory('2026-01-01', '2026-12-31');
+      expect(categories[0]).toMatchObject({ id: '1', revenue: 80000, percentage: 80 });
+      expect(categories[1]).toMatchObject({ id: '2', revenue: 20000, percentage: 20 });
+
+      const [sql, params] = vi.mocked(query).mock.calls[0];
+      expect(sql).toContain('sr.saleDate >= ?');
+      expect(sql).toContain('sr.saleDate <= ?');
+      expect(params).toEqual(['2026-01-01', '2026-12-31']);
+    });
+
+    it('getRevenueByCategory returns 0% for every row when total revenue is 0', async () => {
+      vi.mocked(query).mockResolvedValueOnce([
+        [{ id: 1, name: 'ไม่ระบุหมวด', revenue: 0, qty: 0, deals: 0 }],
+      ] as any);
+      const categories = await getRevenueByCategory();
+      expect(categories[0].percentage).toBe(0);
+    });
+
+    it('getTopProducts clamps the limit and queries without a table alias on saleDate', async () => {
+      vi.mocked(query).mockResolvedValueOnce([
+        [{ id: 'p-1', name: 'Scale A', revenue: 100000, qty: 20, deals: 8 }],
+      ] as any);
+
+      const products = await getTopProducts(0); // 0 -> clamped to 1... but limit only affects SQL LIMIT param
+      expect(products[0]).toMatchObject({ id: 'p-1', name: 'Scale A', percentage: 100 });
+
+      const [sql, params] = vi.mocked(query).mock.calls[0] as [string, unknown[]];
+      expect(sql).not.toContain('sr.saleDate');
+      expect(sql).toContain('FROM sales_records');
+      expect(params[params.length - 1]).toBe(10); // limit=0 is falsy -> Number(0)||10 default
+    });
+
+    it('getTopProducts clamps an over-large limit to 100', async () => {
+      vi.mocked(query).mockResolvedValueOnce([[]] as any);
+      await getTopProducts(99999);
+      const params = vi.mocked(query).mock.calls[0][1] as unknown[];
+      expect(params[params.length - 1]).toBe(100);
+    });
+
+    it('getTopProducts falls back to placeholder id/name when missing', async () => {
+      vi.mocked(query).mockResolvedValueOnce([
+        [{ id: null, name: null, revenue: 500, qty: 1, deals: 1 }],
+      ] as any);
+      const products = await getTopProducts();
+      expect(products[0].id).toBe('unspecified');
+      expect(products[0].name).toBe('ไม่ระบุสินค้า');
+    });
+
+    it('getTopCustomers computes percentages using the sr.-aliased date column', async () => {
+      vi.mocked(query).mockResolvedValueOnce([
+        [
+          { id: 'co-1', name: 'บริษัท เอ', revenue: 60000, qty: 6, deals: 3 },
+          { id: 'co-2', name: 'บริษัท บี', revenue: 40000, qty: 4, deals: 2 },
+        ],
+      ] as any);
+
+      const customers = await getTopCustomers(5, '2026-01-01', '2026-12-31');
+      expect(customers[0]).toMatchObject({ id: 'co-1', percentage: 60 });
+      expect(customers[1]).toMatchObject({ id: 'co-2', percentage: 40 });
+
+      const [sql] = vi.mocked(query).mock.calls[0];
+      expect(sql).toContain('sr.saleDate >= ?');
+    });
+
+    it('getTopCustomers falls back to a placeholder name when missing', async () => {
+      vi.mocked(query).mockResolvedValueOnce([
+        [{ id: null, name: null, revenue: 100, qty: 1, deals: 1 }],
+      ] as any);
+      const customers = await getTopCustomers();
+      expect(customers[0].name).toBe('ไม่ระบุ');
     });
 
     it('getSalespersonLeaderboard calculates percentage and avgDealSize', async () => {

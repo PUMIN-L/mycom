@@ -141,19 +141,31 @@ export async function sendContactEmail(
   });
 }
 
+/**
+ * Every OTP notification shares this exact shape (system sender, single
+ * plain-text recipient) — only the subject/body differ per use case.
+ */
+async function sendOtpNotification(to: string, subject: string, text: string): Promise<void> {
+  const transport = createTransport();
+  await transport.sendMail({
+    from: { name: "ระบบเว็บไซต์ (Profin Lab Scale)", address: process.env.SMTP_USER ?? "" },
+    to: { name: "", address: to },
+    subject,
+    text,
+  });
+}
+
 /** Send an OTP to `to` to authorize changing the contact email to `newEmail`. */
 export async function sendOtpEmail(
   to: string,
   otp: string,
   newEmail: string
 ): Promise<void> {
-  const transport = createTransport();
-  await transport.sendMail({
-    from: { name: "ระบบเว็บไซต์ (Profin Lab Scale)", address: process.env.SMTP_USER ?? "" },
-    to: { name: "", address: to },
-    subject: `[รหัส OTP] ยืนยันการเปลี่ยนอีเมลรับข้อความ`,
-    text: `มีการขอเปลี่ยนอีเมลรับข้อความ (Contact Email) เป็นอีเมลใหม่: ${newEmail}\n\nหากคุณเป็นผู้ดำเนินการ กรุณานำรหัสผ่านชั่วคราวด้านล่างนี้ไปกรอกในหน้าต่างตั้งค่า:\n\nรหัสยืนยัน: ${otp}\n\n(รหัสนี้มีอายุ 15 นาที)\n\nหากคุณไม่ได้เป็นผู้ดำเนินการ กรุณาเพิกเฉยต่ออีเมลฉบับนี้ และตรวจสอบความปลอดภัยของรหัสผ่านผู้ดูแลระบบของคุณทันที`,
-  });
+  await sendOtpNotification(
+    to,
+    `[รหัส OTP] ยืนยันการเปลี่ยนอีเมลรับข้อความ`,
+    `มีการขอเปลี่ยนอีเมลรับข้อความ (Contact Email) เป็นอีเมลใหม่: ${newEmail}\n\nหากคุณเป็นผู้ดำเนินการ กรุณานำรหัสผ่านชั่วคราวด้านล่างนี้ไปกรอกในหน้าต่างตั้งค่า:\n\nรหัสยืนยัน: ${otp}\n\n(รหัสนี้มีอายุ 15 นาที)\n\nหากคุณไม่ได้เป็นผู้ดำเนินการ กรุณาเพิกเฉยต่ออีเมลฉบับนี้ และตรวจสอบความปลอดภัยของรหัสผ่านผู้ดูแลระบบของคุณทันที`
+  );
 }
 
 /** Send a 6-digit OTP to `to` to authorize a company-profile (address/phone) change. */
@@ -162,13 +174,11 @@ export async function sendCompanyProfileOtpEmail(
   otp: string,
   changesSummary: string
 ): Promise<void> {
-  const transport = createTransport();
-  await transport.sendMail({
-    from: { name: "ระบบเว็บไซต์ (Profin Lab Scale)", address: process.env.SMTP_USER ?? "" },
-    to: { name: "", address: to },
-    subject: `[รหัส OTP] ยืนยันการเปลี่ยนข้อมูลบริษัท`,
-    text: `มีการขอเปลี่ยนข้อมูลบริษัท (ที่แสดงบนหน้าเว็บสาธารณะ) ดังนี้:\n\n${changesSummary}\n\nหากคุณเป็นผู้ดำเนินการ กรุณานำรหัสยืนยันด้านล่างนี้ไปกรอกในหน้าตั้งค่า:\n\nรหัสยืนยัน: ${otp}\n\n(รหัสนี้มีอายุ 15 นาที)\n\nหากคุณไม่ได้เป็นผู้ดำเนินการ กรุณาเพิกเฉยต่ออีเมลฉบับนี้ และตรวจสอบความปลอดภัยของบัญชีผู้ดูแลระบบทันที`,
-  });
+  await sendOtpNotification(
+    to,
+    `[รหัส OTP] ยืนยันการเปลี่ยนข้อมูลบริษัท`,
+    `มีการขอเปลี่ยนข้อมูลบริษัท (ที่แสดงบนหน้าเว็บสาธารณะ) ดังนี้:\n\n${changesSummary}\n\nหากคุณเป็นผู้ดำเนินการ กรุณานำรหัสยืนยันด้านล่างนี้ไปกรอกในหน้าตั้งค่า:\n\nรหัสยืนยัน: ${otp}\n\n(รหัสนี้มีอายุ 15 นาที)\n\nหากคุณไม่ได้เป็นผู้ดำเนินการ กรุณาเพิกเฉยต่ออีเมลฉบับนี้ และตรวจสอบความปลอดภัยของบัญชีผู้ดูแลระบบทันที`
+  );
 }
 
 /** Send a 5-digit OTP to `to` to authorize deleting orphaned Cloudinary images. */
@@ -177,13 +187,11 @@ export async function sendOrphanDeleteOtpEmail(
   otp: string,
   imageCount: number
 ): Promise<void> {
-  const transport = createTransport();
-  await transport.sendMail({
-    from: { name: "ระบบเว็บไซต์ (Profin Lab Scale)", address: process.env.SMTP_USER ?? "" },
-    to: { name: "", address: to },
-    subject: `[รหัสยืนยัน] ลบรูปภาพที่ไม่ได้ใช้งานจาก Cloudinary`,
-    text: `มีการขอลบรูปภาพที่ไม่ได้ใช้งานจำนวน ${imageCount} รูป ออกจาก Cloudinary\n\nหากคุณเป็นผู้ดำเนินการ กรุณานำรหัสยืนยันด้านล่างนี้ไปกรอก:\n\nรหัสยืนยัน: ${otp}\n\n(รหัสนี้มีอายุ 10 นาที)\n\nหากคุณไม่ได้เป็นผู้ดำเนินการ กรุณาเพิกเฉยต่ออีเมลฉบับนี้ และตรวจสอบความปลอดภัยของบัญชีผู้ดูแลระบบทันที`,
-  });
+  await sendOtpNotification(
+    to,
+    `[รหัสยืนยัน] ลบรูปภาพที่ไม่ได้ใช้งานจาก Cloudinary`,
+    `มีการขอลบรูปภาพที่ไม่ได้ใช้งานจำนวน ${imageCount} รูป ออกจาก Cloudinary\n\nหากคุณเป็นผู้ดำเนินการ กรุณานำรหัสยืนยันด้านล่างนี้ไปกรอก:\n\nรหัสยืนยัน: ${otp}\n\n(รหัสนี้มีอายุ 10 นาที)\n\nหากคุณไม่ได้เป็นผู้ดำเนินการ กรุณาเพิกเฉยต่ออีเมลฉบับนี้ และตรวจสอบความปลอดภัยของบัญชีผู้ดูแลระบบทันที`
+  );
 }
 
 /** Send a 6-digit OTP to `to` to authorize deleting a completed schedule. */
@@ -192,14 +200,12 @@ export async function sendScheduleDeleteOtpEmail(
   otp: string,
   scheduleInfo: { scheduleType: string; scheduledDate: string; equipmentName?: string }
 ): Promise<void> {
-  const transport = createTransport();
   const typeText = scheduleInfo.scheduleType === "service" ? "Service (บำรุงรักษา)" : "โทรติดตามผล";
   const equipText = scheduleInfo.equipmentName ? ` สำหรับเครื่อง: ${scheduleInfo.equipmentName}` : "";
-  await transport.sendMail({
-    from: { name: "ระบบเว็บไซต์ (Profin Lab Scale)", address: process.env.SMTP_USER ?? "" },
-    to: { name: "", address: to },
-    subject: `[รหัสยืนยัน OTP] ขอลบประวัตินัดหมายที่เสร็จสิ้นแล้ว`,
-    text: `มีการขอลบประวัตินัดหมาย ${typeText} วันที่ ${scheduleInfo.scheduledDate}${equipText} ที่ดำเนินการเสร็จสิ้นแล้ว\n\nเนื่องจากการลบประวัติงานที่เสร็จแล้วส่งผลต่อข้อมูลการรับประกันและการบริการ กรุณานำรหัสยืนยัน 6 หลักด้านล่างนี้ไปกรอกเพื่อยืนยันการลบ:\n\nรหัสยืนยัน: ${otp}\n\n(รหัสนี้มีอายุ 15 นาที)\n\nหากคุณไม่ได้เป็นผู้ดำเนินการ กรุณาเพิกเฉยต่ออีเมลฉบับนี้ และตรวจสอบความปลอดภัยของบัญชีผู้ดูแลระบบทันที`,
-  });
+  await sendOtpNotification(
+    to,
+    `[รหัสยืนยัน OTP] ขอลบประวัตินัดหมายที่เสร็จสิ้นแล้ว`,
+    `มีการขอลบประวัตินัดหมาย ${typeText} วันที่ ${scheduleInfo.scheduledDate}${equipText} ที่ดำเนินการเสร็จสิ้นแล้ว\n\nเนื่องจากการลบประวัติงานที่เสร็จแล้วส่งผลต่อข้อมูลการรับประกันและการบริการ กรุณานำรหัสยืนยัน 6 หลักด้านล่างนี้ไปกรอกเพื่อยืนยันการลบ:\n\nรหัสยืนยัน: ${otp}\n\n(รหัสนี้มีอายุ 15 นาที)\n\nหากคุณไม่ได้เป็นผู้ดำเนินการ กรุณาเพิกเฉยต่ออีเมลฉบับนี้ และตรวจสอบความปลอดภัยของบัญชีผู้ดูแลระบบทันที`
+  );
 }
 

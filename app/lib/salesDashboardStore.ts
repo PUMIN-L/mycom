@@ -420,10 +420,65 @@ export async function getDashboardOverview(
   };
 }
 
-export async function getRevenueByMonth(dateFromRaw: string, dateToRaw: string): Promise<RevenueByPeriod[]> {
+type RevenuePeriodGranularity = "month" | "day" | "quarter";
+
+// The SQL period expressions differ only in how the date is formatted; the
+// surrounding query (table, WHERE, GROUP BY) is otherwise identical across
+// month/day/quarter, so only this piece needs to vary per granularity.
+const REVENUE_PERIOD_SQL: Record<RevenuePeriodGranularity, { sales: string; expense: string }> = {
+  month: { sales: "DATE_FORMAT(saleDate, '%Y-%m')", expense: "DATE_FORMAT(expenseDate, '%Y-%m')" },
+  day: { sales: "DATE_FORMAT(saleDate, '%Y-%m-%d')", expense: "DATE_FORMAT(expenseDate, '%Y-%m-%d')" },
+  quarter: {
+    sales: "CONCAT(YEAR(saleDate), '-Q', QUARTER(saleDate))",
+    expense: "CONCAT(YEAR(expenseDate), '-Q', QUARTER(expenseDate))",
+  },
+};
+
+function revenuePeriodKey(granularity: RevenuePeriodGranularity, d: Date): string {
+  const y = d.getFullYear();
+  if (granularity === "month") return `${y}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  if (granularity === "day") {
+    return `${y}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  }
+  return `${y}-Q${Math.floor(d.getMonth() / 3) + 1}`;
+}
+
+/** Mutates `d` forward to the start of the next period for `granularity`. */
+function advanceRevenuePeriod(granularity: RevenuePeriodGranularity, d: Date): void {
+  if (granularity === "month") d.setMonth(d.getMonth() + 1);
+  else if (granularity === "day") d.setDate(d.getDate() + 1);
+  else d.setMonth(d.getMonth() + 3);
+}
+
+function buildRevenuePeriodRow(
+  period: string,
+  salesRow: RowDataPacket | undefined,
+  expenseRow: RowDataPacket | undefined
+): RevenueByPeriod {
+  const revenue = Number(salesRow?.revenue || 0);
+  const cost = Number(salesRow?.cost || 0);
+  const expense = Number(expenseRow?.expenses || 0);
+  const profit = revenue - cost - expense;
+  return {
+    period,
+    revenue,
+    deals: Number(salesRow?.deals || 0),
+    cost,
+    expense,
+    profit,
+    margin: revenue > 0 ? Math.round((profit / revenue) * 10000) / 100 : 0,
+  };
+}
+
+async function getRevenueByPeriod(
+  granularity: RevenuePeriodGranularity,
+  dateFromRaw: string,
+  dateToRaw: string
+): Promise<RevenueByPeriod[]> {
+  const periodSql = REVENUE_PERIOD_SQL[granularity];
   const params: unknown[] = [dateFromRaw, dateToRaw];
   const [rows] = await query<RowDataPacket[]>(
-    `SELECT DATE_FORMAT(saleDate, '%Y-%m') AS period,
+    `SELECT ${periodSql.sales} AS period,
             COALESCE(SUM(totalAmount), 0) AS revenue,
             COALESCE(SUM(costAmount), 0) AS cost,
             COUNT(*) AS deals
@@ -434,7 +489,7 @@ export async function getRevenueByMonth(dateFromRaw: string, dateToRaw: string):
   );
 
   const [expRows] = await query<RowDataPacket[]>(
-    `SELECT DATE_FORMAT(expenseDate, '%Y-%m') AS period,
+    `SELECT ${periodSql.expense} AS period,
             COALESCE(SUM(amount), 0) AS expenses
      FROM expenses
      WHERE expenseDate >= ? AND expenseDate < ?
@@ -444,153 +499,64 @@ export async function getRevenueByMonth(dateFromRaw: string, dateToRaw: string):
 
   const map = new Map(rows.map((r) => [r.period, r]));
   const expMap = new Map(expRows.map((r) => [r.period, r]));
-  
+
   const start = new Date(dateFromRaw + "T00:00:00");
   const end = new Date(dateToRaw + "T00:00:00");
   const result: RevenueByPeriod[] = [];
+  const seen = new Set<string>(); // a period can't recur with these fixed steps, but guard anyway
   let d = new Date(start);
   while (d < end) {
-    const m = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-    const r = map.get(m);
-    const exp = expMap.get(m);
-    const rev = Number(r?.revenue || 0);
-    const c = Number(r?.cost || 0);
-    const expAmount = Number(exp?.expenses || 0);
-    const profit = rev - c - expAmount;
-    result.push({
-      period: m,
-      revenue: rev,
-      deals: Number(r?.deals || 0),
-      cost: c,
-      expense: expAmount,
-      profit,
-      margin: rev > 0 ? Math.round((profit / rev) * 10000) / 100 : 0,
-    });
-    d.setMonth(d.getMonth() + 1);
+    const period = revenuePeriodKey(granularity, d);
+    if (!seen.has(period)) {
+      seen.add(period);
+      result.push(buildRevenuePeriodRow(period, map.get(period), expMap.get(period)));
+    }
+    advanceRevenuePeriod(granularity, d);
   }
   return result;
 }
 
+export async function getRevenueByMonth(dateFromRaw: string, dateToRaw: string): Promise<RevenueByPeriod[]> {
+  return getRevenueByPeriod("month", dateFromRaw, dateToRaw);
+}
 
 export async function getRevenueByDay(dateFromRaw: string, dateToRaw: string): Promise<RevenueByPeriod[]> {
-  const params: unknown[] = [dateFromRaw, dateToRaw];
-  const [rows] = await query<RowDataPacket[]>(
-    `SELECT DATE_FORMAT(saleDate, '%Y-%m-%d') AS period,
-            COALESCE(SUM(totalAmount), 0) AS revenue,
-            COALESCE(SUM(costAmount), 0) AS cost,
-            COUNT(*) AS deals
-     FROM sales_records
-     WHERE saleDate >= ? AND saleDate < ?
-     GROUP BY period ORDER BY period`,
-    params
-  );
-
-  const [expRows] = await query<RowDataPacket[]>(
-    `SELECT DATE_FORMAT(expenseDate, '%Y-%m-%d') AS period,
-            COALESCE(SUM(amount), 0) AS expenses
-     FROM expenses
-     WHERE expenseDate >= ? AND expenseDate < ?
-     GROUP BY period ORDER BY period`,
-    params
-  );
-
-  const map = new Map(rows.map((r) => [r.period, r]));
-  const expMap = new Map(expRows.map((r) => [r.period, r]));
-  
-  const start = new Date(dateFromRaw + "T00:00:00");
-  const end = new Date(dateToRaw + "T00:00:00");
-  const result: RevenueByPeriod[] = [];
-  let d = new Date(start);
-  while (d < end) {
-    const m = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-    const r = map.get(m);
-    const exp = expMap.get(m);
-    const rev = Number(r?.revenue || 0);
-    const c = Number(r?.cost || 0);
-    const expAmount = Number(exp?.expenses || 0);
-    const profit = rev - c - expAmount;
-    result.push({
-      period: m,
-      revenue: rev,
-      deals: Number(r?.deals || 0),
-      cost: c,
-      expense: expAmount,
-      profit,
-      margin: rev > 0 ? Math.round((profit / rev) * 10000) / 100 : 0,
-    });
-    d.setDate(d.getDate() + 1);
-  }
-  return result;
+  return getRevenueByPeriod("day", dateFromRaw, dateToRaw);
 }
 
 export async function getRevenueByQuarter(dateFromRaw: string, dateToRaw: string): Promise<RevenueByPeriod[]> {
-  const params: unknown[] = [dateFromRaw, dateToRaw];
-  const [rows] = await query<RowDataPacket[]>(
-    `SELECT CONCAT(YEAR(saleDate), '-Q', QUARTER(saleDate)) AS period,
-            COALESCE(SUM(totalAmount), 0) AS revenue,
-            COALESCE(SUM(costAmount), 0) AS cost,
-            COUNT(*) AS deals
-     FROM sales_records
-     WHERE saleDate >= ? AND saleDate < ?
-     GROUP BY period ORDER BY period`,
-    params
-  );
+  return getRevenueByPeriod("quarter", dateFromRaw, dateToRaw);
+}
 
-  const [expRows] = await query<RowDataPacket[]>(
-    `SELECT CONCAT(YEAR(expenseDate), '-Q', QUARTER(expenseDate)) AS period,
-            COALESCE(SUM(amount), 0) AS expenses
-     FROM expenses
-     WHERE expenseDate >= ? AND expenseDate < ?
-     GROUP BY period ORDER BY period`,
-    params
-  );
+/** Same rounding-to-2-decimals percentage calc used by every leaderboard/breakdown below. */
+function percentageOf(value: number, total: number): number {
+  return total > 0 ? Math.round((value / total) * 10000) / 100 : 0;
+}
 
-  const map = new Map(rows.map((r) => [r.period, r]));
-  const expMap = new Map(expRows.map((r) => [r.period, r]));
-
-  const start = new Date(dateFromRaw + "T00:00:00");
-  const end = new Date(dateToRaw + "T00:00:00");
-  const result: RevenueByPeriod[] = [];
-  let d = new Date(start);
-  while (d < end) {
-    const q = Math.floor(d.getMonth() / 3) + 1;
-    const period = `${d.getFullYear()}-Q${q}`;
-    
-    // Ensure we don't add duplicate quarters
-    if (!result.find(r => r.period === period)) {
-      const r = map.get(period);
-      const exp = expMap.get(period);
-      const rev = Number(r?.revenue || 0);
-      const c = Number(r?.cost || 0);
-      const expAmount = Number(exp?.expenses || 0);
-      const profit = rev - c - expAmount;
-      result.push({
-        period,
-        revenue: rev,
-        deals: Number(r?.deals || 0),
-        cost: c,
-        expense: expAmount,
-        profit,
-        margin: rev > 0 ? Math.round((profit / rev) * 10000) / 100 : 0,
-      });
-    }
-    
-    d.setMonth(d.getMonth() + 3);
-  }
-  return result;
+/**
+ * WHERE clause + params for an optional [dateFromRaw, dateToRaw] range on
+ * `dateColumn` — callers pass the exact column reference (aliased or not) so
+ * the generated SQL text is unchanged from before this was extracted.
+ */
+function buildSaleDateRangeWhere(
+  dateColumn: string,
+  dateFromRaw?: string,
+  dateToRaw?: string
+): { clause: string; params: unknown[] } {
+  const where: string[] = [];
+  const params: unknown[] = [];
+  const dateFrom = cleanDate(dateFromRaw);
+  const dateTo = cleanDate(dateToRaw);
+  if (dateFrom) { where.push(`${dateColumn} >= ?`); params.push(dateFrom); }
+  if (dateTo) { where.push(`${dateColumn} <= ?`); params.push(dateTo); }
+  return { clause: where.length > 0 ? `WHERE ${where.join(" AND ")}` : "", params };
 }
 
 export async function getRevenueByCategory(
   dateFromRaw?: string,
   dateToRaw?: string
 ): Promise<TopItem[]> {
-  const where: string[] = [];
-  const params: unknown[] = [];
-  const dateFrom = cleanDate(dateFromRaw);
-  const dateTo = cleanDate(dateToRaw);
-  if (dateFrom) { where.push("sr.saleDate >= ?"); params.push(dateFrom); }
-  if (dateTo) { where.push("sr.saleDate <= ?"); params.push(dateTo); }
-  const clause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
+  const { clause, params } = buildSaleDateRangeWhere("sr.saleDate", dateFromRaw, dateToRaw);
   const [rows] = await query<RowDataPacket[]>(
     `SELECT sr.categoryId AS id,
             COALESCE(pc.name_th, 'ไม่ระบุหมวด') AS name,
@@ -611,7 +577,7 @@ export async function getRevenueByCategory(
     revenue: Number(r.revenue),
     qty: Number(r.qty),
     deals: Number(r.deals),
-    percentage: totalRev > 0 ? Math.round((Number(r.revenue) / totalRev) * 10000) / 100 : 0,
+    percentage: percentageOf(Number(r.revenue), totalRev),
   }));
 }
 
@@ -621,13 +587,7 @@ export async function getTopProducts(
   dateToRaw?: string
 ): Promise<TopItem[]> {
   const safeLimit = Math.max(1, Math.min(100, Math.round(Number(limit) || 10)));
-  const where: string[] = [];
-  const params: unknown[] = [];
-  const dateFrom = cleanDate(dateFromRaw);
-  const dateTo = cleanDate(dateToRaw);
-  if (dateFrom) { where.push("saleDate >= ?"); params.push(dateFrom); }
-  if (dateTo) { where.push("saleDate <= ?"); params.push(dateTo); }
-  const clause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
+  const { clause, params } = buildSaleDateRangeWhere("saleDate", dateFromRaw, dateToRaw);
   const [rows] = await query<RowDataPacket[]>(
     `SELECT productId AS id, productName AS name,
             COALESCE(SUM(totalAmount), 0) AS revenue,
@@ -645,7 +605,7 @@ export async function getTopProducts(
     revenue: Number(r.revenue),
     qty: Number(r.qty),
     deals: Number(r.deals),
-    percentage: totalRev > 0 ? Math.round((Number(r.revenue) / totalRev) * 10000) / 100 : 0,
+    percentage: percentageOf(Number(r.revenue), totalRev),
   }));
 }
 
@@ -655,13 +615,7 @@ export async function getTopCustomers(
   dateToRaw?: string
 ): Promise<TopItem[]> {
   const safeLimit = Math.max(1, Math.min(100, Math.round(Number(limit) || 10)));
-  const where: string[] = [];
-  const params: unknown[] = [];
-  const dateFrom = cleanDate(dateFromRaw);
-  const dateTo = cleanDate(dateToRaw);
-  if (dateFrom) { where.push("sr.saleDate >= ?"); params.push(dateFrom); }
-  if (dateTo) { where.push("sr.saleDate <= ?"); params.push(dateTo); }
-  const clause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
+  const { clause, params } = buildSaleDateRangeWhere("sr.saleDate", dateFromRaw, dateToRaw);
   const [rows] = await query<RowDataPacket[]>(
     `SELECT sr.companyId AS id,
             COALESCE(co.name, 'ไม่ระบุ') AS name,
@@ -682,7 +636,7 @@ export async function getTopCustomers(
     revenue: Number(r.revenue),
     qty: Number(r.qty),
     deals: Number(r.deals),
-    percentage: totalRev > 0 ? Math.round((Number(r.revenue) / totalRev) * 10000) / 100 : 0,
+    percentage: percentageOf(Number(r.revenue), totalRev),
   }));
 }
 
@@ -690,13 +644,7 @@ export async function getSalespersonLeaderboard(
   dateFromRaw?: string,
   dateToRaw?: string
 ): Promise<SalespersonStats[]> {
-  const where: string[] = [];
-  const params: unknown[] = [];
-  const dateFrom = cleanDate(dateFromRaw);
-  const dateTo = cleanDate(dateToRaw);
-  if (dateFrom) { where.push("sr.saleDate >= ?"); params.push(dateFrom); }
-  if (dateTo) { where.push("sr.saleDate <= ?"); params.push(dateTo); }
-  const clause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
+  const { clause, params } = buildSaleDateRangeWhere("sr.saleDate", dateFromRaw, dateToRaw);
   const [rows] = await query<RowDataPacket[]>(
     `SELECT sr.salespersonId AS id,
             COALESCE(sp.name, sr.salespersonId) AS name,
@@ -716,7 +664,7 @@ export async function getSalespersonLeaderboard(
     name: (r.name && String(r.name).trim()) || "ไม่ระบุเซลล์",
     revenue: Number(r.revenue),
     deals: Number(r.deals),
-    percentage: totalRev > 0 ? Math.round((Number(r.revenue) / totalRev) * 10000) / 100 : 0,
+    percentage: percentageOf(Number(r.revenue), totalRev),
     avgDealSize: Number(r.deals) > 0 ? Math.round(Number(r.revenue) / Number(r.deals)) : 0,
   }));
 }

@@ -21,6 +21,10 @@ import {
   isMailConfigured,
   sendContactEmail,
   sendContactRecipientChangedEmail,
+  sendOtpEmail,
+  sendCompanyProfileOtpEmail,
+  sendOrphanDeleteOtpEmail,
+  sendScheduleDeleteOtpEmail,
   type ContactMessage,
 } from '@/app/lib/mailer';
 
@@ -148,6 +152,101 @@ describe('mailer', () => {
       sendMailMock.mockRejectedValueOnce(new Error('SMTP down'));
       await expect(
         sendContactRecipientChangedEmail(['old@site.com', 'new@site.com'], 'old@site.com', 'new@site.com')
+      ).rejects.toThrow('SMTP down');
+    });
+  });
+
+  describe('sendOtpEmail', () => {
+    it('sends a single-recipient OTP email with the new email in the body', async () => {
+      process.env.SMTP_USER = 'system@example.com';
+      await sendOtpEmail('current@site.com', '123456', 'new@site.com');
+
+      expect(sendMailMock).toHaveBeenCalledTimes(1);
+      const mail = sendMailMock.mock.calls[0][0];
+      expect(mail.from).toEqual({ name: 'ระบบเว็บไซต์ (Profin Lab Scale)', address: 'system@example.com' });
+      expect(mail.to).toEqual({ name: '', address: 'current@site.com' });
+      expect(mail.subject).toContain('OTP');
+      expect(mail.text).toContain('123456');
+      expect(mail.text).toContain('new@site.com');
+    });
+
+    it('propagates SMTP failures (throws)', async () => {
+      sendMailMock.mockRejectedValueOnce(new Error('SMTP down'));
+      await expect(sendOtpEmail('a@site.com', '123456', 'b@site.com')).rejects.toThrow('SMTP down');
+    });
+  });
+
+  describe('sendCompanyProfileOtpEmail', () => {
+    it('sends a single-recipient OTP email with the changes summary in the body', async () => {
+      process.env.SMTP_USER = 'system@example.com';
+      await sendCompanyProfileOtpEmail('admin@site.com', '654321', 'เบอร์โทรศัพท์: "02-000-1111" -> "02-999-8888"');
+
+      const mail = sendMailMock.mock.calls[0][0];
+      expect(mail.from).toEqual({ name: 'ระบบเว็บไซต์ (Profin Lab Scale)', address: 'system@example.com' });
+      expect(mail.to).toEqual({ name: '', address: 'admin@site.com' });
+      expect(mail.subject).toContain('ข้อมูลบริษัท');
+      expect(mail.text).toContain('654321');
+      expect(mail.text).toContain('02-999-8888');
+    });
+
+    it('propagates SMTP failures (throws)', async () => {
+      sendMailMock.mockRejectedValueOnce(new Error('SMTP down'));
+      await expect(sendCompanyProfileOtpEmail('a@site.com', '654321', 'summary')).rejects.toThrow('SMTP down');
+    });
+  });
+
+  describe('sendOrphanDeleteOtpEmail', () => {
+    it('sends a single-recipient OTP email with the image count in the body', async () => {
+      process.env.SMTP_USER = 'system@example.com';
+      await sendOrphanDeleteOtpEmail('admin@site.com', '11111', 7);
+
+      const mail = sendMailMock.mock.calls[0][0];
+      expect(mail.from).toEqual({ name: 'ระบบเว็บไซต์ (Profin Lab Scale)', address: 'system@example.com' });
+      expect(mail.to).toEqual({ name: '', address: 'admin@site.com' });
+      expect(mail.subject).toContain('Cloudinary');
+      expect(mail.text).toContain('11111');
+      expect(mail.text).toContain('7 รูป');
+    });
+
+    it('propagates SMTP failures (throws)', async () => {
+      sendMailMock.mockRejectedValueOnce(new Error('SMTP down'));
+      await expect(sendOrphanDeleteOtpEmail('a@site.com', '11111', 3)).rejects.toThrow('SMTP down');
+    });
+  });
+
+  describe('sendScheduleDeleteOtpEmail', () => {
+    it('sends a single-recipient OTP email mentioning the schedule type/date/equipment', async () => {
+      process.env.SMTP_USER = 'system@example.com';
+      await sendScheduleDeleteOtpEmail('admin@site.com', '222222', {
+        scheduleType: 'service',
+        scheduledDate: '2026-09-10',
+        equipmentName: 'เครื่องชั่ง A',
+      });
+
+      const mail = sendMailMock.mock.calls[0][0];
+      expect(mail.from).toEqual({ name: 'ระบบเว็บไซต์ (Profin Lab Scale)', address: 'system@example.com' });
+      expect(mail.to).toEqual({ name: '', address: 'admin@site.com' });
+      expect(mail.text).toContain('222222');
+      expect(mail.text).toContain('Service');
+      expect(mail.text).toContain('2026-09-10');
+      expect(mail.text).toContain('เครื่องชั่ง A');
+    });
+
+    it('omits the equipment clause when equipmentName is not given', async () => {
+      process.env.SMTP_USER = 'system@example.com';
+      await sendScheduleDeleteOtpEmail('admin@site.com', '222222', {
+        scheduleType: 'follow_up',
+        scheduledDate: '2026-09-10',
+      });
+      const mail = sendMailMock.mock.calls[0][0];
+      expect(mail.text).toContain('โทรติดตามผล');
+      expect(mail.text).not.toContain('สำหรับเครื่อง');
+    });
+
+    it('propagates SMTP failures (throws)', async () => {
+      sendMailMock.mockRejectedValueOnce(new Error('SMTP down'));
+      await expect(
+        sendScheduleDeleteOtpEmail('a@site.com', '222222', { scheduleType: 'service', scheduledDate: '2026-01-01' })
       ).rejects.toThrow('SMTP down');
     });
   });

@@ -83,32 +83,45 @@ export async function updateCategory(
   return result.affectedRows > 0;
 }
 
-export async function reorderCategories(categoryIds: number[]): Promise<boolean> {
-  if (!categoryIds || categoryIds.length === 0) return true;
+/**
+ * Persists a drag-and-drop reorder as a single `CASE id WHEN ... END` UPDATE
+ * instead of one query per row. `table` is always a hardcoded literal from
+ * the call sites below, never derived from request input.
+ */
+async function reorderByCaseWhen<T extends string | number>(
+  table: string,
+  ids: T[],
+  errorLabel: string
+): Promise<boolean> {
+  if (!ids || ids.length === 0) return true;
 
   try {
     let caseSql = "CASE id ";
-    const params: any[] = [];
-    const ids: number[] = [];
+    const params: unknown[] = [];
+    const orderedIds: T[] = [];
 
-    categoryIds.forEach((id, index) => {
+    ids.forEach((id, index) => {
       caseSql += "WHEN ? THEN ? ";
       params.push(id, index);
-      ids.push(id);
+      orderedIds.push(id);
     });
     caseSql += "END";
 
-    const placeholders = ids.map(() => "?").join(",");
-    params.push(...ids);
+    const placeholders = orderedIds.map(() => "?").join(",");
+    params.push(...orderedIds);
 
-    const sql = `UPDATE product_categories SET sortOrder = ${caseSql} WHERE id IN (${placeholders})`;
+    const sql = `UPDATE ${table} SET sortOrder = ${caseSql} WHERE id IN (${placeholders})`;
 
     await query(sql, params);
     return true;
   } catch (error) {
-    console.error("Failed to reorder categories:", error);
+    console.error(`Failed to reorder ${errorLabel}:`, error);
     return false;
   }
+}
+
+export async function reorderCategories(categoryIds: number[]): Promise<boolean> {
+  return reorderByCaseWhen("product_categories", categoryIds, "categories");
 }
 
 // ── Products ──────────────────────────────────────────────────────────────────
@@ -295,29 +308,5 @@ export async function updateProduct(
 }
 
 export async function reorderProducts(productIds: string[]): Promise<boolean> {
-  if (!productIds || productIds.length === 0) return true;
-
-  try {
-    let caseSql = "CASE id ";
-    const params: any[] = [];
-    const ids: string[] = [];
-
-    productIds.forEach((id, index) => {
-      caseSql += "WHEN ? THEN ? ";
-      params.push(id, index);
-      ids.push(id);
-    });
-    caseSql += "END";
-
-    const placeholders = ids.map(() => "?").join(",");
-    params.push(...ids);
-
-    const sql = `UPDATE products SET sortOrder = ${caseSql} WHERE id IN (${placeholders})`;
-
-    await query(sql, params);
-    return true;
-  } catch (error) {
-    console.error("Failed to reorder products:", error);
-    return false;
-  }
+  return reorderByCaseWhen("products", productIds, "products");
 }

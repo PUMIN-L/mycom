@@ -27,6 +27,7 @@ import {
   getProductsByCategory,
   deleteProduct,
   updateProduct,
+  reorderProducts,
   isProductPublic,
 } from '@/app/lib/productStore';
 import type { ProductData } from '@/app/lib/productStore';
@@ -479,6 +480,36 @@ describe('productStore', () => {
       // Two SELECTs in getProduct calls
       expect(conn.query).toHaveBeenCalledTimes(0);
       expect(result!.id).toBe('p1');
+    });
+  });
+
+  describe('reorderProducts', () => {
+    it('updates sortOrder using a single CASE WHEN query against the products table', async () => {
+      vi.mocked(query).mockResolvedValue(undefined as any);
+
+      const result = await reorderProducts(['p1', 'p2', 'p3']);
+
+      expect(result).toBe(true);
+      expect(query).toHaveBeenCalledTimes(1);
+      const [sql, params] = vi.mocked(query).mock.calls[0];
+      expect(sql).toContain('UPDATE products SET sortOrder');
+      expect(sql).toContain('CASE id');
+      expect(params).toEqual(['p1', 0, 'p2', 1, 'p3', 2, 'p1', 'p2', 'p3']);
+    });
+
+    it('returns true and issues no updates for an empty list', async () => {
+      vi.mocked(query).mockClear();
+
+      expect(await reorderProducts([])).toBe(true);
+      expect(query).not.toHaveBeenCalled();
+    });
+
+    it('returns false when the query fails', async () => {
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => { });
+      vi.mocked(query).mockRejectedValue(new Error('query failed'));
+
+      expect(await reorderProducts(['p1', 'p2'])).toBe(false);
+      errSpy.mockRestore();
     });
   });
 
