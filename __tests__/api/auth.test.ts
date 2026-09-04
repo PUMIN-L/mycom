@@ -58,11 +58,27 @@ describe('Auth API Routes', () => {
   });
 
   describe('POST /api/auth/logout', () => {
-    it('deletes session and returns success', async () => {
-      const res = await logout();
+    it('deletes session and returns success for a same-origin request', async () => {
+      const res = await logout(
+        new NextRequest('http://localhost', {
+          method: 'POST',
+          headers: { origin: 'http://localhost', host: 'localhost' },
+        })
+      );
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual({ success: true });
       expect(deleteSession).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects a cross-origin logout request (CSRF guard)', async () => {
+      const res = await logout(
+        new NextRequest('http://localhost', {
+          method: 'POST',
+          headers: { origin: 'http://evil.example.com', host: 'localhost' },
+        })
+      );
+      expect(res.status).toBe(403);
+      expect(deleteSession).not.toHaveBeenCalled();
     });
   });
 

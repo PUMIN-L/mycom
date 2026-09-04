@@ -6,7 +6,9 @@ import {
   deleteSchedule,
   SCHEDULE_TYPES,
   SCHEDULE_STATUSES,
+  ScheduleCompletionRequiresLogError,
 } from "../../../../lib/crmStore";
+import { isValidDateString } from "../../../../lib/dateFormat";
 import { getSetting, setSetting } from "../../../../lib/settingsStore";
 import { recordOtpFailure, clearOtpAttempts } from "../../../../lib/otpAttempts";
 
@@ -63,6 +65,9 @@ export const PUT = withRoute(
         400
       );
     }
+    if (data.scheduledDate !== undefined && !isValidDateString(data.scheduledDate)) {
+      return jsonError("scheduledDate must be a valid date (YYYY-MM-DD)", 400);
+    }
 
     // A schedule can only become "completed" together with its result log, via
     // POST .../logs -> completeScheduleWithLog (one transaction, guarantees the
@@ -76,7 +81,18 @@ export const PUT = withRoute(
       );
     }
 
-    const updated = await updateSchedule(id, data);
+    let updated;
+    try {
+      updated = await updateSchedule(id, data);
+    } catch (err) {
+      if (err instanceof ScheduleCompletionRequiresLogError) {
+        return jsonError(
+          "ต้องบันทึกผลงานผ่านหน้าจบงานเท่านั้น (แนบ service log)",
+          400
+        );
+      }
+      throw err;
+    }
     if (!updated) return jsonError("ไม่พบนัดหมาย", 404);
     return NextResponse.json(updated);
   }

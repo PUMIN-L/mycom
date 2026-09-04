@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { revalidateTag } from "next/cache";
 import { withRoute, requireAuth } from "../../../../lib/apiHelpers";
 import { getRevision } from "../../../../lib/revisionStore";
-import { updateProduct } from "../../../../lib/productStore";
-import { updateContent, getContentByProductId } from "../../../../lib/contentStore";
+import { updateProduct, getAllCategories, getProduct } from "../../../../lib/productStore";
+import { updateContent, getContentByProductId, ContentProductConflictError } from "../../../../lib/contentStore";
 import { updateDocument, getDocument } from "../../../../lib/documentStore";
 
 type Ctx = { params: Promise<{ id: string }> };
@@ -27,6 +27,18 @@ export const POST = withRoute(
 
     switch (rev.entityType) {
       case "product": {
+        // The snapshot's categoryId may no longer exist (category deleted
+        // since) — restoring it as-is would silently orphan the product from
+        // any real category. Validate before writing, don't just trust it.
+        if (typeof data.categoryId === "number") {
+          const categories = await getAllCategories();
+          if (!categories.some((c) => c.id === data.categoryId)) {
+            return NextResponse.json(
+              { error: "หมวดหมู่สินค้าที่บันทึกไว้ถูกลบไปแล้ว ไม่สามารถกู้คืนได้" },
+              { status: 400 }
+            );
+          }
+        }
         // updateProduct returns undefined if the row was since deleted — the
         // snapshot can't be re-applied, so report 404 rather than a false 200.
         const updated = await updateProduct(rev.entityId, data);
@@ -37,11 +49,20 @@ export const POST = withRoute(
         break;
       }
       case "content": {
-        // Enforce the same one-content-per-product invariant the PUT route does
-        // (updateContent itself doesn't check), so a restore can't leave two
-        // contents linked to the same product.
+        // Pre-check the one-content-per-product invariant for a friendlier
+        // 409 here (updateContent itself also enforces it, race-safe, as the
+        // real backstop).
         const productId = data.productId;
         if (typeof productId === "string" && productId) {
+          // The snapshot's productId may no longer exist (product deleted
+          // since) — restoring it as-is would leave the content dangling.
+          const product = await getProduct(productId);
+          if (!product) {
+            return NextResponse.json(
+              { error: "สินค้าที่บันทึกไว้ถูกลบไปแล้ว ไม่สามารถกู้คืนได้" },
+              { status: 400 }
+            );
+          }
           const owner = await getContentByProductId(productId);
           if (owner && owner.id !== rev.entityId) {
             return NextResponse.json(
@@ -50,7 +71,18 @@ export const POST = withRoute(
             );
           }
         }
-        const updated = await updateContent(rev.entityId, data);
+        let updated;
+        try {
+          updated = await updateContent(rev.entityId, data);
+        } catch (err) {
+          if (err instanceof ContentProductConflictError) {
+            return NextResponse.json(
+              { error: "สินค้านี้มีเนื้อหาเชื่อมอยู่แล้ว" },
+              { status: 409 }
+            );
+          }
+          throw err;
+        }
         if (!updated) {
           return NextResponse.json({ error: "Content no longer exists" }, { status: 404 });
         }

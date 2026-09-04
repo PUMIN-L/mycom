@@ -231,11 +231,14 @@ export default function AlertsPage() {
     return 0;
   });
 
+  const incompleteTotal = alerts?.incompleteEquipmentsTotal ?? alerts?.incompleteEquipments?.length ?? 0;
+  const incompleteHiddenCount = Math.max(0, incompleteTotal - (alerts?.incompleteEquipments?.length || 0));
+
   const tabOptions = [
-    { id: "all", label: "ทั้งหมด", count: allAlerts.length, color: "bg-gray-100 text-gray-700" },
+    { id: "all", label: "ทั้งหมด", count: allAlerts.length - (alerts?.incompleteEquipments?.length || 0) + incompleteTotal, color: "bg-gray-100 text-gray-700" },
     { id: "schedule", label: "กำหนดการ", count: alerts?.upcomingSchedules?.length || 0, color: "bg-blue-50 text-blue-700 border-blue-200" },
     { id: "warranty", label: "ประกันใกล้หมด", count: alerts?.expiringWarranties?.length || 0, color: "bg-orange-50 text-orange-700 border-orange-200" },
-    { id: "incomplete", label: "ข้อมูลไม่ครบ", count: alerts?.incompleteEquipments?.length || 0, color: "bg-rose-50 text-rose-700 border-rose-200" },
+    { id: "incomplete", label: "ข้อมูลไม่ครบ", count: incompleteTotal, color: "bg-rose-50 text-rose-700 border-rose-200" },
     { id: "missing_doc", label: "เอกสารค้าง", count: alerts?.missingDocuments?.length || 0, color: "bg-red-50 text-red-700 border-red-200" },
   ];
 
@@ -473,6 +476,11 @@ export default function AlertsPage() {
               }
             })}
           </div>
+        )}
+        {(activeTab === "all" || activeTab === "incomplete") && incompleteHiddenCount > 0 && (
+          <p className="text-center text-sm text-gray-500 mt-6">
+            และอีก {incompleteHiddenCount} รายการที่ข้อมูลไม่ครบ (แสดงผลสูงสุด 100 รายการ)
+          </p>
         )}
       </div>
 

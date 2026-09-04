@@ -34,17 +34,27 @@ function rowToRevision(r: RowDataPacket): Revision {
   };
 }
 
+type Queryable = { query: (sql: string, params?: unknown[]) => Promise<unknown> };
+
 /**
  * Snapshot the previous value of an entity. Call this BEFORE applying an update
  * so a failed snapshot aborts before the overwrite (no history → no destructive
  * write). A snapshot that commits without the update is harmless (extra entry).
+ *
+ * Pass `conn` when called from inside `withTransaction()` — that runs the
+ * INSERT through the transaction's own connection instead of the pool-level
+ * `query()`, so it actually rolls back with everything else, and a retried
+ * attempt (withTransaction retries the whole callback on a transient
+ * connection error) can't leave a duplicate snapshot behind from an attempt
+ * that otherwise failed.
  */
 export async function saveRevision(
   entityType: RevisionEntityType,
   entityId: string,
-  data: unknown
+  data: unknown,
+  conn?: Queryable
 ): Promise<void> {
-  await query(
+  await (conn ?? { query }).query(
     `INSERT INTO revisions (id, entityType, entityId, data, createdAt)
      VALUES (?, ?, ?, ?, ?)`,
     [

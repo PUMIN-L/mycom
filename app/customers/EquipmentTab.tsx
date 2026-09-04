@@ -80,8 +80,21 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
   const [viewingEquipment, setViewingEquipment] = useState<CustomerEquipment | null>(null);
 
   // Delete confirm (equipment row delete — see the confirm dialog in the render
-  // section below)
+  // section below). Deleting equipment with a completed schedule attached
+  // requires an emailed OTP (same control as deleting a completed schedule
+  // directly) — deleteNeedsOtp switches the same dialog into OTP-entry mode.
   const [deleteConfirm, setDeleteConfirm] = useState<CustomerEquipment | null>(null);
+  const [deleteNeedsOtp, setDeleteNeedsOtp] = useState(false);
+  const [deleteOtpCode, setDeleteOtpCode] = useState("");
+  const [deleteOtpEmail, setDeleteOtpEmail] = useState<string | null>(null);
+  const [isSendingDeleteOtp, setIsSendingDeleteOtp] = useState(false);
+  const [deleteOtpCountdown, setDeleteOtpCountdown] = useState(0);
+
+  useEffect(() => {
+    if (deleteOtpCountdown <= 0) return;
+    const timer = setTimeout(() => setDeleteOtpCountdown((c) => c - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [deleteOtpCountdown]);
 
   // Search and Filter
   const [searchText, setSearchText] = useState("");
@@ -336,19 +349,57 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
     }
   };
 
+  const closeDeleteDialog = () => {
+    setDeleteConfirm(null);
+    setDeleteNeedsOtp(false);
+    setDeleteOtpCode("");
+    setDeleteOtpEmail(null);
+    setDeleteOtpCountdown(0);
+  };
+
+  const handleSendDeleteOtp = async () => {
+    if (!deleteConfirm || isSendingDeleteOtp) return;
+    setIsSendingDeleteOtp(true);
+    try {
+      const res = await fetch(`/api/admin/equipments/${deleteConfirm.id}/delete-otp`, { method: "POST" });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(data?.error || "ไม่สามารถส่งรหัส OTP ได้");
+      setDeleteOtpEmail(data.email || "อีเมลผู้ดูแลระบบ");
+      setDeleteOtpCountdown(60);
+      showToast(data.message || "ส่งรหัส OTP เรียบร้อยแล้ว", "success");
+    } catch (err: any) {
+      showToast(err.message || "ไม่สามารถส่งรหัส OTP ได้", "error");
+    } finally {
+      setIsSendingDeleteOtp(false);
+    }
+  };
+
   const executeDelete = async () => {
     if (!deleteConfirm || isSaving) return;
     setIsSaving(true);
     try {
-      const res = await fetch(`/api/admin/equipments/${deleteConfirm.id}`, { method: "DELETE" });
-      if (!res.ok) throw new Error("Failed to delete");
+      const res = await fetch(`/api/admin/equipments/${deleteConfirm.id}`, {
+        method: "DELETE",
+        ...(deleteNeedsOtp
+          ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify({ otp: deleteOtpCode }) }
+          : {}),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        if (data?.needOtp) {
+          setDeleteNeedsOtp(true);
+          if (deleteNeedsOtp) showToast(data.error || "รหัส OTP ไม่ถูกต้อง", "error");
+          return;
+        }
+        throw new Error(data?.error || "Failed to delete");
+      }
       showToast("ลบอุปกรณ์สำเร็จ", "success");
-      setDeleteConfirm(null);
       if (viewingEquipment?.id === deleteConfirm.id) setViewingEquipment(null);
+      closeDeleteDialog();
       fetchEquipments();
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      showToast("ลบอุปกรณ์ไม่สำเร็จ", "error");
+      showToast(err.message || "ลบอุปกรณ์ไม่สำเร็จ", "error");
     } finally {
       setIsSaving(false);
     }
@@ -630,7 +681,7 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
           openspec/changes/fix-crm-data-integrity). */}
       {deleteConfirm && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-gray-900/40 backdrop-blur-sm" onClick={() => setDeleteConfirm(null)}></div>
+          <div className="absolute inset-0 bg-gray-900/40 backdrop-blur-sm" onClick={() => { if (!isSaving && !isSendingDeleteOtp) closeDeleteDialog(); }}></div>
           <div className="relative bg-white rounded-3xl shadow-2xl max-w-sm w-full p-6 text-center transform transition-all scale-100 opacity-100">
             <div className="w-16 h-16 bg-red-100 text-red-500 rounded-full flex items-center justify-center mx-auto mb-4">
               <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
@@ -641,10 +692,48 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
               {deleteConfirm.serialNumber ? <> (S/N: <strong>{deleteConfirm.serialNumber}</strong>)</> : null}?
               ประวัตินัดหมาย/บันทึกผลงานของอุปกรณ์นี้จะถูกลบไปด้วย และไม่สามารถกู้คืนได้
             </p>
+
+            {deleteNeedsOtp && (
+              <div className="mb-6 text-left">
+                <p className="text-sm text-red-600 font-semibold mb-3 text-center">
+                  ⚠️ อุปกรณ์นี้มีประวัตินัดหมายที่เสร็จสิ้นแล้ว การลบจึงต้องยืนยันด้วยรหัส OTP 6 หลักที่ส่งไปยังอีเมลผู้ดูแลระบบ
+                </p>
+                <button
+                  type="button"
+                  onClick={handleSendDeleteOtp}
+                  disabled={isSendingDeleteOtp || deleteOtpCountdown > 0}
+                  className="w-full mb-3 px-4 py-2.5 bg-orange-100 text-orange-700 font-semibold rounded-xl hover:bg-orange-200 transition disabled:opacity-50"
+                >
+                  {isSendingDeleteOtp
+                    ? "กำลังส่งรหัส OTP..."
+                    : deleteOtpCountdown > 0
+                      ? `ส่งอีกครั้ง (${deleteOtpCountdown}s)`
+                      : deleteOtpEmail
+                        ? "📩 ส่งรหัสอีกครั้ง"
+                        : "📩 ส่งรหัส OTP"}
+                </button>
+                {deleteOtpEmail && (
+                  <p className="text-xs text-emerald-600 mb-3 text-center">✅ ส่งรหัส 6 หลักไปที่ {deleteOtpEmail} แล้ว</p>
+                )}
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={deleteOtpCode}
+                  onChange={(e) => setDeleteOtpCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                  placeholder="กรอกรหัส OTP 6 หลัก"
+                  className="w-full px-4 py-2.5 text-center tracking-widest border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-500"
+                />
+              </div>
+            )}
+
             <div className="flex gap-3 justify-center">
-              <button onClick={() => setDeleteConfirm(null)} className="px-5 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-800 font-semibold rounded-xl transition-colors flex-1">ยกเลิก</button>
-              <button onClick={executeDelete} disabled={isSaving} className="px-5 py-2.5 bg-red-500 hover:bg-red-600 text-white font-semibold rounded-xl transition-colors shadow-sm hover:shadow-md flex-1 disabled:opacity-50">
-                {isSaving ? "กำลังลบ..." : "ลบข้อมูล"}
+              <button onClick={closeDeleteDialog} disabled={isSaving || isSendingDeleteOtp} className="px-5 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-800 font-semibold rounded-xl transition-colors flex-1 disabled:opacity-50">ยกเลิก</button>
+              <button
+                onClick={executeDelete}
+                disabled={isSaving || (deleteNeedsOtp && deleteOtpCode.length !== 6)}
+                className="px-5 py-2.5 bg-red-500 hover:bg-red-600 text-white font-semibold rounded-xl transition-colors shadow-sm hover:shadow-md flex-1 disabled:opacity-50"
+              >
+                {isSaving ? "กำลังลบ..." : deleteNeedsOtp ? "ยืนยันและลบ" : "ลบข้อมูล"}
               </button>
             </div>
           </div>

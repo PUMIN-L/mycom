@@ -14,6 +14,18 @@ export function toLocalDateString(date: Date): string {
   return `${y}-${m}-${d}`;
 }
 
+/**
+ * True for a syntactically valid "YYYY-MM-DD" calendar date. Several date
+ * columns (warranty/schedule dates) are plain VARCHAR compared and sorted
+ * LEXICALLY in SQL — that only sorts chronologically if every stored value is
+ * actually in this shape, so any input crossing into one of those columns
+ * must be checked with this before being trusted.
+ */
+export function isValidDateString(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  return !isNaN(new Date(value + "T00:00:00").getTime());
+}
+
 // Bangkok is UTC+7 year-round (no DST), so a fixed offset is exact. Use these
 // wherever a client-side feature (e.g. "snooze until 6 AM") must land on the
 // same wall-clock Bangkok time regardless of what timezone the ADMIN'S OWN
@@ -23,13 +35,26 @@ export function toLocalDateString(date: Date): string {
 const BANGKOK_OFFSET_HOURS = 7;
 
 /** The Y/M/D that `date` falls on in Bangkok, independent of local timezone. */
-function bangkokParts(date: Date): { year: number; month: number; day: number } {
+export function bangkokParts(date: Date): { year: number; month: number; day: number } {
   const shifted = new Date(date.getTime() + BANGKOK_OFFSET_HOURS * 60 * 60 * 1000);
   return {
     year: shifted.getUTCFullYear(),
     month: shifted.getUTCMonth(), // 0-indexed
     day: shifted.getUTCDate(),
   };
+}
+
+/**
+ * `date` as a "YYYY-MM-DD" Bangkok calendar-day string — for server code
+ * (Vercel's clock is UTC) comparing against VARCHAR date columns that are
+ * stored/compared as plain Bangkok-local date strings (warranty/schedule
+ * dates, dashboard "today" cutoffs). Using `date.toISOString()` or local
+ * getters directly here would pick the wrong Bangkok day for up to 7 hours
+ * around UTC midnight.
+ */
+export function bangkokDateString(date: Date): string {
+  const { year, month, day } = bangkokParts(date);
+  return `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
 /**

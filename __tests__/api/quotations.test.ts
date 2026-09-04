@@ -85,6 +85,22 @@ describe('Quotations API', () => {
       expect(saveQuotationAtomic).not.toHaveBeenCalled();
     });
 
+    it('returns 400 and never saves when the line items compute a negative grand total', async () => {
+      vi.mocked(getSession).mockResolvedValue(adminSession);
+      const res = await savePOST(
+        postReq({
+          id: 'q1',
+          docNo: 'D-1',
+          data: { items: [{ qty: -5, unitPrice: 1000 }] },
+        })
+      );
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toBe(
+        'ยอดรวมสุทธิต้องไม่ติดลบ กรุณาตรวจสอบรายการสินค้า'
+      );
+      expect(saveQuotationAtomic).not.toHaveBeenCalled();
+    });
+
     it('returns 409 when the atomic save reports a docNo conflict', async () => {
       vi.mocked(getSession).mockResolvedValue(adminSession);
       vi.mocked(saveQuotationAtomic).mockRejectedValue(

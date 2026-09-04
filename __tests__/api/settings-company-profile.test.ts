@@ -15,7 +15,29 @@ const sampleProfile = {
 
 // Not mocking otpAttempts.ts — it's real code backed by the mocked
 // settingsStore getSetting/setSetting below (same pattern as
-// settings-contact-email.test.ts).
+// settings-contact-email.test.ts). Its failure counter now also reads/writes
+// through a locked db.ts transaction (see otpAttempts.ts), so that's mocked
+// too, sharing the SAME state Map via the module-level `sharedState` below.
+let sharedState = new Map<string, string>();
+const conn = {
+  query: vi.fn(async (sql: string, params: unknown[] = []) => {
+    if (sql.includes('SELECT value FROM settings')) {
+      const [key] = params as [string];
+      const v = sharedState.get(key);
+      return [v !== undefined ? [{ value: v }] : []];
+    }
+    if (sql.includes('INSERT INTO settings')) {
+      const [key, value] = params as [string, string];
+      sharedState.set(key, value);
+      return [{ affectedRows: 1 }];
+    }
+    throw new Error(`Unhandled SQL in test: ${sql}`);
+  }),
+};
+vi.mock('@/app/lib/db', () => ({
+  withTransaction: vi.fn(async (fn: (c: typeof conn) => Promise<unknown>) => fn(conn)),
+}));
+
 vi.mock('@/app/lib/settingsStore', () => ({
   getCompanyProfile: vi.fn(),
   updateCompanyProfile: vi.fn(),
@@ -42,12 +64,12 @@ const putRequest = (body: any) =>
 // Wires getSetting/setSetting to a shared Map so recordOtpFailure/
 // clearOtpAttempts (real code) observe writes made during the same test.
 function mockSettingsState(initial: Record<string, string> = {}) {
-  const state = new Map<string, string>(Object.entries(initial));
-  vi.mocked(getSetting).mockImplementation(async (key: string) => state.get(key) ?? null);
+  sharedState = new Map<string, string>(Object.entries(initial));
+  vi.mocked(getSetting).mockImplementation(async (key: string) => sharedState.get(key) ?? null);
   vi.mocked(setSetting).mockImplementation(async (key: string, value: string) => {
-    state.set(key, value);
+    sharedState.set(key, value);
   });
-  return state;
+  return sharedState;
 }
 
 // otp/expiresAt/pending live in ONE settings row — seed it as the route

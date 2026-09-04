@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { revalidateTag } from "next/cache";
-import { getAllProducts, addProduct, isProductPublic, ProductData } from "../../lib/productStore";
-import { cleanupExpiredProducts } from "../../lib/productDeleter";
+import {
+  getAllProducts,
+  addProduct,
+  isProductPublic,
+  ProductData,
+  BestSellerRankConflictError,
+} from "../../lib/productStore";
 import { requireAuth, withRoute } from "../../lib/apiHelpers";
 import { getSession } from "../../lib/session";
 
@@ -54,7 +59,15 @@ export const POST = withRoute(
       bestSellerRank: data.bestSellerRank ?? null,
       showBestSellerBadge: data.showBestSellerBadge !== false,
     };
-    const newProduct = await addProduct(product);
+    let newProduct: ProductData;
+    try {
+      newProduct = await addProduct(product);
+    } catch (err) {
+      if (err instanceof BestSellerRankConflictError) {
+        return NextResponse.json({ error: err.message }, { status: 409 });
+      }
+      throw err;
+    }
 
     // Invalidate the cache to ensure clients see the new product
     revalidateTag("products", { expire: 0 });

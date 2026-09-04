@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { computeQuoteTotals, VAT_RATE } from '@/app/lib/quotationTotals';
+import { computeQuoteTotals, hasNegativeLineItem, VAT_RATE } from '@/app/lib/quotationTotals';
 
 describe('quotationTotals', () => {
   beforeEach(() => {
@@ -161,6 +161,43 @@ describe('quotationTotals', () => {
       });
       expect(result.vat).toBe(0);
       expect(result.grandTotal).toBe(1000);
+    });
+
+    it('a negative-qty item with the default (amount) discount type silently nets to a "valid" 0 total', () => {
+      // Documents the exact loophole hasNegativeLineItem() exists to close:
+      // Math.min(discount, subtotal) with discount=0 and a negative subtotal
+      // clamps discountValue down to that same negative subtotal, cancelling
+      // it out — grandTotal ends up 0, not negative, so a naive
+      // `grandTotal < 0` check alone would miss this input entirely.
+      const result = computeQuoteTotals({ items: [{ qty: -5, unitPrice: 1000 }] });
+      expect(result.subtotal).toBe(-5000);
+      expect(result.grandTotal).toBe(0);
+    });
+  });
+
+  describe('hasNegativeLineItem', () => {
+    it('is false for no items', () => {
+      expect(hasNegativeLineItem({})).toBe(false);
+    });
+
+    it('is false when every item has non-negative qty and unitPrice', () => {
+      expect(hasNegativeLineItem({ items: [{ qty: 2, unitPrice: 500 }] })).toBe(false);
+    });
+
+    it('is true when any item has a negative qty', () => {
+      expect(hasNegativeLineItem({ items: [{ qty: -1, unitPrice: 500 }] })).toBe(true);
+    });
+
+    it('is true when any item has a negative unitPrice', () => {
+      expect(hasNegativeLineItem({ items: [{ qty: 1, unitPrice: -500 }] })).toBe(true);
+    });
+
+    it('is true when a later item in a multi-item list is negative', () => {
+      expect(
+        hasNegativeLineItem({
+          items: [{ qty: 1, unitPrice: 500 }, { qty: -1, unitPrice: 100 }],
+        })
+      ).toBe(true);
     });
   });
 });

@@ -200,6 +200,9 @@ export interface CostItem {
 export interface CrmAlerts {
   expiringWarranties: CustomerEquipment[];
   incompleteEquipments: CustomerEquipment[];
+  /** True count of matching (non-snoozed) incomplete equipment, which can
+   * exceed incompleteEquipments.length since that list is capped. */
+  incompleteEquipmentsTotal: number;
   missingDocuments: SalesRecord[];
   upcomingSchedules: Array<
     ServiceSchedule & {

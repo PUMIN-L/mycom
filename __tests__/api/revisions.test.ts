@@ -6,13 +6,26 @@ import { POST as restorePOST } from '@/app/api/revisions/[id]/restore/route';
 
 vi.mock('@/app/lib/revisionStore', () => ({ listRevisions: vi.fn(), getRevision: vi.fn() }));
 import { listRevisions, getRevision } from '@/app/lib/revisionStore';
-vi.mock('@/app/lib/productStore', () => ({ updateProduct: vi.fn() }));
-import { updateProduct } from '@/app/lib/productStore';
-vi.mock('@/app/lib/contentStore', () => ({
-  updateContent: vi.fn(),
-  getContentByProductId: vi.fn(),
+vi.mock('@/app/lib/productStore', () => ({
+  updateProduct: vi.fn(),
+  getAllCategories: vi.fn(),
+  getProduct: vi.fn(),
 }));
-import { updateContent, getContentByProductId } from '@/app/lib/contentStore';
+import { updateProduct, getAllCategories, getProduct } from '@/app/lib/productStore';
+vi.mock('@/app/lib/contentStore', () => {
+  class ContentProductConflictError extends Error {
+    constructor(public readonly productId: string) {
+      super(`product ${productId} already has a content linked to it`);
+      this.name = 'ContentProductConflictError';
+    }
+  }
+  return {
+    updateContent: vi.fn(),
+    getContentByProductId: vi.fn(),
+    ContentProductConflictError,
+  };
+});
+import { updateContent, getContentByProductId, ContentProductConflictError } from '@/app/lib/contentStore';
 vi.mock('@/app/lib/documentStore', () => ({
   updateDocument: vi.fn(),
   getDocument: vi.fn(),
@@ -35,6 +48,10 @@ const ctx = (id: string) => ({ params: Promise.resolve({ id }) });
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(getSession).mockResolvedValue(admin);
+  // Default: the FK a snapshot points at still exists — tests for the
+  // "it's been deleted since" case override these explicitly.
+  vi.mocked(getProduct).mockResolvedValue({ id: 'p9' } as any);
+  vi.mocked(getAllCategories).mockResolvedValue([{ id: 1 } as any]);
 });
 
 describe('GET /api/revisions', () => {
@@ -165,5 +182,51 @@ describe('POST /api/revisions/[id]/restore', () => {
     const res = await restorePOST(postReq() as any, ctx('r2'));
     expect(res.status).toBe(200);
     expect(updateContent).toHaveBeenCalled();
+  });
+
+  // A snapshot's FK-referenced data can go stale between when it was taken
+  // and when someone restores it — the category/product it pointed at may
+  // have been deleted since. Restoring it as-is would silently re-link to a
+  // dangling reference instead of failing loudly.
+  it('400 when restoring a product whose snapshotted categoryId no longer exists', async () => {
+    vi.mocked(getRevision).mockResolvedValue({
+      id: 'r1', entityType: 'product', entityId: 'p1', data: { title_en: 'old', categoryId: 5 }, createdAt: 't',
+    } as any);
+    vi.mocked(getAllCategories).mockResolvedValue([{ id: 1 } as any, { id: 2 } as any]); // 5 is gone
+    const res = await restorePOST(postReq() as any, ctx('r1'));
+    expect(res.status).toBe(400);
+    expect(updateProduct).not.toHaveBeenCalled();
+  });
+
+  it('restores a product whose snapshotted categoryId still exists', async () => {
+    vi.mocked(getRevision).mockResolvedValue({
+      id: 'r1', entityType: 'product', entityId: 'p1', data: { title_en: 'old', categoryId: 5 }, createdAt: 't',
+    } as any);
+    vi.mocked(getAllCategories).mockResolvedValue([{ id: 5 } as any]);
+    vi.mocked(updateProduct).mockResolvedValue({ id: 'p1' } as any);
+    const res = await restorePOST(postReq() as any, ctx('r1'));
+    expect(res.status).toBe(200);
+    expect(updateProduct).toHaveBeenCalledWith('p1', { title_en: 'old', categoryId: 5 });
+  });
+
+  it('400 when restoring a content whose snapshotted productId no longer exists', async () => {
+    vi.mocked(getRevision).mockResolvedValue({
+      id: 'r2', entityType: 'content', entityId: 'c1', data: { title: 'old', productId: 'p9' }, createdAt: 't',
+    } as any);
+    vi.mocked(getProduct).mockResolvedValue(undefined as any); // product deleted since
+    const res = await restorePOST(postReq() as any, ctx('r2'));
+    expect(res.status).toBe(400);
+    expect(updateContent).not.toHaveBeenCalled();
+    expect(getContentByProductId).not.toHaveBeenCalled();
+  });
+
+  it('translates a ContentProductConflictError from updateContent into a 409 (race the pre-check missed)', async () => {
+    vi.mocked(getRevision).mockResolvedValue({
+      id: 'r2', entityType: 'content', entityId: 'c1', data: { title: 'old', productId: 'p9' }, createdAt: 't',
+    } as any);
+    vi.mocked(getContentByProductId).mockResolvedValue(undefined as any); // pre-check saw it as free
+    vi.mocked(updateContent).mockRejectedValue(new ContentProductConflictError('p9'));
+    const res = await restorePOST(postReq() as any, ctx('r2'));
+    expect(res.status).toBe(409);
   });
 });

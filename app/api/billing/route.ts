@@ -7,6 +7,7 @@ import {
 } from "../../lib/billingStore";
 import type { BillingDocType } from "../../lib/billingNumber";
 import { sanitizePlainText } from "../../lib/sanitizeHtml";
+import { computeQuoteTotals, hasNegativeLineItem } from "../../lib/quotationTotals";
 
 // Matches the DB columns (paymentMethod VARCHAR(50), paymentDate VARCHAR(20),
 // paymentRef VARCHAR(255)) and strips HTML — every other free-text field in
@@ -55,6 +56,18 @@ export const POST = withRoute(
     const linkedQuotationId = body?.linkedQuotationId
       ? String(body.linkedQuotationId).slice(0, 36)
       : null;
+    const data = body?.data ?? {};
+
+    // `data` is otherwise opaque client state, but the grand total feeds
+    // real business documents — a negative one (from a negative qty/price
+    // line item) must never be silently accepted and saved.
+    if (hasNegativeLineItem(data) || computeQuoteTotals(data).grandTotal < 0) {
+      return NextResponse.json(
+        { error: "ยอดรวมสุทธิต้องไม่ติดลบ กรุณาตรวจสอบรายการสินค้า" },
+        { status: 400 }
+      );
+    }
+
     const createdAt = new Date().toISOString();
 
     try {
@@ -63,7 +76,7 @@ export const POST = withRoute(
         docType,
         docNo,
         linkedQuotationId,
-        data: body?.data ?? {},
+        data,
         paymentMethod: cleanOptionalField(body?.paymentMethod, 50),
         paymentDate: cleanOptionalField(body?.paymentDate, 20),
         paymentRef: cleanOptionalField(body?.paymentRef, 255),

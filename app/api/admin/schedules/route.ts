@@ -6,6 +6,7 @@ import {
   getEquipment,
   SCHEDULE_TYPES,
 } from "../../../lib/crmStore";
+import { isValidDateString } from "../../../lib/dateFormat";
 
 // GET /api/admin/schedules[?equipmentId=] — list service/call schedules.
 export const GET = withRoute(
@@ -52,9 +53,9 @@ export const POST = withRoute(
     if (
       !data.scheduledDate ||
       typeof data.scheduledDate !== "string" ||
-      !data.scheduledDate.trim()
+      !isValidDateString(data.scheduledDate)
     ) {
-      return jsonError("scheduledDate is required", 400);
+      return jsonError("scheduledDate must be a valid date (YYYY-MM-DD)", 400);
     }
 
     const created = await addSchedule(data);

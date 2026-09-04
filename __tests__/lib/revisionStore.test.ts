@@ -27,6 +27,21 @@ describe('revisionStore', () => {
       await saveRevision('product', 'p1', undefined);
       expect(vi.mocked(query).mock.calls[0][1]![3]).toBe('null');
     });
+
+    it('runs the INSERT through a passed connection instead of the pool-level query', async () => {
+      // Callers inside withTransaction() pass their own conn so the snapshot
+      // is genuinely part of that transaction — a retry of the whole callback
+      // (withTransaction retries on a transient error) can't leave a
+      // duplicate snapshot behind from a rolled-back attempt.
+      const conn = { query: vi.fn().mockResolvedValue([{ affectedRows: 1 }]) };
+      await saveRevision('content', 'c1', { title: 'old' }, conn);
+
+      expect(conn.query).toHaveBeenCalledTimes(1);
+      expect(query).not.toHaveBeenCalled();
+      const [sql, params] = conn.query.mock.calls[0];
+      expect(sql).toContain('INSERT INTO revisions');
+      expect(params[2]).toBe('c1');
+    });
   });
 
   describe('listRevisions', () => {

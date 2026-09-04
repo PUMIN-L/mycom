@@ -7,6 +7,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // updateProduct snapshots the previous value via revisionStore before writing;
 // stub it so it doesn't add a query the call-order assertions don't expect.
 vi.mock('@/app/lib/revisionStore', () => ({ saveRevision: vi.fn() }));
+import { saveRevision } from '@/app/lib/revisionStore';
 
 vi.mock('@/app/lib/db', () => ({
   query: vi.fn(),
@@ -29,6 +30,7 @@ import {
   updateProduct,
   reorderProducts,
   isProductPublic,
+  BestSellerRankConflictError,
 } from '@/app/lib/productStore';
 import type { ProductData } from '@/app/lib/productStore';
 
@@ -324,14 +326,28 @@ describe('productStore', () => {
       isPublished: true,
     };
 
-    it('inserts all columns and returns the product with sanitized descriptions', async () => {
-      const conn = { query: vi.fn().mockResolvedValue([{ affectedRows: 1 }] as any) };
+    // baseProduct has no explicit sortOrder, so addProduct looks up the next
+    // slot in its category first; this stubs that lookup and returns the
+    // INSERT call regardless of how many other queries ran before it.
+    const stubConnAppendingAt = (nextSort: number) => {
+      const conn = {
+        query: vi.fn().mockImplementation(async (sql: string) => {
+          if (sql.includes('MAX(sortOrder)')) return [[{ nextSort }]] as any;
+          return [{ affectedRows: 1 }] as any;
+        }),
+      };
       vi.mocked(withTransaction).mockImplementation(async (fn: any) => fn(conn));
+      const insertCall = () =>
+        conn.query.mock.calls.find((c) => (c[0] as string).includes('INSERT INTO products'))!;
+      return { conn, insertCall };
+    };
+
+    it('inserts all columns and returns the product with sanitized descriptions', async () => {
+      const { insertCall } = stubConnAppendingAt(0);
 
       const result = await addProduct(baseProduct);
 
-      expect(conn.query.mock.calls[0][0]).toContain('INSERT INTO products');
-      expect(conn.query.mock.calls[0][1]).toEqual([
+      expect(insertCall()[1]).toEqual([
         'new-1',
         3,
         '/img/new.png',
@@ -347,45 +363,102 @@ describe('productStore', () => {
         null,
         true,
       ]);
-      expect(result).toEqual({ ...baseProduct, isPublished: true });
+      expect(result).toEqual({ ...baseProduct, isPublished: true, sortOrder: 0 });
+    });
+
+    it('appends after the highest existing sortOrder in the same category instead of resetting to 0', async () => {
+      const { insertCall } = stubConnAppendingAt(5);
+
+      const result = await addProduct(baseProduct);
+
+      expect(insertCall()[1][11]).toBe(5); // 12th param is sortOrder
+      expect(result.sortOrder).toBe(5);
+    });
+
+    it('scopes the next-sortOrder lookup to the product\'s own category', async () => {
+      const conn = { query: vi.fn().mockResolvedValue([[{ nextSort: 0 }]] as any) };
+      vi.mocked(withTransaction).mockImplementation(async (fn: any) => fn(conn));
+
+      await addProduct(baseProduct);
+
+      const lookupCall = conn.query.mock.calls.find((c) => (c[0] as string).includes('MAX(sortOrder)'))!;
+      expect(lookupCall[1]).toEqual([3]); // baseProduct.categoryId
+    });
+
+    it('uses an explicitly supplied sortOrder as-is, skipping the lookup', async () => {
+      const conn = { query: vi.fn().mockResolvedValue([{ affectedRows: 1 }] as any) };
+      vi.mocked(withTransaction).mockImplementation(async (fn: any) => fn(conn));
+
+      const result = await addProduct({ ...baseProduct, sortOrder: 42 });
+
+      expect(conn.query).toHaveBeenCalledTimes(1); // only the INSERT, no lookup
+      expect(conn.query.mock.calls[0][1][11]).toBe(42);
+      expect(result.sortOrder).toBe(42);
     });
 
     it('coerces isPublished to false when explicitly false', async () => {
-      const conn = { query: vi.fn().mockResolvedValue([{ affectedRows: 1 }] as any) };
-      vi.mocked(withTransaction).mockImplementation(async (fn: any) => fn(conn));
+      const { insertCall } = stubConnAppendingAt(0);
 
       const result = await addProduct({ ...baseProduct, isPublished: false });
 
       // 11th param is isPublished.
-      expect(conn.query.mock.calls[0][1][10]).toBe(false);
+      expect(insertCall()[1][10]).toBe(false);
       expect(result.isPublished).toBe(false);
     });
 
     it('defaults isPublished to true when undefined', async () => {
-      const conn = { query: vi.fn().mockResolvedValue([{ affectedRows: 1 }] as any) };
-      vi.mocked(withTransaction).mockImplementation(async (fn: any) => fn(conn));
+      const { insertCall } = stubConnAppendingAt(0);
 
       const { isPublished, ...noFlag } = baseProduct;
       const result = await addProduct(noFlag as ProductData);
 
       // 11th param is isPublished.
-      expect(conn.query.mock.calls[0][1][10]).toBe(true);
+      expect(insertCall()[1][10]).toBe(true);
       expect(result.isPublished).toBe(true);
     });
 
     it('sanitizes rich-text descriptions on write, stripping scripts', async () => {
-      const conn = { query: vi.fn().mockResolvedValue([{ affectedRows: 1 }] as any) };
-      vi.mocked(withTransaction).mockImplementation(async (fn: any) => fn(conn));
+      const { insertCall } = stubConnAppendingAt(0);
 
       const result = await addProduct({
         ...baseProduct,
         desc_th: '<p>safe</p><script>alert(1)</script>',
       });
 
-      const storedDescTh = conn.query.mock.calls[0][1][6] as string;
+      const storedDescTh = insertCall()[1][6] as string;
       expect(storedDescTh).not.toContain('<script>');
       expect(storedDescTh).toContain('safe');
       expect(result.desc_th).not.toContain('<script>');
+    });
+
+    it('rejects a bestSellerRank already held by another product instead of creating a duplicate', async () => {
+      const conn = {
+        query: vi.fn().mockImplementation(async (sql: string) => {
+          if (sql.includes('MAX(sortOrder)')) return [[{ nextSort: 0 }]] as any;
+          if (sql.includes('WHERE bestSellerRank = ?')) return [[{ id: 'other-product' }]] as any;
+          return [{ affectedRows: 1 }] as any;
+        }),
+      };
+      vi.mocked(withTransaction).mockImplementation(async (fn: any) => fn(conn));
+
+      await expect(addProduct({ ...baseProduct, bestSellerRank: 1 })).rejects.toThrow(
+        BestSellerRankConflictError
+      );
+      expect(conn.query.mock.calls.some((c) => (c[0] as string).includes('INSERT INTO products'))).toBe(false);
+    });
+
+    it('allows a bestSellerRank that no other product holds', async () => {
+      const conn = {
+        query: vi.fn().mockImplementation(async (sql: string) => {
+          if (sql.includes('MAX(sortOrder)')) return [[{ nextSort: 0 }]] as any;
+          if (sql.includes('WHERE bestSellerRank = ?')) return [[]] as any;
+          return [{ affectedRows: 1 }] as any;
+        }),
+      };
+      vi.mocked(withTransaction).mockImplementation(async (fn: any) => fn(conn));
+
+      const result = await addProduct({ ...baseProduct, bestSellerRank: 1 });
+      expect(result.bestSellerRank).toBe(1);
     });
   });
 
@@ -444,6 +517,11 @@ describe('productStore', () => {
       expect(updateCall[1]).toEqual(['Updated', false, 'p1']);
       expect(result!.title_en).toBe('Updated');
       expect(result!.isPublished).toBe(false);
+
+      // Snapshot runs through the transaction's own connection, not the
+      // pool-level query — a retried attempt (withTransaction retries the
+      // whole callback on a transient error) can't leave a duplicate behind.
+      expect(saveRevision).toHaveBeenCalledWith('product', 'p1', expect.anything(), conn);
     });
 
     it('sanitizes description columns in the UPDATE', async () => {
@@ -480,6 +558,42 @@ describe('productStore', () => {
       // Two SELECTs in getProduct calls
       expect(conn.query).toHaveBeenCalledTimes(0);
       expect(result!.id).toBe('p1');
+    });
+
+    it('rejects a bestSellerRank already held by a different product', async () => {
+      vi.mocked(query).mockImplementation(async (sql: string) => {
+        if (sql.includes('SELECT * FROM products')) return [[makeRow({ bestSellerRank: null })]] as any;
+        if (sql.includes('SELECT supplierId')) return [[]] as any;
+        return [] as any;
+      });
+      const conn = {
+        query: vi.fn().mockImplementation(async (sql: string) => {
+          if (sql.includes('WHERE bestSellerRank = ?')) return [[{ id: 'other-product' }]] as any;
+          return [{ affectedRows: 1 }] as any;
+        }),
+      };
+      vi.mocked(withTransaction).mockImplementation(async (fn: any) => fn(conn));
+
+      await expect(updateProduct('p1', { bestSellerRank: 1 })).rejects.toThrow(
+        BestSellerRankConflictError
+      );
+      expect(conn.query.mock.calls.some((c) => (c[0] as string).startsWith('UPDATE products'))).toBe(false);
+    });
+
+    it('excludes the product itself from the bestSellerRank collision check', async () => {
+      vi.mocked(query).mockImplementation(async (sql: string) => {
+        if (sql.includes('SELECT * FROM products')) return [[makeRow({ bestSellerRank: 1 })]] as any;
+        if (sql.includes('SELECT supplierId')) return [[]] as any;
+        return [] as any;
+      });
+      const conn = { query: vi.fn().mockResolvedValue([{ affectedRows: 1 }] as any) };
+      vi.mocked(withTransaction).mockImplementation(async (fn: any) => fn(conn));
+
+      // Re-saving the same rank the product already holds is a no-op change,
+      // not a self-collision — the guard must skip the check entirely.
+      await updateProduct('p1', { bestSellerRank: 1 });
+
+      expect(conn.query.mock.calls.some((c) => (c[0] as string).includes('WHERE bestSellerRank = ?'))).toBe(false);
     });
   });
 

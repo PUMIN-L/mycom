@@ -25,6 +25,7 @@ import {
   sendCompanyProfileOtpEmail,
   sendOrphanDeleteOtpEmail,
   sendScheduleDeleteOtpEmail,
+  sendEquipmentDeleteOtpEmail,
   type ContactMessage,
 } from '@/app/lib/mailer';
 
@@ -247,6 +248,42 @@ describe('mailer', () => {
       sendMailMock.mockRejectedValueOnce(new Error('SMTP down'));
       await expect(
         sendScheduleDeleteOtpEmail('a@site.com', '222222', { scheduleType: 'service', scheduledDate: '2026-01-01' })
+      ).rejects.toThrow('SMTP down');
+    });
+  });
+
+  describe('sendEquipmentDeleteOtpEmail', () => {
+    it('sends a single-recipient OTP email naming the equipment and completed-schedule count', async () => {
+      process.env.SMTP_USER = 'system@example.com';
+      await sendEquipmentDeleteOtpEmail('admin@site.com', '333333', {
+        productName: 'เครื่องชั่ง A',
+        serialNumber: 'SN-001',
+        completedScheduleCount: 2,
+      });
+
+      const mail = sendMailMock.mock.calls[0][0];
+      expect(mail.from).toEqual({ name: 'ระบบเว็บไซต์ (Profin Lab Scale)', address: 'system@example.com' });
+      expect(mail.to).toEqual({ name: '', address: 'admin@site.com' });
+      expect(mail.text).toContain('333333');
+      expect(mail.text).toContain('เครื่องชั่ง A');
+      expect(mail.text).toContain('SN-001');
+      expect(mail.text).toContain('2 รายการ');
+    });
+
+    it('omits the serial number clause when not given', async () => {
+      process.env.SMTP_USER = 'system@example.com';
+      await sendEquipmentDeleteOtpEmail('admin@site.com', '333333', {
+        productName: 'เครื่องชั่ง A',
+        completedScheduleCount: 1,
+      });
+      const mail = sendMailMock.mock.calls[0][0];
+      expect(mail.text).not.toContain('S/N');
+    });
+
+    it('propagates SMTP failures (throws)', async () => {
+      sendMailMock.mockRejectedValueOnce(new Error('SMTP down'));
+      await expect(
+        sendEquipmentDeleteOtpEmail('a@site.com', '333333', { productName: 'X', completedScheduleCount: 1 })
       ).rejects.toThrow('SMTP down');
     });
   });

@@ -25,6 +25,29 @@ vi.mock('@/app/lib/settingsStore', () => ({
 }));
 import { getSetting, setSetting } from '@/app/lib/settingsStore';
 
+// otpAttempts.ts's failure counter reads/writes through a locked db.ts
+// transaction (see otpAttempts.ts) — shares state with the getSetting/
+// setSetting mock above via the module-level `sharedState` used below.
+let sharedState = new Map<string, string>();
+const conn = {
+  query: vi.fn(async (sql: string, params: unknown[] = []) => {
+    if (sql.includes('SELECT value FROM settings')) {
+      const [key] = params as [string];
+      const v = sharedState.get(key);
+      return [v !== undefined ? [{ value: v }] : []];
+    }
+    if (sql.includes('INSERT INTO settings')) {
+      const [key, value] = params as [string, string];
+      sharedState.set(key, value);
+      return [{ affectedRows: 1 }];
+    }
+    throw new Error(`Unhandled SQL in test: ${sql}`);
+  }),
+};
+vi.mock('@/app/lib/db', () => ({
+  withTransaction: vi.fn(async (fn: (c: typeof conn) => Promise<unknown>) => fn(conn)),
+}));
+
 vi.mock('@/app/lib/mailer', () => ({
   isMailConfigured: vi.fn().mockReturnValue(true),
   sendOrphanDeleteOtpEmail: vi.fn().mockResolvedValue(undefined),
@@ -46,12 +69,12 @@ const req = (url: string, method: string, body?: any) =>
 // A fresh, mutable settings-table simulation per test so the persistent
 // attempt counter behaves the way it would across real requests.
 function mockSettingsState(initial: Record<string, string> = {}) {
-  const state = new Map(Object.entries(initial));
-  vi.mocked(getSetting).mockImplementation(async (key: string) => state.get(key) ?? null);
+  sharedState = new Map(Object.entries(initial));
+  vi.mocked(getSetting).mockImplementation(async (key: string) => sharedState.get(key) ?? null);
   vi.mocked(setSetting).mockImplementation(async (key: string, value: string) => {
-    state.set(key, value);
+    sharedState.set(key, value);
   });
-  return state;
+  return sharedState;
 }
 
 beforeEach(() => {

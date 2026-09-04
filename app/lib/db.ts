@@ -661,18 +661,30 @@ async function bootstrapSchemaOnce(): Promise<void> {
       if (!isBenignSchemaError(error)) throw error;
     }
 
-    // v23: Add document tracking and warranty fields to sales_records
-    try {
-      await connection.query(`ALTER TABLE sales_records 
-        ADD COLUMN poRef VARCHAR(255) NOT NULL DEFAULT '',
-        ADD COLUMN deliveryRef VARCHAR(255) NOT NULL DEFAULT '',
-        ADD COLUMN invoiceRef VARCHAR(255) NOT NULL DEFAULT '',
-        ADD COLUMN receiptRef VARCHAR(255) NOT NULL DEFAULT '',
-        ADD COLUMN warrantyStartDate DATE DEFAULT NULL,
-        ADD COLUMN warrantyEndDate DATE DEFAULT NULL`
-      );
-    } catch (error) {
-      if (!isBenignSchemaError(error)) throw error;
+    // v23: Add document tracking and warranty fields to sales_records.
+    // One ALTER per column (not a single multi-column ALTER): a multi-column
+    // ALTER is one all-or-nothing statement, but on a database where an
+    // earlier run got interrupted partway through applying it (crash, TiDB
+    // splitting it into multiple internal DDL jobs), some of these columns
+    // can already exist while others don't. Re-running the multi-column form
+    // would hit ER_DUP_FIELDNAME on the FIRST already-existing column and
+    // abort the whole statement — silently leaving the later columns missing
+    // forever, since that error is swallowed as benign on every future run
+    // too. Each column added (and checked) independently is re-runnable from
+    // any partial state.
+    for (const columnDef of [
+      "ADD COLUMN IF NOT EXISTS poRef VARCHAR(255) NOT NULL DEFAULT ''",
+      "ADD COLUMN IF NOT EXISTS deliveryRef VARCHAR(255) NOT NULL DEFAULT ''",
+      "ADD COLUMN IF NOT EXISTS invoiceRef VARCHAR(255) NOT NULL DEFAULT ''",
+      "ADD COLUMN IF NOT EXISTS receiptRef VARCHAR(255) NOT NULL DEFAULT ''",
+      "ADD COLUMN IF NOT EXISTS warrantyStartDate DATE DEFAULT NULL",
+      "ADD COLUMN IF NOT EXISTS warrantyEndDate DATE DEFAULT NULL",
+    ]) {
+      try {
+        await connection.query(`ALTER TABLE sales_records ${columnDef}`);
+      } catch (error) {
+        if (!isBenignSchemaError(error)) throw error;
+      }
     }
 
     // ── Sale cost items — breakdown of costs per sale (transport, service,
@@ -977,14 +989,32 @@ const BENIGN_SCHEMA_ERROR_CODES = new Set([
   "ER_DUP_FIELDNAME", // column already exists
   "ER_DUP_KEYNAME", // index already exists
   "ER_PARSE_ERROR", // `IF NOT EXISTS` syntax unsupported on this engine
-  "ER_CANT_CREATE_TABLE", // usually foreign key already exists
   "ER_FK_DUP_NAME", // foreign key already exists
   "ER_DUP_KEY", // duplicate key/constraint
 ]);
 
+// ER_CANT_CREATE_TABLE (1005) is a generic wrapper MySQL/TiDB uses for many
+// different `ALTER TABLE ADD CONSTRAINT` failures. "the constraint name
+// already exists" — the case this bootstrap re-runs into on every deploy — is
+// truly benign, but the SAME code also covers a constraint that genuinely
+// can't be created (existing data violates it, the referenced column isn't
+// indexed, a type/collation mismatch): those must NOT be swallowed, or the FK
+// (and whatever ON DELETE CASCADE behavior the app relies on, e.g. deleting
+// an equipment cascading to its schedules/logs) silently never exists while
+// schema_version still gets stamped as if it did. Telling them apart needs
+// the message text, not just the code.
+const DUPLICATE_CONSTRAINT_MESSAGE_HINTS = ["duplicate", "already exists"];
+
 function isBenignSchemaError(error: unknown): boolean {
-  const code = (error as { code?: string } | null | undefined)?.code;
-  return code !== undefined && BENIGN_SCHEMA_ERROR_CODES.has(code);
+  const err = error as { code?: string; message?: string; sqlMessage?: string } | null | undefined;
+  const code = err?.code;
+  if (code === undefined) return false;
+  if (BENIGN_SCHEMA_ERROR_CODES.has(code)) return true;
+  if (code === "ER_CANT_CREATE_TABLE") {
+    const text = `${err?.message ?? ""} ${err?.sqlMessage ?? ""}`.toLowerCase();
+    return DUPLICATE_CONSTRAINT_MESSAGE_HINTS.some((hint) => text.includes(hint));
+  }
+  return false;
 }
 
 // ── Lightweight connectivity probe (for /api/health) ─────────────────────────

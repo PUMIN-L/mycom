@@ -1,8 +1,12 @@
 // @vitest-environment node
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-vi.mock('@/app/lib/db', () => ({ query: vi.fn() }));
-import { query } from '@/app/lib/db';
+const conn = { query: vi.fn() };
+vi.mock('@/app/lib/db', () => ({
+  query: vi.fn(),
+  withTransaction: vi.fn(async (fn: (c: typeof conn) => Promise<unknown>) => fn(conn)),
+}));
+import { query, withTransaction } from '@/app/lib/db';
 import {
   addSalesRecord,
   getSalesRecord,
@@ -10,6 +14,7 @@ import {
   deleteSalesRecord,
   listSalesRecords,
   getDashboardOverview,
+  getPeriodDateRange,
   getRevenueByMonth,
   getRevenueByDay,
   getRevenueByQuarter,
@@ -18,10 +23,16 @@ import {
   getTopCustomers,
   getSalespersonLeaderboard,
   getSmartInsights,
+  recalcCostAmount,
+  getCostItems,
+  addCostItem,
+  updateCostItem,
+  deleteCostItem,
 } from '@/app/lib/salesDashboardStore';
 
 beforeEach(() => {
   vi.clearAllMocks();
+  conn.query.mockReset();
 });
 
 describe('salesDashboardStore', () => {
@@ -166,6 +177,208 @@ describe('salesDashboardStore', () => {
       const sqlCall = vi.mocked(query).mock.calls[0];
       expect(sqlCall[0]).toContain('WHERE sr.salespersonId = ? AND sr.customerId = ? AND sr.categoryId = ? AND sr.saleDate >= ? AND sr.saleDate <= ?');
       expect(sqlCall[1]).toEqual(['sp-1', 'c-1', 2, '2026-01-01', '2026-12-31']);
+    });
+  });
+
+  describe('getPeriodDateRange', () => {
+    it('defaults to the Bangkok calendar month, not the server-local one, near a UTC day/month boundary', () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      try {
+        // 2026-01-31T20:00:00Z is already 2026-02-01 03:00 in Bangkok.
+        vi.setSystemTime(new Date('2026-01-31T20:00:00Z'));
+        const range = getPeriodDateRange('month');
+        expect(range.curStart).toBe('2026-02-01');
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('defaults to the Bangkok calendar year near a UTC year boundary', () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      try {
+        // 2025-12-31T20:00:00Z is already 2026-01-01 03:00 in Bangkok.
+        vi.setSystemTime(new Date('2025-12-31T20:00:00Z'));
+        const range = getPeriodDateRange('year');
+        expect(range.curStart).toBe('2026-01-01');
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('respects an explicit periodValue regardless of the current date', () => {
+      const range = getPeriodDateRange('month', '2026-03');
+      expect(range).toMatchObject({ curStart: '2026-03-01', curEnd: '2026-04-01', prevStart: '2026-02-01' });
+    });
+  });
+
+  describe('getDashboardOverview', () => {
+    // 9 sequential queries: curRows, curExpRows, prevRows, prevExpRows,
+    // curCust, prevCust, curQuot, prevQuot, expWarranty.
+    const mockAllQueries = (overrides: Partial<Record<string, any>> = {}) => {
+      vi.mocked(query)
+        .mockResolvedValueOnce([[{ revenue: overrides.curRevenue ?? 0, deals: overrides.curDeals ?? 0, cost: overrides.curCost ?? 0 }]] as any)
+        .mockResolvedValueOnce([[{ expenses: overrides.curExp ?? 0 }]] as any)
+        .mockResolvedValueOnce([[{ revenue: overrides.prevRevenue ?? 0, deals: overrides.prevDeals ?? 0, cost: overrides.prevCost ?? 0 }]] as any)
+        .mockResolvedValueOnce([[{ expenses: overrides.prevExp ?? 0 }]] as any)
+        .mockResolvedValueOnce([[{ cnt: overrides.curCust ?? 0 }]] as any)
+        .mockResolvedValueOnce([[{ cnt: overrides.prevCust ?? 0 }]] as any)
+        .mockResolvedValueOnce([[{ cnt: overrides.curQuot ?? 0 }]] as any)
+        .mockResolvedValueOnce([[{ cnt: overrides.prevQuot ?? 0 }]] as any)
+        .mockResolvedValueOnce([[{ cnt: overrides.expiring ?? 0 }]] as any);
+    };
+
+    it('computes revenue/cost/profit and new-customer counts for both periods', async () => {
+      mockAllQueries({ curRevenue: 100000, curCost: 20000, curExp: 5000, curDeals: 10, curCust: 3, curQuot: 8, expiring: 2 });
+
+      const result = await getDashboardOverview('2026-08-01', '2026-09-01', '2026-07-01', '2026-08-01');
+
+      expect(result.currentPeriod).toEqual({
+        revenue: 100000, deals: 10, newCustomers: 3, quotations: 8, cost: 25000, profit: 75000,
+      });
+      expect(result.expiringWarranties).toBe(2);
+    });
+
+    it('counts ONLY quotation docNos (QT prefix), not invoices/billing notes/receipts sharing the same ledger', async () => {
+      mockAllQueries();
+
+      await getDashboardOverview('2026-08-01', '2026-09-01', '2026-07-01', '2026-08-01');
+
+      const quotCalls = vi.mocked(query).mock.calls.filter(([sql]) => String(sql).includes('used_docnos'));
+      expect(quotCalls).toHaveLength(2); // current + previous period
+      for (const [sql] of quotCalls) {
+        expect(sql).toContain("docNo LIKE 'QT%'");
+      }
+    });
+
+    it('uses the Bangkok calendar date for the warranty-expiry window, not the server-local one', async () => {
+      // 2026-01-01T20:00:00Z is already 2026-01-02 03:00 in Bangkok (UTC+7).
+      vi.useFakeTimers({ toFake: ['Date'] });
+      try {
+        vi.setSystemTime(new Date('2026-01-01T20:00:00Z'));
+        mockAllQueries();
+
+        await getDashboardOverview('2026-08-01', '2026-09-01', '2026-07-01', '2026-08-01');
+
+        const warrantyCall = vi.mocked(query).mock.calls.find(([sql]) => String(sql).includes('customer_equipments'));
+        expect(warrantyCall?.[1]).toEqual(['2026-01-02', '2026-02-01']);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
+  describe('Cost Items', () => {
+    // recalcCostAmount locks the sale row (SELECT ... FOR UPDATE) before
+    // summing+writing costAmount, so two concurrent cost-item edits on the
+    // SAME sale can't interleave their read-modify-write and leave
+    // costAmount out of sync with the true sum of sale_cost_items.
+    it('recalcCostAmount locks the sale row, sums the items, and writes costAmount atomically', async () => {
+      conn.query
+        .mockResolvedValueOnce([[{ id: 'sale-1' }]]) // SELECT ... FOR UPDATE
+        .mockResolvedValueOnce([[{ total: '300.00' }]]) // SELECT SUM
+        .mockResolvedValueOnce([{ affectedRows: 1 }]); // UPDATE costAmount
+
+      const total = await recalcCostAmount('sale-1');
+
+      expect(total).toBe(300);
+      expect(withTransaction).toHaveBeenCalledTimes(1);
+      expect(conn.query.mock.calls[0][0]).toContain('FOR UPDATE');
+      expect(conn.query.mock.calls[1][0]).toContain('SUM(amount)');
+      expect(conn.query.mock.calls[2][0]).toContain('UPDATE sales_records');
+      expect(conn.query.mock.calls[2][1]).toEqual([300, 'sale-1']);
+    });
+
+    it('recalcCostAmount treats no cost items as a total of 0', async () => {
+      conn.query
+        .mockResolvedValueOnce([[{ id: 'sale-1' }]])
+        .mockResolvedValueOnce([[{ total: '0.00' }]])
+        .mockResolvedValueOnce([{ affectedRows: 1 }]);
+
+      expect(await recalcCostAmount('sale-1')).toBe(0);
+    });
+
+    it('addCostItem inserts a sanitized item and recalculates costAmount', async () => {
+      vi.mocked(query)
+        .mockResolvedValueOnce([{ affectedRows: 1 }] as any) // INSERT sale_cost_items
+        .mockResolvedValueOnce([[{ id: 'ci-1', salesRecordId: 'sale-1', costType: 'transport', label: 'ค่ารถ', amount: 100, note: '' }]] as any); // final SELECT
+      conn.query
+        .mockResolvedValueOnce([[{ id: 'sale-1' }]])
+        .mockResolvedValueOnce([[{ total: '100.00' }]])
+        .mockResolvedValueOnce([{ affectedRows: 1 }]);
+
+      const item = await addCostItem('sale-1', { costType: 'transport', label: '<b>ค่ารถ</b>', amount: 100 });
+
+      expect(item.id).toBe('ci-1');
+      const insertCall = vi.mocked(query).mock.calls[0];
+      expect(insertCall[0]).toContain('INSERT INTO sale_cost_items');
+      expect(insertCall[1]![2]).toBe('transport');
+      expect(insertCall[1]![3]).toBe('ค่ารถ'); // HTML stripped
+      expect(withTransaction).toHaveBeenCalledTimes(1); // recalc ran exactly once
+    });
+
+    it('addCostItem falls back to "other" for an invalid costType', async () => {
+      vi.mocked(query)
+        .mockResolvedValueOnce([{ affectedRows: 1 }] as any)
+        .mockResolvedValueOnce([[{ id: 'ci-1' }]] as any);
+      conn.query
+        .mockResolvedValueOnce([[{ id: 'sale-1' }]])
+        .mockResolvedValueOnce([[{ total: '0.00' }]])
+        .mockResolvedValueOnce([{ affectedRows: 1 }]);
+
+      await addCostItem('sale-1', { costType: 'not-a-real-type' as any, amount: 1 });
+      expect(vi.mocked(query).mock.calls[0][1]![2]).toBe('other');
+    });
+
+    it('updateCostItem merges onto the existing item and recalculates costAmount', async () => {
+      vi.mocked(query)
+        .mockResolvedValueOnce([[{ id: 'ci-1', salesRecordId: 'sale-1', costType: 'other', label: 'x', amount: 50, note: '' }]] as any) // existing
+        .mockResolvedValueOnce([{ affectedRows: 1 }] as any) // UPDATE
+        .mockResolvedValueOnce([[{ id: 'ci-1', amount: 75 }]] as any); // final SELECT
+      conn.query
+        .mockResolvedValueOnce([[{ id: 'sale-1' }]])
+        .mockResolvedValueOnce([[{ total: '75.00' }]])
+        .mockResolvedValueOnce([{ affectedRows: 1 }]);
+
+      const item = await updateCostItem('ci-1', { amount: 75 });
+      expect(item?.amount).toBe(75);
+      expect(withTransaction).toHaveBeenCalledTimes(1);
+    });
+
+    it('updateCostItem returns null for a missing item without recalculating', async () => {
+      vi.mocked(query).mockResolvedValueOnce([[]] as any);
+      const result = await updateCostItem('missing', { amount: 1 });
+      expect(result).toBeNull();
+      expect(withTransaction).not.toHaveBeenCalled();
+    });
+
+    it('deleteCostItem removes the item and recalculates costAmount for its sale', async () => {
+      vi.mocked(query)
+        .mockResolvedValueOnce([[{ salesRecordId: 'sale-1' }]] as any) // existing lookup
+        .mockResolvedValueOnce([{ affectedRows: 1 }] as any); // DELETE
+      conn.query
+        .mockResolvedValueOnce([[{ id: 'sale-1' }]])
+        .mockResolvedValueOnce([[{ total: '0.00' }]])
+        .mockResolvedValueOnce([{ affectedRows: 1 }]);
+
+      const result = await deleteCostItem('ci-1');
+      expect(result).toBe(true);
+      expect(withTransaction).toHaveBeenCalledTimes(1);
+    });
+
+    it('deleteCostItem does not recalculate when nothing was deleted', async () => {
+      vi.mocked(query)
+        .mockResolvedValueOnce([[]] as any) // existing lookup finds nothing
+        .mockResolvedValueOnce([{ affectedRows: 0 }] as any); // DELETE affects nothing
+
+      const result = await deleteCostItem('missing');
+      expect(result).toBe(false);
+      expect(withTransaction).not.toHaveBeenCalled();
+    });
+
+    it('getCostItems returns items ordered by createdAt', async () => {
+      vi.mocked(query).mockResolvedValueOnce([[{ id: 'ci-1' }, { id: 'ci-2' }]] as any);
+      const items = await getCostItems('sale-1');
+      expect(items).toHaveLength(2);
     });
   });
 
@@ -364,6 +577,31 @@ describe('salesDashboardStore', () => {
       expect(insights.some((i) => i.title.includes('เครื่องชั่ง'))).toBe(true);
       expect(insights.some((i) => i.title.includes('Repeat Customer Rate: 40%'))).toBe(true);
       expect(insights.some((i) => i.title.includes('2 เครื่องประกันจะหมด'))).toBe(true);
+    });
+
+    it('uses the Bangkok calendar month for the dormant-customer 6-month cutoff, not the server-local one', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      try {
+        // 2026-01-31T20:00:00Z is already 2026-02-01 in Bangkok, one calendar
+        // month later than the server's own UTC date at that instant.
+        vi.setSystemTime(new Date('2026-01-31T20:00:00Z'));
+        vi.mocked(query)
+          .mockResolvedValueOnce([[{ rev: 0 }]] as any)
+          .mockResolvedValueOnce([[{ rev: 0 }]] as any)
+          .mockResolvedValueOnce([[{ cnt: 0 }]] as any)
+          .mockResolvedValueOnce([[{}]] as any)
+          .mockResolvedValueOnce([[{ total: 0, repeaters: 0 }]] as any)
+          .mockResolvedValueOnce([[{ cnt: 0 }]] as any);
+
+        await getSmartInsights('2026-08-01', '2026-09-01', '2026-07-01', '2026-08-01', 'เดือนนี้');
+
+        const dormantCall = vi.mocked(query).mock.calls.find(([sql]) => String(sql).includes('sales_records') && String(sql).includes('NOT IN'));
+        // 6 months before Bangkok's 2026-02-01 is 2025-08-01, not 2025-07-01
+        // (which is what the server's own UTC date at that instant would give).
+        expect(dormantCall?.[1]).toEqual(['2025-08-01']);
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 });

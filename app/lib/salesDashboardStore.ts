@@ -2,6 +2,7 @@ import "server-only";
 import { query, withTransaction } from "./db";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { sanitizePlainText } from "./sanitizeHtml";
+import { bangkokDateString, bangkokParts } from "./dateFormat";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 import type { SalesRecord, CostItem } from "./types";
@@ -287,10 +288,13 @@ export async function listSalesRecords(filters?: {
 export function getPeriodDateRange(periodType?: string, periodValue?: string) {
   let curStart, curEnd, prevStart, prevEnd;
   let periodLabel = "เดือนนี้";
-  const now = new Date();
+  // Only the DEFAULT (no explicit periodValue) reads "now" — use Bangkok's
+  // calendar date/month, not the server's own (UTC on Vercel), or the
+  // default view picks the wrong month/quarter/year for up to 7 hours a day.
+  const { year: bkkYear, month: bkkMonth } = bangkokParts(new Date());
 
   if (periodType === 'year') {
-    const y = parseInt(periodValue || now.getFullYear().toString(), 10);
+    const y = parseInt(periodValue || bkkYear.toString(), 10);
     curStart = `${y}-01-01`;
     curEnd = `${y + 1}-01-01`;
     prevStart = `${y - 1}-01-01`;
@@ -298,8 +302,8 @@ export function getPeriodDateRange(periodType?: string, periodValue?: string) {
     periodLabel = `ปี ${y}`;
   } else if (periodType === 'quarter') {
     const parts = (periodValue || "").split('-Q');
-    const y = parseInt(parts[0], 10) || now.getFullYear();
-    const q = parseInt(parts[1], 10) || Math.floor(now.getMonth() / 3) + 1;
+    const y = parseInt(parts[0], 10) || bkkYear;
+    const q = parseInt(parts[1], 10) || Math.floor(bkkMonth / 3) + 1;
     const startMonth = (q - 1) * 3;
     curStart = `${y}-${String(startMonth + 1).padStart(2, "0")}-01`;
     const curEndDate = new Date(y, startMonth + 3, 1);
@@ -311,8 +315,8 @@ export function getPeriodDateRange(periodType?: string, periodValue?: string) {
   } else {
     // month (default)
     const parts = (periodValue || "").split('-');
-    const y = parseInt(parts[0], 10) || now.getFullYear();
-    const m = parts.length > 1 ? parseInt(parts[1], 10) - 1 : now.getMonth();
+    const y = parseInt(parts[0], 10) || bkkYear;
+    const m = parts.length > 1 ? parseInt(parts[1], 10) - 1 : bkkMonth;
     curStart = `${y}-${String(m + 1).padStart(2, "0")}-01`;
     const nextMonth = new Date(y, m + 1, 1);
     curEnd = `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, "0")}-01`;
@@ -367,21 +371,27 @@ export async function getDashboardOverview(
     `SELECT COUNT(*) AS cnt FROM customers WHERE createdAt >= ? AND createdAt < ?`,
     [prevStart, prevEnd]
   );
-  // Quotations
+  // Quotations — used_docnos is a SHARED ledger for both quotations (docNo
+  // prefix "QT") and billing documents (prefixes "INV"/"BN"/"RC"), so this
+  // must filter to quotations only or it silently counts every issued
+  // document type as a "quotation" (permanently deflating Conversion Rate
+  // for any business that also issues billing documents).
   const [curQuot] = await query<RowDataPacket[]>(
-    `SELECT COUNT(*) AS cnt FROM used_docnos WHERE createdAt >= ? AND createdAt < ?`,
+    `SELECT COUNT(*) AS cnt FROM used_docnos WHERE docNo LIKE 'QT%' AND createdAt >= ? AND createdAt < ?`,
     [curStart, curEnd]
   );
   const [prevQuot] = await query<RowDataPacket[]>(
-    `SELECT COUNT(*) AS cnt FROM used_docnos WHERE createdAt >= ? AND createdAt < ?`,
+    `SELECT COUNT(*) AS cnt FROM used_docnos WHERE docNo LIKE 'QT%' AND createdAt >= ? AND createdAt < ?`,
     [prevStart, prevEnd]
   );
-  // Expiring warranties (≤30 days)
+  // Expiring warranties (≤30 days) — Bangkok calendar date, not the server's
+  // own (UTC on Vercel), or this window is off by up to a day for 7 hours
+  // every day.
   const now = new Date();
-  const thirtyDaysLater = formatLocalDate(
+  const thirtyDaysLater = bangkokDateString(
     new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000)
   );
-  const today = formatLocalDate(now);
+  const today = bangkokDateString(now);
   const [expWarranty] = await query<RowDataPacket[]>(
     `SELECT COUNT(*) AS cnt FROM customer_equipments
      WHERE warrantyEndDate IS NOT NULL AND warrantyEndDate >= ? AND warrantyEndDate <= ?
@@ -714,9 +724,10 @@ export async function getSmartInsights(
     });
   }
 
-  const year = now.getFullYear();
-  const month = now.getMonth();
-  
+  // Bangkok calendar date/month, not the server's own (UTC on Vercel) — see
+  // getDashboardOverview/getPeriodDateRange for the same reasoning.
+  const { year, month } = bangkokParts(now);
+
   // 2. Customers with no purchase in 6+ months
   const sixMonthsDate = new Date(year, month - 6, 1);
   const sixMonthsAgo = `${sixMonthsDate.getFullYear()}-${String(sixMonthsDate.getMonth() + 1).padStart(2, "0")}-01`;
@@ -779,10 +790,10 @@ export async function getSmartInsights(
   }
 
   // 5. Expiring warranties
-  const thirtyDaysLater = formatLocalDate(
+  const thirtyDaysLater = bangkokDateString(
     new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000)
   );
-  const today = formatLocalDate(now);
+  const today = bangkokDateString(now);
   const [expiring] = await query<RowDataPacket[]>(
     `SELECT COUNT(*) AS cnt FROM customer_equipments
      WHERE warrantyEndDate IS NOT NULL AND warrantyEndDate >= ? AND warrantyEndDate <= ?
@@ -816,18 +827,32 @@ function cleanCostInput(data: Partial<CostItem>) {
   };
 }
 
-/** Recalculate the cached costAmount on sales_records from its cost items */
+/**
+ * Recalculate the cached costAmount on sales_records from its cost items.
+ *
+ * Locks the sale's row (SELECT ... FOR UPDATE) before summing+writing, inside
+ * one transaction — without this, two concurrent cost-item edits on the SAME
+ * sale (e.g. two admin tabs) could each read the sum BEFORE the other's item
+ * was inserted, then write back in reverse-completion order, leaving
+ * costAmount permanently out of sync with the true sum of sale_cost_items
+ * (and every profit/margin figure that reads costAmount along with it). The
+ * lock forces concurrent recalcs to serialize, so whichever finishes last
+ * always re-reads the CURRENT total rather than a stale pre-race snapshot.
+ */
 export async function recalcCostAmount(salesRecordId: string): Promise<number> {
-  const [rows] = await query<RowDataPacket[]>(
-    `SELECT COALESCE(SUM(amount), 0) AS total FROM sale_cost_items WHERE salesRecordId = ?`,
-    [salesRecordId]
-  );
-  const total = Number(rows[0]?.total || 0);
-  await query(
-    `UPDATE sales_records SET costAmount = ? WHERE id = ?`,
-    [total, salesRecordId]
-  );
-  return total;
+  return withTransaction(async (conn) => {
+    await conn.query("SELECT id FROM sales_records WHERE id = ? FOR UPDATE", [salesRecordId]);
+    const [rows] = await conn.query<RowDataPacket[]>(
+      `SELECT COALESCE(SUM(amount), 0) AS total FROM sale_cost_items WHERE salesRecordId = ?`,
+      [salesRecordId]
+    );
+    const total = Number(rows[0]?.total || 0);
+    await conn.query(
+      `UPDATE sales_records SET costAmount = ? WHERE id = ?`,
+      [total, salesRecordId]
+    );
+    return total;
+  });
 }
 
 export async function getCostItems(salesRecordId: string): Promise<CostItem[]> {

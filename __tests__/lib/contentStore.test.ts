@@ -6,10 +6,15 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // updateContent snapshots the previous value via revisionStore before writing;
 // stub it so it doesn't add a query the call-order assertions don't expect.
 vi.mock('@/app/lib/revisionStore', () => ({ saveRevision: vi.fn() }));
+import { saveRevision } from '@/app/lib/revisionStore';
 
+// addContent/updateContent's productId-conflict check runs inside
+// withTransaction — a single shared `conn` whose queries are scripted
+// per-test (no matching productId row = FOR UPDATE finds nothing = no conflict).
+const conn = { query: vi.fn() };
 vi.mock('@/app/lib/db', () => ({
   query: vi.fn(),
-  withTransaction: vi.fn(),
+  withTransaction: vi.fn(async (fn: (c: typeof conn) => Promise<unknown>) => fn(conn)),
   getDbConnection: vi.fn(),
 }));
 import { query } from '@/app/lib/db';
@@ -25,6 +30,7 @@ import {
   getContentByProductId,
   deleteContent,
   updateContent,
+  ContentProductConflictError,
 } from '@/app/lib/contentStore';
 import type { ContentData } from '@/app/lib/contentStore';
 
@@ -32,6 +38,19 @@ const mockedQuery = vi.mocked(query);
 
 // Helper: last SQL + params passed to query on a given (0-based) call.
 const callArgs = (i = 0) => mockedQuery.mock.calls[i] as [string, unknown[]];
+
+// addContent always runs its productId-conflict check first (via conn.query)
+// before the INSERT — stub that check to "no conflict" and route conn.query
+// calls to the same assertable shape the old tests used against `query`.
+function stubNoConflict(insertResult: unknown = [{ affectedRows: 1 }]) {
+  conn.query.mockReset();
+  conn.query.mockImplementation(async (sql: string) => {
+    if (sql.includes('SELECT id FROM contents WHERE productId')) return [[]];
+    return insertResult;
+  });
+}
+const connInsertCall = () =>
+  conn.query.mock.calls.find((c) => (c[0] as string).includes('INSERT INTO contents')) as [string, unknown[]];
 
 describe('contentStore', () => {
   beforeEach(() => {
@@ -48,11 +67,11 @@ describe('contentStore', () => {
     };
 
     it('inserts with the correct SQL and params and returns sanitized content', async () => {
-      mockedQuery.mockResolvedValue([{ affectedRows: 1, insertId: 0 }] as any);
+      stubNoConflict();
 
       const result = await addContent(base);
 
-      const [sql, params] = callArgs(0);
+      const [sql, params] = connInsertCall();
       expect(sql).toContain('INSERT INTO contents');
       // Positional params: id, title, JSON(blocks), createdAt, productId.
       expect(params[0]).toBe('c-1');
@@ -67,7 +86,7 @@ describe('contentStore', () => {
     });
 
     it('sanitizes rich-text HTML (strips <script>) before storing and returning', async () => {
-      mockedQuery.mockResolvedValue([{ affectedRows: 1 }] as any);
+      stubNoConflict();
 
       const result = await addContent({
         ...base,
@@ -76,7 +95,7 @@ describe('contentStore', () => {
         ],
       });
 
-      const storedJson = callArgs(0)[1][2] as string;
+      const storedJson = connInsertCall()[1][2] as string;
       expect(storedJson).not.toContain('<script>');
       expect(storedJson).not.toContain('alert(1)');
       expect(storedJson).toContain('<p>safe</p>');
@@ -87,7 +106,7 @@ describe('contentStore', () => {
     });
 
     it('leaves blocks without a `content` field untouched and defaults productId to null', async () => {
-      mockedQuery.mockResolvedValue([{ affectedRows: 1 }] as any);
+      stubNoConflict();
 
       const imageBlock = { id: 'img', type: 'image' as const, imageUrl: 'https://x/y.png' };
       const result = await addContent({
@@ -98,8 +117,27 @@ describe('contentStore', () => {
         // productId intentionally omitted
       });
 
-      expect(callArgs(0)[1][4]).toBeNull(); // productId ?? null
+      expect(connInsertCall()[1][4]).toBeNull(); // productId ?? null
       expect(result.blocks[0]).toEqual(imageBlock); // image block passes through unchanged
+    });
+
+    it('rejects when the product already has a DIFFERENT content linked (race-safe check)', async () => {
+      conn.query.mockReset();
+      conn.query.mockImplementation(async (sql: string) => {
+        if (sql.includes('SELECT id FROM contents WHERE productId')) return [[{ id: 'other-content' }]];
+        return [{ affectedRows: 1 }];
+      });
+
+      await expect(addContent(base)).rejects.toThrow(ContentProductConflictError);
+      expect(conn.query.mock.calls.some((c) => (c[0] as string).includes('INSERT INTO contents'))).toBe(false);
+    });
+
+    it('skips the conflict check entirely when no productId is given', async () => {
+      stubNoConflict();
+      await addContent({ ...base, productId: undefined });
+      expect(
+        conn.query.mock.calls.some((c) => (c[0] as string).includes('SELECT id FROM contents WHERE productId'))
+      ).toBe(false);
     });
   });
 
@@ -357,6 +395,41 @@ describe('contentStore', () => {
       expect(sql).toContain('productId = ?');
       expect(params).toEqual([null, 'c-1']);
       expect(result?.productId).toBeNull();
+    });
+
+    it('rejects re-linking to a product another content already owns (race-safe check)', async () => {
+      mockedQuery.mockResolvedValueOnce([[existingRow]] as any); // getContent
+      conn.query.mockReset();
+      conn.query.mockImplementation(async (sql: string) => {
+        if (sql.includes('SELECT id FROM contents WHERE productId')) return [[{ id: 'other-content' }]];
+        return [{ affectedRows: 1 }];
+      });
+
+      await expect(updateContent('c-1', { productId: 'p-taken' })).rejects.toThrow(
+        ContentProductConflictError
+      );
+      expect(conn.query.mock.calls.some((c) => (c[0] as string).startsWith('UPDATE contents'))).toBe(false);
+      // No UPDATE ran at all (plain query() path is only used for the
+      // non-conflicting case) — the plain mockedQuery only saw the SELECT.
+      expect(mockedQuery).toHaveBeenCalledTimes(1);
+    });
+
+    it('allows re-linking to a product nothing else has claimed', async () => {
+      mockedQuery.mockResolvedValueOnce([[existingRow]] as any); // getContent
+      conn.query.mockReset();
+      conn.query.mockImplementation(async (sql: string) => {
+        if (sql.includes('SELECT id FROM contents WHERE productId')) return [[]];
+        return [{ affectedRows: 1 }];
+      });
+
+      const result = await updateContent('c-1', { productId: 'p-free' });
+      expect(result?.productId).toBe('p-free');
+      const updateCall = conn.query.mock.calls.find((c) => (c[0] as string).startsWith('UPDATE contents'));
+      expect(updateCall).toBeDefined();
+      // Snapshot runs through the transaction's own connection, not the
+      // pool-level query — a retried attempt (withTransaction retries the
+      // whole callback on a transient error) can't leave a duplicate behind.
+      expect(saveRevision).toHaveBeenCalledWith('content', 'c-1', expect.anything(), conn);
     });
 
     it('issues no UPDATE when the partial is empty but still returns existing values', async () => {

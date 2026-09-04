@@ -4,6 +4,7 @@ import {
   bangkokDateAtHour,
   bangkokDateAtHourFromNow,
   bangkokCurrentMonth,
+  isValidDateString,
 } from '@/app/lib/dateFormat';
 
 describe('toLocalDateString', () => {
@@ -24,6 +25,30 @@ describe('toLocalDateString', () => {
     const morning = new Date(2026, 7, 5, 0, 0, 1);
     const night = new Date(2026, 7, 5, 23, 59, 59);
     expect(toLocalDateString(morning)).toBe(toLocalDateString(night));
+  });
+});
+
+describe('isValidDateString', () => {
+  it('accepts a well-formed calendar date', () => {
+    expect(isValidDateString('2026-02-14')).toBe(true);
+  });
+
+  it('rejects garbage text', () => {
+    expect(isValidDateString('not-a-date')).toBe(false);
+  });
+
+  it('rejects a value with the wrong shape even if partially numeric', () => {
+    expect(isValidDateString('2026/02/14')).toBe(false);
+    expect(isValidDateString('26-02-14')).toBe(false);
+    expect(isValidDateString('2026-02-14T00:00:00')).toBe(false);
+  });
+
+  it('rejects an empty string', () => {
+    expect(isValidDateString('')).toBe(false);
+  });
+
+  it('rejects a month/day out of any calendar\'s range', () => {
+    expect(isValidDateString('2026-13-01')).toBe(false);
   });
 });
 

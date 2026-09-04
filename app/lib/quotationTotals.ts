@@ -19,6 +19,23 @@ export interface QuoteTotals {
 
 export const VAT_RATE = 0.07;
 
+/**
+ * True if any line item has a negative qty or unitPrice. computeQuoteTotals()
+ * alone isn't a reliable guard against this: a negative subtotal combined
+ * with the default (amount) discount type clamps discountValue down to that
+ * same negative subtotal (`Math.min(discount, subtotal)`), which cancels out
+ * to a grandTotal of exactly 0 — a negative input silently laundered into a
+ * falsely "valid" total. Callers that need to reject negative inputs (e.g.
+ * before saving a quotation/billing document) must check this too, not just
+ * `grandTotal < 0`.
+ */
+export function hasNegativeLineItem(input: QuoteTotalsInput): boolean {
+  const items = Array.isArray(input.items) ? input.items : [];
+  return items.some(
+    (it) => (Number(it.qty) || 0) < 0 || (Number(it.unitPrice) || 0) < 0
+  );
+}
+
 export function computeQuoteTotals(input: QuoteTotalsInput): QuoteTotals {
   const items = Array.isArray(input.items) ? input.items : [];
   const subtotal = items.reduce(

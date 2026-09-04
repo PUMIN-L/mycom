@@ -19,6 +19,12 @@ vi.mock('@/app/lib/crmStore', () => ({
       super(`schedule ${scheduleId} is not pending`);
     }
   },
+  ScheduleCompletionRequiresLogError: class extends Error {
+    name = 'ScheduleCompletionRequiresLogError';
+    constructor(public readonly scheduleId: string) {
+      super(`schedule ${scheduleId} cannot be marked completed via updateSchedule`);
+    }
+  },
   SCHEDULE_TYPES: ['service', 'phone_call'],
   SCHEDULE_STATUSES: ['pending', 'completed', 'cancelled'],
 }));
@@ -42,6 +48,29 @@ vi.mock('@/app/lib/settingsStore', () => ({
   getContactEmail: vi.fn().mockResolvedValue('admin@example.com'),
 }));
 import { getSetting, setSetting, getContactEmail } from '@/app/lib/settingsStore';
+
+// otpAttempts.ts's failure counter reads/writes through a locked db.ts
+// transaction (see otpAttempts.ts) — shares state with the getSetting/
+// setSetting mock above via the module-level `sharedState` used below.
+let sharedState = new Map<string, string>();
+const conn = {
+  query: vi.fn(async (sql: string, params: unknown[] = []) => {
+    if (sql.includes('SELECT value FROM settings')) {
+      const [key] = params as [string];
+      const v = sharedState.get(key);
+      return [v !== undefined ? [{ value: v }] : []];
+    }
+    if (sql.includes('INSERT INTO settings')) {
+      const [key, value] = params as [string, string];
+      sharedState.set(key, value);
+      return [{ affectedRows: 1 }];
+    }
+    throw new Error(`Unhandled SQL in test: ${sql}`);
+  }),
+};
+vi.mock('@/app/lib/db', () => ({
+  withTransaction: vi.fn(async (fn: (c: typeof conn) => Promise<unknown>) => fn(conn)),
+}));
 
 vi.mock('@/app/lib/mailer', () => ({
   isMailConfigured: vi.fn().mockReturnValue(true),
@@ -132,6 +161,21 @@ describe('Admin Schedules API', () => {
     expect(res.status).toBe(400);
   });
 
+  it('POST returns 400 for a malformed scheduledDate instead of storing it for lexical-sort comparisons to silently break on', async () => {
+    vi.mocked(getSession).mockResolvedValue(admin);
+    vi.mocked(getEquipment).mockResolvedValue({ id: 'eq-1' } as any);
+
+    const res = await createPOST(
+      mutReq('http://localhost:3000/api/admin/schedules', 'POST', {
+        equipmentId: 'eq-1',
+        scheduleType: 'service',
+        scheduledDate: 'not-a-date',
+      })
+    );
+    expect(res.status).toBe(400);
+    expect(addSchedule).not.toHaveBeenCalled();
+  });
+
   it('POST returns 404 for missing equipment', async () => {
     vi.mocked(getSession).mockResolvedValue(admin);
     vi.mocked(getEquipment).mockResolvedValue(null);
@@ -173,6 +217,23 @@ describe('Admin Schedules API', () => {
     expect(await res.json()).toEqual({ error: 'นัดหมายที่เสร็จสิ้นแล้วไม่สามารถแก้ไขได้' });
   });
 
+  it('PUT translates a ScheduleCompletionRequiresLogError from the store into the "use the completion form" message', async () => {
+    // Defense-in-depth: even if a future change let a "completed" body reach
+    // updateSchedule(), the store itself rejects it — the route must map that
+    // rejection to the same friendly 400, not a raw 500.
+    vi.mocked(getSession).mockResolvedValue(admin);
+    vi.mocked(getSchedule).mockResolvedValue({ id: 's1', status: 'pending' } as any);
+    const { ScheduleCompletionRequiresLogError } = await import('@/app/lib/crmStore');
+    vi.mocked(updateSchedule).mockRejectedValue(new ScheduleCompletionRequiresLogError('s1'));
+
+    const res = await PUT(
+      mutReq('http://localhost:3000/api/admin/schedules/s1', 'PUT', { notes: 'x' }),
+      ctx('s1')
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'ต้องบันทึกผลงานผ่านหน้าจบงานเท่านั้น (แนบ service log)' });
+  });
+
   it('PUT returns 400 for invalid status', async () => {
     vi.mocked(getSession).mockResolvedValue(admin);
 
@@ -181,6 +242,18 @@ describe('Admin Schedules API', () => {
       ctx('s1')
     );
     expect(res.status).toBe(400);
+  });
+
+  it('PUT returns 400 for a malformed scheduledDate', async () => {
+    vi.mocked(getSession).mockResolvedValue(admin);
+    vi.mocked(getSchedule).mockResolvedValue({ id: 's1', status: 'pending' } as any);
+
+    const res = await PUT(
+      mutReq('http://localhost:3000/api/admin/schedules/s1', 'PUT', { scheduledDate: '2026/09/01' }),
+      ctx('s1')
+    );
+    expect(res.status).toBe(400);
+    expect(updateSchedule).not.toHaveBeenCalled();
   });
 
   it('PUT returns 400 for invalid scheduleType', async () => {
@@ -250,13 +323,13 @@ describe('Admin Schedules API', () => {
     vi.mocked(getSession).mockResolvedValue(admin);
     vi.mocked(getSchedule).mockResolvedValue({ id: 's1', status: 'completed' } as any);
 
-    const state = new Map<string, string>([
+    sharedState = new Map<string, string>([
       ['schedule_delete_otp_s1', '123456'],
       ['schedule_delete_otp_expires_s1', (Date.now() + 100000).toString()],
     ]);
-    vi.mocked(getSetting).mockImplementation(async (key: string) => state.get(key) ?? '');
+    vi.mocked(getSetting).mockImplementation(async (key: string) => sharedState.get(key) ?? '');
     vi.mocked(setSetting).mockImplementation(async (key: string, value: string) => {
-      state.set(key, value);
+      sharedState.set(key, value);
     });
 
     let lastRes;

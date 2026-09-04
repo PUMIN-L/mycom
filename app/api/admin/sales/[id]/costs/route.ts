@@ -34,7 +34,7 @@ export const POST = withRoute(
       return NextResponse.json({ error: "ไม่พบรายการขาย" }, { status: 404 });
     }
     const body = await request.json();
-    if (!body.amount || Number(body.amount) <= 0) {
+    if (!body.amount || !Number.isFinite(Number(body.amount)) || Number(body.amount) <= 0) {
       return NextResponse.json(
         { error: "จำนวนเงินต้องมากกว่า 0" },
         { status: 400 }

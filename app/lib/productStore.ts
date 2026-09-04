@@ -15,6 +15,13 @@ export function isProductPublic(product: Pick<ProductData, "isPublished" | "pend
   return product.isPublished !== false && !product.pendingDeleteAt;
 }
 
+export class BestSellerRankConflictError extends Error {
+  constructor(public rank: number) {
+    super(`Best seller rank ${rank} is already assigned to another product`);
+    this.name = "BestSellerRankConflictError";
+  }
+}
+
 // ── Categories ────────────────────────────────────────────────────────────────
 
 export async function getAllCategories(): Promise<ProductCategory[]> {
@@ -156,7 +163,33 @@ export async function addProduct(product: ProductData): Promise<ProductData> {
   const desc_th = sanitizeRichText(product.desc_th).substring(0, 10000);
   const desc_en = sanitizeRichText(product.desc_en).substring(0, 10000);
   const desc_zh = sanitizeRichText(product.desc_zh).substring(0, 10000);
+  let sortOrder = product.sortOrder;
   await withTransaction(async (conn) => {
+    if (sortOrder === undefined) {
+      // Append to the end of the product's own category instead of defaulting
+      // to 0, which would reshuffle a manually-curated catalog order every
+      // time an admin adds a new product.
+      const [rows] = await conn.query<RowDataPacket[]>(
+        "SELECT COALESCE(MAX(sortOrder), -1) + 1 AS nextSort FROM products WHERE categoryId = ?",
+        [product.categoryId]
+      );
+      sortOrder = rows[0].nextSort as number;
+    }
+
+    if (product.bestSellerRank != null) {
+      // The UI only warns against a rank already taken in the snapshot it
+      // loaded on open, which two concurrent/stale admin tabs can both pass —
+      // re-check against the live row here so a genuine collision is rejected
+      // instead of silently creating two products with the same rank.
+      const [rankRows] = await conn.query<RowDataPacket[]>(
+        "SELECT id FROM products WHERE bestSellerRank = ? FOR UPDATE",
+        [product.bestSellerRank]
+      );
+      if (rankRows.length > 0) {
+        throw new BestSellerRankConflictError(product.bestSellerRank);
+      }
+    }
+
     await conn.query(
       "INSERT INTO products (id, categoryId, image, title_th, title_en, title_zh, desc_th, desc_en, desc_zh, createdAt, isPublished, sortOrder, bestSellerRank, showBestSellerBadge) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       [
@@ -171,7 +204,7 @@ export async function addProduct(product: ProductData): Promise<ProductData> {
         desc_zh,
         product.createdAt,
         isPublished,
-        product.sortOrder ?? 0,
+        sortOrder,
         product.bestSellerRank ?? null,
         product.showBestSellerBadge !== false,
       ]
@@ -187,7 +220,7 @@ export async function addProduct(product: ProductData): Promise<ProductData> {
     }
   });
 
-  return { ...product, title_th, title_en, title_zh, desc_th, desc_en, desc_zh, isPublished };
+  return { ...product, title_th, title_en, title_zh, desc_th, desc_en, desc_zh, isPublished, sortOrder };
 }
 
 export async function getProduct(id: string): Promise<ProductData | undefined> {
@@ -281,10 +314,27 @@ export async function updateProduct(
   }
 
   await withTransaction(async (conn) => {
+    if (
+      updates.bestSellerRank != null &&
+      updates.bestSellerRank !== existing.bestSellerRank
+    ) {
+      // Same collision guard as addProduct — the UI's warning is only as
+      // fresh as the snapshot it loaded, so re-check the live row.
+      const [rankRows] = await conn.query<RowDataPacket[]>(
+        "SELECT id FROM products WHERE bestSellerRank = ? AND id != ? FOR UPDATE",
+        [updates.bestSellerRank, id]
+      );
+      if (rankRows.length > 0) {
+        throw new BestSellerRankConflictError(updates.bestSellerRank);
+      }
+    }
+
     if (sets.length > 0) {
       // Snapshot the previous value first so an accidental overwrite is restorable
-      // (a failed snapshot aborts before we touch the row).
-      await saveRevision("product", id, existing);
+      // (a failed snapshot aborts before we touch the row). Runs through this
+      // transaction's own connection so a retry (withTransaction retries the
+      // whole callback on a transient error) can't leave a duplicate snapshot.
+      await saveRevision("product", id, existing, conn);
       await conn.query(
         `UPDATE products SET ${sets.join(", ")} WHERE id = ?`,
         [...values, id]

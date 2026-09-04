@@ -28,10 +28,10 @@ export default function GlobalAdminBell() {
         const res = await fetch("/api/admin/alerts?t=" + Date.now());
         if (res.ok) {
           const data = await res.json();
-          const total = 
-            (data.expiringWarranties?.length || 0) + 
-            (data.upcomingSchedules?.length || 0) + 
-            (data.incompleteEquipments?.length || 0) +
+          const total =
+            (data.expiringWarranties?.length || 0) +
+            (data.upcomingSchedules?.length || 0) +
+            (data.incompleteEquipmentsTotal ?? data.incompleteEquipments?.length ?? 0) +
             (data.missingDocuments?.length || 0);
           setAlertsCount(total);
         }

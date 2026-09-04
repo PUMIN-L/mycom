@@ -209,3 +209,24 @@ export async function sendScheduleDeleteOtpEmail(
   );
 }
 
+/**
+ * Send a 6-digit OTP to `to` to authorize deleting equipment that has one or
+ * more completed service schedules attached (deleting the equipment cascades
+ * to those schedules and their logs — the same data the schedule-delete OTP
+ * flow protects, reached through a different door).
+ */
+export async function sendEquipmentDeleteOtpEmail(
+  to: string,
+  otp: string,
+  equipmentInfo: { productName: string; serialNumber?: string; completedScheduleCount: number }
+): Promise<void> {
+  const label = equipmentInfo.serialNumber
+    ? `${equipmentInfo.productName} (S/N: ${equipmentInfo.serialNumber})`
+    : equipmentInfo.productName;
+  await sendOtpNotification(
+    to,
+    `[รหัสยืนยัน OTP] ขอลบอุปกรณ์ที่มีประวัติงานเสร็จสิ้นแล้ว`,
+    `มีการขอลบอุปกรณ์: ${label}\n\nอุปกรณ์นี้มีประวัตินัดหมายที่เสร็จสิ้นแล้ว ${equipmentInfo.completedScheduleCount} รายการผูกอยู่ — การลบอุปกรณ์จะลบประวัตินัดหมายและบันทึกผลงานเหล่านั้นไปด้วย ซึ่งส่งผลต่อข้อมูลการรับประกันและการบริการ กรุณานำรหัสยืนยัน 6 หลักด้านล่างนี้ไปกรอกเพื่อยืนยันการลบ:\n\nรหัสยืนยัน: ${otp}\n\n(รหัสนี้มีอายุ 15 นาที)\n\nหากคุณไม่ได้เป็นผู้ดำเนินการ กรุณาเพิกเฉยต่ออีเมลฉบับนี้ และตรวจสอบความปลอดภัยของบัญชีผู้ดูแลระบบทันที`
+  );
+}
+

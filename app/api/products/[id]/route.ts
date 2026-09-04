@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { revalidateTag } from "next/cache";
-import { getProduct, deleteProduct, updateProduct } from "../../../lib/productStore";
+import {
+  getProduct,
+  deleteProduct,
+  updateProduct,
+  BestSellerRankConflictError,
+} from "../../../lib/productStore";
 import { requireAuth, withRoute, ApiError } from "../../../lib/apiHelpers";
 import { getSession } from "../../../lib/session";
 
@@ -40,7 +45,15 @@ export const PUT = withRoute(
     const existing = await getProduct(id);
     const oldImageUrl = existing?.image;
 
-    const updated = await updateProduct(id, body);
+    let updated;
+    try {
+      updated = await updateProduct(id, body);
+    } catch (err) {
+      if (err instanceof BestSellerRankConflictError) {
+        return NextResponse.json({ error: err.message }, { status: 409 });
+      }
+      throw err;
+    }
     if (!updated) {
       return NextResponse.json({ error: "Product not found" }, { status: 404 });
     }

@@ -1,7 +1,11 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { deleteSession } from "../../../lib/session";
+import { withRoute } from "../../../lib/apiHelpers";
 
-export async function POST() {
-  await deleteSession();
-  return NextResponse.json({ success: true });
-}
+export const POST = withRoute(
+  "ออกจากระบบไม่สำเร็จ",
+  async (_request: NextRequest) => {
+    await deleteSession();
+    return NextResponse.json({ success: true });
+  }
+);

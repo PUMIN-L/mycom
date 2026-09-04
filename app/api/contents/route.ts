@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { addContent, ContentData, getContentByProductId } from "../../lib/contentStore";
+import {
+  addContent,
+  ContentData,
+  getContentByProductId,
+  ContentProductConflictError,
+} from "../../lib/contentStore";
 import { requireAuth, withRoute } from "../../lib/apiHelpers";
 
 // POST — create content linked to a product (login required)
@@ -22,7 +27,17 @@ export const POST = withRoute(
       );
     }
 
-    const newContent = await addContent(data);
-    return NextResponse.json(newContent, { status: 201 });
+    try {
+      const newContent = await addContent(data);
+      return NextResponse.json(newContent, { status: 201 });
+    } catch (err) {
+      if (err instanceof ContentProductConflictError) {
+        return NextResponse.json(
+          { error: "This product already has a content linked to it" },
+          { status: 400 }
+        );
+      }
+      throw err;
+    }
   }
 );

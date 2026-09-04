@@ -4,12 +4,21 @@ import { NextRequest } from 'next/server';
 import { GET, PUT, DELETE } from '@/app/api/products/[id]/route';
 
 // Product store — only the functions these handlers touch.
-vi.mock('@/app/lib/productStore', () => ({
-  getProduct: vi.fn(),
-  updateProduct: vi.fn(),
-  deleteProduct: vi.fn(),
-}));
-import { getProduct, updateProduct, deleteProduct } from '@/app/lib/productStore';
+vi.mock('@/app/lib/productStore', () => {
+  class BestSellerRankConflictError extends Error {
+    constructor(public rank: number) {
+      super(`Best seller rank ${rank} is already assigned to another product`);
+      this.name = 'BestSellerRankConflictError';
+    }
+  }
+  return {
+    getProduct: vi.fn(),
+    updateProduct: vi.fn(),
+    deleteProduct: vi.fn(),
+    BestSellerRankConflictError,
+  };
+});
+import { getProduct, updateProduct, deleteProduct, BestSellerRankConflictError } from '@/app/lib/productStore';
 
 // DELETE also cascades into linked contents + Cloudinary; keep those inert.
 vi.mock('@/app/lib/contentStore', () => ({
@@ -171,6 +180,15 @@ describe('Products [id] API Route', () => {
 
       await PUT(mutatingRequest('PUT', { image: 'https://res.cloudinary.com/demo/image/upload/v1/new.jpg' }), ctx('1'));
       expect(safeDeleteCloudinaryImage).not.toHaveBeenCalled();
+    });
+
+    it('returns 409 when the requested bestSellerRank is already taken', async () => {
+      vi.mocked(getSession).mockResolvedValue(adminSession);
+      vi.mocked(getProduct).mockResolvedValue({ id: '1', title_en: 'Old', image: 'x' } as any);
+      vi.mocked(updateProduct).mockRejectedValue(new BestSellerRankConflictError(1));
+
+      const res = await PUT(mutatingRequest('PUT', { bestSellerRank: 1 }), ctx('1'));
+      expect(res.status).toBe(409);
     });
   });
 

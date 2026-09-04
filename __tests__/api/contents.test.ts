@@ -10,14 +10,23 @@ import {
 import { GET as getByProduct } from '@/app/api/contents/by-product/[productId]/route';
 
 // Content store — every route reads/writes content through this module.
-vi.mock('@/app/lib/contentStore', () => ({
-  addContent: vi.fn(),
-  getContent: vi.fn(),
-  getAllContents: vi.fn(),
-  getContentByProductId: vi.fn(),
-  updateContent: vi.fn(),
-  deleteContent: vi.fn(),
-}));
+vi.mock('@/app/lib/contentStore', () => {
+  class ContentProductConflictError extends Error {
+    constructor(public readonly productId: string) {
+      super(`product ${productId} already has a content linked to it`);
+      this.name = 'ContentProductConflictError';
+    }
+  }
+  return {
+    addContent: vi.fn(),
+    getContent: vi.fn(),
+    getAllContents: vi.fn(),
+    getContentByProductId: vi.fn(),
+    updateContent: vi.fn(),
+    deleteContent: vi.fn(),
+    ContentProductConflictError,
+  };
+});
 import {
   addContent,
   getContent,
@@ -25,6 +34,7 @@ import {
   getContentByProductId,
   updateContent,
   deleteContent,
+  ContentProductConflictError,
 } from '@/app/lib/contentStore';
 
 // DELETE cascades to Cloudinary image cleanup — mock it so no network happens.
@@ -119,6 +129,16 @@ describe('Contents API Routes', () => {
       expect(res.status).toBe(201);
       expect(await res.json()).toEqual(sampleContent);
       expect(addContent).toHaveBeenCalledTimes(1);
+    });
+
+    it('translates a ContentProductConflictError from the store into the same 400 (race the pre-check missed)', async () => {
+      vi.mocked(getSession).mockResolvedValue(adminSession);
+      vi.mocked(getContentByProductId).mockResolvedValue(undefined); // pre-check saw it as free
+      vi.mocked(addContent).mockRejectedValue(new ContentProductConflictError('p-1'));
+
+      const res = await POST(mutatingRequest('POST', { id: 'c-1', productId: 'p-1' }));
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toBe('This product already has a content linked to it');
     });
   });
 
@@ -222,6 +242,18 @@ describe('Contents API Routes', () => {
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual(updated);
       expect(updateContent).toHaveBeenCalledWith('c-1', { title: 'Updated' });
+    });
+
+    it('translates a ContentProductConflictError from the store into the same 400 (race the pre-check missed)', async () => {
+      vi.mocked(getSession).mockResolvedValue(adminSession);
+      vi.mocked(getContentByProductId).mockResolvedValue(undefined); // pre-check saw it as free
+      vi.mocked(updateContent).mockRejectedValue(new ContentProductConflictError('p-1'));
+
+      const res = await putById(mutatingRequest('PUT', { productId: 'p-1' }), {
+        params: Promise.resolve({ id: 'c-1' }),
+      });
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toBe('This product already has a content linked to it');
     });
 
     it('returns 404 when updating a content that does not exist', async () => {

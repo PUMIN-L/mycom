@@ -5,6 +5,7 @@ import {
   DocNoConflictError,
   listQuotations,
 } from "../../lib/quotationStore";
+import { computeQuoteTotals, hasNegativeLineItem } from "../../lib/quotationTotals";
 
 // GET /api/quotations (login required) — list saved quotations (summary only).
 export const GET = withRoute("โหลดรายการใบเสนอราคาไม่สำเร็จ", async () => {
@@ -30,6 +31,17 @@ export const POST = withRoute(
     }
 
     const docNo = String(body?.docNo ?? "").slice(0, 255);
+    const data = body?.data ?? {};
+
+    // `data` is otherwise opaque client state, but the grand total feeds
+    // real business documents — a negative one (from a negative qty/price
+    // line item) must never be silently accepted and saved.
+    if (hasNegativeLineItem(data) || computeQuoteTotals(data).grandTotal < 0) {
+      return NextResponse.json(
+        { error: "ยอดรวมสุทธิต้องไม่ติดลบ กรุณาตรวจสอบรายการสินค้า" },
+        { status: 400 }
+      );
+    }
 
     // Server backstop for the image-deletion safety invariant: only accept URLs
     // on OUR Cloudinary cloud. Anything else (foreign host, garbage) is dropped
@@ -53,7 +65,7 @@ export const POST = withRoute(
       await saveQuotationAtomic({
         id,
         docNo,
-        data: body?.data ?? {},
+        data,
         uploadedImages,
         createdAt,
       });

@@ -226,6 +226,79 @@ describe('db.ts', () => {
       expect(settingsCalls).toHaveLength(1);
     });
 
+    it('adds every v23 sales_records column independently, so a partial prior run does not block the rest', async () => {
+      // Simulates a database where an earlier interrupted bootstrap already
+      // added poRef and deliveryRef, but not the other four v23 columns. A
+      // single multi-column ALTER would hit ER_DUP_FIELDNAME on poRef and
+      // abort before ever reaching invoiceRef/receiptRef/warranty* — this
+      // must add each column with its own statement so the rest still land.
+      const db = await freshImport();
+      const dupColumn = { code: 'ER_DUP_FIELDNAME', message: 'Duplicate column name' };
+      const v23Columns = ['poRef', 'deliveryRef', 'invoiceRef', 'receiptRef', 'warrantyStartDate', 'warrantyEndDate'];
+      const addedColumns: string[] = [];
+      mockConnection.query.mockImplementation((sql: string) => {
+        const m = /ALTER TABLE sales_records ADD COLUMN(?: IF NOT EXISTS)? (\w+)/.exec(sql);
+        const column = m?.[1];
+        if (column && v23Columns.includes(column)) {
+          if (column === 'poRef' || column === 'deliveryRef') return Promise.reject(dupColumn);
+          addedColumns.push(column);
+        }
+        return Promise.resolve(EMPTY);
+      });
+
+      await db.getDbConnection();
+
+      expect(addedColumns).toEqual([
+        'invoiceRef',
+        'receiptRef',
+        'warrantyStartDate',
+        'warrantyEndDate',
+      ]);
+      const settingsCalls = mockConnection.query.mock.calls.filter((c) =>
+        String(c[0]).includes('INSERT INTO settings')
+      );
+      expect(settingsCalls).toHaveLength(1); // bootstrap still completes
+    });
+
+    it('still swallows ER_CANT_CREATE_TABLE when the message confirms a duplicate constraint name', async () => {
+      process.env.ADMIN_PASSWORD = 'pw';
+      const db = await freshImport();
+      const dupFk = {
+        code: 'ER_CANT_CREATE_TABLE',
+        message: "Can't create table `db`.`#sql-1` (errno: 121 \"Duplicate key on write or update\")",
+      };
+      mockConnection.query.mockImplementation((sql: string) => {
+        if (sql.includes('fk_content_product')) return Promise.reject(dupFk);
+        return Promise.resolve(EMPTY);
+      });
+
+      await db.getDbConnection();
+      const settingsCalls = mockConnection.query.mock.calls.filter((c) =>
+        String(c[0]).includes('INSERT INTO settings')
+      );
+      expect(settingsCalls).toHaveLength(1);
+    });
+
+    it('propagates ER_CANT_CREATE_TABLE when the message does NOT confirm a duplicate — a real FK failure, not "already exists"', async () => {
+      const db = await freshImport();
+      const realFailure = {
+        code: 'ER_CANT_CREATE_TABLE',
+        message: "Can't create table `db`.`#sql-1` (errno: 150 \"Foreign key constraint is incorrectly formed\")",
+      };
+      mockConnection.query.mockImplementation((sql: string) => {
+        if (sql.includes('fk_content_product')) return Promise.reject(realFailure);
+        return Promise.resolve(EMPTY);
+      });
+
+      // Must NOT be swallowed — a genuinely broken FK means ON DELETE CASCADE
+      // never actually exists, which several stores rely on silently.
+      await expect(db.getDbConnection()).rejects.toBe(realFailure);
+      const settingsCalls = mockConnection.query.mock.calls.filter((c) =>
+        String(c[0]).includes('INSERT INTO settings')
+      );
+      expect(settingsCalls).toHaveLength(0);
+    });
+
     it('SKIPS bootstrap entirely on a Vercel preview deploy (never mutates the shared prod DB)', async () => {
       process.env.VERCEL_ENV = 'preview';
       try {

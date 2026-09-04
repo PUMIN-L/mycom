@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSalesperson, updateSalesperson, deleteSalesperson } from "../../../lib/salesStore";
-import { requireAuth, withRoute, ApiError } from "../../../lib/apiHelpers";
+import { requireAuth, withRoute, ApiError, jsonError } from "../../../lib/apiHelpers";
+import { query } from "../../../lib/db";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -44,7 +45,19 @@ export const DELETE = withRoute(
   async (_request: NextRequest, { params }: Ctx) => {
     await requireAuth();
     const { id } = await params;
-    
+
+    // sales_records references salespersonId with no FK (loose reference by
+    // design), so deleting a salesperson that still has sales records would
+    // silently orphan their sales history. Check first, the same way
+    // customers/[id]/route.ts guards on linked sales records.
+    const [salesRecords] = (await query(
+      "SELECT id FROM sales_records WHERE salespersonId = ? LIMIT 1",
+      [id]
+    )) as any[];
+    if (salesRecords.length > 0) {
+      return jsonError("Cannot delete salesperson with linked sales records", 400);
+    }
+
     const deleted = await deleteSalesperson(id);
     if (!deleted) {
       throw new ApiError(500, "Failed to delete salesperson");

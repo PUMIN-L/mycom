@@ -61,6 +61,42 @@ describe("sanitizeRichText", () => {
     expect(out).not.toContain("data-evil");
   });
 
+  it("forces rel=noopener noreferrer onto a target=_blank link (reverse-tabnabbing hardening)", () => {
+    const out = sanitizeRichText('<a href="https://example.com" target="_blank">link</a>');
+    expect(out).toContain('rel="noopener noreferrer"');
+  });
+
+  it("adds noopener/noreferrer alongside an existing rel value instead of replacing it", () => {
+    const out = sanitizeRichText('<a href="https://example.com" target="_blank" rel="nofollow">link</a>');
+    expect(out).toContain("nofollow");
+    expect(out).toContain("noopener");
+    expect(out).toContain("noreferrer");
+  });
+
+  it("does not add rel to a link with no target", () => {
+    const out = sanitizeRichText('<a href="https://example.com">link</a>');
+    expect(out).not.toContain("rel=");
+  });
+
+  it("keeps color/background-color/font-size — the only styles the editor's toolbar emits", () => {
+    const out = sanitizeRichText(
+      '<span style="color: rgb(230, 0, 0); background-color: #ffff00; font-size: 18px;">styled</span>'
+    );
+    expect(out).toContain("color:rgb(230, 0, 0)");
+    expect(out).toContain("background-color:#ffff00");
+    expect(out).toContain("font-size:18px");
+  });
+
+  it("strips CSS properties outside the editor's toolbar (no legitimate source, so not trusted)", () => {
+    const out = sanitizeRichText(
+      '<span style="position: fixed; top: 0; left: 0; z-index: 9999; background-image: url(https://evil.example/track.gif);">x</span>'
+    );
+    expect(out).not.toContain("position");
+    expect(out).not.toContain("z-index");
+    expect(out).not.toContain("background-image");
+    expect(out).not.toContain("evil.example");
+  });
+
   it("survives malformed / nested-mXSS-style input", () => {
     const out = sanitizeRichText('<svg><p><style><!--</style><script>alert(1)</script>-->');
     expect(out).not.toContain("script");

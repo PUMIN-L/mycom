@@ -1,6 +1,7 @@
 import { query, withTransaction } from "./db";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { sanitizePlainText } from "./sanitizeHtml";
+import { bangkokDateString } from "./dateFormat";
 import type {
   CustomerEquipment,
   ServiceSchedule,
@@ -26,6 +27,18 @@ export class ScheduleNotPendingError extends Error {
   constructor(public readonly scheduleId: string) {
     super(`schedule ${scheduleId} is not pending`);
     this.name = "ScheduleNotPendingError";
+  }
+}
+
+/** Thrown by updateSchedule() on any attempt to set status to "completed" —
+ * that transition must go through completeScheduleWithLog() so a completed
+ * schedule can never exist without its result log. */
+export class ScheduleCompletionRequiresLogError extends Error {
+  constructor(public readonly scheduleId: string) {
+    super(
+      `schedule ${scheduleId} cannot be marked completed via updateSchedule — use completeScheduleWithLog`
+    );
+    this.name = "ScheduleCompletionRequiresLogError";
   }
 }
 
@@ -283,7 +296,19 @@ export async function updateEquipment(
 ): Promise<CustomerEquipment | null> {
   const existing = await getEquipment(id);
   if (!existing) return null;
-  const v = cleanEquipment({ ...existing, ...data });
+  const merged = { ...existing, ...data };
+  // getEquipment()'s productName is resolved live from the catalog (see
+  // EQUIPMENT_SELECT's COALESCE) whenever the raw column is empty, and the
+  // client always echoes that resolved value back on save (there is no
+  // separate "product name" input — only a product picker). Writing it
+  // straight through here would freeze that catalog-title snapshot into the
+  // raw column, decoupling it from later catalog edits. Only equipment with
+  // no linked catalog product keeps its own stored name.
+  const hasLinkedProduct = !!merged.productId && merged.productId !== "_custom";
+  const v = cleanEquipment({
+    ...merged,
+    productName: hasLinkedProduct ? "" : merged.productName,
+  });
   await query(
     `UPDATE customer_equipments SET
        customerId = ?, productId = ?, productName = ?, serialNumber = ?, quotationNumber = ?,
@@ -377,6 +402,9 @@ export async function updateSchedule(
 ): Promise<ServiceSchedule | null> {
   const existing = await getSchedule(id);
   if (!existing) return null;
+  if (data.status === "completed") {
+    throw new ScheduleCompletionRequiresLogError(id);
+  }
   const merged = { ...existing, ...data };
   // Defense-in-depth: whitelist enum fields so even a direct store caller
   // can't write arbitrary values. Invalid → keep the existing value.
@@ -485,11 +513,8 @@ export async function completeScheduleWithLog(
 // calendar date gives Bangkok's wall-clock date instead of the server's.
 // Without this, "today" between 00:00-06:59 Thai time is still "yesterday"
 // server-side, so an overdue schedule/expired warranty from yesterday goes
-// unflagged for up to 7 hours every single day.
-const BANGKOK_OFFSET_MS = 7 * 60 * 60 * 1000;
-function bangkokDateString(date: Date): string {
-  return new Date(date.getTime() + BANGKOK_OFFSET_MS).toISOString().slice(0, 10);
-}
+// unflagged for up to 7 hours every single day. (bangkokDateString lives in
+// dateFormat.ts, shared with salesDashboardStore.ts's identical need.)
 
 export async function getAlerts(
   warrantyDays = 30,
@@ -506,6 +531,7 @@ export async function getAlerts(
      LEFT JOIN alert_snoozes sno ON sno.alertType = 'warranty' AND sno.referenceId = e.id
      WHERE e.warrantyEndDate IS NOT NULL
        AND e.warrantyEndDate >= ? AND e.warrantyEndDate <= ?
+       AND e.status != 'Expired'
        AND (sno.snoozeUntil IS NULL OR sno.snoozeUntil <= ?)
      ORDER BY e.warrantyEndDate ASC`,
     [today, warrantyCutoff, nowIso]
@@ -519,6 +545,19 @@ export async function getAlerts(
      ORDER BY e.createdAt DESC LIMIT 100`,
     [nowIso]
   );
+
+  // The list above is capped at 100 for display; count the true total
+  // (same filter, no cap) so callers can show "and N more" instead of
+  // silently hiding a backlog beyond the cap.
+  const [incompleteCountRows] = await query<RowDataPacket[]>(
+    `SELECT COUNT(*) AS cnt
+     FROM customer_equipments e
+     LEFT JOIN alert_snoozes sno ON sno.alertType = 'incomplete' AND sno.referenceId = e.id
+     WHERE (e.serialNumber = '' OR e.serialNumber IS NULL OR e.warrantyStartDate IS NULL)
+       AND (sno.snoozeUntil IS NULL OR sno.snoozeUntil <= ?)`,
+    [nowIso]
+  );
+  const incompleteEquipmentsTotal = Number(incompleteCountRows[0]?.cnt) || 0;
 
   const [scheduleRows] = await query<RowDataPacket[]>(
     `SELECT s.*, e.customerId, e.serialNumber, c.name AS customerName,
@@ -557,6 +596,7 @@ export async function getAlerts(
   return {
     expiringWarranties: warrantyRows as CustomerEquipment[],
     incompleteEquipments: incompleteRows as CustomerEquipment[],
+    incompleteEquipmentsTotal,
     missingDocuments: missingDocRows as SalesRecord[],
     upcomingSchedules: (scheduleRows as CrmAlerts["upcomingSchedules"]).map(
       (s) => ({ ...s, overdue: s.scheduledDate < today })

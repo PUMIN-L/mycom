@@ -108,6 +108,17 @@ describe('POST /api/billing', () => {
     expect(saved.paymentRef).toBeNull();
   });
 
+  it('returns 400 and never saves when the line items compute a negative grand total', async () => {
+    const res = await POST(
+      postReq({ id: 'b1', data: { items: [{ qty: -5, unitPrice: 1000 }] } })
+    );
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe(
+      'ยอดรวมสุทธิต้องไม่ติดลบ กรุณาตรวจสอบรายการสินค้า'
+    );
+    expect(saveBillingDocumentAtomic).not.toHaveBeenCalled();
+  });
+
   it('returns 409 on a docNo conflict', async () => {
     vi.mocked(saveBillingDocumentAtomic).mockRejectedValue(new BillingDocNoConflictError('INV-1'));
     const res = await POST(postReq({ id: 'b1', docNo: 'INV-1' }));

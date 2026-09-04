@@ -5,6 +5,7 @@ import {
   deleteContent,
   updateContent,
   getContentByProductId,
+  ContentProductConflictError,
 } from "../../../lib/contentStore";
 import { collectContentImageUrls } from "../../../lib/cloudinaryHelper";
 import { requireAuth, withRoute, ApiError } from "../../../lib/apiHelpers";
@@ -75,7 +76,18 @@ export const PUT = withRoute(
       }
     }
 
-    const updated = await updateContent(id, body);
+    let updated;
+    try {
+      updated = await updateContent(id, body);
+    } catch (err) {
+      if (err instanceof ContentProductConflictError) {
+        return NextResponse.json(
+          { error: "This product already has a content linked to it" },
+          { status: 400 }
+        );
+      }
+      throw err;
+    }
     if (!updated) {
       return NextResponse.json({ error: "Content not found" }, { status: 404 });
     }

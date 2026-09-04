@@ -4,12 +4,21 @@ import { NextRequest } from 'next/server';
 import { GET, POST } from '@/app/api/products/route';
 
 // Product store
-vi.mock('@/app/lib/productStore', () => ({
-  getAllProducts: vi.fn(),
-  addProduct: vi.fn(),
-  isProductPublic: (p: any) => p.isPublished !== false && !p.pendingDeleteAt,
-}));
-import { getAllProducts, addProduct } from '@/app/lib/productStore';
+vi.mock('@/app/lib/productStore', () => {
+  class BestSellerRankConflictError extends Error {
+    constructor(public rank: number) {
+      super(`Best seller rank ${rank} is already assigned to another product`);
+      this.name = 'BestSellerRankConflictError';
+    }
+  }
+  return {
+    getAllProducts: vi.fn(),
+    addProduct: vi.fn(),
+    isProductPublic: (p: any) => p.isPublished !== false && !p.pendingDeleteAt,
+    BestSellerRankConflictError,
+  };
+});
+import { getAllProducts, addProduct, BestSellerRankConflictError } from '@/app/lib/productStore';
 
 vi.mock('next/cache', () => ({ revalidateTag: vi.fn() }));
 import { revalidateTag } from 'next/cache';
@@ -92,6 +101,14 @@ describe('Products API Route', () => {
       // createdAt must be assigned server-side, not taken from the client.
       const passed = vi.mocked(addProduct).mock.calls[0][0];
       expect(typeof passed.createdAt).toBe('string');
+    });
+
+    it('returns 409 when the requested bestSellerRank is already taken', async () => {
+      vi.mocked(getSession).mockResolvedValue(adminSession);
+      vi.mocked(addProduct).mockRejectedValue(new BestSellerRankConflictError(1));
+
+      const res = await POST(mockRequest({ ...validProduct, bestSellerRank: 1 }));
+      expect(res.status).toBe(409);
     });
   });
 });

@@ -50,10 +50,15 @@ export const POST = withRoute(
     const otp = generateOtp();
     const expiresAt = Date.now() + 15 * 60 * 1000; // 15 minutes
 
-    // Save to database
-    await setSetting("contact_email_otp", otp);
-    await setSetting("contact_email_otp_expires", expiresAt.toString());
-    await setSetting("contact_email_pending", value);
+    // otp/expiresAt/pendingEmail are kept in ONE settings row (not three) so a
+    // verifying PUT reads a single consistent snapshot instead of three
+    // independent reads that a second, superseding OTP request could
+    // interleave with (an old OTP authorizing a newer pending change) — same
+    // fix as company-profile's otp route.
+    await setSetting(
+      "contact_email_otp_state",
+      JSON.stringify({ otp, expiresAt, pendingEmail: value })
+    );
     await resetOtpAttempts("contact_email_otp");
 
     // Send the OTP to the CURRENT email

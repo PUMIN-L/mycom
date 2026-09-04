@@ -23,11 +23,38 @@ const SANITIZE_OPTIONS: sanitize.IOptions = {
     "*": ["style", "class"],
     a: ["href", "target", "rel"],
   },
+  // The editor's toolbar only ever emits color/background-color/font-size —
+  // anything else in a `style` attribute (position, background-image url(),
+  // etc.) has no legitimate source and is dropped rather than trusted as-is.
+  allowedStyles: {
+    "*": {
+      color: [/^#[0-9a-fA-F]{3,8}$/, /^rgb\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*\)$/, /^[a-zA-Z]+$/],
+      "background-color": [/^#[0-9a-fA-F]{3,8}$/, /^rgb\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*\)$/, /^[a-zA-Z]+$/],
+      "font-size": [/^\d+(\.\d+)?(px|pt|em|rem|%)$/],
+    },
+  },
   // http(s)/mailto/tel only — blocks javascript: and data: URLs.
   allowedSchemes: ["http", "https", "mailto", "tel"],
   allowProtocolRelative: false,
   // Text inside removed <script>/<style> tags is discarded, not leaked as text.
   nonTextTags: ["script", "style", "textarea", "option", "noscript"],
+  // A target="_blank" link the editor produces gets a window handle to the
+  // page that opened it (via window.opener) unless rel carries noopener —
+  // that lets the linked page navigate the original tab to a phishing page
+  // ("reverse tabnabbing"). noreferrer additionally withholds the Referer
+  // header. Force both onto any anchor with a target, preserving whatever
+  // rel tokens (if any) were already there.
+  transformTags: {
+    a: (tagName: string, attribs: Record<string, string>) => {
+      if (attribs.target) {
+        const rel = new Set((attribs.rel || "").split(/\s+/).filter(Boolean));
+        rel.add("noopener");
+        rel.add("noreferrer");
+        attribs.rel = Array.from(rel).join(" ");
+      }
+      return { tagName, attribs };
+    },
+  },
 };
 
 /**

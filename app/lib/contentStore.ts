@@ -1,5 +1,5 @@
 import { cache } from "react";
-import { query } from "./db";
+import { query, withTransaction } from "./db";
 import { RowDataPacket, ResultSetHeader } from "mysql2";
 import type { ContentBlock, ContentData, ContentMeta } from "./types";
 import { sanitizeRichText } from "./sanitizeHtml";
@@ -7,6 +7,16 @@ import { saveRevision } from "./revisionStore";
 
 // Re-exported so existing callers can keep importing these from "./contentStore".
 export type { ContentBlock, ContentData, ContentMeta } from "./types";
+
+/** Thrown by addContent()/updateContent() when the target product already has
+ * a DIFFERENT content linked to it — "one content per product" is an
+ * invariant, not just a UI hint. */
+export class ContentProductConflictError extends Error {
+  constructor(public readonly productId: string) {
+    super(`product ${productId} already has a content linked to it`);
+    this.name = "ContentProductConflictError";
+  }
+}
 
 // Sanitize the rich-text HTML on every block before it is stored, so content
 // rendered later with dangerouslySetInnerHTML on public pages is always safe.
@@ -47,16 +57,30 @@ function rowToContent(row: RowDataPacket): ContentData {
 export async function addContent(content: ContentData): Promise<ContentData> {
   const blocks = sanitizeBlocks(content.blocks);
   const sanitizedTitle = sanitizeRichText(content.title).substring(0, 255);
-  await query(
-    "INSERT INTO contents (id, title, blocks, createdAt, productId) VALUES (?, ?, ?, ?, ?)",
-    [
-      content.id,
-      sanitizedTitle,
-      JSON.stringify(blocks),
-      content.createdAt,
-      content.productId ?? null,
-    ]
-  );
+  const productId = content.productId ?? null;
+
+  await withTransaction(async (conn) => {
+    if (productId) {
+      // Re-check against the live row, not just the route's earlier read —
+      // that check-then-insert has a race window two concurrent creates for
+      // the same product can both pass. Once a row for this productId
+      // exists, FOR UPDATE reliably locks it (TiDB doesn't gap-lock a row
+      // that doesn't exist yet, but this only needs to catch an EXISTING
+      // claim).
+      const [rows] = await conn.query<RowDataPacket[]>(
+        "SELECT id FROM contents WHERE productId = ? FOR UPDATE",
+        [productId]
+      );
+      if (rows.length > 0) {
+        throw new ContentProductConflictError(productId);
+      }
+    }
+    await conn.query(
+      "INSERT INTO contents (id, title, blocks, createdAt, productId) VALUES (?, ?, ?, ?, ?)",
+      [content.id, sanitizedTitle, JSON.stringify(blocks), content.createdAt, productId]
+    );
+  });
+
   return { ...content, title: sanitizedTitle, blocks };
 }
 
@@ -165,12 +189,38 @@ export async function updateContent(
   if ("productId" in updatedContent) set("productId", productId);
 
   if (sets.length > 0) {
-    // Snapshot the previous value first so an accidental overwrite is restorable.
-    await saveRevision("content", id, existing);
-    await query(
-      `UPDATE contents SET ${sets.join(", ")} WHERE id = ?`,
-      [...values, id]
-    );
+    if (productId && productId !== existing.productId) {
+      // Same race guard as addContent — re-linking an EXISTING content to a
+      // different product is a sequential bug otherwise, not just a race: the
+      // old check-then-update let any caller silently create a second
+      // content for a product that already has one.
+      await withTransaction(async (conn) => {
+        const [rows] = await conn.query<RowDataPacket[]>(
+          "SELECT id FROM contents WHERE productId = ? AND id != ? FOR UPDATE",
+          [productId, id]
+        );
+        if (rows.length > 0) {
+          throw new ContentProductConflictError(productId);
+        }
+        // Snapshot the previous value first so an accidental overwrite is
+        // restorable (a failed snapshot aborts before we touch the row) —
+        // only reached once the conflict check has already passed. Runs
+        // through this transaction's own connection so a retry (withTransaction
+        // retries the whole callback on a transient error) can't leave a
+        // duplicate snapshot.
+        await saveRevision("content", id, existing, conn);
+        await conn.query(
+          `UPDATE contents SET ${sets.join(", ")} WHERE id = ?`,
+          [...values, id]
+        );
+      });
+    } else {
+      await saveRevision("content", id, existing);
+      await query(
+        `UPDATE contents SET ${sets.join(", ")} WHERE id = ?`,
+        [...values, id]
+      );
+    }
   }
 
   return { id, title, blocks, createdAt, productId };

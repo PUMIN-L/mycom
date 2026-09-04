@@ -19,6 +19,12 @@ export const PUT = withRoute(
       return NextResponse.json({ error: "ไม่พบรายการขาย" }, { status: 404 });
     }
     const body = await request.json();
+    if (body.amount !== undefined && (!Number.isFinite(Number(body.amount)) || Number(body.amount) <= 0)) {
+      return NextResponse.json(
+        { error: "จำนวนเงินต้องมากกว่า 0" },
+        { status: 400 }
+      );
+    }
     const updated = await updateCostItem(costId, body);
     if (!updated) {
       return NextResponse.json({ error: "ไม่พบรายการต้นทุน" }, { status: 404 });

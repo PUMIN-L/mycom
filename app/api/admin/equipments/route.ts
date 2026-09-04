@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withRoute, requireAuth, jsonError } from "../../../lib/apiHelpers";
 import { listEquipments, addEquipment } from "../../../lib/crmStore";
+import { isValidDateString } from "../../../lib/dateFormat";
 
 // CRM equipment registry (admin-only). Spec:
 // openspec/changes/add-crm-service-tracking — document numbers are text refs.
@@ -28,6 +29,12 @@ export const POST = withRoute(
     }
     if (!data.productId || typeof data.productId !== "string" || !data.productId.trim()) {
       return jsonError("productId is required", 400);
+    }
+    if (data.warrantyStartDate && !isValidDateString(data.warrantyStartDate)) {
+      return jsonError("warrantyStartDate must be a valid date (YYYY-MM-DD)", 400);
+    }
+    if (data.warrantyEndDate && !isValidDateString(data.warrantyEndDate)) {
+      return jsonError("warrantyEndDate must be a valid date (YYYY-MM-DD)", 400);
     }
 
     const created = await addEquipment(data);

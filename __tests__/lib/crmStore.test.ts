@@ -18,6 +18,9 @@ import {
   completeScheduleWithLog,
   ScheduleNotPendingError,
   snoozeAlert,
+  updateEquipment,
+  updateSchedule,
+  ScheduleCompletionRequiresLogError,
 } from '@/app/lib/crmStore';
 
 beforeEach(() => {
@@ -175,6 +178,86 @@ describe('syncEquipmentsForSalesRecord', () => {
   });
 });
 
+describe('updateEquipment', () => {
+  // getEquipment()'s SELECT resolves productName live via
+  // COALESCE(NULLIF(e.productName, ''), p.title_th) — simulate that resolved
+  // value coming back on the "existing" read, exactly as the real EQUIPMENT_SELECT
+  // would when the raw column is empty but a catalog product is linked.
+  function mockQueryFor(existingRow: Record<string, unknown>, updatedRow: Record<string, unknown>) {
+    let updated = false;
+    topQuery.mockImplementation((sql: string) => {
+      if (sql.startsWith('UPDATE customer_equipments')) {
+        updated = true;
+        return Promise.resolve([{ affectedRows: 1 }]);
+      }
+      return Promise.resolve([[updated ? updatedRow : existingRow]]);
+    });
+  }
+
+  it('does not freeze the live catalog title into the raw column on an unrelated edit', async () => {
+    mockQueryFor(
+      {
+        id: 'eq-1',
+        productId: 'prod-1',
+        productName: 'Live Catalog Title', // as resolved by the COALESCE
+        warrantyStartDate: null,
+      },
+      { id: 'eq-1', productId: 'prod-1', productName: 'Live Catalog Title', warrantyStartDate: '2026-01-01' }
+    );
+
+    // Client echoes back the whole record it loaded (incl. the resolved
+    // productName) even though only warrantyStartDate changed.
+    await updateEquipment('eq-1', {
+      productId: 'prod-1',
+      productName: 'Live Catalog Title',
+      warrantyStartDate: '2026-01-01',
+    });
+
+    const updateCall = topQuery.mock.calls.find((c) => String(c[0]).startsWith('UPDATE customer_equipments'))!;
+    const [, params] = updateCall;
+    // productName is the 2nd bound param (customerId, productId, productName, ...)
+    expect((params as unknown[])[2]).toBe('');
+  });
+
+  it('keeps a custom equipment\'s own productName when there is no linked catalog product', async () => {
+    mockQueryFor(
+      { id: 'eq-2', productId: '', productName: 'ปั๊มมือสอง', warrantyStartDate: null },
+      { id: 'eq-2', productId: '', productName: 'ปั๊มมือสอง', warrantyStartDate: '2026-01-01' }
+    );
+
+    await updateEquipment('eq-2', {
+      productId: '_custom',
+      productName: 'ปั๊มมือสอง',
+      warrantyStartDate: '2026-01-01',
+    });
+
+    const updateCall = topQuery.mock.calls.find((c) => String(c[0]).startsWith('UPDATE customer_equipments'))!;
+    const [, params] = updateCall;
+    expect((params as unknown[])[2]).toBe('ปั๊มมือสอง');
+  });
+});
+
+describe('updateSchedule', () => {
+  it('rejects setting status to completed — that transition must go through completeScheduleWithLog', async () => {
+    topQuery.mockResolvedValue([[{ id: 'sch-1', status: 'pending', notes: '' }]]);
+
+    await expect(updateSchedule('sch-1', { status: 'completed' })).rejects.toThrow(
+      ScheduleCompletionRequiresLogError
+    );
+    expect(topQuery.mock.calls.some((c) => String(c[0]).startsWith('UPDATE service_schedules'))).toBe(false);
+  });
+
+  it('allows a normal field update that does not touch status', async () => {
+    topQuery.mockImplementation((sql: string) => {
+      if (String(sql).startsWith('UPDATE service_schedules')) return Promise.resolve([{ affectedRows: 1 }]);
+      return Promise.resolve([[{ id: 'sch-1', status: 'pending', notes: 'old' }]]);
+    });
+
+    const result = await updateSchedule('sch-1', { notes: 'new' });
+    expect(result?.status).toBe('pending');
+  });
+});
+
 describe('cleanupEquipmentsForSalesRecord', () => {
   it('unlinks equipment from the sale — never deletes the rows', async () => {
     topQuery.mockResolvedValue([{ affectedRows: 2 }]);
@@ -307,6 +390,32 @@ describe('getAlerts — "today" must be Bangkok (UTC+7) time, not server UTC', (
 
     const alerts = await getAlerts();
     expect(alerts.upcomingSchedules[0].overdue).toBe(true);
+  });
+
+  it('reports the true incomplete-equipment total separately from the capped list', async () => {
+    topQuery.mockImplementation((sql: string) => {
+      if (String(sql).includes('SELECT COUNT(*) AS cnt')) {
+        return Promise.resolve([[{ cnt: 137 }]]);
+      }
+      if (String(sql).includes('customer_equipments e') && String(sql).includes("e.serialNumber = ''")) {
+        return Promise.resolve([Array.from({ length: 100 }, (_, i) => ({ id: `eq-${i}` }))]);
+      }
+      return Promise.resolve([[]]);
+    });
+
+    const alerts = await getAlerts();
+    expect(alerts.incompleteEquipments).toHaveLength(100);
+    expect(alerts.incompleteEquipmentsTotal).toBe(137);
+  });
+
+  it('excludes equipment manually marked Expired from the warranty-expiry alert query', async () => {
+    // A warranty ending inside the alert window is normally worth flagging,
+    // but an admin can also manually set an equipment's status to "Expired" —
+    // that override must suppress the alert even if the date math still says
+    // "expiring soon".
+    await getAlerts();
+    const warrantyCall = topQuery.mock.calls.find(([sql]) => String(sql).includes('warrantyEndDate'));
+    expect(String(warrantyCall![0])).toContain("e.status != 'Expired'");
   });
 
   it('excludes an alert whose snoozeUntil filter would match in the real query (SQL shape regression guard)', async () => {
