@@ -7,47 +7,68 @@ import {
   SCHEDULE_TYPES,
 } from "../../../lib/crmStore";
 import { isValidDateString } from "../../../lib/dateFormat";
+import { query } from "../../../lib/db";
 
-// GET /api/admin/schedules[?equipmentId=] — list service/call schedules.
+// GET /api/admin/schedules[?equipmentId=|?customerId=] — list service/call schedules.
 export const GET = withRoute(
   "โหลดรายการนัดหมายไม่สำเร็จ",
   async (request: NextRequest) => {
     await requireAuth();
-    const equipmentId =
-      new URL(request.url).searchParams.get("equipmentId") || undefined;
-    return NextResponse.json(await listSchedules(equipmentId));
+    const params = new URL(request.url).searchParams;
+    const equipmentId = params.get("equipmentId") || undefined;
+    const customerId = params.get("customerId") || undefined;
+    return NextResponse.json(await listSchedules(equipmentId, customerId));
   }
 );
 
-// POST /api/admin/schedules — create a new schedule for an equipment.
+// POST /api/admin/schedules — create a new schedule for EITHER an equipment
+// or a customer directly (a general follow-up call not tied to any specific
+// equipment — always scheduleType "phone_call").
 export const POST = withRoute(
   "สร้างนัดหมายไม่สำเร็จ",
   async (request: NextRequest) => {
     await requireAuth();
     const data = await request.json();
 
-    if (
-      !data.equipmentId ||
-      typeof data.equipmentId !== "string" ||
-      !data.equipmentId.trim()
-    ) {
-      return jsonError("equipmentId is required", 400);
+    const hasEquipmentId = typeof data.equipmentId === "string" && data.equipmentId.trim();
+    const hasCustomerId = typeof data.customerId === "string" && data.customerId.trim();
+
+    if (!hasEquipmentId && !hasCustomerId) {
+      return jsonError("equipmentId or customerId is required", 400);
     }
 
-    // Verify equipment exists
-    const equipment = await getEquipment(data.equipmentId);
-    if (!equipment) {
-      return jsonError("ไม่พบอุปกรณ์ที่อ้างอิง", 404);
-    }
-
-    if (
-      !data.scheduleType ||
-      !(SCHEDULE_TYPES as readonly string[]).includes(data.scheduleType)
-    ) {
-      return jsonError(
-        `scheduleType must be one of: ${SCHEDULE_TYPES.join(", ")}`,
-        400
-      );
+    if (hasEquipmentId) {
+      const equipment = await getEquipment(data.equipmentId);
+      if (!equipment) {
+        return jsonError("ไม่พบอุปกรณ์ที่อ้างอิง", 404);
+      }
+      if (
+        !data.scheduleType ||
+        !(SCHEDULE_TYPES as readonly string[]).includes(data.scheduleType)
+      ) {
+        return jsonError(
+          `scheduleType must be one of: ${SCHEDULE_TYPES.join(", ")}`,
+          400
+        );
+      }
+    } else {
+      const [customers] = (await query(
+        "SELECT id FROM customers WHERE id = ? LIMIT 1",
+        [data.customerId]
+      )) as any[];
+      if (customers.length === 0) {
+        return jsonError("ไม่พบลูกค้าที่อ้างอิง", 404);
+      }
+      // A customer-scoped schedule is always a phone-call follow-up — there's
+      // no equipment context for a "service" visit. addSchedule() would
+      // coerce this too, but reject explicitly here for a clear error instead
+      // of silently overriding whatever the client asked for.
+      if (data.scheduleType && data.scheduleType !== "phone_call") {
+        return jsonError(
+          "การนัดหมายลูกค้าโดยตรง (ไม่ผูกกับอุปกรณ์) รองรับเฉพาะประเภทโทรติดตามเท่านั้น",
+          400
+        );
+      }
     }
 
     if (

@@ -20,6 +20,8 @@ import {
   snoozeAlert,
   addEquipment,
   updateEquipment,
+  addSchedule,
+  listSchedules,
   updateSchedule,
   ScheduleCompletionRequiresLogError,
   declineWarrantyRenewal,
@@ -332,6 +334,85 @@ describe('declineWarrantyRenewal', () => {
   });
 });
 
+describe('listSchedules', () => {
+  it('filters by equipmentId when given', async () => {
+    topQuery.mockResolvedValue([[]]);
+    await listSchedules('eq-1');
+    expect(topQuery).toHaveBeenCalledWith(
+      expect.stringContaining('WHERE equipmentId = ?'),
+      ['eq-1']
+    );
+  });
+
+  it('filters by customerId when given (and no equipmentId)', async () => {
+    topQuery.mockResolvedValue([[]]);
+    await listSchedules(undefined, 'cust-1');
+    expect(topQuery).toHaveBeenCalledWith(
+      expect.stringContaining('WHERE customerId = ?'),
+      ['cust-1']
+    );
+  });
+
+  it('returns everything when neither filter is given', async () => {
+    topQuery.mockResolvedValue([[]]);
+    await listSchedules();
+    expect(topQuery).toHaveBeenCalledWith(expect.not.stringContaining('WHERE'));
+  });
+});
+
+describe('addSchedule', () => {
+  it('stores an equipment-scoped schedule with customerId left null', async () => {
+    topQuery.mockImplementation((sql: string) => {
+      if (sql.startsWith('INSERT INTO service_schedules')) return Promise.resolve([{ affectedRows: 1 }]);
+      return Promise.resolve([[{ id: 'sch-1', equipmentId: 'eq-1' }]]);
+    });
+
+    await addSchedule({ equipmentId: 'eq-1', scheduleType: 'service', scheduledDate: '2026-09-04' });
+
+    const insertCall = topQuery.mock.calls.find((c) => String(c[0]).startsWith('INSERT INTO service_schedules'))!;
+    const params = insertCall[1] as unknown[];
+    // (id, equipmentId, customerId, scheduleType, ...)
+    expect(params[1]).toBe('eq-1');
+    expect(params[2]).toBeNull();
+    expect(params[3]).toBe('service');
+  });
+
+  it('stores a customer-scoped schedule with equipmentId left null and forces scheduleType to phone_call', async () => {
+    topQuery.mockImplementation((sql: string) => {
+      if (sql.startsWith('INSERT INTO service_schedules')) return Promise.resolve([{ affectedRows: 1 }]);
+      return Promise.resolve([[{ id: 'sch-1', customerId: 'cust-1' }]]);
+    });
+
+    // Even if the caller asks for "service", there's no equipment context.
+    await addSchedule({ customerId: 'cust-1', scheduleType: 'service' as any, scheduledDate: '2026-09-04' });
+
+    const insertCall = topQuery.mock.calls.find((c) => String(c[0]).startsWith('INSERT INTO service_schedules'))!;
+    const params = insertCall[1] as unknown[];
+    expect(params[1]).toBeNull();
+    expect(params[2]).toBe('cust-1');
+    expect(params[3]).toBe('phone_call');
+  });
+
+  it('prefers equipmentId over customerId if a caller supplies both', async () => {
+    topQuery.mockImplementation((sql: string) => {
+      if (sql.startsWith('INSERT INTO service_schedules')) return Promise.resolve([{ affectedRows: 1 }]);
+      return Promise.resolve([[{ id: 'sch-1' }]]);
+    });
+
+    await addSchedule({
+      equipmentId: 'eq-1',
+      customerId: 'cust-1',
+      scheduleType: 'service',
+      scheduledDate: '2026-09-04',
+    });
+
+    const insertCall = topQuery.mock.calls.find((c) => String(c[0]).startsWith('INSERT INTO service_schedules'))!;
+    const params = insertCall[1] as unknown[];
+    expect(params[1]).toBe('eq-1');
+    expect(params[2]).toBeNull();
+  });
+});
+
 describe('updateSchedule', () => {
   it('rejects setting status to completed — that transition must go through completeScheduleWithLog', async () => {
     topQuery.mockResolvedValue([[{ id: 'sch-1', status: 'pending', notes: '' }]]);
@@ -350,6 +431,19 @@ describe('updateSchedule', () => {
 
     const result = await updateSchedule('sch-1', { notes: 'new' });
     expect(result?.status).toBe('pending');
+  });
+
+  it('keeps a customer-scoped schedule as phone_call even if asked to change scheduleType', async () => {
+    topQuery.mockImplementation((sql: string) => {
+      if (String(sql).startsWith('UPDATE service_schedules')) return Promise.resolve([{ affectedRows: 1 }]);
+      return Promise.resolve([[{ id: 'sch-1', customerId: 'cust-1', status: 'pending', scheduleType: 'phone_call', notes: '' }]]);
+    });
+
+    await updateSchedule('sch-1', { scheduleType: 'service' as any });
+
+    const updateCall = topQuery.mock.calls.find((c) => String(c[0]).startsWith('UPDATE service_schedules'))!;
+    const params = updateCall[1] as unknown[];
+    expect(params[0]).toBe('phone_call'); // scheduleType is the 1st SET value
   });
 });
 
@@ -485,6 +579,28 @@ describe('getAlerts — "today" must be Bangkok (UTC+7) time, not server UTC', (
 
     const alerts = await getAlerts();
     expect(alerts.upcomingSchedules[0].overdue).toBe(true);
+  });
+
+  it('resolves customerName/companyName for a customer-scoped schedule (no linked equipment)', async () => {
+    topQuery.mockImplementation((sql: string) => {
+      if (String(sql).includes('FROM service_schedules')) {
+        return Promise.resolve([[
+          { id: 's1', equipmentId: null, customerId: 'cust-1', scheduledDate: '2026-08-01', status: 'pending', customerName: 'สมชาย', companyName: 'ACME' },
+        ]]);
+      }
+      return Promise.resolve([[]]);
+    });
+
+    const alerts = await getAlerts();
+    expect(alerts.upcomingSchedules[0].customerName).toBe('สมชาย');
+    expect(alerts.upcomingSchedules[0].companyName).toBe('ACME');
+  });
+
+  it('joins through customerId (not just the equipment path) to resolve customer/company', async () => {
+    await getAlerts();
+    const scheduleCall = topQuery.mock.calls.find(([sql]) => String(sql).includes('FROM service_schedules'));
+    expect(String(scheduleCall![0])).toContain('LEFT JOIN customers c2 ON s.customerId = c2.id');
+    expect(String(scheduleCall![0])).toContain('COALESCE(c.name, c2.name)');
   });
 
   it('reports the true incomplete-equipment total separately from the capped list', async () => {

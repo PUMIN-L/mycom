@@ -4,7 +4,7 @@ import type { QueryResult, FieldPacket, RowDataPacket } from "mysql2";
 
 // Bump whenever the schema below changes — a mismatch re-runs the (idempotent)
 // bump; a match lets returning cold instances skip it in one SELECT.
-const SCHEMA_VERSION = 31;
+const SCHEMA_VERSION = 32;
 
 type DbPool = ReturnType<typeof mysql.createPool>;
 
@@ -579,10 +579,15 @@ async function bootstrapSchemaOnce(): Promise<void> {
     // of a unit already sold to a customer.
 
     // ── CRM: service / follow-up call schedules ─────────────────────────────
+    // A schedule is scoped to EITHER an equipmentId OR a customerId (never
+    // both) — a customer-level schedule is used for a general follow-up call
+    // not tied to a specific piece of equipment, and is restricted to
+    // scheduleType='phone_call' at the app layer (see crmStore.ts/addSchedule).
     await connection.query(`
         CREATE TABLE IF NOT EXISTS service_schedules (
           id VARCHAR(36) PRIMARY KEY,
-          equipmentId VARCHAR(36) NOT NULL,
+          equipmentId VARCHAR(36) NULL,
+          customerId VARCHAR(255) NULL,
           scheduleType VARCHAR(20) NOT NULL DEFAULT 'service',
           scheduledDate VARCHAR(20) NOT NULL,
           assignedToAdminId VARCHAR(255) NOT NULL DEFAULT '',
@@ -590,12 +595,45 @@ async function bootstrapSchemaOnce(): Promise<void> {
           notes TEXT,
           createdAt VARCHAR(255) NOT NULL,
           INDEX idx_ss_equipment (equipmentId),
+          INDEX idx_ss_customer (customerId),
           INDEX idx_ss_status_date (status, scheduledDate)
         )
       `);
     try {
       await connection.query(
         `ALTER TABLE service_schedules ADD CONSTRAINT fk_ss_equipment FOREIGN KEY (equipmentId) REFERENCES customer_equipments(id) ON DELETE CASCADE`
+      );
+    } catch (error) {
+      if (!isBenignSchemaError(error)) throw error;
+    }
+    // v32: existing databases created equipmentId as NOT NULL — relax it so a
+    // customer-scoped (no equipment) schedule can be inserted. MODIFY COLUMN
+    // is safe/idempotent on an already-nullable column and never touches
+    // existing row data (every existing row already has a real value).
+    try {
+      await connection.query(
+        `ALTER TABLE service_schedules MODIFY COLUMN equipmentId VARCHAR(36) NULL`
+      );
+    } catch (error) {
+      if (!isBenignSchemaError(error)) throw error;
+    }
+    try {
+      await connection.query(
+        `ALTER TABLE service_schedules ADD COLUMN IF NOT EXISTS customerId VARCHAR(255) NULL`
+      );
+    } catch (error) {
+      if (!isBenignSchemaError(error)) throw error;
+    }
+    try {
+      await connection.query(
+        `CREATE INDEX idx_ss_customer ON service_schedules (customerId)`
+      );
+    } catch (error) {
+      if (!isBenignSchemaError(error)) throw error;
+    }
+    try {
+      await connection.query(
+        `ALTER TABLE service_schedules ADD CONSTRAINT fk_ss_customer FOREIGN KEY (customerId) REFERENCES customers(id) ON DELETE CASCADE`
       );
     } catch (error) {
       if (!isBenignSchemaError(error)) throw error;

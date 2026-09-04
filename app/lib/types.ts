@@ -151,13 +151,20 @@ export interface CustomerEquipment {
 
 export interface ServiceSchedule {
   id: string;
-  equipmentId: string;
+  /** Exactly one of equipmentId/customerId is set — a customer-scoped
+   * schedule (no equipment) is a general follow-up call, always
+   * scheduleType "phone_call". */
+  equipmentId?: string | null;
+  customerId?: string | null;
   scheduleType: ScheduleType;
   scheduledDate: string; // YYYY-MM-DD
   assignedToAdminId: string;
   status: ScheduleStatus;
   notes: string;
   createdAt: string;
+  // Joined display fields (present on customer-scoped reads)
+  customerName?: string;
+  companyName?: string;
 }
 
 export interface ServiceLog {

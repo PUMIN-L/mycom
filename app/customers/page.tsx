@@ -5,6 +5,7 @@ import { useAuth } from "../context/AuthContext";
 import Toast from "../components/Toast";
 import Link from "next/link";
 import EquipmentTab from "./EquipmentTab";
+import CustomerCallScheduleSection from "../components/modals/CustomerCallScheduleSection";
 import { downloadExcel } from "../lib/xlsxExport";
 
 interface Company {
@@ -754,7 +755,7 @@ function CustomersInner() {
       {viewingCustomer && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-gray-900/40 backdrop-blur-sm" onClick={() => setViewingCustomer(null)}></div>
-          <div className="relative bg-white rounded-3xl shadow-2xl max-w-xl w-full p-8 overflow-hidden transform transition-all">
+          <div className="relative bg-white rounded-3xl shadow-2xl max-w-xl w-full p-8 max-h-[85vh] overflow-y-auto transform transition-all">
             <div className="absolute top-0 right-0 p-4">
               <button onClick={() => setViewingCustomer(null)} className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full transition-colors">
                 <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
@@ -769,7 +770,7 @@ function CustomersInner() {
                 <p className="text-orange-600 font-medium">{viewingCustomer.companyName}</p>
               </div>
             </div>
-            
+
             <div className="space-y-4">
               <div className="flex items-center p-4 bg-gray-50 rounded-2xl border border-gray-100">
                 <div className="p-2 bg-white rounded-xl shadow-sm mr-4 text-gray-400">
@@ -807,6 +808,8 @@ function CustomersInner() {
                   <p className="text-orange-900">{viewingCustomer.note}</p>
                 </div>
               )}
+
+              <CustomerCallScheduleSection customerId={viewingCustomer.id} />
             </div>
           </div>
         </div>

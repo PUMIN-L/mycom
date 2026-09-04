@@ -70,6 +70,18 @@ export const DELETE = withRoute(
     if (salesRecords.length > 0) {
       return jsonError("Cannot delete customer with linked sales records", 400);
     }
+    // service_schedules.customerId has an ON DELETE CASCADE FK (customer-scoped
+    // call follow-ups, not tied to equipment) — without this check, deleting
+    // the customer would silently wipe that call history the same way an
+    // unguarded equipment delete would (equipment deletion requires an OTP
+    // for exactly this reason).
+    const [schedules] = (await query(
+      "SELECT id FROM service_schedules WHERE customerId = ? LIMIT 1",
+      [id]
+    )) as any[];
+    if (schedules.length > 0) {
+      return jsonError("Cannot delete customer with linked call schedules", 400);
+    }
 
     await query("DELETE FROM customers WHERE id = ?", [id]);
     return NextResponse.json({ success: true });

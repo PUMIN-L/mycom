@@ -40,9 +40,9 @@ process.env.DB_USER = 'tester';
 process.env.DB_PASSWORD = 'pw';
 process.env.DB_NAME = 'testdb';
 
-// A version SELECT result that MATCHES SCHEMA_VERSION (31) → bootstrap fast-path,
+// A version SELECT result that MATCHES SCHEMA_VERSION (32) → bootstrap fast-path,
 // skipping DDL. Value is a string because settings stores VARCHAR values.
-const SCHEMA_MATCH: [Array<{ value: string }>, unknown[]] = [[{ value: '31' }], []];
+const SCHEMA_MATCH: [Array<{ value: string }>, unknown[]] = [[{ value: '32' }], []];
 // An empty result → no schema_version row / no admin row → full bootstrap.
 const EMPTY: [unknown[], unknown[]] = [[], []];
 
@@ -141,7 +141,7 @@ describe('db.ts', () => {
       // Schema version is recorded so future cold instances take the fast path
       expect(mockConnection.query).toHaveBeenCalledWith(
         expect.stringContaining("INSERT INTO settings"),
-        ['31'],
+        ['32'],
       );
       expect(mockConnection.release).toHaveBeenCalledTimes(1);
     });

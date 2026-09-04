@@ -365,13 +365,22 @@ export async function deleteEquipment(id: string): Promise<boolean> {
 // ── Schedules ─────────────────────────────────────────────────────────────────
 
 export async function listSchedules(
-  equipmentId?: string
+  equipmentId?: string,
+  customerId?: string
 ): Promise<ServiceSchedule[]> {
   if (equipmentId) {
     const [rows] = await query<RowDataPacket[]>(
       `SELECT * FROM service_schedules WHERE equipmentId = ?
        ORDER BY scheduledDate ASC`,
       [equipmentId]
+    );
+    return rows as ServiceSchedule[];
+  }
+  if (customerId) {
+    const [rows] = await query<RowDataPacket[]>(
+      `SELECT * FROM service_schedules WHERE customerId = ?
+       ORDER BY scheduledDate ASC`,
+      [customerId]
     );
     return rows as ServiceSchedule[];
   }
@@ -394,18 +403,31 @@ export async function addSchedule(
 ): Promise<ServiceSchedule> {
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
-  // Defense-in-depth: whitelist scheduleType (mirrors updateSchedule).
-  const scheduleType = SCHEDULE_TYPES.includes(data.scheduleType as ScheduleType)
-    ? data.scheduleType
-    : "service";
+  // Exactly one of equipmentId/customerId — equipmentId wins if a caller
+  // (incorrectly) supplies both, since that's the pre-existing, more
+  // specific relationship.
+  const equipmentId = sanitizePlainText(data.equipmentId || "").substring(0, 36) || null;
+  const customerId = equipmentId
+    ? null
+    : sanitizePlainText(data.customerId || "").substring(0, 255) || null;
+  // A customer-scoped schedule (no linked equipment) is always a phone-call
+  // follow-up — there's no equipment context for a "service" visit. For an
+  // equipment-scoped schedule, defense-in-depth whitelist scheduleType
+  // (mirrors updateSchedule).
+  const scheduleType = customerId
+    ? "phone_call"
+    : SCHEDULE_TYPES.includes(data.scheduleType as ScheduleType)
+      ? data.scheduleType
+      : "service";
   await query(
     `INSERT INTO service_schedules
-       (id, equipmentId, scheduleType, scheduledDate, assignedToAdminId,
+       (id, equipmentId, customerId, scheduleType, scheduledDate, assignedToAdminId,
         status, notes, createdAt)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
-      sanitizePlainText(data.equipmentId || "").substring(0, 36),
+      equipmentId,
+      customerId,
       scheduleType,
       sanitizePlainText(data.scheduledDate || "").substring(0, 20),
       sanitizePlainText(data.assignedToAdminId || "").substring(0, 255),
@@ -428,10 +450,14 @@ export async function updateSchedule(
   }
   const merged = { ...existing, ...data };
   // Defense-in-depth: whitelist enum fields so even a direct store caller
-  // can't write arbitrary values. Invalid → keep the existing value.
-  const scheduleType = SCHEDULE_TYPES.includes(merged.scheduleType as ScheduleType)
-    ? merged.scheduleType
-    : existing.scheduleType;
+  // can't write arbitrary values. Invalid → keep the existing value. A
+  // customer-scoped schedule (no linked equipment) stays "phone_call" no
+  // matter what's requested — there's no equipment context for "service".
+  const scheduleType = existing.customerId
+    ? "phone_call"
+    : SCHEDULE_TYPES.includes(merged.scheduleType as ScheduleType)
+      ? merged.scheduleType
+      : existing.scheduleType;
   const status = SCHEDULE_STATUSES.includes(merged.status as ScheduleStatus)
     ? merged.status
     : existing.status;
@@ -600,14 +626,21 @@ export async function getAlerts(
   );
   const incompleteEquipmentsTotal = Number(incompleteCountRows[0]?.cnt) || 0;
 
+  // A schedule's customer/company come from its linked equipment's customer
+  // when equipment-scoped, or straight from s.customerId when customer-scoped
+  // (no equipment) — COALESCE picks whichever join path actually matched.
   const [scheduleRows] = await query<RowDataPacket[]>(
-    `SELECT s.*, e.customerId, e.serialNumber, c.name AS customerName,
-            co.name AS companyName, p.title_th AS productName
+    `SELECT s.*, COALESCE(e.customerId, s.customerId) AS customerId, e.serialNumber,
+            COALESCE(c.name, c2.name) AS customerName,
+            COALESCE(co.name, co2.name) AS companyName,
+            p.title_th AS productName
      FROM service_schedules s
      LEFT JOIN customer_equipments e ON s.equipmentId = e.id
      LEFT JOIN customers c ON e.customerId = c.id
      LEFT JOIN companies co ON c.companyId = co.id
      LEFT JOIN products p ON e.productId = p.id
+     LEFT JOIN customers c2 ON s.customerId = c2.id
+     LEFT JOIN companies co2 ON c2.companyId = co2.id
      LEFT JOIN alert_snoozes sno ON sno.alertType = 'schedule' AND sno.referenceId = s.id
      WHERE s.status = 'pending' AND s.scheduledDate <= ?
        AND (sno.snoozeUntil IS NULL OR sno.snoozeUntil <= ?)

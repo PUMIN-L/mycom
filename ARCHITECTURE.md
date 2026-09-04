@@ -477,3 +477,14 @@ Tackle in small, verifiable steps — the test suite is now a safety net for the
 
 **4. Testing Updates & Mocks**
 - The `updateProduct` mock in Vitest needs to be carefully constructed because it runs within `withTransaction`. When testing API routes that mutate products, use `mockImplementation` or ensure you return the exact object properties requested (e.g. `pendingDeleteAt`).
+
+---
+
+## Recent Architectural Changes (September 2026)
+
+**1. Equipment Calibration Reminders**
+- `CustomerEquipment.calibrationDate` (`YYYY-MM-DD`, nullable) records the date of the equipment's most recent calibration — entered by hand in `EquipmentEditModal.tsx`, either an exact date or an approximate one (e.g. when the customer had it calibrated by a different vendor). The logic treats both identically; there's no separate "approximate" flag.
+- **Business rule (do not "simplify" this without re-reading the constants):** a calibration is valid for `CALIBRATION_VALIDITY_MONTHS = 12` months (defined in `app/lib/types.ts`, since a client component needs it too). The system must start alerting `CALIBRATION_ALERT_LEAD_MONTHS = 2` months (defined in `app/lib/crmStore.ts`, server-only) *before* that 12-month due date — i.e. the alert fires once `today >= calibrationDate + 10 months`. The "10" is `12 - 2`, not an independently-chosen number; if either constant changes, the trigger point changes with it.
+- **No upper bound, unlike warranty alerts:** the `nearingCalibration` query in `getAlerts()` (`app/lib/crmStore.ts`) has only a lower bound (`DATE_ADD(calibrationDate, INTERVAL 10 MONTH) <= today`). Warranty alerts stop firing once `status = 'Expired'`, but nothing marks a calibration "handled" except recording a new `calibrationDate` — so once overdue, it must keep alerting indefinitely (shown as "เลยกำหนดสอบเทียบ" in `app/crm/alerts/page.tsx`) rather than silently disappearing after some window.
+- The due date shown to admins (`calibrationDueDate()` helper in `app/crm/alerts/page.tsx`) is `calibrationDate + CALIBRATION_VALIDITY_MONTHS` (12 months, via `addMonthsToDateString()` in `app/lib/dateFormat.ts`) — this is the true due date the customer sees, not the 10-month alert-trigger point. Don't conflate the two when touching this UI.
+- Related but separate: `declineWarrantyRenewal()` in `crmStore.ts` is a warranty-only flow (flips equipment `status` to `Expired` + appends a note) triggered from the warranty alert card in `app/crm/alerts/page.tsx`. It has no calibration equivalent — a calibration alert can only be cleared by entering a new `calibrationDate`.

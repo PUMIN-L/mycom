@@ -118,9 +118,14 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
     if (isExporting) return;
     setIsExporting(true);
     try {
-      // Fetch all schedules for a complete backup
+      // Fetch all schedules for a complete backup. This sheet is equipment
+      // data specifically — customer-scoped call schedules (no equipmentId)
+      // aren't equipment history, so they're excluded here.
       const schedRes = await fetch("/api/admin/schedules");
-      const allSchedules: ServiceSchedule[] = schedRes.ok ? await schedRes.json() : [];
+      const rawSchedules: ServiceSchedule[] = schedRes.ok ? await schedRes.json() : [];
+      const allSchedules = rawSchedules.filter(
+        (s): s is ServiceSchedule & { equipmentId: string } => !!s.equipmentId
+      );
 
       // Group schedules by equipmentId
       const schedulesByEq = new Map<string, ServiceSchedule[]>();
