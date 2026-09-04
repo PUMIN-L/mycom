@@ -226,6 +226,18 @@ export default function EquipmentEditModal({
             </div>
           </div>
 
+          {/* Calibration */}
+          <div className="relative z-50">
+            <label className="block text-sm font-semibold text-gray-700 mb-1.5">วันที่สอบเทียบ</label>
+            <DatePicker
+              selected={editing?.calibrationDate ? new Date(editing.calibrationDate) : null}
+              onChange={(date) => setEditing((prev) => ({ ...prev, calibrationDate: date ? toLocalDateString(date) : "" }))}
+              placeholderText="ไม่ระบุ"
+              isClearable
+            />
+            <p className="text-xs text-gray-400 mt-1">ระบบจะแจ้งเตือนล่วงหน้าเมื่อใกล้ถึงกำหนดสอบเทียบครั้งถัดไป (10 เดือนหลังวันนี้)</p>
+          </div>
+
           {/* Status */}
           <div>
             <label className="block text-sm font-semibold text-gray-700 mb-1.5">สถานะ</label>

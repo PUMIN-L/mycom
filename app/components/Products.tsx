@@ -1062,7 +1062,13 @@ export default function Products({ dataPromise }: ProductsProps) {
 
                     <div className={`flex flex-col flex-1 p-6 relative z-10 ${item.isPublished === false ? "bg-gray-50" : "bg-white"}`}>
                       <h3
-                        className={`text-lg font-bold text-[var(--text-primary)] mb-1 transition-colors line-clamp-2 [&_p]:m-0 ${item.isPublished === false ? "" : "group-hover:text-[var(--accent)]"}`}
+                        // -webkit-line-clamp on the H3 itself doesn't work reliably once
+                        // Quill's <p> paragraphs are separate block children instead of one
+                        // inline flow — it was clipping the 2nd line far short of the card's
+                        // edge instead of filling it. Clamp each paragraph to its OWN single
+                        // line instead (a well-supported case for line-clamp), and hide any
+                        // 3rd+ paragraph as a safety net for an unusually long title.
+                        className={`text-lg font-bold text-[var(--text-primary)] mb-1 transition-colors [&_p]:m-0 [&_p]:line-clamp-1 [&_p:nth-child(n+3)]:hidden ${item.isPublished === false ? "" : "group-hover:text-[var(--accent)]"}`}
                         dangerouslySetInnerHTML={{ __html: getTitle(item) }}
                       />
                       {/* Show the English name too when viewing another language:
@@ -1155,7 +1161,7 @@ export default function Products({ dataPromise }: ProductsProps) {
                             </div>
                           </td>
                           <td className="py-3 px-4 min-w-[200px] whitespace-normal">
-                            <div className={`font-bold line-clamp-2 ${item.isPublished === false ? "text-gray-400" : "text-gray-800"}`} dangerouslySetInnerHTML={{ __html: getTitle(item) }} />
+                            <div className={`font-bold [&_p]:m-0 [&_p]:line-clamp-1 [&_p:nth-child(n+3)]:hidden ${item.isPublished === false ? "text-gray-400" : "text-gray-800"}`} dangerouslySetInnerHTML={{ __html: getTitle(item) }} />
                             {item.pendingDeleteAt && (
                               <span className="inline-block mt-1 px-2 py-0.5 bg-red-100 text-red-600 text-[10px] font-bold rounded-full">รอยืนยันการลบ</span>
                             )}

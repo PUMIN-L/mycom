@@ -129,6 +129,12 @@ export interface CustomerEquipment {
   warrantyStartDate: string | null; // YYYY-MM-DD
   warrantyEndDate: string | null; // YYYY-MM-DD
   status: string; // Active | Expired
+  /** Free-text log of events recorded against this equipment (e.g. "customer
+   * declined to renew the warranty"), newest entry appended last. */
+  note?: string | null;
+  /** Date of the last calibration performed. The alert feed warns 10 months
+   * after this date (see getAlerts()'s "nearingCalibration"). */
+  calibrationDate?: string | null; // YYYY-MM-DD
   createdAt: string;
   // Joined display fields (present on reads)
   customerName?: string;
@@ -201,6 +207,7 @@ export interface CostItem {
 
 export interface CrmAlerts {
   expiringWarranties: CustomerEquipment[];
+  nearingCalibration: CustomerEquipment[];
   incompleteEquipments: CustomerEquipment[];
   /** True count of matching (non-snoozed) incomplete equipment, which can
    * exceed incompleteEquipments.length since that list is capped. */

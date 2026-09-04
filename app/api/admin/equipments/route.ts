@@ -36,6 +36,9 @@ export const POST = withRoute(
     if (data.warrantyEndDate && !isValidDateString(data.warrantyEndDate)) {
       return jsonError("warrantyEndDate must be a valid date (YYYY-MM-DD)", 400);
     }
+    if (data.calibrationDate && !isValidDateString(data.calibrationDate)) {
+      return jsonError("calibrationDate must be a valid date (YYYY-MM-DD)", 400);
+    }
 
     const created = await addEquipment(data);
     return NextResponse.json(created, { status: 201 });

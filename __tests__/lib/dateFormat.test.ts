@@ -5,6 +5,7 @@ import {
   bangkokDateAtHourFromNow,
   bangkokCurrentMonth,
   isValidDateString,
+  addMonthsToDateString,
 } from '@/app/lib/dateFormat';
 
 describe('toLocalDateString', () => {
@@ -103,5 +104,24 @@ describe('bangkokCurrentMonth', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-01-15T04:00:00.000Z')); // Bangkok: Jan 15, 11:00
     expect(bangkokCurrentMonth()).toBe('2026-01');
+  });
+});
+
+describe('addMonthsToDateString', () => {
+  it('adds whole months within the same year', () => {
+    expect(addMonthsToDateString('2026-01-15', 10)).toBe('2026-11-15');
+  });
+
+  it('rolls over into the next year', () => {
+    expect(addMonthsToDateString('2026-06-01', 10)).toBe('2027-04-01');
+  });
+
+  it('overflows into the following month when the target month is shorter (matches MySQL DATE_ADD)', () => {
+    // Jan 31 + 1 month: February has no 31st, so it rolls into March.
+    expect(addMonthsToDateString('2026-01-31', 1)).toBe('2026-03-03');
+  });
+
+  it('handles a leap-year February correctly', () => {
+    expect(addMonthsToDateString('2027-04-29', 10)).toBe('2028-02-29'); // 2028 is a leap year
   });
 });

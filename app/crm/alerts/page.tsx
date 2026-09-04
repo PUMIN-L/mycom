@@ -4,8 +4,9 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "../../context/AuthContext";
 import Toast from "../../components/Toast";
+import ConfirmDialog from "../../components/ConfirmDialog";
 import type { CrmAlerts, CustomerEquipment } from "../../lib/types";
-import { toLocalDateString, bangkokDateAtHour, bangkokDateAtHourFromNow } from "../../lib/dateFormat";
+import { toLocalDateString, bangkokDateAtHour, bangkokDateAtHourFromNow, addMonthsToDateString } from "../../lib/dateFormat";
 
 // Import Modals
 import EquipmentEditModal from "../../components/modals/EquipmentEditModal";
@@ -44,9 +45,13 @@ export default function AlertsPage() {
 
   // View Details Modal
   const [selectedAlert, setSelectedAlert] = useState<{
-    type: "schedule" | "warranty" | "incomplete" | "missing_doc";
+    type: "schedule" | "warranty" | "calibration" | "incomplete" | "missing_doc";
     data: any;
   } | null>(null);
+
+  // "ลูกค้าไม่ต่อประกัน" confirmation
+  const [declineRenewalTarget, setDeclineRenewalTarget] = useState<CustomerEquipment | null>(null);
+  const [isDecliningRenewal, setIsDecliningRenewal] = useState(false);
 
   useEffect(() => {
     if (!authLoading && !isLoggedIn) router.replace("/login");
@@ -158,6 +163,25 @@ export default function AlertsPage() {
     }
   };
 
+  const handleDeclineRenewal = async () => {
+    if (!declineRenewalTarget || isDecliningRenewal) return;
+    setIsDecliningRenewal(true);
+    try {
+      const res = await fetch(`/api/admin/equipments/${declineRenewalTarget.id}/decline-renewal`, {
+        method: "POST",
+      });
+      if (!res.ok) throw new Error("Failed");
+      showToast("บันทึกแล้วว่าลูกค้าไม่ต่อประกัน", "success");
+      setDeclineRenewalTarget(null);
+      setSelectedAlert(null);
+      fetchAlerts();
+    } catch {
+      showToast("บันทึกไม่สำเร็จ", "error");
+    } finally {
+      setIsDecliningRenewal(false);
+    }
+  };
+
   const handleEditClick = async (alertTarget?: any) => {
     const target = alertTarget || selectedAlert;
     if (!target) return;
@@ -191,6 +215,16 @@ export default function AlertsPage() {
     return Math.ceil((new Date(endDate).getTime() - Date.now()) / 86400000);
   };
 
+  // Calibration is due 10 months after the last calibrationDate (no separate
+  // stored due-date column — see getAlerts() in crmStore.ts).
+  const calibrationDueDate = (calibrationDate: string | null | undefined) =>
+    calibrationDate ? addMonthsToDateString(calibrationDate, 10) : null;
+  const calibrationDaysLeft = (calibrationDate: string | null | undefined) => {
+    const due = calibrationDueDate(calibrationDate);
+    if (!due) return null;
+    return Math.ceil((new Date(due).getTime() - Date.now()) / 86400000);
+  };
+
   if (authLoading || !isLoggedIn) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -202,6 +236,7 @@ export default function AlertsPage() {
   const allAlerts = alerts
     ? [
         ...(alerts.expiringWarranties || []).map((data) => ({ type: "warranty" as const, data })),
+        ...(alerts.nearingCalibration || []).map((data) => ({ type: "calibration" as const, data })),
         ...(alerts.incompleteEquipments || []).map((data) => ({ type: "incomplete" as const, data })),
         ...(alerts.upcomingSchedules || []).map((data) => ({ type: "schedule" as const, data })),
         ...(alerts.missingDocuments || []).map((data) => ({ type: "missing_doc" as const, data })),
@@ -238,6 +273,7 @@ export default function AlertsPage() {
     { id: "all", label: "ทั้งหมด", count: allAlerts.length - (alerts?.incompleteEquipments?.length || 0) + incompleteTotal, color: "bg-gray-100 text-gray-700" },
     { id: "schedule", label: "กำหนดการ", count: alerts?.upcomingSchedules?.length || 0, color: "bg-blue-50 text-blue-700 border-blue-200" },
     { id: "warranty", label: "ประกันใกล้หมด", count: alerts?.expiringWarranties?.length || 0, color: "bg-orange-50 text-orange-700 border-orange-200" },
+    { id: "calibration", label: "ใกล้ถึงกำหนดสอบเทียบ", count: alerts?.nearingCalibration?.length || 0, color: "bg-cyan-50 text-cyan-700 border-cyan-200" },
     { id: "incomplete", label: "ข้อมูลไม่ครบ", count: incompleteTotal, color: "bg-rose-50 text-rose-700 border-rose-200" },
     { id: "missing_doc", label: "เอกสารค้าง", count: alerts?.missingDocuments?.length || 0, color: "bg-red-50 text-red-700 border-red-200" },
   ];
@@ -394,6 +430,41 @@ export default function AlertsPage() {
                       </button>
                       <button 
                         onClick={(e) => { e.stopPropagation(); setSnoozeAlertTarget({ type: "warranty", id: alert.data.id }); }}
+                        className="px-3 py-2 bg-amber-50 text-amber-700 text-sm font-semibold rounded-xl hover:bg-amber-100 transition-colors flex items-center justify-center gap-1.5"
+                        title="เลื่อนแจ้งเตือน"
+                      >
+                         ⏱️
+                      </button>
+                    </div>
+                  </div>
+                );
+              }
+
+              if (alert.type === "calibration") {
+                const daysLeft = calibrationDaysLeft(alert.data.calibrationDate);
+                const isOverdue = daysLeft !== null && daysLeft <= 0;
+                return (
+                  <div key={idx} onClick={() => setSelectedAlert(alert)} className="bg-white rounded-2xl p-5 border border-gray-100 hover:border-cyan-200 hover:shadow-lg transition-all cursor-pointer group relative overflow-hidden flex flex-col">
+                    <div className={`absolute top-0 left-0 w-1 h-full ${isOverdue ? "bg-red-500" : "bg-cyan-500"}`}></div>
+                    <div className="flex justify-between items-start mb-4">
+                      <div className={`px-2.5 py-1 rounded-md text-xs font-bold ${isOverdue ? "bg-red-50 text-red-700" : "bg-cyan-50 text-cyan-700"}`}>
+                        🔧 {isOverdue ? "เลยกำหนดสอบเทียบ" : "ใกล้ถึงกำหนดสอบเทียบ"}
+                      </div>
+                      <span className={`text-xs font-bold ${isOverdue ? "text-red-600 bg-red-50 px-2 py-0.5 rounded-full" : "text-cyan-600 bg-cyan-50 px-2 py-0.5 rounded-full"}`}>
+                        เหลือ {daysLeft} วัน
+                      </span>
+                    </div>
+
+                    <h4 className="font-bold text-gray-900 mb-1 line-clamp-1">{alert.data.customerName || "ลูกค้าทั่วไป"}</h4>
+                    <p className="text-sm text-gray-500 mb-1 line-clamp-1" dangerouslySetInnerHTML={{ __html: alert.data.productName || "ไม่ระบุสินค้า" }} />
+                    <p className="text-xs text-gray-400 font-mono mb-4">S/N: {alert.data.serialNumber || "—"}</p>
+
+                    <div className="mt-auto flex gap-2 w-full opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button className="flex-1 px-3 py-2 bg-gray-50 text-gray-700 text-sm font-semibold rounded-xl hover:bg-gray-100 transition-colors flex items-center justify-center gap-1.5">
+                        ดูรายละเอียด →
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setSnoozeAlertTarget({ type: "calibration", id: alert.data.id }); }}
                         className="px-3 py-2 bg-amber-50 text-amber-700 text-sm font-semibold rounded-xl hover:bg-amber-100 transition-colors flex items-center justify-center gap-1.5"
                         title="เลื่อนแจ้งเตือน"
                       >
@@ -721,6 +792,25 @@ export default function AlertsPage() {
                   </>
                 )}
 
+                {selectedAlert.type === "calibration" && (
+                  <>
+                    <div>
+                      <div className="text-gray-500 mb-1">Serial Number</div>
+                      <div className="font-mono text-gray-800">{selectedAlert.data.serialNumber || "—"}</div>
+                    </div>
+                    <div>
+                      <div className="text-gray-500 mb-1">สอบเทียบล่าสุด</div>
+                      <div className="font-semibold text-gray-800">{selectedAlert.data.calibrationDate || "—"}</div>
+                    </div>
+                    <div>
+                      <div className="text-gray-500 mb-1">กำหนดสอบเทียบครั้งถัดไป</div>
+                      <div className="font-semibold text-gray-800">
+                        {calibrationDueDate(selectedAlert.data.calibrationDate) || "—"}
+                      </div>
+                    </div>
+                  </>
+                )}
+
                 {selectedAlert.type === "incomplete" && (
                   <>
                     <div className="col-span-2">
@@ -760,8 +850,16 @@ export default function AlertsPage() {
             </div>
 
             <div className="px-6 py-4 border-t border-gray-100 flex justify-end gap-3 bg-gray-50/50">
-              <button 
-                onClick={() => setSelectedAlert(null)} 
+              {selectedAlert.type === "warranty" && (
+                <button
+                  onClick={() => setDeclineRenewalTarget(selectedAlert.data)}
+                  className="px-5 py-2.5 bg-white border border-gray-200 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 transition-all text-sm shadow-sm mr-auto"
+                >
+                  ลูกค้าไม่ต่อประกัน
+                </button>
+              )}
+              <button
+                onClick={() => setSelectedAlert(null)}
                 className="px-5 py-2.5 bg-white border border-gray-200 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 transition-all text-sm shadow-sm"
               >
                 ปิด
@@ -776,6 +874,20 @@ export default function AlertsPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Decline-renewal confirmation */}
+      {declineRenewalTarget && (
+        <ConfirmDialog
+          title="ยืนยันว่าลูกค้าไม่ต่อประกัน"
+          message={`ระบบจะบันทึกว่าอุปกรณ์นี้หมดประกันแล้ว และลูกค้าไม่ต่อประกัน (S/N: ${declineRenewalTarget.serialNumber || "—"}) คุณแน่ใจหรือไม่?`}
+          confirmText="ยืนยัน"
+          loadingText="กำลังบันทึก..."
+          cancelText="ยกเลิก"
+          loading={isDecliningRenewal}
+          onConfirm={handleDeclineRenewal}
+          onCancel={() => setDeclineRenewalTarget(null)}
+        />
       )}
       
       {/* ── Extracted Modals ────────────────────────────────────────────── */}

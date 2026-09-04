@@ -84,3 +84,21 @@ export function bangkokCurrentMonth(): string {
   const { year, month } = bangkokParts(new Date());
   return `${year}-${String(month + 1).padStart(2, "0")}`;
 }
+
+/**
+ * `dateStr` ("YYYY-MM-DD") shifted forward by `months` calendar months — for
+ * "N months after X" reminders (e.g. calibration due 10 months after the last
+ * calibration date). Uses UTC internally so the result never shifts by a day
+ * from the caller's own timezone. A day that overflows the target month (e.g.
+ * Jan 31 + 1 month) rolls into the following month, matching MySQL's
+ * DATE_ADD(..., INTERVAL n MONTH) — the two must agree since the alert query
+ * filters with DATE_ADD server-side while callers may also display this.
+ */
+export function addMonthsToDateString(dateStr: string, months: number): string {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const shifted = new Date(Date.UTC(y, m - 1 + months, d));
+  const yyyy = shifted.getUTCFullYear();
+  const mm = String(shifted.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(shifted.getUTCDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}

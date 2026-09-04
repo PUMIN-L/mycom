@@ -18,9 +18,11 @@ import {
   completeScheduleWithLog,
   ScheduleNotPendingError,
   snoozeAlert,
+  addEquipment,
   updateEquipment,
   updateSchedule,
   ScheduleCompletionRequiresLogError,
+  declineWarrantyRenewal,
 } from '@/app/lib/crmStore';
 
 beforeEach(() => {
@@ -178,6 +180,35 @@ describe('syncEquipmentsForSalesRecord', () => {
   });
 });
 
+describe('addEquipment', () => {
+  it('stores a provided calibrationDate, truncated/sanitized like the warranty dates', async () => {
+    topQuery.mockImplementation((sql: string) => {
+      if (sql.startsWith('INSERT INTO customer_equipments')) return Promise.resolve([{ affectedRows: 1 }]);
+      return Promise.resolve([[{ id: 'eq-1', calibrationDate: '2026-01-15' }]]);
+    });
+
+    await addEquipment({ customerId: 'c1', productId: 'p1', calibrationDate: '2026-01-15' });
+
+    const insertCall = topQuery.mock.calls.find((c) => String(c[0]).startsWith('INSERT INTO customer_equipments'))!;
+    const params = insertCall[1] as unknown[];
+    // calibrationDate is the 2nd-to-last param, right before createdAt.
+    expect(params[params.length - 2]).toBe('2026-01-15');
+  });
+
+  it('defaults calibrationDate to null when not provided', async () => {
+    topQuery.mockImplementation((sql: string) => {
+      if (sql.startsWith('INSERT INTO customer_equipments')) return Promise.resolve([{ affectedRows: 1 }]);
+      return Promise.resolve([[{ id: 'eq-1' }]]);
+    });
+
+    await addEquipment({ customerId: 'c1', productId: 'p1' });
+
+    const insertCall = topQuery.mock.calls.find((c) => String(c[0]).startsWith('INSERT INTO customer_equipments'))!;
+    const params = insertCall[1] as unknown[];
+    expect(params[params.length - 2]).toBeNull();
+  });
+});
+
 describe('updateEquipment', () => {
   // getEquipment()'s SELECT resolves productName live via
   // COALESCE(NULLIF(e.productName, ''), p.title_th) — simulate that resolved
@@ -234,6 +265,70 @@ describe('updateEquipment', () => {
     const updateCall = topQuery.mock.calls.find((c) => String(c[0]).startsWith('UPDATE customer_equipments'))!;
     const [, params] = updateCall;
     expect((params as unknown[])[2]).toBe('ปั๊มมือสอง');
+  });
+
+  it('persists note and calibrationDate', async () => {
+    mockQueryFor(
+      { id: 'eq-3', productId: 'p1', productName: '', note: null, calibrationDate: null },
+      { id: 'eq-3', productId: 'p1', productName: '', note: 'x', calibrationDate: '2026-02-01' }
+    );
+
+    await updateEquipment('eq-3', { note: 'x', calibrationDate: '2026-02-01' });
+
+    const updateCall = topQuery.mock.calls.find((c) => String(c[0]).startsWith('UPDATE customer_equipments'))!;
+    const params = updateCall[1] as unknown[];
+    // note = index 10, calibrationDate = index 11 (see the UPDATE column list).
+    expect(params[10]).toBe('x');
+    expect(params[11]).toBe('2026-02-01');
+  });
+});
+
+describe('declineWarrantyRenewal', () => {
+  function mockQueryFor(existingRow: Record<string, unknown>) {
+    let updated = false;
+    topQuery.mockImplementation((sql: string) => {
+      if (sql.startsWith('UPDATE customer_equipments')) {
+        updated = true;
+        return Promise.resolve([{ affectedRows: 1 }]);
+      }
+      return Promise.resolve([[updated ? { ...existingRow, status: 'Expired' } : existingRow]]);
+    });
+  }
+
+  it('returns null when the equipment does not exist', async () => {
+    topQuery.mockResolvedValue([[]]);
+    expect(await declineWarrantyRenewal('missing')).toBeNull();
+    expect(topQuery.mock.calls.some((c) => String(c[0]).startsWith('UPDATE customer_equipments'))).toBe(false);
+  });
+
+  it('flips status to Expired and writes a dated note when there was none before', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-04T10:00:00.000Z')); // Bangkok: Sep 4
+    mockQueryFor({ id: 'eq-1', productId: 'prod-1', productName: '', status: 'Active', note: null });
+
+    await declineWarrantyRenewal('eq-1');
+
+    const updateCall = topQuery.mock.calls.find((c) => String(c[0]).startsWith('UPDATE customer_equipments'))!;
+    const params = updateCall[1] as unknown[];
+    // status is the 10th bound param, note is the 11th (see the UPDATE column list).
+    expect(params[9]).toBe('Expired');
+    expect(params[10]).toBe('หมดประกันแล้ว วันที่ 2026-09-04 - ลูกค้าไม่ต่อประกัน');
+    vi.useRealTimers();
+  });
+
+  it('appends to an existing note instead of overwriting it', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-04T10:00:00.000Z'));
+    mockQueryFor({ id: 'eq-1', productId: 'prod-1', productName: '', status: 'Active', note: 'ติดตั้งเมื่อ 2026-01-01' });
+
+    await declineWarrantyRenewal('eq-1');
+
+    const updateCall = topQuery.mock.calls.find((c) => String(c[0]).startsWith('UPDATE customer_equipments'))!;
+    const params = updateCall[1] as unknown[];
+    expect(params[10]).toBe(
+      'ติดตั้งเมื่อ 2026-01-01\nหมดประกันแล้ว วันที่ 2026-09-04 - ลูกค้าไม่ต่อประกัน'
+    );
+    vi.useRealTimers();
   });
 });
 
@@ -416,6 +511,29 @@ describe('getAlerts — "today" must be Bangkok (UTC+7) time, not server UTC', (
     await getAlerts();
     const warrantyCall = topQuery.mock.calls.find(([sql]) => String(sql).includes('warrantyEndDate'));
     expect(String(warrantyCall![0])).toContain("e.status != 'Expired'");
+  });
+
+  it('computes the calibration-due cutoff (calibrationDate + 10 months) using Bangkok "today", not server UTC', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-04T19:00:00.000Z')); // Bangkok: Aug 5, 02:00
+
+    await getAlerts(30, 7, 30);
+
+    const calibrationCall = topQuery.mock.calls.find(([sql]) => String(sql).includes('calibrationDate'));
+    expect(calibrationCall![0]).toContain('DATE_ADD(e.calibrationDate, INTERVAL 10 MONTH)');
+    expect(calibrationCall![1]).toEqual(['2026-08-05', '2026-09-04', '2026-08-04T19:00:00.000Z']);
+  });
+
+  it('returns nearingCalibration rows separately from expiringWarranties', async () => {
+    topQuery.mockImplementation((sql: string) => {
+      if (String(sql).includes('calibrationDate')) {
+        return Promise.resolve([[{ id: 'eq-1', calibrationDate: '2025-11-05' }]]);
+      }
+      return Promise.resolve([[]]);
+    });
+
+    const alerts = await getAlerts();
+    expect(alerts.nearingCalibration).toEqual([{ id: 'eq-1', calibrationDate: '2025-11-05' }]);
   });
 
   it('excludes an alert whose snoozeUntil filter would match in the real query (SQL shape regression guard)', async () => {

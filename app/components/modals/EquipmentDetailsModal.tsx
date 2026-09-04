@@ -271,7 +271,17 @@ export default function EquipmentDetailsModal({
             <Info label="สถานะ" value={equipment.status} />
             <Info label="เริ่มประกัน" value={equipment.warrantyStartDate} />
             <Info label="หมดประกัน" value={equipment.warrantyEndDate} />
+            <Info label="วันที่สอบเทียบล่าสุด" value={equipment.calibrationDate} />
           </div>
+
+          {equipment.note && (
+            <div className="px-6 pb-6">
+              <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">หมายเหตุ</div>
+              <div className="text-sm text-gray-700 whitespace-pre-wrap bg-gray-50 border border-gray-100 rounded-xl p-3">
+                {equipment.note}
+              </div>
+            </div>
+          )}
 
           {/* Schedules */}
           <div className="p-6 border-t border-gray-100">

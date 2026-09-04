@@ -11,6 +11,7 @@ vi.mock('@/app/lib/crmStore', () => ({
   updateEquipment: vi.fn(),
   deleteEquipment: vi.fn(),
   listSchedules: vi.fn(),
+  declineWarrantyRenewal: vi.fn(),
 }));
 import {
   listEquipments,
@@ -19,6 +20,7 @@ import {
   updateEquipment,
   deleteEquipment,
   listSchedules,
+  declineWarrantyRenewal,
 } from '@/app/lib/crmStore';
 
 vi.mock('@/app/lib/session', () => ({ getSession: vi.fn() }));
@@ -92,6 +94,7 @@ const ctx = (id: string) => ({ params: Promise.resolve({ id }) });
 import { GET as listGET, POST } from '@/app/api/admin/equipments/route';
 import { GET as getGET, PUT, DELETE } from '@/app/api/admin/equipments/[id]/route';
 import { POST as deleteOtpPOST } from '@/app/api/admin/equipments/[id]/delete-otp/route';
+import { POST as declineRenewalPOST } from '@/app/api/admin/equipments/[id]/decline-renewal/route';
 
 const equipmentNoSchedule = { id: 'eq-1', serialNumber: 'ABC', productName: 'Scale A' };
 
@@ -187,6 +190,16 @@ describe('Admin Equipments API', () => {
     expect(addEquipment).not.toHaveBeenCalled();
   });
 
+  it('POST returns 400 for a malformed calibrationDate', async () => {
+    vi.mocked(getSession).mockResolvedValue(admin);
+
+    const res = await POST(
+      mutReq('POST', { customerId: 'c1', productId: 'p1', calibrationDate: 'nope' })
+    );
+    expect(res.status).toBe(400);
+    expect(addEquipment).not.toHaveBeenCalled();
+  });
+
   // ── GET [id] ────────────────────────────────────────────────────────────
 
   it('GET [id] returns equipment', async () => {
@@ -251,6 +264,50 @@ describe('Admin Equipments API', () => {
     const res = await PUT(mutReqId('PUT', { warrantyEndDate: '2026-13-40' }), ctx('eq-1'));
     expect(res.status).toBe(400);
     expect(updateEquipment).not.toHaveBeenCalled();
+  });
+
+  it('PUT returns 400 for a malformed calibrationDate', async () => {
+    vi.mocked(getSession).mockResolvedValue(admin);
+
+    const res = await PUT(mutReqId('PUT', { calibrationDate: 'not-a-date' }), ctx('eq-1'));
+    expect(res.status).toBe(400);
+    expect(updateEquipment).not.toHaveBeenCalled();
+  });
+
+  it('PUT accepts a valid calibrationDate', async () => {
+    vi.mocked(getSession).mockResolvedValue(admin);
+    vi.mocked(updateEquipment).mockResolvedValue({ id: 'eq-1', calibrationDate: '2026-01-15' } as any);
+
+    const res = await PUT(mutReqId('PUT', { calibrationDate: '2026-01-15' }), ctx('eq-1'));
+    expect(res.status).toBe(200);
+    expect(updateEquipment).toHaveBeenCalledWith('eq-1', { calibrationDate: '2026-01-15' });
+  });
+
+  // ── POST /decline-renewal ───────────────────────────────────────────────
+
+  it('POST /decline-renewal returns 401 for anonymous', async () => {
+    const res = await declineRenewalPOST(mutReqId('POST'), ctx('eq-1'));
+    expect(res.status).toBe(401);
+    expect(declineWarrantyRenewal).not.toHaveBeenCalled();
+  });
+
+  it('POST /decline-renewal returns 404 for a missing equipment', async () => {
+    vi.mocked(getSession).mockResolvedValue(admin);
+    vi.mocked(declineWarrantyRenewal).mockResolvedValue(null);
+
+    const res = await declineRenewalPOST(mutReqId('POST'), ctx('nope'));
+    expect(res.status).toBe(404);
+  });
+
+  it('POST /decline-renewal records the decline and returns the updated equipment', async () => {
+    vi.mocked(getSession).mockResolvedValue(admin);
+    const updated = { id: 'eq-1', status: 'Expired', note: 'หมดประกันแล้ว วันที่ 2026-09-04 - ลูกค้าไม่ต่อประกัน' };
+    vi.mocked(declineWarrantyRenewal).mockResolvedValue(updated as any);
+
+    const res = await declineRenewalPOST(mutReqId('POST'), ctx('eq-1'));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual(updated);
+    expect(declineWarrantyRenewal).toHaveBeenCalledWith('eq-1');
   });
 
   // ── DELETE [id] ─────────────────────────────────────────────────────────

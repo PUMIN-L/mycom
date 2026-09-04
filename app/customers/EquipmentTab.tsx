@@ -152,7 +152,9 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
           "ประเภทประกัน": eq.warrantyType,
           "เริ่มประกัน": eq.warrantyStartDate || "",
           "หมดประกัน": eq.warrantyEndDate || "",
+          "วันที่สอบเทียบล่าสุด": eq.calibrationDate || "",
           "สถานะ": eq.status,
+          "หมายเหตุ": eq.note || "",
           "ประวัตินัดหมาย/ติดตาม": scheduleText || "-",
           "วันที่บันทึก": eq.createdAt,
         };

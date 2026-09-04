@@ -4,7 +4,7 @@ import type { QueryResult, FieldPacket, RowDataPacket } from "mysql2";
 
 // Bump whenever the schema below changes — a mismatch re-runs the (idempotent)
 // bump; a match lets returning cold instances skip it in one SELECT.
-const SCHEMA_VERSION = 30;
+const SCHEMA_VERSION = 31;
 
 type DbPool = ReturnType<typeof mysql.createPool>;
 
@@ -516,9 +516,12 @@ async function bootstrapSchemaOnce(): Promise<void> {
           warrantyStartDate VARCHAR(20) DEFAULT NULL,
           warrantyEndDate VARCHAR(20) DEFAULT NULL,
           status VARCHAR(20) NOT NULL DEFAULT 'Active',
+          note TEXT NULL,
+          calibrationDate VARCHAR(20) DEFAULT NULL,
           createdAt VARCHAR(255) NOT NULL,
           INDEX idx_ce_customer (customerId),
-          INDEX idx_ce_warrantyEnd (warrantyEndDate)
+          INDEX idx_ce_warrantyEnd (warrantyEndDate),
+          INDEX idx_ce_calibrationDate (calibrationDate)
         )
       `);
     try {
@@ -538,6 +541,26 @@ async function bootstrapSchemaOnce(): Promise<void> {
     }
     try {
       await connection.query("ALTER TABLE customer_equipments ADD COLUMN productName VARCHAR(255) DEFAULT ''");
+    } catch (error) {
+      if (!isBenignSchemaError(error)) throw error;
+    }
+    // v31: "note" (free-text log, e.g. "customer declined to renew warranty")
+    // and "calibrationDate" (last calibration performed — the alert feed warns
+    // 10 months after this date, same idea as the warranty-expiry alert).
+    try {
+      await connection.query("ALTER TABLE customer_equipments ADD COLUMN IF NOT EXISTS note TEXT NULL");
+    } catch (error) {
+      if (!isBenignSchemaError(error)) throw error;
+    }
+    try {
+      await connection.query("ALTER TABLE customer_equipments ADD COLUMN IF NOT EXISTS calibrationDate VARCHAR(20) DEFAULT NULL");
+    } catch (error) {
+      if (!isBenignSchemaError(error)) throw error;
+    }
+    try {
+      await connection.query(
+        `CREATE INDEX idx_ce_calibrationDate ON customer_equipments (calibrationDate)`
+      );
     } catch (error) {
       if (!isBenignSchemaError(error)) throw error;
     }

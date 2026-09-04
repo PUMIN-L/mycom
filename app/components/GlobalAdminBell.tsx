@@ -30,6 +30,7 @@ export default function GlobalAdminBell() {
           const data = await res.json();
           const total =
             (data.expiringWarranties?.length || 0) +
+            (data.nearingCalibration?.length || 0) +
             (data.upcomingSchedules?.length || 0) +
             (data.incompleteEquipmentsTotal ?? data.incompleteEquipments?.length ?? 0) +
             (data.missingDocuments?.length || 0);

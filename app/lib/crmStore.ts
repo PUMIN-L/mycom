@@ -102,6 +102,10 @@ function cleanEquipment(data: Partial<CustomerEquipment>) {
       ? sanitizePlainText(String(data.warrantyEndDate)).substring(0, 10) || null
       : null,
     status: data.status === "Expired" ? "Expired" : "Active",
+    note: data.note ? sanitizePlainText(String(data.note)).substring(0, 5000) : null,
+    calibrationDate: data.calibrationDate
+      ? sanitizePlainText(String(data.calibrationDate)).substring(0, 10) || null
+      : null,
   };
 }
 
@@ -115,8 +119,8 @@ export async function addEquipment(
     `INSERT INTO customer_equipments
        (id, salesRecordId, customerId, productId, productName, serialNumber, quotationNumber,
         warrantyCertNumber, warrantyType, warrantyStartDate, warrantyEndDate,
-        status, createdAt)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        status, calibrationDate, createdAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
       v.salesRecordId,
@@ -130,6 +134,7 @@ export async function addEquipment(
       v.warrantyStartDate,
       v.warrantyEndDate,
       v.status,
+      v.calibrationDate,
       now,
     ]
   );
@@ -313,7 +318,7 @@ export async function updateEquipment(
     `UPDATE customer_equipments SET
        customerId = ?, productId = ?, productName = ?, serialNumber = ?, quotationNumber = ?,
        warrantyCertNumber = ?, warrantyType = ?, warrantyStartDate = ?,
-       warrantyEndDate = ?, status = ?
+       warrantyEndDate = ?, status = ?, note = ?, calibrationDate = ?
      WHERE id = ?`,
     [
       v.customerId,
@@ -326,10 +331,26 @@ export async function updateEquipment(
       v.warrantyStartDate,
       v.warrantyEndDate,
       v.status,
+      v.note,
+      v.calibrationDate,
       id,
     ]
   );
   return getEquipment(id);
+}
+
+/**
+ * Records that the customer declined to renew the warranty on this
+ * equipment: flips status to "Expired" and appends a dated log entry to its
+ * note (never overwrites earlier notes). Used by the "ลูกค้าไม่ต่อประกัน"
+ * action on the warranty-expiry alert.
+ */
+export async function declineWarrantyRenewal(id: string): Promise<CustomerEquipment | null> {
+  const existing = await getEquipment(id);
+  if (!existing) return null;
+  const entry = `หมดประกันแล้ว วันที่ ${bangkokDateString(new Date())} - ลูกค้าไม่ต่อประกัน`;
+  const note = existing.note ? `${existing.note}\n${entry}` : entry;
+  return updateEquipment(id, { status: "Expired", note });
 }
 
 /** Deletes the equipment (schedules + logs cascade via FK). */
@@ -518,11 +539,13 @@ export async function completeScheduleWithLog(
 
 export async function getAlerts(
   warrantyDays = 30,
-  scheduleDays = 7
+  scheduleDays = 7,
+  calibrationDays = 30
 ): Promise<CrmAlerts> {
   const today = bangkokDateString(new Date());
   const warrantyCutoff = bangkokDateString(new Date(Date.now() + warrantyDays * 86400000));
   const scheduleCutoff = bangkokDateString(new Date(Date.now() + scheduleDays * 86400000));
+  const calibrationCutoff = bangkokDateString(new Date(Date.now() + calibrationDays * 86400000));
 
   const nowIso = new Date().toISOString();
 
@@ -535,6 +558,20 @@ export async function getAlerts(
        AND (sno.snoozeUntil IS NULL OR sno.snoozeUntil <= ?)
      ORDER BY e.warrantyEndDate ASC`,
     [today, warrantyCutoff, nowIso]
+  );
+
+  // Calibration is due 10 months after the last calibrationDate — computed in
+  // SQL (DATE_ADD) rather than stored, so it always reflects the current
+  // calibrationDate value with no separate column to keep in sync.
+  const [calibrationRows] = await query<RowDataPacket[]>(
+    `${EQUIPMENT_SELECT}
+     LEFT JOIN alert_snoozes sno ON sno.alertType = 'calibration' AND sno.referenceId = e.id
+     WHERE e.calibrationDate IS NOT NULL
+       AND DATE_ADD(e.calibrationDate, INTERVAL 10 MONTH) >= ?
+       AND DATE_ADD(e.calibrationDate, INTERVAL 10 MONTH) <= ?
+       AND (sno.snoozeUntil IS NULL OR sno.snoozeUntil <= ?)
+     ORDER BY e.calibrationDate ASC`,
+    [today, calibrationCutoff, nowIso]
   );
 
   const [incompleteRows] = await query<RowDataPacket[]>(
@@ -595,6 +632,7 @@ export async function getAlerts(
 
   return {
     expiringWarranties: warrantyRows as CustomerEquipment[],
+    nearingCalibration: calibrationRows as CustomerEquipment[],
     incompleteEquipments: incompleteRows as CustomerEquipment[],
     incompleteEquipmentsTotal,
     missingDocuments: missingDocRows as SalesRecord[],
