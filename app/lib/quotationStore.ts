@@ -49,7 +49,11 @@ function rowToQuotation(row: RowDataPacket): QuotationRecord {
   };
 }
 
-/** Upsert a quotation. Re-saving the same id refreshes its 30-day clock. */
+/**
+ * Upsert a quotation. Re-saving the same id rewrites `createdAt`, which
+ * restarts its retention clock (2 years — see RETENTION_DAYS in
+ * app/api/quotations/cleanup/route.ts).
+ */
 export async function saveQuotation(rec: QuotationRecord): Promise<void> {
   await query(
     `INSERT INTO quotations (id, docNo, data, uploadedImages, createdAt)
@@ -139,7 +143,12 @@ export async function saveQuotationAtomic(rec: QuotationRecord): Promise<void> {
 
 // ── Issued quotation-number ledger (used_docnos) ─────────────────────────────
 // Separate from `quotations` so a number stays reserved even after its
-// quotation is deleted/auto-purged. Kept ~2 days (docNo is date-prefixed).
+// quotation is deleted/auto-purged. Its retention is its OWN, much shorter
+// window (~2 days — a docNo is date-prefixed, so it only has to outlive its own
+// day) and is deliberately NOT tied to the 2-year quotation retention: the two
+// answer different questions, so widening one must never widen the other.
+// In practice the cron no longer calls purgeOldDocNos at all — the ledger is
+// kept for conversion-rate analytics — but the function stays for manual use.
 
 export interface UsedDocNo {
   docNo: string;
@@ -222,18 +231,63 @@ function summarize(data: QuoteDataLite): { customer: string; total: number } {
   };
 }
 
-// Quotations are auto-purged after 30 days (see purgeExpiredQuotations), so
-// this table never holds more than ~30 days of drafts under normal
-// operation — the LIMIT here is a generous safety cap (in case the cleanup
-// cron is ever misconfigured/failing), not the real bound. It used to be a
-// tight 200, which meant more than ~7 quotations/day would silently push
-// still-live (not yet purged) drafts off the bottom of the list.
+// Hard ceiling on how many rows one list call may return. This used to be
+// justified by the 30-day purge ("the table never holds more than ~30 days of
+// drafts anyway"), but retention is now 2 years, so the cap CAN legitimately be
+// hit and older-but-still-live quotations would fall off the bottom of the list
+// unseen. Hence `search` below: the picker filters in SQL instead of relying on
+// everything fitting in one page.
 const LIST_SAFETY_LIMIT = 2000;
 
-export async function listQuotations(): Promise<QuotationSummary[]> {
-  const [rows] = await query<RowDataPacket[]>(
-    `SELECT id, docNo, data, createdAt FROM quotations ORDER BY createdAt DESC LIMIT ${LIST_SAFETY_LIMIT}`
-  );
+export interface ListQuotationsOptions {
+  /** Matched against docNo and the customer company/contact text. */
+  search?: string;
+  /** Rows to return; clamped to [1, LIST_SAFETY_LIMIT]. */
+  limit?: number;
+}
+
+// `!` as the LIKE escape char instead of the default backslash, whose meaning
+// depends on the NO_BACKSLASH_ESCAPES sql_mode. Without this, a user typing `%`
+// would match every quotation.
+function escapeLikeTerm(term: string): string {
+  return term.replace(/[!%_]/g, (ch) => `!${ch}`);
+}
+
+function clampListLimit(limit: number | undefined): number {
+  if (limit == null || !Number.isFinite(limit)) return LIST_SAFETY_LIMIT;
+  return Math.min(Math.max(Math.floor(limit), 1), LIST_SAFETY_LIMIT);
+}
+
+/**
+ * Saved-quotation summaries, newest first.
+ *
+ * Called with no arguments it behaves exactly as before (newest LIST_SAFETY_LIMIT
+ * rows, unfiltered) for app/billing and the quotations list page.
+ */
+export async function listQuotations(
+  options: ListQuotationsOptions = {}
+): Promise<QuotationSummary[]> {
+  const search = (options.search ?? "").trim().slice(0, 100);
+  const limit = clampListLimit(options.limit);
+
+  // The customer name lives inside the opaque `data` JSON, so it is matched
+  // with JSON_EXTRACT server-side rather than by pulling every row into Node.
+  // A missing key yields SQL NULL, so those rows simply don't match.
+  const params: string[] = [];
+  let where = "";
+  if (search) {
+    const like = `%${escapeLikeTerm(search.toLowerCase())}%`;
+    where =
+      ` WHERE LOWER(docNo) LIKE ? ESCAPE '!'` +
+      ` OR LOWER(JSON_UNQUOTE(JSON_EXTRACT(data, '$.customerCompany'))) LIKE ? ESCAPE '!'` +
+      ` OR LOWER(JSON_UNQUOTE(JSON_EXTRACT(data, '$.customerContact'))) LIKE ? ESCAPE '!'`;
+    params.push(like, like, like);
+  }
+
+  const sql = `SELECT id, docNo, data, createdAt FROM quotations${where} ORDER BY createdAt DESC LIMIT ${limit}`;
+  const [rows] = params.length > 0
+    ? await query<RowDataPacket[]>(sql, params)
+    : await query<RowDataPacket[]>(sql);
   return rows.map((r) => {
     const { customer, total } = summarize(parseJson<QuoteDataLite>(r.data, {}));
     return { id: r.id, docNo: r.docNo ?? "", createdAt: r.createdAt, customer, total };

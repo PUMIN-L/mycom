@@ -145,140 +145,344 @@ function normalizeSerial(s: string): string {
   return String(s || "").trim().toLowerCase();
 }
 
+/** At most this many machines per sales record (guards a runaway qty). */
+const MAX_EQUIPMENT_ROWS = 50;
+
+/** One physical machine on a sale. Everything but the serial is optional;
+ * whatever a row leaves out falls back to the sale-level `shared` template, so
+ * a single-model bill can still be described with bare serials. */
+export interface EquipmentRowInput {
+  serialNumber: string;
+  productId?: string;
+  productName?: string;
+  warrantyStartDate?: string | null;
+  warrantyEndDate?: string | null;
+  quotationNumber?: string;
+  customerId?: string;
+}
+
+/** Structural shape of the mysql2 connection a `withTransaction` callback
+ * receives — declared here so callers can pass theirs straight through
+ * without importing mysql2 types. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type TxConn = { query: (sql: string, params?: unknown[]) => Promise<any> };
+
+/** Catalog-product identity used to group machines by model. Mirrors
+ * cleanEquipment's handling of the UI-only "_custom" sentinel, so a custom
+ * machine and one with no product at all share the same ("") group. */
+function productGroupKey(productId: string | undefined): string {
+  const id = String(productId || "").trim();
+  return id === "_custom" ? "" : id;
+}
+
+type ResolvedRow = { group: string; data: Partial<CustomerEquipment> };
+
+/** Merge one submitted machine over the sale-level template. A row that names
+ * its own model owns BOTH product fields, so a P2 machine in a mixed bill can
+ * never be stamped with the sale's (or another line's) P1 name. */
+function resolveEquipmentRow(
+  row: EquipmentRowInput,
+  shared: Partial<CustomerEquipment>,
+  salesRecordId: string
+): ResolvedRow {
+  const ownsProduct = row.productId !== undefined || row.productName !== undefined;
+  const productId = ownsProduct ? row.productId || "" : shared.productId || "";
+  return {
+    group: productGroupKey(productId),
+    data: {
+      ...shared,
+      salesRecordId,
+      customerId: row.customerId ?? shared.customerId ?? "",
+      productId,
+      productName: ownsProduct ? row.productName || "" : shared.productName || "",
+      serialNumber: String(row.serialNumber || "").trim(),
+      quotationNumber: row.quotationNumber ?? shared.quotationNumber ?? "",
+      warrantyStartDate:
+        row.warrantyStartDate !== undefined
+          ? row.warrantyStartDate
+          : shared.warrantyStartDate ?? null,
+      warrantyEndDate:
+        row.warrantyEndDate !== undefined ? row.warrantyEndDate : shared.warrantyEndDate ?? null,
+    },
+  };
+}
+
+async function runEquipmentSync(
+  conn: TxConn,
+  salesRecordId: string,
+  rows: ResolvedRow[]
+): Promise<void> {
+  const [existingRows] = await conn.query(
+    `SELECT id, serialNumber FROM customer_equipments WHERE salesRecordId = ? ORDER BY createdAt ASC`,
+    [salesRecordId]
+  );
+  const existingEqs = (Array.isArray(existingRows) ? existingRows : []) as {
+    id: string;
+    serialNumber: string;
+  }[];
+
+  const existingUsed = new Set<string>();
+  const wantedUsed = new Set<number>();
+  const pairs: { existingId: string; row: ResolvedRow }[] = [];
+
+  // Pass 1 — identity match: pair a submitted serial to the existing row
+  // that already has that exact (normalized) serial. This is what keeps a
+  // unit's history attached to the right physical unit when the list is
+  // reordered or another entry is added/removed. Identity wins across the
+  // whole sale, product groups included — the serial IS the machine.
+  for (let i = 0; i < rows.length; i++) {
+    const key = normalizeSerial(rows[i].data.serialNumber || "");
+    if (!key) continue;
+    const match = existingEqs.find(
+      (eq) => !existingUsed.has(eq.id) && normalizeSerial(eq.serialNumber) === key
+    );
+    if (match) {
+      existingUsed.add(match.id);
+      wantedUsed.add(i);
+      pairs.push({ existingId: match.id, row: rows[i] });
+    }
+  }
+
+  const remainingExisting = existingEqs.filter((eq) => !existingUsed.has(eq.id));
+  const unpairedGroups = new Set(
+    rows.filter((_, i) => !wantedUsed.has(i)).map((r) => r.group)
+  );
+
+  // Positional fallback has to stay INSIDE one product group, or two models in
+  // the same bill trade rows while their serials are still blank. Which model
+  // each existing row holds is only worth reading when the leftovers actually
+  // span more than one group — a single-model bill pairs positionally as it
+  // always has.
+  let modelById: Map<string, string> | null = null;
+  if (unpairedGroups.size > 1 && remainingExisting.length > 0) {
+    const [modelRows] = await conn.query(
+      `SELECT id, productId FROM customer_equipments WHERE salesRecordId = ? ORDER BY createdAt ASC`,
+      [salesRecordId]
+    );
+    if (Array.isArray(modelRows) && modelRows.every((r) => r && typeof r.id === "string")) {
+      modelById = new Map(
+        (modelRows as { id: string; productId?: string }[]).map((r) => [
+          r.id,
+          productGroupKey(r.productId),
+        ])
+      );
+    }
+  }
+
+  // Pass 2 — positional fallback for whatever's left (blank serials, or a
+  // serial with no existing match): pair remaining submitted slots with
+  // remaining existing rows in original order. Preserves the old behavior
+  // for equipment that has no serial yet, so unrelated edits don't spawn
+  // duplicate rows.
+  const queues = new Map<string, { id: string; serialNumber: string }[]>();
+  if (modelById) {
+    for (const eq of remainingExisting) {
+      const g = modelById.get(eq.id) ?? "";
+      const q = queues.get(g);
+      if (q) q.push(eq);
+      else queues.set(g, [eq]);
+    }
+  }
+  let cursor = 0;
+  for (let i = 0; i < rows.length; i++) {
+    if (wantedUsed.has(i)) continue;
+    let eq: { id: string; serialNumber: string } | undefined;
+    if (modelById) {
+      eq = queues.get(rows[i].group)?.shift();
+    } else if (cursor < remainingExisting.length) {
+      eq = remainingExisting[cursor++];
+    }
+    if (!eq) continue;
+    existingUsed.add(eq.id);
+    wantedUsed.add(i);
+    pairs.push({ existingId: eq.id, row: rows[i] });
+  }
+
+  // Update every matched row with ITS OWN machine data — never another row's.
+  for (const { existingId, row } of pairs) {
+    const v = cleanEquipment(row.data);
+    await conn.query(
+      `UPDATE customer_equipments SET
+         customerId = ?, productId = ?, productName = ?, serialNumber = ?, quotationNumber = ?,
+         warrantyCertNumber = ?, warrantyType = ?, warrantyStartDate = ?,
+         warrantyEndDate = ?, status = ?
+       WHERE id = ?`,
+      [
+        v.customerId,
+        v.productId,
+        v.productName,
+        v.serialNumber,
+        v.quotationNumber,
+        v.warrantyCertNumber,
+        v.warrantyType,
+        v.warrantyStartDate,
+        v.warrantyEndDate,
+        v.status,
+        existingId,
+      ]
+    );
+  }
+
+  // Genuinely new entries (submitted slots with no pairing at all) → insert.
+  for (let i = 0; i < rows.length; i++) {
+    if (wantedUsed.has(i)) continue;
+    // Generated here, inside the caller's transaction body, so a
+    // withTransaction retry re-derives fresh ids instead of replaying stale
+    // ones onto a rolled-back attempt.
+    const newId = crypto.randomUUID();
+    const now = new Date().toISOString();
+    const v = cleanEquipment({ ...rows[i].data, salesRecordId });
+    await conn.query(
+      `INSERT INTO customer_equipments
+         (id, salesRecordId, customerId, productId, productName, serialNumber, quotationNumber,
+          warrantyCertNumber, warrantyType, warrantyStartDate, warrantyEndDate,
+          status, createdAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        newId,
+        v.salesRecordId,
+        v.customerId,
+        v.productId,
+        v.productName,
+        v.serialNumber,
+        v.quotationNumber,
+        v.warrantyCertNumber,
+        v.warrantyType,
+        v.warrantyStartDate,
+        v.warrantyEndDate,
+        v.status,
+        now,
+      ]
+    );
+  }
+
+  // Excess existing rows (not paired at all, e.g. qty was reduced) are
+  // UNLINKED from this sale — never deleted. Their warranty/schedule/log
+  // history is preserved intact under the customer.
+  const toUnlink = existingEqs.filter((eq) => !existingUsed.has(eq.id));
+  for (const eq of toUnlink) {
+    await conn.query(
+      "UPDATE customer_equipments SET salesRecordId = '' WHERE id = ?",
+      [eq.id]
+    );
+  }
+}
+
 /**
- * Sync the equipment rows linked to a sales record with the submitted serial
- * list. NEVER deletes a row: matching is by SERIAL IDENTITY first (so
+ * Sync the equipment rows linked to a sales record with a PER-MACHINE list:
+ * each row carries its own product, serial, warranty dates and quotation
+ * number, so one bill can hold several different models. `shared` supplies the
+ * sale-level defaults for whatever a row leaves out.
+ *
+ * NEVER deletes a row: matching is by SERIAL IDENTITY first (so
  * reordering/editing the list can't silently mix up which physical unit owns
  * which service history — the bug this replaced), falling back to positional
  * pairing only for entries with no serial yet (so records that have never had
- * a serial filled in don't explode into duplicates on every unrelated save).
- * A submitted list shorter than before UNLINKS the leftover rows
- * (`salesRecordId = ''`) instead of deleting them — the equipment and all its
- * warranty/schedule/log history stay in the database, just no longer
- * attached to this sale; they remain visible under the customer's equipment
- * list. The whole sync runs in one transaction.
+ * a serial filled in don't explode into duplicates on every unrelated save),
+ * and that fallback pairs only within one product group. A submitted list
+ * shorter than before UNLINKS the leftover rows (`salesRecordId = ''`) instead
+ * of deleting them — the equipment and all its warranty/schedule/log history
+ * stay in the database, just no longer attached to this sale; they remain
+ * visible under the customer's equipment list.
+ *
+ * Pass `conn` to run inside a caller's transaction, so the sale, its line
+ * items and its machines commit all-or-nothing; omit it and the sync opens its
+ * own transaction as before. Either way the body is idempotent: re-running
+ * with the same serials updates the same rows in place.
+ */
+export async function syncEquipmentRowsForSalesRecord(
+  salesRecordId: string,
+  rows: EquipmentRowInput[],
+  shared: Partial<CustomerEquipment>,
+  conn?: TxConn
+): Promise<void> {
+  if (!salesRecordId) return;
+
+  const resolved = rows
+    .slice(0, MAX_EQUIPMENT_ROWS)
+    .map((row) => resolveEquipmentRow(row, shared, salesRecordId));
+
+  if (conn) {
+    await runEquipmentSync(conn, salesRecordId, resolved);
+    return;
+  }
+  await withTransaction((c) =>
+    runEquipmentSync(c as unknown as TxConn, salesRecordId, resolved)
+  );
+}
+
+/**
+ * Serial-list flavour of {@link syncEquipmentRowsForSalesRecord}: every machine
+ * on the sale takes the same sale-level template, differing only by serial.
  */
 export async function syncEquipmentsForSalesRecord(
   salesRecordId: string,
   serialNumbers: string[],
   baseEquipmentData: Partial<CustomerEquipment>
 ): Promise<void> {
-  if (!salesRecordId) return;
+  await syncEquipmentRowsForSalesRecord(
+    salesRecordId,
+    serialNumbers.map((sn) => ({ serialNumber: String(sn || "") })),
+    baseEquipmentData
+  );
+}
 
-  const limit = Math.min(serialNumbers.length, 50);
-  const wanted = serialNumbers.slice(0, limit).map((sn) => String(sn || "").trim());
+/**
+ * Which existing machines already carry any of these serials — one query for
+ * the whole list, normalized exactly the way the sync matching normalizes
+ * (trim + case-insensitive). Returns enough to name the clashing machine to
+ * the user (which sale, which product, whose).
+ *
+ * ADVISORY ONLY (D12/D13): duplicate serials are legal, so this feeds a
+ * "serial already in use by X" warning the admin can confirm past. It never
+ * throws and never blocks a write — a failed lookup degrades to "no duplicates
+ * found" rather than failing the save.
+ */
+export async function findEquipmentsBySerial(serials: string[]): Promise<
+  Array<{
+    id: string;
+    serialNumber: string;
+    salesRecordId: string;
+    productName: string;
+    customerName: string;
+  }>
+> {
+  try {
+    const keys = Array.from(
+      new Set((serials || []).map((s) => normalizeSerial(String(s ?? ""))))
+    )
+      .filter(Boolean)
+      .slice(0, MAX_EQUIPMENT_ROWS);
+    if (keys.length === 0) return [];
 
-  await withTransaction(async (conn) => {
-    const [existingRows] = await conn.query<RowDataPacket[]>(
-      `SELECT id, serialNumber FROM customer_equipments WHERE salesRecordId = ? ORDER BY createdAt ASC`,
-      [salesRecordId]
+    const placeholders = keys.map(() => "?").join(", ");
+    // productName falls back to the live catalog title the same way
+    // EQUIPMENT_SELECT resolves it, so the warning names the machine even when
+    // the row stores no name of its own.
+    const [rows] = await query<RowDataPacket[]>(
+      `SELECT e.id, e.serialNumber, e.salesRecordId,
+              COALESCE(NULLIF(e.productName, ''), p.title_th, '') AS productName,
+              COALESCE(c.name, '') AS customerName
+       FROM customer_equipments e
+       LEFT JOIN customers c ON e.customerId = c.id
+       LEFT JOIN products p ON e.productId = p.id
+       WHERE LOWER(TRIM(e.serialNumber)) IN (${placeholders})
+       ORDER BY e.createdAt DESC
+       LIMIT 200`,
+      keys
     );
-    const existingEqs = existingRows as { id: string; serialNumber: string }[];
-
-    const existingUsed = new Set<string>();
-    const wantedUsed = new Set<number>();
-    const pairs: { existingId: string; serial: string }[] = [];
-
-    // Pass 1 — identity match: pair a submitted serial to the existing row
-    // that already has that exact (normalized) serial. This is what keeps a
-    // unit's history attached to the right physical unit when the list is
-    // reordered or another entry is added/removed.
-    for (let i = 0; i < wanted.length; i++) {
-      const key = normalizeSerial(wanted[i]);
-      if (!key) continue;
-      const match = existingEqs.find(
-        (eq) => !existingUsed.has(eq.id) && normalizeSerial(eq.serialNumber) === key
-      );
-      if (match) {
-        existingUsed.add(match.id);
-        wantedUsed.add(i);
-        pairs.push({ existingId: match.id, serial: wanted[i] });
-      }
-    }
-
-    // Pass 2 — positional fallback for whatever's left (blank serials, or a
-    // serial with no existing match): pair remaining submitted slots with
-    // remaining existing rows in original order. Preserves the old behavior
-    // for equipment that has no serial yet, so unrelated edits don't spawn
-    // duplicate rows.
-    const remainingExisting = existingEqs.filter((eq) => !existingUsed.has(eq.id));
-    let cursor = 0;
-    for (let i = 0; i < wanted.length; i++) {
-      if (wantedUsed.has(i)) continue;
-      if (cursor < remainingExisting.length) {
-        const eq = remainingExisting[cursor++];
-        existingUsed.add(eq.id);
-        wantedUsed.add(i);
-        pairs.push({ existingId: eq.id, serial: wanted[i] });
-      }
-    }
-
-    // Update every matched row (base fields + its resolved serial).
-    for (const { existingId, serial } of pairs) {
-      const v = cleanEquipment({ ...baseEquipmentData, serialNumber: serial });
-      await conn.query(
-        `UPDATE customer_equipments SET
-           customerId = ?, productId = ?, productName = ?, serialNumber = ?, quotationNumber = ?,
-           warrantyCertNumber = ?, warrantyType = ?, warrantyStartDate = ?,
-           warrantyEndDate = ?, status = ?
-         WHERE id = ?`,
-        [
-          v.customerId,
-          v.productId,
-          v.productName,
-          v.serialNumber,
-          v.quotationNumber,
-          v.warrantyCertNumber,
-          v.warrantyType,
-          v.warrantyStartDate,
-          v.warrantyEndDate,
-          v.status,
-          existingId,
-        ]
-      );
-    }
-
-    // Genuinely new entries (submitted slots with no pairing at all) → insert.
-    for (let i = 0; i < wanted.length; i++) {
-      if (wantedUsed.has(i)) continue;
-      const newId = crypto.randomUUID();
-      const now = new Date().toISOString();
-      const v = cleanEquipment({ ...baseEquipmentData, salesRecordId, serialNumber: wanted[i] });
-      await conn.query(
-        `INSERT INTO customer_equipments
-           (id, salesRecordId, customerId, productId, productName, serialNumber, quotationNumber,
-            warrantyCertNumber, warrantyType, warrantyStartDate, warrantyEndDate,
-            status, createdAt)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          newId,
-          v.salesRecordId,
-          v.customerId,
-          v.productId,
-          v.productName,
-          v.serialNumber,
-          v.quotationNumber,
-          v.warrantyCertNumber,
-          v.warrantyType,
-          v.warrantyStartDate,
-          v.warrantyEndDate,
-          v.status,
-          now,
-        ]
-      );
-    }
-
-    // Excess existing rows (not paired at all, e.g. qty was reduced) are
-    // UNLINKED from this sale — never deleted. Their warranty/schedule/log
-    // history is preserved intact under the customer.
-    const toUnlink = existingEqs.filter((eq) => !existingUsed.has(eq.id));
-    for (const eq of toUnlink) {
-      await conn.query(
-        "UPDATE customer_equipments SET salesRecordId = '' WHERE id = ?",
-        [eq.id]
-      );
-    }
-  });
+    if (!Array.isArray(rows)) return [];
+    return rows.map((r) => ({
+      id: String(r.id || ""),
+      serialNumber: String(r.serialNumber || ""),
+      salesRecordId: String(r.salesRecordId || ""),
+      productName: String(r.productName || ""),
+      customerName: String(r.customerName || ""),
+    }));
+  } catch (err) {
+    console.error("findEquipmentsBySerial failed:", err);
+    return [];
+  }
 }
 
 /**

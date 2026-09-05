@@ -8,13 +8,30 @@ import {
 import { computeQuoteTotals, hasNegativeLineItem } from "../../lib/quotationTotals";
 
 // GET /api/quotations (login required) — list saved quotations (summary only).
-export const GET = withRoute("โหลดรายการใบเสนอราคาไม่สำเร็จ", async () => {
-  await requireAuth();
-  return NextResponse.json(await listQuotations());
-});
+//
+// `?search=` / `?limit=` filter server-side. Retention is now 2 years, so the
+// list can genuinely exceed the store's safety cap and older-but-still-live
+// quotations would drop off the bottom unseen; the picker searches in SQL
+// instead of relying on one page holding everything. Both params are optional
+// and omitting them returns the previous unfiltered newest-first page.
+export const GET = withRoute(
+  "โหลดรายการใบเสนอราคาไม่สำเร็จ",
+  async (request?: NextRequest) => {
+    await requireAuth();
+    const params = request ? new URL(request.url).searchParams : null;
+    const rawLimit = Number(params?.get("limit"));
+    return NextResponse.json(
+      await listQuotations({
+        search: params?.get("search") || undefined,
+        limit: Number.isFinite(rawLimit) && rawLimit > 0 ? rawLimit : undefined,
+      })
+    );
+  }
+);
 
 // POST /api/quotations (login required) — save/upsert a quotation so it can be
-// deleted from the "keep or delete?" prompt and auto-purged after 30 days.
+// deleted from the "keep or delete?" prompt and auto-purged once it is past the
+// retention window (2 years — RETENTION_DAYS in the cleanup route).
 export const POST = withRoute(
   "บันทึกใบเสนอราคาไม่สำเร็จ",
   async (request: NextRequest) => {

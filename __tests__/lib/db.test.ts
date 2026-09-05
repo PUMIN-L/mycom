@@ -40,9 +40,10 @@ process.env.DB_USER = 'tester';
 process.env.DB_PASSWORD = 'pw';
 process.env.DB_NAME = 'testdb';
 
-// A version SELECT result that MATCHES SCHEMA_VERSION (32) → bootstrap fast-path,
+// A version SELECT result that MATCHES SCHEMA_VERSION (33) → bootstrap fast-path,
 // skipping DDL. Value is a string because settings stores VARCHAR values.
-const SCHEMA_MATCH: [Array<{ value: string }>, unknown[]] = [[{ value: '32' }], []];
+const SCHEMA_VERSION = '33';
+const SCHEMA_MATCH: [Array<{ value: string }>, unknown[]] = [[{ value: SCHEMA_VERSION }], []];
 // An empty result → no schema_version row / no admin row → full bootstrap.
 const EMPTY: [unknown[], unknown[]] = [[], []];
 
@@ -86,6 +87,103 @@ afterEach(() => {
   warnSpy.mockRestore();
   errorSpy.mockRestore();
 });
+
+// ── v33 backfill simulator ────────────────────────────────────────────────────
+// There is no database here, so "one line item per pre-existing sale, and a
+// second run inserts nothing" is exercised by executing the backfill's REAL SQL
+// against a tiny in-memory stand-in for the three tables it touches. The
+// simulator interrogates the statement it was handed — does it carry the
+// NOT EXISTS guard? does it key the new row off sr.id? does it exclude legacy
+// product_cost rows? — instead of assuming any of it, so a backfill that lost
+// one of those guards produces visibly wrong rows here instead of passing.
+type FakeSale = {
+  id: string;
+  productId: string;
+  productName: string;
+  categoryId: number | null;
+  qty: number;
+  unitPrice: number;
+  totalAmount: number;
+  costAmount: number;
+  createdAt: string;
+};
+type FakeCostItem = { salesRecordId: string; costType: string; amount: number };
+type FakeLineItem = {
+  id: string;
+  salesRecordId: string;
+  productId: string;
+  productName: string;
+  categoryId: number | null;
+  qty: number;
+  unitPrice: number;
+  totalAmount: number;
+  costAmount: number;
+  quotationItemId: string | null;
+  sortOrder: number;
+  createdAt: string;
+};
+type FakeDb = { sales: FakeSale[]; costItems: FakeCostItem[]; lineItems: FakeLineItem[] };
+
+const BACKFILL_INSERT = /INSERT INTO\s+sales_record_items/i;
+
+let syntheticIdCounter = 0;
+
+function applyBackfill(sql: string, db: FakeDb): void {
+  const guarded =
+    /WHERE NOT EXISTS\s*\(\s*SELECT 1 FROM sales_record_items sri WHERE sri\.salesRecordId = sr\.id\s*\)/i.test(sql);
+  // `id` and `salesRecordId` both selected as sr.id → deterministic per sale, so
+  // a racing second writer collides on the PRIMARY KEY instead of duplicating.
+  const keyedOnSaleId = /SELECT\s+sr\.id\s*,\s*sr\.id\s*,/i.test(sql);
+  const excludesProductCost = /costType\s*<>\s*'product_cost'/i.test(sql);
+
+  for (const sale of db.sales) {
+    if (guarded && db.lineItems.some((li) => li.salesRecordId === sale.id)) continue;
+    const id = keyedOnSaleId ? sale.id : `synthetic-${++syntheticIdCounter}`;
+    if (db.lineItems.some((li) => li.id === id)) {
+      throw { code: 'ER_DUP_ENTRY', message: `Duplicate entry '${id}' for key 'PRIMARY'` };
+    }
+    const billLevelCost = db.costItems
+      .filter(
+        (ci) =>
+          ci.salesRecordId === sale.id &&
+          (!excludesProductCost || ci.costType !== 'product_cost'),
+      )
+      .reduce((sum, ci) => sum + ci.amount, 0);
+    db.lineItems.push({
+      id,
+      salesRecordId: sale.id,
+      productId: sale.productId,
+      productName: sale.productName,
+      categoryId: sale.categoryId,
+      qty: sale.qty,
+      unitPrice: sale.unitPrice,
+      totalAmount: sale.totalAmount,
+      costAmount: Math.max(0, sale.costAmount - billLevelCost),
+      quotationItemId: null,
+      sortOrder: 0,
+      createdAt: sale.createdAt,
+    });
+  }
+}
+
+// Full-bootstrap mock (no schema_version row) where the backfill statement
+// actually mutates `db`; every other statement is a no-op returning no rows.
+function mockBootstrapAgainst(db: FakeDb): void {
+  mockConnection.query.mockImplementation((sql: string) => {
+    if (BACKFILL_INSERT.test(sql)) {
+      applyBackfill(String(sql), db);
+      return Promise.resolve([{ affectedRows: 0 }, []]);
+    }
+    return Promise.resolve(EMPTY);
+  });
+}
+
+const sqlOfCall = (call: unknown[]) => String(call[0]);
+const bootstrapSql = () => mockConnection.query.mock.calls.map(sqlOfCall);
+const indexOfSql = (needle: string | RegExp) =>
+  mockConnection.query.mock.calls.findIndex((c) =>
+    typeof needle === 'string' ? sqlOfCall(c).includes(needle) : needle.test(sqlOfCall(c)),
+  );
 
 describe('db.ts', () => {
   // ── getDbConnection ─────────────────────────────────────────────────────────
@@ -138,10 +236,12 @@ describe('db.ts', () => {
         expect.stringContaining('INSERT IGNORE INTO users'),
         expect.arrayContaining(['admin-001', 'root', 'hashed-pw']),
       );
-      // Schema version is recorded so future cold instances take the fast path
+      // Schema version is recorded so future cold instances take the fast path.
+      // Stamping anything but the current SCHEMA_VERSION means every instance
+      // re-runs the whole DDL forever (or skips a migration it never applied).
       expect(mockConnection.query).toHaveBeenCalledWith(
         expect.stringContaining("INSERT INTO settings"),
-        ['32'],
+        [SCHEMA_VERSION],
       );
       expect(mockConnection.release).toHaveBeenCalledTimes(1);
     });
@@ -406,6 +506,238 @@ describe('db.ts', () => {
       // _initPromise was cleared on failure → the next call re-inits successfully.
       const pool = await db.getDbConnection();
       expect(pool).toBe(mockPool);
+    });
+  });
+
+  // ── v33: sales_record_items DDL + backfill ───────────────────────────────────
+  describe('v33 sale line items', () => {
+    it('issues the whole v33 DDL: the table, its four indexes, the CASCADE FK and the soft quotation link', async () => {
+      const db = await freshImport();
+      mockConnection.query.mockResolvedValue(EMPTY);
+
+      await db.getDbConnection();
+      const sql = bootstrapSql();
+      const hasSql = (re: RegExp) => sql.some((s) => re.test(s));
+
+      expect(hasSql(/CREATE TABLE IF NOT EXISTS sales_record_items/)).toBe(true);
+      // Each index is also created standalone: a database whose table predates
+      // one of them never gets it from CREATE TABLE IF NOT EXISTS.
+      for (const index of [
+        'idx_sri_salesRecord',
+        'idx_sri_product',
+        'idx_sri_category',
+        'idx_sri_quotationItem',
+      ]) {
+        expect(
+          hasSql(new RegExp(`CREATE INDEX ${index} ON sales_record_items`)),
+        ).toBe(true);
+      }
+      // The CASCADE is what stops a deleted sale from leaving orphan revenue
+      // lines behind that every report would keep counting.
+      expect(
+        hasSql(
+          /ADD CONSTRAINT fk_sri_sales FOREIGN KEY \(salesRecordId\) REFERENCES sales_records\(id\) ON DELETE CASCADE/,
+        ),
+      ).toBe(true);
+
+      // Soft link on the parent: column + index, and deliberately NO foreign key
+      // to `quotations` — those are hard-purged by retention, and an FK would
+      // either block the purge or cascade it into revenue rows.
+      expect(hasSql(/ALTER TABLE sales_records ADD COLUMN IF NOT EXISTS quotationId VARCHAR\(36\) DEFAULT NULL/)).toBe(true);
+      expect(hasSql(/CREATE INDEX idx_sr_quotation ON sales_records \(quotationId\)/)).toBe(true);
+      expect(hasSql(/REFERENCES quotations/)).toBe(false);
+    });
+
+    it('creates sales_records (and sale_cost_items) before the line-item table, FK and backfill', async () => {
+      const db = await freshImport();
+      mockConnection.query.mockResolvedValue(EMPTY);
+
+      await db.getDbConnection();
+
+      const salesRecordsIdx = indexOfSql('CREATE TABLE IF NOT EXISTS sales_records');
+      const costItemsIdx = indexOfSql('CREATE TABLE IF NOT EXISTS sale_cost_items');
+      const lineItemsIdx = indexOfSql('CREATE TABLE IF NOT EXISTS sales_record_items');
+      const fkIdx = indexOfSql('fk_sri_sales');
+      const backfillIdx = indexOfSql(BACKFILL_INSERT);
+
+      expect(salesRecordsIdx).toBeGreaterThanOrEqual(0);
+      // FK parent first, or a fresh install dies on ER_FK_CANNOT_OPEN_PARENT.
+      expect(salesRecordsIdx).toBeLessThan(lineItemsIdx);
+      expect(lineItemsIdx).toBeLessThan(fkIdx);
+      // The backfill reads sale_cost_items and writes sales_record_items, so
+      // both must already exist when it runs.
+      expect(costItemsIdx).toBeLessThan(backfillIdx);
+      expect(lineItemsIdx).toBeLessThan(backfillIdx);
+    });
+
+    it('re-runs cleanly on a database where every v33 object already exists', async () => {
+      const dupKey = { code: 'ER_DUP_KEYNAME', message: 'Duplicate key name' };
+      const dupColumn = { code: 'ER_DUP_FIELDNAME', message: 'Duplicate column name' };
+      const dupConstraint = {
+        code: 'ER_CANT_CREATE_TABLE',
+        message: "Can't create table `db`.`#sql-2` (errno: 121 \"Duplicate key on write or update\")",
+      };
+      const db = await freshImport();
+      mockConnection.query.mockImplementation((sql: string) => {
+        if (/CREATE INDEX idx_sri_/.test(sql) || /CREATE INDEX idx_sr_quotation/.test(sql)) {
+          return Promise.reject(dupKey);
+        }
+        if (/ADD COLUMN IF NOT EXISTS quotationId/.test(sql)) return Promise.reject(dupColumn);
+        if (/fk_sri_sales/.test(sql)) return Promise.reject(dupConstraint);
+        return Promise.resolve(EMPTY);
+      });
+
+      await db.getDbConnection();
+
+      // Second deploy against the same DB must still finish and stamp v33 —
+      // "already exists" is the normal case on every redeploy, not a failure.
+      expect(mockConnection.query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO settings'),
+        [SCHEMA_VERSION],
+      );
+    });
+
+    it('backfills exactly one line item per pre-existing sale, and a second bootstrap adds none', async () => {
+      const fake: FakeDb = {
+        sales: [
+          { id: 's1', productId: 'p1', productName: 'Microscope', categoryId: 3, qty: 2, unitPrice: 500, totalAmount: 1000, costAmount: 600, createdAt: '2025-01-05T00:00:00.000Z' },
+          // Legacy product_cost row stays as history but is NOT subtracted, so
+          // the line keeps the product share of the old cached total.
+          { id: 's2', productId: 'p2', productName: 'Centrifuge', categoryId: 4, qty: 1, unitPrice: 2000, totalAmount: 2000, costAmount: 1000, createdAt: '2025-02-05T00:00:00.000Z' },
+          // saleType='service' style row: no product, no category — still gets a
+          // line item, or its revenue vanishes from the reports.
+          { id: 's3', productId: '', productName: '', categoryId: null, qty: 1, unitPrice: 300, totalAmount: 300, costAmount: 50, createdAt: '2025-03-05T00:00:00.000Z' },
+        ],
+        costItems: [
+          { salesRecordId: 's2', costType: 'product_cost', amount: 700 },
+          { salesRecordId: 's2', costType: 'transport', amount: 120 },
+          { salesRecordId: 's3', costType: 'commission', amount: 200 },
+        ],
+        lineItems: [],
+      };
+
+      const first = await freshImport();
+      mockBootstrapAgainst(fake);
+      await first.getDbConnection();
+
+      expect(fake.lineItems).toHaveLength(fake.sales.length);
+      expect(fake.lineItems.map((li) => li.salesRecordId)).toEqual(['s1', 's2', 's3']);
+      expect(fake.lineItems[0]).toMatchObject({
+        id: 's1',
+        productId: 'p1',
+        productName: 'Microscope',
+        categoryId: 3,
+        qty: 2,
+        unitPrice: 500,
+        totalAmount: 1000,
+        costAmount: 600, // no cost items → whole cached cost is product cost
+        quotationItemId: null,
+        sortOrder: 0,
+        createdAt: '2025-01-05T00:00:00.000Z',
+      });
+      // 1000 cached − 120 transport = 880 on the line; 880 + 120 reproduces the
+      // very same total under the new composition rule. The 700 product_cost row
+      // is neither subtracted nor deleted (it is simply no longer summed).
+      expect(fake.lineItems[1].costAmount).toBe(880);
+      // GREATEST(0, …): bill-level costs exceeding the cached total must not
+      // write a negative product cost.
+      expect(fake.lineItems[2].costAmount).toBe(0);
+
+      // A second cold start (new instance, same database) re-runs the whole
+      // bootstrap — the backfill must be a no-op, not a second set of rows that
+      // would silently double every historical sale.
+      const second = await freshImport();
+      mockConnection.query.mockReset();
+      mockBootstrapAgainst(fake);
+      await second.getDbConnection();
+
+      expect(fake.lineItems).toHaveLength(fake.sales.length);
+      expect(fake.lineItems.map((li) => li.id)).toEqual(['s1', 's2', 's3']);
+    });
+
+    it('leaves a sale that already has line items untouched, and issues no UPDATE/DELETE at all', async () => {
+      const existing: FakeLineItem = {
+        id: 'li-existing',
+        salesRecordId: 's1',
+        productId: 'p9',
+        productName: 'Hand-entered line',
+        categoryId: 7,
+        qty: 3,
+        unitPrice: 100,
+        totalAmount: 300,
+        costAmount: 111,
+        quotationItemId: 'qi-1',
+        sortOrder: 2,
+        createdAt: '2025-04-01T00:00:00.000Z',
+      };
+      const fake: FakeDb = {
+        sales: [
+          { id: 's1', productId: 'p1', productName: 'Microscope', categoryId: 3, qty: 2, unitPrice: 500, totalAmount: 1000, costAmount: 600, createdAt: '2025-01-05T00:00:00.000Z' },
+          { id: 's2', productId: 'p2', productName: 'Centrifuge', categoryId: 4, qty: 1, unitPrice: 2000, totalAmount: 2000, costAmount: 1000, createdAt: '2025-02-05T00:00:00.000Z' },
+        ],
+        costItems: [],
+        lineItems: [existing],
+      };
+      const snapshot = { ...existing };
+
+      const db = await freshImport();
+      mockBootstrapAgainst(fake);
+      await db.getDbConnection();
+
+      // s1 already had a line → skipped entirely; only s2 is backfilled.
+      expect(fake.lineItems).toHaveLength(2);
+      expect(fake.lineItems[0]).toEqual(snapshot);
+      expect(fake.lineItems[1]).toMatchObject({ id: 's2', salesRecordId: 's2' });
+
+      // The migration is purely additive: nothing in this bootstrap may rewrite
+      // or remove a sale or a line item (sales_records.totalAmount/costAmount and
+      // sale_cost_items must survive byte-for-byte).
+      const mutations = bootstrapSql().filter(
+        (s) =>
+          /^\s*(UPDATE|DELETE)\b/i.test(s) &&
+          /sales_records?|sales_record_items|sale_cost_items/i.test(s),
+      );
+      expect(mutations).toEqual([]);
+    });
+
+    it('stands down when a concurrent bootstrap wins the backfill race, but still stamps the version', async () => {
+      const db = await freshImport();
+      const dupEntry = { code: 'ER_DUP_ENTRY', message: "Duplicate entry 's1' for key 'PRIMARY'" };
+      mockConnection.query.mockImplementation((sql: string) => {
+        if (BACKFILL_INSERT.test(sql)) return Promise.reject(dupEntry);
+        return Promise.resolve(EMPTY);
+      });
+
+      await db.getDbConnection();
+
+      // The other instance wrote exactly these rows — taking the app down over
+      // it would be worse than useless.
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('backfill lost a race'),
+        'ER_DUP_ENTRY',
+      );
+      expect(mockConnection.query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO settings'),
+        [SCHEMA_VERSION],
+      );
+    });
+
+    it('propagates a real backfill failure and never stamps the version over it', async () => {
+      const db = await freshImport();
+      const fatal = { code: 'ER_BAD_FIELD_ERROR', message: "Unknown column 'sr.categoryId'" };
+      mockConnection.query.mockImplementation((sql: string) => {
+        if (BACKFILL_INSERT.test(sql)) return Promise.reject(fatal);
+        return Promise.resolve(EMPTY);
+      });
+
+      // Stamping v33 here would mark the migration done on a database whose
+      // sales have no line items — every report would read zero for them, and
+      // no later boot would ever retry.
+      await expect(db.getDbConnection()).rejects.toBe(fatal);
+      const settingsCalls = mockConnection.query.mock.calls.filter((c) =>
+        sqlOfCall(c).includes('INSERT INTO settings'),
+      );
+      expect(settingsCalls).toHaveLength(0);
     });
   });
 

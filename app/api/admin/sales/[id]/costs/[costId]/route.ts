@@ -4,7 +4,17 @@ import {
   getSalesRecord,
   updateCostItem,
   deleteCostItem,
+  ProductCostIsPerLineError,
+  ProductCostNotAttributableError,
 } from "../../../../../../lib/salesDashboardStore";
+
+/** Both "that money belongs somewhere else" refusals are client errors, not 500s. */
+function costRefusal(error: unknown): NextResponse | null {
+  return error instanceof ProductCostIsPerLineError ||
+    error instanceof ProductCostNotAttributableError
+    ? NextResponse.json({ error: (error as Error).message }, { status: 400 })
+    : null;
+}
 
 type Ctx = { params: Promise<{ id: string; costId: string }> };
 
@@ -25,7 +35,14 @@ export const PUT = withRoute(
         { status: 400 }
       );
     }
-    const updated = await updateCostItem(costId, body);
+    let updated;
+    try {
+      updated = await updateCostItem(costId, body);
+    } catch (error) {
+      const refusal = costRefusal(error);
+      if (refusal) return refusal;
+      throw error;
+    }
     if (!updated) {
       return NextResponse.json({ error: "ไม่พบรายการต้นทุน" }, { status: 404 });
     }
@@ -47,7 +64,14 @@ export const DELETE = withRoute(
     if (!record) {
       return NextResponse.json({ error: "ไม่พบรายการขาย" }, { status: 404 });
     }
-    const deleted = await deleteCostItem(costId);
+    let deleted;
+    try {
+      deleted = await deleteCostItem(costId);
+    } catch (error) {
+      const refusal = costRefusal(error);
+      if (refusal) return refusal;
+      throw error;
+    }
     if (!deleted) {
       return NextResponse.json({ error: "ไม่พบรายการต้นทุน" }, { status: 404 });
     }

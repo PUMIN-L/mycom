@@ -4,7 +4,7 @@ import type { QueryResult, FieldPacket, RowDataPacket } from "mysql2";
 
 // Bump whenever the schema below changes — a mismatch re-runs the (idempotent)
 // bump; a match lets returning cold instances skip it in one SELECT.
-const SCHEMA_VERSION = 32;
+const SCHEMA_VERSION = 33;
 
 type DbPool = ReturnType<typeof mysql.createPool>;
 
@@ -661,7 +661,8 @@ async function bootstrapSchemaOnce(): Promise<void> {
     }
 
     // ── Sales records (permanent, normalized — the source of truth for
-    // analytics). Quotations and billing docs are purged after 30 days, so
+    // analytics). Quotations are purged once past their retention window
+    // (2 years — RETENTION_DAYS in app/api/quotations/cleanup/route.ts), so
     // they cannot be used for historical revenue reporting. This table stores
     // every closed deal with indexed columns for fast GROUP BY queries.
     await connection.query(`
@@ -687,6 +688,7 @@ async function bootstrapSchemaOnce(): Promise<void> {
           warrantyStartDate DATE DEFAULT NULL,
           warrantyEndDate DATE DEFAULT NULL,
           equipmentId VARCHAR(36) DEFAULT NULL,
+          quotationId VARCHAR(36) DEFAULT NULL,
           note TEXT,
           createdAt VARCHAR(255) NOT NULL,
           INDEX idx_sr_saleDate (saleDate),
@@ -694,7 +696,8 @@ async function bootstrapSchemaOnce(): Promise<void> {
           INDEX idx_sr_customer (customerId),
           INDEX idx_sr_company (companyId),
           INDEX idx_sr_product (productId),
-          INDEX idx_sr_category (categoryId)
+          INDEX idx_sr_category (categoryId),
+          INDEX idx_sr_quotation (quotationId)
         )
       `);
     try {
@@ -748,6 +751,27 @@ async function bootstrapSchemaOnce(): Promise<void> {
       }
     }
 
+    // v33: link a sale back to the quotation it was created from. Deliberately
+    // has NO FOREIGN KEY to `quotations`: quotations are hard-deleted by the
+    // retention cron, and an FK would either block that purge or (with cascade)
+    // destroy revenue rows along with it. The link is soft — a sale whose
+    // quotation is gone still reads/edits normally, and `quotationRef` (the
+    // document number as text) is always stored alongside it.
+    try {
+      await connection.query(
+        `ALTER TABLE sales_records ADD COLUMN IF NOT EXISTS quotationId VARCHAR(36) DEFAULT NULL`
+      );
+    } catch (error) {
+      if (!isBenignSchemaError(error)) throw error;
+    }
+    try {
+      await connection.query(
+        `CREATE INDEX idx_sr_quotation ON sales_records (quotationId)`
+      );
+    } catch (error) {
+      if (!isBenignSchemaError(error)) throw error;
+    }
+
     // ── Sale cost items — breakdown of costs per sale (transport, service,
     // repair, shipping, commission etc.). The parent sales_records.costAmount
     // is the cached SUM and is recalculated whenever items change.
@@ -766,6 +790,66 @@ async function bootstrapSchemaOnce(): Promise<void> {
     try {
       await connection.query(
         `ALTER TABLE sale_cost_items ADD CONSTRAINT fk_sci_sales FOREIGN KEY (salesRecordId) REFERENCES sales_records(id) ON DELETE CASCADE`
+      );
+    } catch (error) {
+      if (!isBenignSchemaError(error)) throw error;
+    }
+
+    // ── Sale line items (v33) — one row per product line under a sales_record.
+    // Created AFTER sales_records (and after sale_cost_items, which the backfill
+    // below reads) so the FK's parent already exists on a fresh database.
+    //
+    // COST COMPOSITION RULE — `sales_records.costAmount` (the number every
+    // profit/margin query and Chart 1 "ต้นทุนสินค้า" reads) is EXACTLY:
+    //   SUM(sales_record_items.costAmount)                              per-line product cost
+    //   + SUM(sale_cost_items.amount WHERE costType <> 'product_cost')  bill-level costs
+    //                                                                   (ค่ารถ/ค่าคอม/ฯลฯ)
+    // Product cost now lives on the line item ONLY: new write paths must not
+    // create `product_cost` rows in sale_cost_items, and existing ones are kept
+    // as history but excluded from the sum — otherwise product cost is counted
+    // twice.
+    //
+    // Types mirror sales_records / sale_cost_items exactly. quotationItemId is
+    // nullable (a hand-typed line has no source QuoteItem) and, like
+    // sales_records.quotationId, carries no FK to quotations.
+    await connection.query(`
+        CREATE TABLE IF NOT EXISTS sales_record_items (
+          id VARCHAR(36) PRIMARY KEY,
+          salesRecordId VARCHAR(36) NOT NULL,
+          productId VARCHAR(255) NOT NULL DEFAULT '',
+          productName VARCHAR(255) NOT NULL DEFAULT '',
+          categoryId INT DEFAULT NULL,
+          qty INT NOT NULL DEFAULT 1,
+          unitPrice DECIMAL(12,2) NOT NULL DEFAULT 0,
+          totalAmount DECIMAL(12,2) NOT NULL DEFAULT 0,
+          costAmount DECIMAL(12,2) NOT NULL DEFAULT 0,
+          quotationItemId VARCHAR(64) DEFAULT NULL,
+          sortOrder INT NOT NULL DEFAULT 0,
+          createdAt VARCHAR(255) NOT NULL,
+          INDEX idx_sri_salesRecord (salesRecordId),
+          INDEX idx_sri_product (productId),
+          INDEX idx_sri_category (categoryId),
+          INDEX idx_sri_quotationItem (quotationItemId)
+        )
+      `);
+    // Also create each index standalone: a database whose table predates one of
+    // them (partially applied earlier run) would never get it from CREATE TABLE
+    // IF NOT EXISTS. ER_DUP_KEYNAME on the fresh-DB path is benign.
+    for (const indexDef of [
+      "CREATE INDEX idx_sri_salesRecord ON sales_record_items (salesRecordId)",
+      "CREATE INDEX idx_sri_product ON sales_record_items (productId)",
+      "CREATE INDEX idx_sri_category ON sales_record_items (categoryId)",
+      "CREATE INDEX idx_sri_quotationItem ON sales_record_items (quotationItemId)",
+    ]) {
+      try {
+        await connection.query(indexDef);
+      } catch (error) {
+        if (!isBenignSchemaError(error)) throw error;
+      }
+    }
+    try {
+      await connection.query(
+        `ALTER TABLE sales_record_items ADD CONSTRAINT fk_sri_sales FOREIGN KEY (salesRecordId) REFERENCES sales_records(id) ON DELETE CASCADE`
       );
     } catch (error) {
       if (!isBenignSchemaError(error)) throw error;
@@ -834,6 +918,79 @@ async function bootstrapSchemaOnce(): Promise<void> {
       );
     } catch (error) {
       if (!isBenignSchemaError(error)) throw error;
+    }
+
+    // ── v33 backfill: one line item per pre-existing sale ──────────────────
+    // Runs after ALL v33 DDL above, so both sales_record_items and
+    // sale_cost_items exist. Reporting queries move to sales_record_items in
+    // this release, so a sale left without a line item would silently drop its
+    // revenue from "สินค้าขายดี" / "รายได้ตามหมวดหมู่" — hence NO filter here:
+    // every sale is covered, including saleType='service' and rows with an
+    // empty productId (they land in the existing "ไม่ระบุสินค้า"/"ไม่ระบุหมวด"
+    // buckets, which is what the pre-migration queries already did).
+    //
+    // Purely additive and idempotent: a single INSERT ... SELECT guarded by
+    // WHERE NOT EXISTS, so a sale that already has ANY line item is skipped and
+    // a second run inserts nothing. It never UPDATEs or DELETEs a row in any
+    // table — sales_records.totalAmount/costAmount and sale_cost_items are left
+    // exactly as they are.
+    //
+    // costAmount is the product-cost SHARE of the old cached total, i.e. the old
+    // sales_records.costAmount minus the bill-level cost items that keep living
+    // in sale_cost_items — so the composition rule above reproduces the very
+    // same total and no historical figure moves. Legacy `product_cost` rows are
+    // intentionally NOT subtracted (they are no longer summed) and NOT deleted.
+    // GREATEST(0, …) guards the odd legacy row whose cost items already exceed
+    // the cached total, which would otherwise write a negative cost.
+    //
+    // ids: the sale's OWN id is reused as its backfilled line item's id instead
+    // of UUID() (which TiDB does support). It is deterministic, so if two
+    // instances boot and run this at the same time the loser collides on the
+    // PRIMARY KEY and writes nothing, rather than inserting a SECOND line item
+    // for the same sale under a fresh random id — a duplicate that would double
+    // that sale's historical revenue with no unique constraint to catch it.
+    // Line items created from here on still use crypto.randomUUID() in the app.
+    //
+    // A single statement is atomic on its own; withTransaction() cannot be used
+    // here because it awaits the very init promise this bootstrap is fulfilling.
+    try {
+      await connection.query(`
+        INSERT INTO sales_record_items
+          (id, salesRecordId, productId, productName, categoryId, qty,
+           unitPrice, totalAmount, costAmount, quotationItemId, sortOrder, createdAt)
+        SELECT
+          sr.id,
+          sr.id,
+          sr.productId,
+          sr.productName,
+          sr.categoryId,
+          sr.qty,
+          sr.unitPrice,
+          sr.totalAmount,
+          GREATEST(0, sr.costAmount - COALESCE((
+            SELECT SUM(sci.amount)
+            FROM sale_cost_items sci
+            WHERE sci.salesRecordId = sr.id
+              AND sci.costType <> 'product_cost'
+          ), 0)),
+          NULL,
+          0,
+          sr.createdAt
+        FROM sales_records sr
+        WHERE NOT EXISTS (
+          SELECT 1 FROM sales_record_items sri WHERE sri.salesRecordId = sr.id
+        )
+      `);
+    } catch (error) {
+      // Only a concurrent bootstrap racing us is benign — the other instance is
+      // writing (or already wrote) exactly these rows, so failing the whole
+      // bootstrap over it would take the app down for nothing. Any other error
+      // propagates, so schema_version is never stamped over a skipped backfill.
+      if (!isConcurrentWriteError(error)) throw error;
+      console.warn(
+        "v33 line-item backfill lost a race with a concurrent bootstrap; the other instance owns it:",
+        (error as { code?: string }).code
+      );
     }
 
     // ── Seed default admin user ────────────────────────────────────────────
@@ -1038,6 +1195,29 @@ function isTransientDbError(error: unknown): boolean {
 
 function isDuplicateKeyError(error: unknown): boolean {
   return (error as { code?: string } | null | undefined)?.code === "ER_DUP_ENTRY";
+}
+
+// Errors that mean "another writer got there first / is holding the rows right
+// now", as opposed to a broken statement. Only used by the idempotent v33
+// backfill, where two instances booting at once legitimately race: the loser
+// hits a duplicate primary key (ids are derived from the sale id), a lock
+// timeout/deadlock, or TiDB's optimistic write conflict — in every one of those
+// cases the winner writes exactly the same rows, so the loser can stand down.
+const CONCURRENT_WRITE_ERROR_CODES = new Set([
+  "ER_DUP_ENTRY",
+  "ER_LOCK_DEADLOCK",
+  "ER_LOCK_WAIT_TIMEOUT",
+]);
+
+// TiDB's write conflict (errno 9007) has no mysql2 code mapping, so it is
+// matched on message text.
+const WRITE_CONFLICT_MESSAGE_HINTS = ["write conflict", "try again later"];
+
+function isConcurrentWriteError(error: unknown): boolean {
+  const err = error as { code?: string; message?: string; sqlMessage?: string } | null | undefined;
+  if (err?.code !== undefined && CONCURRENT_WRITE_ERROR_CODES.has(err.code)) return true;
+  const text = `${err?.message ?? ""} ${err?.sqlMessage ?? ""}`.toLowerCase();
+  return WRITE_CONFLICT_MESSAGE_HINTS.some((hint) => text.includes(hint));
 }
 
 // Errors that are genuinely safe to ignore when running the idempotent schema

@@ -11,8 +11,11 @@ vi.mock('@/app/lib/db', () => ({
   withTransaction: vi.fn(async (fn: (c: typeof conn) => Promise<unknown>) => fn(conn)),
 }));
 
+import { withTransaction } from '@/app/lib/db';
 import {
   syncEquipmentsForSalesRecord,
+  syncEquipmentRowsForSalesRecord,
+  findEquipmentsBySerial,
   cleanupEquipmentsForSalesRecord,
   getAlerts,
   completeScheduleWithLog,
@@ -179,6 +182,315 @@ describe('syncEquipmentsForSalesRecord', () => {
     await syncEquipmentsForSalesRecord('sale-1', many, base);
     const inserts = callsMatching('INSERT INTO customer_equipments');
     expect(inserts).toHaveLength(50);
+  });
+});
+
+/**
+ * Per-machine flavour (task 4.x / 9.8 / 9.9). Same invariants as the serial-list
+ * flavour above — those tests still guard them — plus: each submitted row owns
+ * its own model/warranty, and the positional fallback may only pair rows that
+ * share a productId.
+ *
+ * The writer issues a SECOND read (`SELECT id, productId ...`) to learn which
+ * model each existing row holds, but only when the leftovers span more than one
+ * product group, so this helper answers both SELECTs from one fixture.
+ */
+type ExistingRow = { id: string; serialNumber: string; productId?: string };
+
+function mockConnRowsFor(existingRows: ExistingRow[], target = conn) {
+  target.query.mockImplementation((sql: string) => {
+    if (sql.includes('SELECT id, serialNumber FROM customer_equipments')) {
+      return Promise.resolve([
+        existingRows.map((r) => ({ id: r.id, serialNumber: r.serialNumber })),
+      ]);
+    }
+    if (sql.includes('SELECT id, productId FROM customer_equipments')) {
+      return Promise.resolve([
+        existingRows.map((r) => ({ id: r.id, productId: r.productId ?? '' })),
+      ]);
+    }
+    return Promise.resolve([{ affectedRows: 1 }]);
+  });
+}
+
+function updateCalls(target = conn) {
+  return target.query.mock.calls.filter(
+    (c) =>
+      String(c[0]).includes('UPDATE customer_equipments SET') &&
+      !String(c[0]).includes("salesRecordId = ''")
+  );
+}
+
+// UPDATE bind order: customerId, productId, productName, serialNumber, ..., id
+const P_PRODUCT_ID = 1;
+const P_PRODUCT_NAME = 2;
+const P_SERIAL = 3;
+const P_WARRANTY_END = 8;
+
+describe('syncEquipmentRowsForSalesRecord — mixed-model bills', () => {
+  const shared = { customerId: 'cust-1', productId: 'P1', productName: 'รุ่น P1' };
+
+  it('binds each service history to its OWN serial when a two-model bill is resubmitted out of order (9.8)', async () => {
+    // P1 x2 + P2 x1, created in that order. eq-P1a is the unit carrying the
+    // service history we must not hand to another machine.
+    mockConnRowsFor([
+      { id: 'eq-P1a', serialNumber: 'SN-1', productId: 'P1' },
+      { id: 'eq-P1b', serialNumber: 'SN-2', productId: 'P1' },
+      { id: 'eq-P2a', serialNumber: 'SN-9', productId: 'P2' },
+    ]);
+
+    // Submitted in a completely different order, and the P2 machine now comes
+    // first — positional matching would drag SN-9 onto eq-P1a.
+    await syncEquipmentRowsForSalesRecord(
+      'sale-1',
+      [
+        { serialNumber: 'SN-9', productId: 'P2', productName: 'รุ่น P2', warrantyEndDate: '2027-06-30' },
+        { serialNumber: 'SN-2', productId: 'P1', productName: 'รุ่น P1', warrantyEndDate: '2027-01-31' },
+        { serialNumber: 'SN-1', productId: 'P1', productName: 'รุ่น P1', warrantyEndDate: '2027-01-31' },
+      ],
+      shared
+    );
+
+    const updates = updateCalls();
+    expect(updates).toHaveLength(3);
+    expect(callsMatching('INSERT INTO customer_equipments')).toHaveLength(0);
+    expect(callsMatching("UPDATE customer_equipments SET salesRecordId = ''")).toHaveLength(0);
+
+    const byId = (id: string) => updates.find((c) => c[1].at(-1) === id)![1];
+    expect(byId('eq-P1a')[P_SERIAL]).toBe('SN-1');
+    expect(byId('eq-P1b')[P_SERIAL]).toBe('SN-2');
+    expect(byId('eq-P2a')[P_SERIAL]).toBe('SN-9');
+    // ...and each row keeps its own model + warranty, never the sale-level P1
+    // template or a neighbouring line's values.
+    expect(byId('eq-P2a')[P_PRODUCT_ID]).toBe('P2');
+    expect(byId('eq-P2a')[P_PRODUCT_NAME]).toBe('รุ่น P2');
+    expect(byId('eq-P2a')[P_WARRANTY_END]).toBe('2027-06-30');
+    expect(byId('eq-P1a')[P_PRODUCT_ID]).toBe('P1');
+    expect(byId('eq-P1a')[P_WARRANTY_END]).toBe('2027-01-31');
+  });
+
+  it('pairs blank-serial rows only within the same productId group (9.8)', async () => {
+    // Nothing has a serial yet, so every pairing goes through the positional
+    // fallback. Existing order is P1, P1, P2 — submission order is P2 first.
+    mockConnRowsFor([
+      { id: 'eq-1', serialNumber: '', productId: 'P1' },
+      { id: 'eq-2', serialNumber: '', productId: 'P1' },
+      { id: 'eq-3', serialNumber: '', productId: 'P2' },
+    ]);
+
+    await syncEquipmentRowsForSalesRecord(
+      'sale-1',
+      [
+        { serialNumber: '', productId: 'P2', productName: 'รุ่น P2' },
+        { serialNumber: '', productId: 'P1', productName: 'รุ่น P1' },
+        { serialNumber: '', productId: 'P1', productName: 'รุ่น P1' },
+      ],
+      shared
+    );
+
+    const updates = updateCalls();
+    expect(updates).toHaveLength(3);
+    // Blank serials must not spawn duplicates or unlink anything.
+    expect(callsMatching('INSERT INTO customer_equipments')).toHaveLength(0);
+    expect(callsMatching("UPDATE customer_equipments SET salesRecordId = ''")).toHaveLength(0);
+
+    const byId = (id: string) => updates.find((c) => c[1].at(-1) === id)![1];
+    // Naive position matching would have written P2 onto eq-1.
+    expect(byId('eq-3')[P_PRODUCT_ID]).toBe('P2');
+    expect(byId('eq-1')[P_PRODUCT_ID]).toBe('P1');
+    expect(byId('eq-2')[P_PRODUCT_ID]).toBe('P1');
+  });
+
+  it('lets serial identity win over position, then falls back within the group for the rest (9.8)', async () => {
+    mockConnRowsFor([
+      { id: 'eq-A', serialNumber: 'SN-A', productId: 'P1' },
+      { id: 'eq-B', serialNumber: '', productId: 'P1' },
+      { id: 'eq-C', serialNumber: '', productId: 'P2' },
+    ]);
+
+    await syncEquipmentRowsForSalesRecord(
+      'sale-1',
+      [
+        { serialNumber: '', productId: 'P2', productName: 'รุ่น P2' },
+        { serialNumber: '', productId: 'P1', productName: 'รุ่น P1' },
+        { serialNumber: 'SN-A', productId: 'P1', productName: 'รุ่น P1' },
+      ],
+      shared
+    );
+
+    const updates = updateCalls();
+    expect(updates).toHaveLength(3);
+    const byId = (id: string) => updates.find((c) => c[1].at(-1) === id)![1];
+    // SN-A stays on eq-A even though it was submitted last.
+    expect(byId('eq-A')[P_SERIAL]).toBe('SN-A');
+    // The two blanks are left to the fallback, which stays inside its group.
+    expect(byId('eq-C')[P_PRODUCT_ID]).toBe('P2');
+    expect(byId('eq-B')[P_PRODUCT_ID]).toBe('P1');
+    expect(callsMatching('INSERT INTO customer_equipments')).toHaveLength(0);
+    expect(callsMatching("UPDATE customer_equipments SET salesRecordId = ''")).toHaveLength(0);
+  });
+
+  it('falls back to the sale-level template for rows that name no model of their own', async () => {
+    mockConnRowsFor([]);
+
+    await syncEquipmentRowsForSalesRecord('sale-1', [{ serialNumber: 'SN-X' }], shared);
+
+    const inserts = callsMatching('INSERT INTO customer_equipments');
+    expect(inserts).toHaveLength(1);
+    // INSERT bind order: id, salesRecordId, customerId, productId, productName, serialNumber, ...
+    expect(inserts[0][1][3]).toBe('P1');
+    expect(inserts[0][1][4]).toBe('รุ่น P1');
+    expect(inserts[0][1][5]).toBe('SN-X');
+  });
+
+  it('UNLINKS the surplus row and issues no DELETE when the machine count drops (9.9)', async () => {
+    mockConnRowsFor([
+      { id: 'eq-A', serialNumber: 'SN-A', productId: 'P1' },
+      { id: 'eq-B', serialNumber: 'SN-B', productId: 'P1' },
+      { id: 'eq-C', serialNumber: 'SN-C', productId: 'P2' },
+    ]);
+
+    // 3 machines down to 2 — the P1 unit in the middle is dropped.
+    await syncEquipmentRowsForSalesRecord(
+      'sale-1',
+      [
+        { serialNumber: 'SN-A', productId: 'P1', productName: 'รุ่น P1' },
+        { serialNumber: 'SN-C', productId: 'P2', productName: 'รุ่น P2' },
+      ],
+      shared
+    );
+
+    const unlinks = callsMatching("UPDATE customer_equipments SET salesRecordId = ''");
+    expect(unlinks).toHaveLength(1);
+    expect(unlinks[0][1]).toEqual(['eq-B']);
+    // NEVER delete — the row plus its schedules/logs stay under the customer.
+    // Assert against every statement issued, not just DELETE FROM
+    // customer_equipments, so no other purge can sneak in either.
+    expect(conn.query.mock.calls.filter((c) => /DELETE/i.test(String(c[0])))).toHaveLength(0);
+    // The two kept machines are updated in place, each with its own serial.
+    const updates = updateCalls();
+    expect(updates).toHaveLength(2);
+    expect(updates.find((c) => c[1].at(-1) === 'eq-A')![1][P_SERIAL]).toBe('SN-A');
+    expect(updates.find((c) => c[1].at(-1) === 'eq-C')![1][P_SERIAL]).toBe('SN-C');
+  });
+
+  it('unlinks every surplus row when the bill drops to a single machine (9.9)', async () => {
+    mockConnRowsFor([
+      { id: 'eq-A', serialNumber: 'SN-A', productId: 'P1' },
+      { id: 'eq-B', serialNumber: 'SN-B', productId: 'P1' },
+      { id: 'eq-C', serialNumber: 'SN-C', productId: 'P2' },
+    ]);
+
+    await syncEquipmentRowsForSalesRecord(
+      'sale-1',
+      [{ serialNumber: 'SN-B', productId: 'P1', productName: 'รุ่น P1' }],
+      shared
+    );
+
+    const unlinks = callsMatching("UPDATE customer_equipments SET salesRecordId = ''");
+    expect(unlinks.map((c) => c[1][0]).sort()).toEqual(['eq-A', 'eq-C']);
+    expect(conn.query.mock.calls.filter((c) => /DELETE/i.test(String(c[0])))).toHaveLength(0);
+  });
+
+  it('runs on a caller-supplied transaction connection without opening its own (atomic sale path)', async () => {
+    // salesDashboardStore's createSaleWithLineItems writes the sale, its line
+    // items and its machines in ONE withTransaction and hands that connection
+    // down — the writer must join it, not start a nested transaction.
+    const txConn = { query: vi.fn() };
+    mockConnRowsFor([{ id: 'eq-A', serialNumber: 'SN-A', productId: 'P1' }], txConn);
+
+    await syncEquipmentRowsForSalesRecord(
+      'sale-1',
+      [
+        { serialNumber: 'SN-A', productId: 'P1', productName: 'รุ่น P1' },
+        { serialNumber: 'SN-NEW', productId: 'P2', productName: 'รุ่น P2' },
+      ],
+      { customerId: 'cust-1' },
+      txConn
+    );
+
+    expect(vi.mocked(withTransaction)).not.toHaveBeenCalled();
+    expect(conn.query).not.toHaveBeenCalled();
+    const updates = updateCalls(txConn);
+    const inserts = txConn.query.mock.calls.filter((c) =>
+      String(c[0]).includes('INSERT INTO customer_equipments')
+    );
+    expect(updates).toHaveLength(1);
+    expect(updates[0][1].at(-1)).toBe('eq-A');
+    expect(inserts).toHaveLength(1);
+    expect(inserts[0][1][5]).toBe('SN-NEW');
+    // The insert's id is generated inside the callback body, so a
+    // withTransaction retry re-derives it rather than replaying a stale one.
+    expect(inserts[0][1][0]).toEqual(expect.any(String));
+    expect(inserts[0][1][0]).not.toBe('');
+  });
+
+  it('does nothing when salesRecordId is empty, even with a transaction connection', async () => {
+    const txConn = { query: vi.fn() };
+    await syncEquipmentRowsForSalesRecord('', [{ serialNumber: 'SN-A' }], {}, txConn);
+    expect(txConn.query).not.toHaveBeenCalled();
+    expect(vi.mocked(withTransaction)).not.toHaveBeenCalled();
+  });
+});
+
+describe('findEquipmentsBySerial', () => {
+  it('normalizes each serial with trim + lowercase, exactly like the sync matching (9.11)', async () => {
+    topQuery.mockResolvedValue([[]]);
+
+    await findEquipmentsBySerial(['  SN-a  ', 'sn-B']);
+
+    const [sql, params] = topQuery.mock.calls[0];
+    expect(String(sql)).toContain('LOWER(TRIM(e.serialNumber)) IN (?, ?)');
+    expect(params).toEqual(['sn-a', 'sn-b']);
+  });
+
+  it('collapses serials that differ only by case/whitespace into one bind (9.11)', async () => {
+    topQuery.mockResolvedValue([[]]);
+
+    await findEquipmentsBySerial(['SN-A', ' sn-a', 'Sn-A  ']);
+
+    const [sql, params] = topQuery.mock.calls[0];
+    expect(params).toEqual(['sn-a']);
+    expect(String(sql)).toContain('IN (?)');
+  });
+
+  it('returns the clashing machine with enough context to name it to the admin (9.11)', async () => {
+    topQuery.mockResolvedValue([
+      [
+        {
+          id: 'eq-A',
+          serialNumber: 'SN-A',
+          salesRecordId: 'sale-9',
+          productName: 'รุ่น P1',
+          customerName: 'สมชาย',
+        },
+      ],
+    ]);
+
+    const found = await findEquipmentsBySerial(['  sn-A ']);
+    expect(found).toEqual([
+      {
+        id: 'eq-A',
+        serialNumber: 'SN-A',
+        salesRecordId: 'sale-9',
+        productName: 'รุ่น P1',
+        customerName: 'สมชาย',
+      },
+    ]);
+  });
+
+  it('skips the query entirely when every serial is blank', async () => {
+    expect(await findEquipmentsBySerial(['', '   '])).toEqual([]);
+    expect(await findEquipmentsBySerial([])).toEqual([]);
+    expect(topQuery).not.toHaveBeenCalled();
+  });
+
+  it('is advisory only — a failed lookup degrades to "no duplicates" instead of blocking the save (D12/D13)', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    topQuery.mockRejectedValue(new Error('db down'));
+
+    await expect(findEquipmentsBySerial(['SN-A'])).resolves.toEqual([]);
+    errSpy.mockRestore();
   });
 });
 

@@ -15,6 +15,21 @@ import type { SearchableDropdownOption } from "../components/SearchableDropdown"
 import FormattedNumberInput from "../components/FormattedNumberInput";
 import ConfirmDialog from "../components/ConfirmDialog";
 import type { SalesRecord, CustomerEquipment } from "../lib/types";
+import QuotationPickerSection from "../components/QuotationPickerSection";
+import type { QuotationSelection } from "../components/QuotationPickerSection";
+import QuotationLineItemsEditor from "../components/QuotationLineItemsEditor";
+import type { LineEditorReport } from "../components/QuotationLineItemsEditor";
+import {
+  buildLineDrafts,
+  buildSalePayload,
+  collectSerials,
+  findDuplicateSerialsInForm,
+  findOverQuotedLines,
+  normalizeSerial,
+  summarizeBill,
+  validateLineDrafts,
+} from "../lib/quotationToSale";
+import type { SaleLineDraft } from "../lib/quotationToSale";
 import ViewRecordModal from "./ViewRecordModal";
 import SalesTable from "./SalesTable";
 import {
@@ -26,6 +41,11 @@ import {
 } from "./types";
 
 // emptyForm imported from ./types
+
+/** Deadline for the advisory duplicate-serial lookup. It only feeds a warning,
+ * so waiting on it forever would turn an optional check into the one thing that
+ * can stop a save — the exact failure mode this phase forbids. */
+const SERIAL_CHECK_TIMEOUT_MS = 8000;
 
 // ── Main Component ───────────────────────────────────────────────────────────
 
@@ -60,6 +80,43 @@ export default function DashboardPage() {
   const [costSubmitError, setCostSubmitError] = useState(false);
   const [formErrors, setFormErrors] = useState<Record<string, boolean>>({});
   const [pendingEquipments, setPendingEquipments] = useState<CustomerEquipment[]>([]);
+
+  // ── Quotation → sale (Phase 2) ────────────────────────────────────────────
+  // All of this stays EMPTY unless the admin picks a quotation. With nothing
+  // picked, `lines` is [] → `linesActive` is false → the form renders and posts
+  // exactly the legacy single-product shape it always has.
+  const [quotationId, setQuotationId] = useState("");
+  const [lines, setLines] = useState<SaleLineDraft[]>([]);
+  const [linesDirty, setLinesDirty] = useState(false);
+  const [quotationWarrantyTerms, setQuotationWarrantyTerms] = useState("");
+  const [lineReport, setLineReport] = useState<LineEditorReport | null>(null);
+  const [submitAttempted, setSubmitAttempted] = useState(false);
+  // Task 13.3 — a ticked line that this quotation already sold.
+  const [soldLineConfirm, setSoldLineConfirm] = useState<{ index: number; line: SaleLineDraft } | null>(null);
+  // Tasks 13.4/13.5 — duplicate serials. Holds the dialog text; the save
+  // request is NOT sent until the admin confirms.
+  const [serialConfirm, setSerialConfirm] = useState<string | null>(null);
+  const [checkingSerials, setCheckingSerials] = useState(false);
+
+  /** The picker (and with it the line editor) belongs to the CREATE flow only:
+   * `PUT /api/admin/sales/[id]` is the legacy single-product update route and
+   * cannot take `items[]`, so an existing record keeps the plain text input and
+   * behaves exactly as it does today. */
+  const quotationEnabled = !editingId;
+  const quotationPicked = quotationEnabled && !!quotationId;
+  /** True only when a picked quotation actually produced product lines. */
+  const linesActive = quotationEnabled && lines.length > 0;
+
+  const resetQuotationState = useCallback(() => {
+    setQuotationId("");
+    setLines([]);
+    setLinesDirty(false);
+    setQuotationWarrantyTerms("");
+    setLineReport(null);
+    setSubmitAttempted(false);
+    setSoldLineConfirm(null);
+    setSerialConfirm(null);
+  }, []);
 
   const handleScrollToRecords = () => {
     setShowRecords(true);
@@ -162,28 +219,191 @@ export default function DashboardPage() {
 
   // Filtered sales records for table search
 
+  // ── Quotation → sale wiring (tasks 10-13) ─────────────────────────────────
+
+  /** A quotation finished loading in the picker (or the link was cleared). */
+  const handleQuotationSelect = useCallback((selection: QuotationSelection | null) => {
+    if (!selection) {
+      setQuotationId("");
+      setLines([]);
+      setLinesDirty(false);
+      setQuotationWarrantyTerms("");
+      setLineReport(null);
+      return;
+    }
+    // Task 10.4 — the link keeps BOTH ids: `quotationId` for the record and the
+    // docNo as `quotationRef` (which the admin can still overtype afterwards).
+    setQuotationId(selection.quotationId);
+    if (selection.quotationRef) {
+      setForm(prev => ({ ...prev, quotationRef: selection.quotationRef }));
+    }
+    setQuotationWarrantyTerms(selection.warrantyTerms || "");
+    const drafts = buildLineDrafts({
+      items: selection.items,
+      sold: selection.sold,
+      products,
+    });
+    setLines(drafts);
+    setLinesDirty(false);
+    setLineReport(null);
+    setSubmitAttempted(false);
+    // On a line-item bill the product cost lives on each line, so the blank
+    // "ต้นทุนสินค้า" row the calculator adds by default has nowhere to go.
+    // Only rows with no amount typed into them are dropped — never money.
+    if (drafts.length > 0) {
+      setCostItems(prev => prev.filter(ci => !(ci.costType === "product_cost" && !(ci.amount > 0))));
+    }
+  }, [products]);
+
+  const handleLinesChange = useCallback((next: SaleLineDraft[]) => {
+    setLines(next);
+    setLinesDirty(true);
+  }, []);
+
+  const handleReport = useCallback((report: LineEditorReport) => {
+    setLineReport(report);
+  }, []);
+
+  /** Task 13.3 — ticking a line this quotation already sold asks first. */
+  const handleRequestSelectSoldLine = useCallback((index: number, line: SaleLineDraft) => {
+    setSoldLineConfirm({ index, line });
+  }, []);
+
+  const confirmSelectSoldLine = () => {
+    const target = soldLineConfirm;
+    setSoldLineConfirm(null);
+    if (!target) return;
+    setLines(prev => prev.map((l, i) => (i === target.index ? { ...l, selected: true } : l)));
+    setLinesDirty(true);
+  };
+
+  /**
+   * Tasks 12.2/13.4/13.5 — every confirmable warning for the current lines, as
+   * ready-to-show Thai lines. NONE of these is a blocker: they are gathered so
+   * the admin can be asked once, say yes, and have the save proceed. Advisory
+   * throughout — a failed lookup degrades to "nothing found" so it can never
+   * stall a save.
+   */
+  const collectSaveWarnings = async (drafts: SaleLineDraft[]): Promise<string[]> => {
+    const at = (lineIndex: number, machineIndex: number, productName: string) => {
+      const base = productName ? `รายการที่ ${lineIndex + 1} (${productName})` : `รายการที่ ${lineIndex + 1}`;
+      return `${base} เครื่องที่ ${machineIndex + 1}`;
+    };
+
+    // Task 12.2 — selling MORE than the quotation offered is legitimate, but the
+    // spec asks for an explicit yes before it is written.
+    const warnings = findOverQuotedLines(drafts).map(
+      (line) =>
+        `• «${line.productName || "ไม่ระบุชื่อสินค้า"}» ขาย ${line.qty} เครื่อง ` +
+        `มากกว่าที่เสนอไว้ในใบเสนอราคา (${line.quotedQty} เครื่อง)`
+    );
+
+    warnings.push(...findDuplicateSerialsInForm(drafts).map(
+      (group) =>
+        `• «${group.serialNumber}» ซ้ำกันเองในฟอร์มนี้ (${group.occurrences
+          .map((o) => at(o.lineIndex, o.machineIndex, o.productName))
+          .join(" และ ")})`
+    ));
+
+    const serials = collectSerials(drafts);
+    if (serials.length > 0) {
+      // The lookup is advisory, so it must not only survive a failure — it must
+      // survive a request that never answers. Without a deadline a stalled
+      // connection leaves `checkingSerials` true forever, and that flag disables
+      // the save button: a hung advisory call would become the hard block this
+      // whole phase is designed not to have.
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), SERIAL_CHECK_TIMEOUT_MS);
+      try {
+        const res = await fetch(
+          `/api/admin/equipments/serial-check?serials=${encodeURIComponent(serials.join(","))}`,
+          { signal: controller.signal }
+        );
+        if (res.ok) {
+          const body = await res.json();
+          const matches: Array<{ serialNumber?: string; productName?: string; customerName?: string }> =
+            Array.isArray(body?.matches) ? body.matches : [];
+          const typed = new Map<string, string>();
+          for (const s of serials) typed.set(normalizeSerial(s), s);
+          const seen = new Set<string>();
+          for (const m of matches) {
+            const key = normalizeSerial(m?.serialNumber);
+            if (!key || !typed.has(key) || seen.has(key)) continue;
+            seen.add(key);
+            const owner = String(m?.customerName || "").trim() || "ไม่ระบุลูกค้า";
+            const product = String(m?.productName || "").trim();
+            warnings.push(
+              `• «${typed.get(key)}» มีอยู่ในระบบแล้ว — เป็นเครื่องของ ${owner}${product ? ` (${product})` : ""}`
+            );
+          }
+        }
+      } catch {
+        /* advisory only — never block the save on a failed lookup */
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+    return warnings;
+  };
+
   // Save sales record
-  const handleSave = async () => {
-    if (isSaving) return;
+  const handleSave = () => { void runSave(false); };
+
+  /**
+   * `serialsConfirmed` is true only when the admin has already pressed
+   * "ยืนยันและบันทึก" in the duplicate-serial dialog (task 13.6: nothing is
+   * posted before that).
+   */
+  const runSave = async (serialsConfirmed: boolean) => {
+    if (isSaving || checkingSerials) return;
+    const useLines = linesActive;
+    setSubmitAttempted(true);
 
     const errors: Record<string, boolean> = {};
     if (!form.saleDate) errors.saleDate = true;
-    if (!form.productName.trim()) errors.productName = true;
-    if (!form.qty || form.qty <= 0) errors.qty = true;
-    if (!form.unitPrice || form.unitPrice <= 0) errors.unitPrice = true;
     if (!form.poRef.trim()) errors.poRef = true;
-    
-    if (form.saleType === "equipment") {
-      if (!form.warrantyStartDate) errors.warrantyStartDate = true;
-      if (!form.warrantyEndDate) errors.warrantyEndDate = true;
-    }
-    
     if (form.deliveryRef && !form.invoiceRef) errors.invoiceRef = true;
 
-    const totalCost = costItems.reduce((acc, curr) => acc + curr.amount, 0);
-    if (!showCostCalc || costItems.length === 0 || totalCost <= 0) {
+    // The product / quantity / price / warranty / serial rules live on the
+    // LINES when a quotation is driving the bill, and on the flat fields when
+    // it is not. `validateLineDrafts` is the only hard blocker on that side —
+    // everything else in Phase 2 is a confirmable warning.
+    let lineErrors: string[] = [];
+    if (useLines) {
+      lineErrors = lineReport ? lineReport.errors : validateLineDrafts(lines);
+      if (lineErrors.length > 0) errors.lines = true;
+    } else {
+      if (!form.productName.trim()) errors.productName = true;
+      if (!form.qty || form.qty <= 0) errors.qty = true;
+      if (!form.unitPrice || form.unitPrice <= 0) errors.unitPrice = true;
+      if (form.saleType === "equipment") {
+        if (!form.warrantyStartDate) errors.warrantyStartDate = true;
+        if (!form.warrantyEndDate) errors.warrantyEndDate = true;
+      }
+    }
+
+    const billCostTotal = costItems.reduce((acc, curr) => acc + curr.amount, 0);
+    if (useLines) {
+      // Product cost is per line here, so the cost calculator is optional and
+      // must NOT carry a bill-level ต้นทุนสินค้า: `syncCostItems` cannot split
+      // one number across several lines and would answer 400. Caught in the
+      // form instead, in Thai, before anything is posted.
+      const lineCostTotal = (lineReport ? lineReport.summary : summarizeBill(lines)).costAmount;
+      if (costItems.some(ci => ci.costType === "product_cost")) {
+        setCostSubmitError(true);
+        setShowCostCalc(true);
+        errors.productCostOnBill = true;
+      }
+      if (lineCostTotal + billCostTotal <= 0) {
+        setCostSubmitError(true);
+        errors.lineCost = true;
+      } else if (showCostCalc && costItems.some(ci => !ci.amount || ci.amount <= 0)) {
+        setCostSubmitError(true);
+        errors.costItems = true;
+      }
+    } else if (!showCostCalc || costItems.length === 0 || billCostTotal <= 0) {
       setCostSubmitError(true);
-      setShowCostCalc(true); 
+      setShowCostCalc(true);
       if (costItems.length === 0) {
         setCostItems([{ costType: "product_cost", label: "", amount: 0, note: "" }]);
       }
@@ -208,7 +428,10 @@ export default function DashboardPage() {
       if (errors.warrantyStartDate) missing.push("วันเริ่มรับประกัน");
       if (errors.warrantyEndDate) missing.push("วันสิ้นสุดรับประกัน");
       if (errors.invoiceRef) missing.push("อ้างอิง Invoice");
+      if (errors.lineCost) missing.push("ต้นทุนสินค้า (กรอกที่ช่อง «ต้นทุนสินค้า» ของแต่ละรายการ)");
+      if (errors.productCostOnBill) missing.push("ย้ายรายการ «ต้นทุนสินค้า» ในตัวช่วยคำนวณต้นทุนไปกรอกที่แต่ละรายการสินค้า");
       if (errors.costItems) missing.push("ต้นทุน (กรุณาเปิดเครื่องคิดต้นทุน แล้วกรอกยอดต้นทุน)");
+      if (errors.lines) missing.push(lineErrors[0] || "รายการสินค้า");
       showToast(`กรุณากรอก: ${missing.join(", ")}`, "error");
       setTimeout(() => {
         const firstErrorElement = document.querySelector('.error-border');
@@ -218,8 +441,30 @@ export default function DashboardPage() {
       }, 100);
       return;
     }
-    
+
     setFormErrors({});
+
+    // Tasks 12.2/13.4-13.6 — warn about over-quoted quantities and duplicate
+    // serials, then WAIT for a decision. Nothing has been sent at this point,
+    // and cancelling leaves the form as it is. Every one of these warnings is
+    // confirmable: answering "yes" always proceeds to the save. Only the
+    // line-driven flow does this — the legacy path is untouched.
+    if (useLines && !serialsConfirmed) {
+      setCheckingSerials(true);
+      let warnings: string[] = [];
+      try {
+        warnings = await collectSaveWarnings(lines);
+      } finally {
+        setCheckingSerials(false);
+      }
+      if (warnings.length > 0) {
+        setSerialConfirm(
+          `พบข้อควรตรวจสอบ ${warnings.length} รายการ:\n\n${warnings.join("\n")}\n\n` +
+            "ระบบยังบันทึกให้ได้ตามปกติ ต้องการบันทึกต่อหรือไม่?"
+        );
+        return;
+      }
+    }
 
     setIsSaving(true);
     try {
@@ -227,15 +472,42 @@ export default function DashboardPage() {
       const method = editingId ? "PUT" : "POST";
       // Do not send costAmount here. The sync endpoint will calculate and update it.
       // This prevents a ghost costAmount if the sync endpoint fails.
-      const payload = { ...form };
-      // Trim serialNumbers to match qty (array may have stale entries beyond current qty)
-      if (payload.saleType === "equipment" && Array.isArray(payload.serialNumbers)) {
-        payload.serialNumbers = payload.serialNumbers.slice(0, Math.max(1, payload.qty || 1));
+      let payload: Record<string, unknown>;
+      // The product cost the cost sheet must claim afterwards: the lines' own
+      // total on a line-item bill, the calculator's own rows otherwise.
+      let lineCostTotal = 0;
+      if (useLines) {
+        const parts = buildSalePayload(lines, { quotationRef: form.quotationRef.trim() });
+        lineCostTotal = parts.costAmount;
+        payload = {
+          saleType: form.saleType,
+          salespersonId: form.salespersonId,
+          customerId: form.customerId,
+          companyId: form.companyId,
+          saleDate: form.saleDate,
+          quotationId,
+          quotationRef: form.quotationRef,
+          poRef: form.poRef,
+          deliveryRef: form.deliveryRef,
+          invoiceRef: form.invoiceRef,
+          receiptRef: form.receiptRef,
+          note: form.note,
+          // qty / totalAmount / costAmount and the scalar product columns are
+          // derived from `items[]` by `createSaleWithLineItems`; warranty dates
+          // are per machine now and ride on `equipments[]`.
+          items: parts.items,
+          equipments: parts.equipments,
+        };
+      } else {
+        const legacy = { ...form } as Record<string, unknown> & { saleType: string; serialNumbers?: string[]; qty: number };
+        // Trim serialNumbers to match qty (array may have stale entries beyond current qty)
+        if (legacy.saleType === "equipment" && Array.isArray(legacy.serialNumbers)) {
+          legacy.serialNumbers = legacy.serialNumbers.slice(0, Math.max(1, legacy.qty || 1));
+        }
+        payload = legacy;
       }
       const res = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-      if (res.ok || res.status === 207) {
-        // 207 = sales record saved but equipment partially failed
-        const is207 = res.status === 207;
+      if (res.ok) {
         const savedData = await res.json();
         const savedRecord = method === "POST" ? savedData.record : savedData;
         const recordId = savedRecord?.id || editingId;
@@ -244,7 +516,19 @@ export default function DashboardPage() {
         let costSyncSuccess = true;
         if (recordId) {
           try {
-            const validCostItems = costItems.filter(ci => ci.amount > 0);
+            // On a line-item bill the sheet carries ONE ต้นทุนสินค้า row equal
+            // to the lines' own total: `syncCostItems` treats the sheet as
+            // authoritative, so omitting it would zero the per-line costs that
+            // were just written (single line) or be refused as unattributable
+            // (several lines).
+            const validCostItems = useLines
+              ? [
+                  ...costItems.filter(ci => ci.amount > 0 && ci.costType !== "product_cost"),
+                  ...(lineCostTotal > 0
+                    ? [{ costType: "product_cost", label: "ต้นทุนสินค้าจากรายการสินค้า", amount: lineCostTotal, note: "" }]
+                    : []),
+                ]
+              : costItems.filter(ci => ci.amount > 0);
             const syncRes = await fetch(`/api/admin/sales/${recordId}/costs/sync`, {
               method: "PUT",
               headers: { "Content-Type": "application/json" },
@@ -258,6 +542,27 @@ export default function DashboardPage() {
         }
 
         if (!costSyncSuccess) {
+          if (useLines) {
+            // The sale, its lines and its machines are already written (one
+            // transaction) and the per-line ต้นทุนสินค้า is already on them —
+            // only the bill-level extras failed. Shifting THIS form into edit
+            // mode would arm a legacy PUT that cannot describe a multi-line
+            // bill, so close it and point the admin at the saved record.
+            showToast(
+              "บันทึกยอดขายสำเร็จ แต่บันทึกค่าใช้จ่ายอื่นของใบขายไม่สำเร็จ — กรุณาแก้ต้นทุนจากรายการขายอีกครั้ง",
+              "error"
+            );
+            setShowForm(false);
+            setEditingId(null);
+            setForm(emptyForm());
+            setCostItems([]);
+            setShowCostCalc(false);
+            resetQuotationState();
+            fetchDashboard();
+            fetchRecords();
+            setIsSaving(false);
+            return;
+          }
           // If sync fails, shift to edit mode (to prevent duplicates on retry)
           // and keep the form open so the user doesn't lose their typed cost items.
           setEditingId(recordId);
@@ -265,16 +570,13 @@ export default function DashboardPage() {
           return;
         }
 
-        if (is207 && savedData.warning) {
-          showToast(`บันทึกยอดขายสำเร็จ แต่: ${savedData.warning}`, "error");
-        } else {
-          showToast("บันทึกยอดขายและต้นทุนสำเร็จ", "success");
-        }
+        showToast("บันทึกยอดขายและต้นทุนสำเร็จ", "success");
         setShowForm(false);
         setEditingId(null);
         setForm(emptyForm());
         setCostItems([]);
         setShowCostCalc(false);
+        resetQuotationState();
         fetchDashboard();
         fetchRecords();
       } else {
@@ -333,6 +635,9 @@ export default function DashboardPage() {
       if (!res.ok) throw new Error("โหลดต้นทุนไม่สำเร็จ");
       const data = await res.json();
 
+      // Editing an existing record is the legacy single-product flow: no
+      // picker, no line editor, no multi-line payload (see `quotationEnabled`).
+      resetQuotationState();
       setEditingId(fullRec.id);
       setForm({
         saleType: fullRec.saleType || "equipment",
@@ -378,11 +683,24 @@ export default function DashboardPage() {
 
   // Cost calculator helpers
   const costTotal = useMemo(() => costItems.reduce((sum, c) => sum + (c.amount || 0), 0), [costItems]);
-  const formProfit = (form.totalAmount || 0) - costTotal;
-  const formMargin = form.totalAmount > 0 ? Math.round((formProfit / form.totalAmount) * 10000) / 100 : 0;
+  // On a line-item bill the revenue and the product cost live on the lines; the
+  // calculator below only holds the bill-level extras. Identical arithmetic to
+  // before whenever no quotation line is in play.
+  const lineSummaryTotal = linesActive ? lineReport?.summary.totalAmount ?? 0 : 0;
+  const lineSummaryCost = linesActive ? lineReport?.summary.costAmount ?? 0 : 0;
+  const billRevenue = linesActive ? lineSummaryTotal : (form.totalAmount || 0);
+  const billCost = linesActive ? lineSummaryCost + costTotal : costTotal;
+  const formProfit = billRevenue - billCost;
+  const formMargin = billRevenue > 0 ? Math.round((formProfit / billRevenue) * 10000) / 100 : 0;
 
+  // On a line-item bill "ต้นทุนสินค้า" is owned by the lines, so a new row here
+  // defaults to a bill-level type instead (and the type list drops it below).
+  const costTypeOptions = useMemo(
+    () => (linesActive ? COST_TYPE_OPTIONS.filter((o) => o.value !== "product_cost") : COST_TYPE_OPTIONS),
+    [linesActive]
+  );
   const addLocalCostItem = () => {
-    setCostItems([...costItems, { costType: "product_cost", label: "", amount: 0, note: "" }]);
+    setCostItems([...costItems, { costType: linesActive ? "other" : "product_cost", label: "", amount: 0, note: "" }]);
     setShowCostCalc(true);
   };
   const removeLocalCostItem = (idx: number) => {
@@ -506,6 +824,39 @@ export default function DashboardPage() {
           cancelText="ยกเลิก"
           onConfirm={confirmDelete}
           onCancel={() => setDeleteTarget(null)}
+        />
+      )}
+      {/* Task 13.3 — ticking a line this quotation already sold. Confirm and
+          ALLOW: the customer coming back for the remaining machine is the
+          normal case. Cancelling leaves the line unticked and the form as it
+          was. */}
+      {soldLineConfirm && (
+        <ConfirmDialog
+          title="รายการนี้เคยบันทึกขายแล้ว"
+          message={
+            `«${soldLineConfirm.line.productName || "ไม่ระบุชื่อสินค้า"}» ` +
+            `ของใบเสนอราคานี้เคยบันทึกขายไปแล้ว ${soldLineConfirm.line.soldQty} รายการ\n\n` +
+            "ต้องการเลือกรายการนี้เพื่อบันทึกขายเพิ่มหรือไม่? (ใบขายเดิมจะไม่ถูกแก้ไขหรือลบ)"
+          }
+          confirmText="เลือกรายการนี้"
+          cancelText="ยกเลิก"
+          onConfirm={confirmSelectSoldLine}
+          onCancel={() => setSoldLineConfirm(null)}
+        />
+      )}
+      {/* Tasks 12.2/13.4-13.6 — over-quoted quantities and duplicate serials.
+          The save request has NOT been sent yet; cancelling returns to the form
+          with everything intact, confirming always proceeds to the save. */}
+      {serialConfirm && (
+        <ConfirmDialog
+          title="ตรวจสอบก่อนบันทึก"
+          message={serialConfirm}
+          confirmText="ยืนยันและบันทึก"
+          loadingText="กำลังบันทึก..."
+          cancelText="ยกเลิก"
+          loading={isSaving}
+          onConfirm={() => { setSerialConfirm(null); void runSave(true); }}
+          onCancel={() => setSerialConfirm(null)}
         />
       )}
       {/* Toast */}
@@ -638,7 +989,7 @@ export default function DashboardPage() {
             </div>
             
             {/* Action Button */}
-            <button onClick={() => { setShowForm(true); setEditingId(null); setForm(emptyForm()); setCostItems([]); setShowCostCalc(false); }} className="px-5 py-2 bg-[#065f46] text-white rounded-full text-sm font-semibold hover:bg-[#047857] transition-all shadow-md flex items-center justify-center gap-1.5 whitespace-nowrap w-full sm:w-auto h-[40px] shrink-0 border border-[#064e3b]">
+            <button onClick={() => { setShowForm(true); setEditingId(null); setForm(emptyForm()); setCostItems([]); setShowCostCalc(false); resetQuotationState(); }} className="px-5 py-2 bg-[#065f46] text-white rounded-full text-sm font-semibold hover:bg-[#047857] transition-all shadow-md flex items-center justify-center gap-1.5 whitespace-nowrap w-full sm:w-auto h-[40px] shrink-0 border border-[#064e3b]">
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"/></svg>
               บันทึกยอดขาย
             </button>
@@ -972,6 +1323,59 @@ export default function DashboardPage() {
                 </div>
               </div>
 
+              {/* ── Quotation picker (tasks 10-11) ─────────────────────────
+                  Replaces the old plain "อ้างอิงใบเสนอราคา" text input, which
+                  it still contains and keeps editable when no quotation is
+                  picked (task 10.3). It also OWNS the ลูกค้า/บริษัท dropdowns
+                  while it is on screen (auto-fill markers + inline create), so
+                  the form's own copies below are rendered only when it is not.
+                  Editing an existing record keeps the plain input and the
+                  original ลูกค้า/บริษัท fields, exactly as today. */}
+              {quotationEnabled && (
+                <QuotationPickerSection
+                  quotationId={quotationId}
+                  quotationRef={form.quotationRef}
+                  customerId={form.customerId}
+                  companyId={form.companyId}
+                  customers={customers}
+                  companies={companies}
+                  linesDirty={linesDirty}
+                  disabled={isSaving}
+                  onQuotationRefChange={(v) => setForm(prev => ({ ...prev, quotationRef: v }))}
+                  onQuotationSelect={handleQuotationSelect}
+                  onCustomerChange={(v) => {
+                    const c = customers.find((x) => x.id === v);
+                    setForm(prev => ({ ...prev, customerId: v, companyId: c?.companyId || prev.companyId }));
+                  }}
+                  onCompanyChange={(v) => setForm(prev => ({ ...prev, companyId: v }))}
+                  onCustomerCreated={(c) =>
+                    setCustomers(prev => [
+                      { id: c.id, name: c.name, companyId: c.companyId || "", companyName: c.companyName },
+                      ...prev,
+                    ])
+                  }
+                  onCompanyCreated={(c) => setCompanies(prev => [{ id: c.id, name: c.name }, ...prev])}
+                />
+              )}
+
+              {/* ── Line items of the picked quotation (task 12) ───────────── */}
+              {quotationPicked && (
+                <QuotationLineItemsEditor
+                  lines={lines}
+                  onLinesChange={handleLinesChange}
+                  products={products}
+                  warrantyTerms={quotationWarrantyTerms}
+                  quotationRef={form.quotationRef}
+                  submitAttempted={submitAttempted}
+                  disabled={isSaving || checkingSerials}
+                  onRequestSelectSoldLine={handleRequestSelectSoldLine}
+                  onReport={handleReport}
+                />
+              )}
+
+              {/* The flat single-product fields. They stay exactly as they were
+                  and drive the save whenever no quotation line is in play. */}
+              {!linesActive && (
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-1.5">สินค้าจากระบบ</label>
                 <SearchableDropdown
@@ -984,7 +1388,9 @@ export default function DashboardPage() {
                   placeholder="เลือกสินค้าจากแคตตาล็อก (หรือพิมพ์ชื่อด้านล่าง)..."
                 />
               </div>
+              )}
 
+              {!linesActive && (
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-1.5">ชื่อสินค้าที่แสดง <span className="text-red-500">*</span></label>
                 <input
@@ -996,7 +1402,9 @@ export default function DashboardPage() {
                   className={`w-full px-3 py-2.5 border rounded-xl text-sm focus:ring-2 outline-none ${formErrors.productName ? "border-red-500 bg-red-50 focus:border-red-500 focus:ring-red-200 error-border" : "border-gray-200 focus:ring-indigo-200 focus:border-indigo-400"}`}
                 />
               </div>
+              )}
 
+              {!quotationEnabled && (
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1.5">ลูกค้า</label>
@@ -1015,7 +1423,9 @@ export default function DashboardPage() {
                   <SearchableDropdown options={companyOptions} value={form.companyId} onChange={(v) => setForm(prev => ({ ...prev, companyId: v }))} placeholder="เลือกบริษัท..." />
                 </div>
               </div>
+              )}
 
+              {!linesActive && (
               <div className="grid grid-cols-3 gap-4">
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1.5">จำนวน <span className="text-red-500">*</span></label>
@@ -1058,6 +1468,7 @@ export default function DashboardPage() {
                   />
                 </div>
               </div>
+              )}
 
               {/* ── Cost Calculator ──────────────────────────────────── */}
               <div className="border border-dashed border-emerald-300 rounded-xl bg-emerald-50/50 p-4">
@@ -1069,7 +1480,7 @@ export default function DashboardPage() {
                   >
                     💰 {showCostCalc ? "ซ่อน" : "เปิด"} ตัวช่วยคำนวณต้นทุน
                   </button>
-                  {(form.totalAmount > 0 || costTotal > 0) && (
+                  {(billRevenue > 0 || billCost > 0) && (
                     <div className="flex items-center gap-3 text-sm">
                       <span className="text-gray-500">กำไร: <span className={`font-bold ${formProfit >= 0 ? "text-emerald-700" : "text-red-600"}`}>฿{fmtDec(formProfit)}</span></span>
                       <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${formMargin >= 20 ? "bg-emerald-100 text-emerald-700" : formMargin >= 10 ? "bg-amber-100 text-amber-700" : formMargin >= 0 ? "bg-red-100 text-red-700" : "bg-red-200 text-red-800"}`}>
@@ -1079,17 +1490,29 @@ export default function DashboardPage() {
                   )}
                 </div>
 
+                {/* On a line-item bill the product cost is entered per line, so
+                    this sheet is for the bill-level extras only. Sending a
+                    bill-level ต้นทุนสินค้า as well would be a second, unsplittable
+                    number for the same money — the API refuses it, so the type is
+                    removed from the list here instead. */}
+                {linesActive && (
+                  <div className="mb-3 rounded-lg border border-emerald-200 bg-white px-3 py-2 text-xs text-emerald-800">
+                    ต้นทุนสินค้าของบิลนี้กรอกที่ช่อง «ต้นทุนสินค้า» ของแต่ละรายการด้านบนแล้ว
+                    (รวม ฿{fmtDec(lineSummaryCost)}) — ตารางนี้ใช้สำหรับค่าใช้จ่ายอื่นของใบขาย เช่น ค่ารถ ค่าขนส่ง ค่าคอมมิชชั่น
+                  </div>
+                )}
+
                 {showCostCalc && (
                   <div className="space-y-2">
                     {costItems.map((ci, idx) => (
                       <div key={idx} className="flex gap-2 items-start">
                         <SearchableDropdown
-                          options={COST_TYPE_OPTIONS}
+                          options={costTypeOptions}
                           value={ci.costType}
                           onChange={(v) => updateLocalCostItem(idx, "costType", v)}
                           placeholder="เลือกประเภท..."
                           className="w-44 shrink-0"
-                          buttonClassName="h-[38px] border-gray-200"
+                          buttonClassName={`h-[38px] ${linesActive && ci.costType === "product_cost" ? "border-red-500 bg-red-50 error-border" : "border-gray-200"}`}
                         />
                         <input
                           type="text"
@@ -1114,6 +1537,12 @@ export default function DashboardPage() {
                         </button>
                       </div>
                     ))}
+                    {linesActive && costItems.some(ci => ci.costType === "product_cost") && (
+                      <p className="text-xs text-red-600 font-semibold">
+                        มีรายการประเภท «ต้นทุนสินค้า» อยู่ในตารางนี้ —
+                        กรุณาเปลี่ยนประเภทหรือลบรายการนั้นทิ้ง แล้วกรอกต้นทุนสินค้าที่แต่ละรายการสินค้าด้านบนแทน
+                      </p>
+                    )}
                     <div className="flex justify-between items-center pt-2">
                       <button
                         type="button"
@@ -1123,19 +1552,26 @@ export default function DashboardPage() {
                         + เพิ่มรายการต้นทุน
                       </button>
                       <div className="text-sm font-semibold text-gray-700">
-                        รวมต้นทุน: <span className="text-amber-700">฿{fmtDec(costTotal)}</span>
+                        รวมต้นทุน{linesActive ? "อื่น" : ""}: <span className="text-amber-700">฿{fmtDec(costTotal)}</span>
+                        {linesActive && (
+                          <span className="text-gray-500 font-normal"> · รวมทั้งบิล ฿{fmtDec(billCost)}</span>
+                        )}
                       </div>
                     </div>
                   </div>
                 )}
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className={`grid gap-4 ${quotationEnabled ? "grid-cols-1" : "grid-cols-2"}`}>
+                {/* When the picker is on screen it owns this field (it keeps the
+                    same free-text input, always editable — task 10.3). */}
+                {!quotationEnabled && (
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1.5">อ้างอิงใบเสนอราคา</label>
                   <input type="text" value={form.quotationRef} onChange={(e) => { const v = e.target.value; setForm(prev => ({ ...prev, quotationRef: v })); }} placeholder="เลขที่ใบเสนอราคา"
                     className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none" />
                 </div>
+                )}
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1.5">อ้างอิงใบ PO <span className="text-red-500">*</span></label>
                   <input type="text" value={form.poRef} onChange={(e) => { const v = e.target.value; setForm(prev => ({ ...prev, poRef: v })); }} placeholder="เลขที่ใบ PO"
@@ -1161,7 +1597,9 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              {form.saleType === "equipment" && (
+              {/* Bill-level warranty + serials: replaced by the per-machine rows
+                  of the line editor whenever a quotation line is in play. */}
+              {!linesActive && form.saleType === "equipment" && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-semibold text-gray-700 mb-1.5">วันเริ่มรับประกัน <span className="text-red-500">*</span></label>
@@ -1186,7 +1624,7 @@ export default function DashboardPage() {
                 </div>
               )}
 
-              {form.saleType === "equipment" && form.qty > 0 && (
+              {!linesActive && form.saleType === "equipment" && form.qty > 0 && (
                 <div className="p-5 bg-gray-50 border border-gray-100 rounded-2xl">
                   <label className="block text-sm font-semibold text-gray-700 mb-3">
                     หมายเลขซีเรียล  <span className="text-red-500">*</span>
@@ -1228,8 +1666,8 @@ export default function DashboardPage() {
               <button onClick={() => { setShowForm(false); setEditingId(null); }} className="px-5 py-2.5 bg-gray-100 text-gray-700 rounded-xl font-semibold hover:bg-gray-200 transition-all text-sm">
                 ยกเลิก
               </button>
-              <button onClick={handleSave} disabled={isSaving} className="px-5 py-2.5 bg-indigo-600 text-white rounded-xl font-semibold hover:bg-indigo-700 transition-all text-sm disabled:opacity-50">
-                {isSaving ? "กำลังบันทึก..." : editingId ? "บันทึกการแก้ไข" : "บันทึกยอดขาย"}
+              <button onClick={handleSave} disabled={isSaving || checkingSerials} className="px-5 py-2.5 bg-indigo-600 text-white rounded-xl font-semibold hover:bg-indigo-700 transition-all text-sm disabled:opacity-50">
+                {isSaving ? "กำลังบันทึก..." : checkingSerials ? "กำลังตรวจสอบ Serial..." : editingId ? "บันทึกการแก้ไข" : "บันทึกยอดขาย"}
               </button>
             </div>
           </div>

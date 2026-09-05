@@ -4,6 +4,7 @@ import {
   getSalesRecord,
   getCostItems,
   addCostItem,
+  ProductCostIsPerLineError,
 } from "../../../../../lib/salesDashboardStore";
 
 type Ctx = { params: Promise<{ id: string }> };
@@ -40,7 +41,18 @@ export const POST = withRoute(
         { status: 400 }
       );
     }
-    const item = await addCostItem(id, body);
+    // ต้นทุนสินค้า is per line item, not a bill-level cost row — a client that
+    // asks for one gets told where it belongs (400) rather than a 500, and
+    // nothing is written anywhere.
+    let item;
+    try {
+      item = await addCostItem(id, body);
+    } catch (error) {
+      if (error instanceof ProductCostIsPerLineError) {
+        return NextResponse.json({ error: error.message }, { status: 400 });
+      }
+      throw error;
+    }
     const updatedRecord = await getSalesRecord(id);
     return NextResponse.json({
       item,

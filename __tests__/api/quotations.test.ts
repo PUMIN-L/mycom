@@ -68,6 +68,23 @@ describe('Quotations API', () => {
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual(rows);
     });
+
+    it('passes ?search / ?limit through to the store (2-year retention needs SQL-side filtering)', async () => {
+      vi.mocked(getSession).mockResolvedValue(adminSession);
+      vi.mocked(listQuotations).mockResolvedValue([] as any);
+      const res = await listGET(
+        new NextRequest('http://localhost/api/quotations?search=ACME&limit=25')
+      );
+      expect(res.status).toBe(200);
+      expect(listQuotations).toHaveBeenCalledWith({ search: 'ACME', limit: 25 });
+    });
+
+    it('sends no filter when neither param is given, keeping the previous full list', async () => {
+      vi.mocked(getSession).mockResolvedValue(adminSession);
+      vi.mocked(listQuotations).mockResolvedValue([] as any);
+      await listGET(new NextRequest('http://localhost/api/quotations'));
+      expect(listQuotations).toHaveBeenCalledWith({ search: undefined, limit: undefined });
+    });
   });
 
   describe('POST /api/quotations (save)', () => {
@@ -187,7 +204,10 @@ describe('Quotations API', () => {
       const res = await cleanupGET(cleanupReq('Bearer cron-test-secret'));
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual({ ok: true, deleted: 3, billingDeleted: 0, docNosPurged: 0 });
-      expect(purgeExpiredQuotations).toHaveBeenCalledWith(30);
+      // Retention widened 30 -> 730 days (2 years): this business's sales cycle
+      // runs for months, so the old window purged quotations right when the
+      // customer decided to buy.
+      expect(purgeExpiredQuotations).toHaveBeenCalledWith(730);
     });
   });
 });

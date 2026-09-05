@@ -8,6 +8,7 @@ import { DOCNO_START, pad2, nextDocNo } from "../lib/quotationNumber";
 import { toLocalDateString } from "../lib/dateFormat";
 import { computeQuoteTotals } from "../lib/quotationTotals";
 import { stripHtml } from "../lib/stripHtml";
+import { selectPartyFromSystem, applyTypedPartyName } from "../lib/quotationToSale";
 import SearchableDropdown from "../components/SearchableDropdown";
 import ConfirmDialog from "../components/ConfirmDialog";
 import ImageDeleteConfirmDialog, { type OrphanedImage } from "../components/ImageDeleteConfirmDialog";
@@ -53,6 +54,15 @@ interface QuoteState {
   companyTaxId: string;
   customerContact: string;
   customerCompany: string;
+  // Soft links back to the rows in `customers` / `companies` the two names were
+  // picked from (task 14.1). OPTIONAL on purpose: the whole document is stored
+  // as one JSON blob in `quotations.data`, so every quotation saved before this
+  // existed simply has no such key — that is `undefined`, never an error, and
+  // the sale form falls back to matching by name (task 14.4). An id is only
+  // ever written together with the name it belongs to, and is cleared the
+  // moment the name is typed over, so the two can never disagree.
+  customerId?: string;
+  companyId?: string;
   customerAddress: string;
   customerPhone: string;
   customerEmail: string;
@@ -444,6 +454,21 @@ export default function QuotationPage() {
 
   const set = <K extends keyof QuoteState>(key: K, value: QuoteState[K]) =>
     setQ((prev) => ({ ...prev, [key]: value }));
+
+  // Task 14.3 — the admin typed over a name that was picked from the system.
+  // `applyTypedPartyName` drops the stored id unless the text still names the
+  // same row (re-typing the same name, or only its case/spacing, is not a
+  // different customer), so a saved quotation can never carry an id that
+  // disagrees with the name printed on it.
+  const setParty = (which: "customer" | "company", typed: string) =>
+    setQ((prev) => {
+      if (which === "customer") {
+        const next = applyTypedPartyName({ name: prev.customerContact, id: prev.customerId || "" }, typed);
+        return { ...prev, customerContact: next.name, customerId: next.id };
+      }
+      const next = applyTypedPartyName({ name: prev.customerCompany, id: prev.companyId || "" }, typed);
+      return { ...prev, customerCompany: next.name, companyId: next.id };
+    });
 
   const setItem = (id: string, updates: Partial<QuoteItem>) =>
     setQ((prev) => ({
@@ -1025,7 +1050,7 @@ export default function QuotationPage() {
                 <SearchableDropdown
                   className="w-[240px]"
                   placeholder="+ เลือกลูกค้าจากระบบ"
-                  value=""
+                  value={q.customerId || ""}
                   options={dbCustomers.map(c => ({
                     value: c.id,
                     label: c.name,
@@ -1035,10 +1060,23 @@ export default function QuotationPage() {
                     const c = dbCustomers.find(x => x.id === val);
                     if (c) {
                       const comp = dbCompanies.find(x => x.id === c.companyId);
+                      // Task 14.2 — keep the id of the row that was picked, not
+                      // just its name.
+                      const customer = selectPartyFromSystem(c);
+                      // The company name shown may come from the customer's own
+                      // free-text `companyName` rather than from `comp`, so run
+                      // it back through the same "typed over" rule: the company
+                      // id survives only while the two names still agree.
+                      const company = applyTypedPartyName(
+                        selectPartyFromSystem(comp),
+                        c.companyName || comp?.name || ""
+                      );
                       setQ(prev => ({
                         ...prev,
-                        customerContact: c.name,
-                        customerCompany: c.companyName || comp?.name || "",
+                        customerContact: customer.name,
+                        customerId: customer.id,
+                        customerCompany: company.name,
+                        companyId: company.id,
                         customerAddress: comp ? formatAddress(comp) : prev.customerAddress,
                         customerPhone: c.phone || comp?.phone || prev.customerPhone,
                         customerEmail: c.email || prev.customerEmail
@@ -1050,7 +1088,7 @@ export default function QuotationPage() {
                 <SearchableDropdown
                   className="w-[240px]"
                   placeholder="+ เลือกบริษัทจากระบบ"
-                  value=""
+                  value={q.companyId || ""}
                   options={dbCompanies.map(c => ({
                     value: c.id,
                     label: c.name
@@ -1058,6 +1096,8 @@ export default function QuotationPage() {
                   onChange={(val) => {
                     const comp = dbCompanies.find(x => x.id === val);
                     if (comp) {
+                      // Task 14.2 — the picked company keeps its id.
+                      const company = selectPartyFromSystem(comp);
                       // Validate if current customer is a known DB customer
                       const currentCust = dbCustomers.find(c => c.name === q.customerContact);
                       if (currentCust && currentCust.companyId && currentCust.companyId !== comp.id) {
@@ -1065,8 +1105,13 @@ export default function QuotationPage() {
                         // Clear customer name since user explicitly chose a different company
                         setQ(prev => ({
                           ...prev,
+                          // The name goes, so its id must go with it (task 14.3)
+                          // — otherwise the blob would carry a customerId that
+                          // no longer matches anything printed on the document.
                           customerContact: "",
-                          customerCompany: comp.name,
+                          customerId: "",
+                          customerCompany: company.name,
+                          companyId: company.id,
                           customerAddress: formatAddress(comp),
                           customerPhone: comp.phone || prev.customerPhone
                         }));
@@ -1075,7 +1120,8 @@ export default function QuotationPage() {
 
                       setQ(prev => ({
                         ...prev,
-                        customerCompany: comp.name,
+                        customerCompany: company.name,
+                        companyId: company.id,
                         customerAddress: formatAddress(comp),
                         customerPhone: comp.phone || prev.customerPhone
                       }));
@@ -1088,11 +1134,11 @@ export default function QuotationPage() {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className={labelCls}>ชื่อผู้ติดต่อ</label>
-                <input className={inputCls} value={q.customerContact} onChange={(e) => set("customerContact", e.target.value)} />
+                <input className={inputCls} value={q.customerContact} onChange={(e) => setParty("customer", e.target.value)} />
               </div>
               <div>
                 <label className={labelCls}>บริษัทลูกค้า</label>
-                <input className={inputCls} value={q.customerCompany} onChange={(e) => set("customerCompany", e.target.value)} />
+                <input className={inputCls} value={q.customerCompany} onChange={(e) => setParty("company", e.target.value)} />
               </div>
               <div className="col-span-2">
                 <label className={labelCls}>ที่อยู่บริษัทลูกค้า</label>
