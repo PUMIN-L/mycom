@@ -1280,3 +1280,488 @@ describe('snoozeAlert', () => {
     }
   });
 });
+
+// ── The alert-feed split (add-crm-task-board, phase 1) ────────────────────────
+//
+// getAlerts() used to answer "which schedules are due?" with ONE query on a
+// `scheduledDate <= today + scheduleDays` window. That window is right for a
+// service visit booked against a machine and wrong for a follow-up CALL booked
+// from the customer page: booking one six months out looked like it did nothing
+// at all until the day came within the window. The categories are now split by
+// SCOPE — equipment-scoped stays exactly as it was, customer-scoped drops the
+// date window entirely.
+//
+// There is no database here, so the three schedule queries and the three
+// equipment queries are executed against tiny in-memory tables by predicates
+// DERIVED FROM THE STATEMENT ITSELF (does it bound the date? which snooze
+// alertType does it join? does it test warrantyAlertEnabled?). A query that
+// quietly loses its window, its snooze join or its scope filter therefore
+// produces visibly wrong rows here instead of passing.
+
+type FakeSchedule = {
+  id: string;
+  equipmentId: string | null;
+  customerId: string | null;
+  scheduleType?: string;
+  scheduledDate: string;
+  status: string;
+  customerName?: string;
+};
+type FakeSnooze = { alertType: string; referenceId: string; snoozeUntil: string };
+type FakeEquipment = {
+  id: string;
+  warrantyEndDate?: string | null;
+  warrantyStartDate?: string | null;
+  serialNumber?: string | null;
+  status?: string;
+  calibrationDate?: string | null;
+  /** Left undefined for a row written before the column existed — the real
+   * SELECT COALESCEs those to 1. */
+  warrantyAlertEnabled?: number;
+};
+type AlertWorld = {
+  schedules?: FakeSchedule[];
+  snoozes?: FakeSnooze[];
+  equipments?: FakeEquipment[];
+};
+
+/** MySQL DATE_ADD(date, INTERVAL n MONTH) for the YYYY-MM-DD strings used here. */
+function addMonths(date: string, months: number): string {
+  const [y, m, d] = date.split('-').map(Number);
+  const total = y * 12 + (m - 1) + months;
+  return `${Math.floor(total / 12)}-${String((total % 12) + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+}
+
+function snoozeHides(sql: string, params: unknown[], id: string, snoozes: FakeSnooze[]): boolean {
+  if (!/sno\.snoozeUntil IS NULL OR sno\.snoozeUntil <= \?/.test(sql)) return false;
+  const alertType = /sno\.alertType = '(\w+)'/.exec(sql)?.[1] ?? '';
+  const nowIso = String(params[params.length - 1]);
+  const snooze = snoozes.find((s) => s.alertType === alertType && s.referenceId === id);
+  return !!snooze && snooze.snoozeUntil > nowIso;
+}
+
+function scheduleMatches(
+  sql: string,
+  params: unknown[],
+  s: FakeSchedule,
+  snoozes: FakeSnooze[]
+): boolean {
+  if (snoozeHides(sql, params, s.id, snoozes)) return false;
+  if (/s\.equipmentId IS NOT NULL/.test(sql) && !s.equipmentId) return false;
+  if (/s\.equipmentId IS NULL/.test(sql) && s.equipmentId) return false;
+  if (/s\.customerId IS NOT NULL/.test(sql) && !s.customerId) return false;
+  if (/s\.status = 'pending'/.test(sql) && s.status !== 'pending') return false;
+  // The whole point of the split: only ONE of the two queries may carry this.
+  if (/s\.scheduledDate <= \?/.test(sql) && !(s.scheduledDate <= String(params[0]))) return false;
+  return true;
+}
+
+function equipmentMatches(
+  sql: string,
+  params: unknown[],
+  e: FakeEquipment,
+  snoozes: FakeSnooze[]
+): boolean {
+  if (snoozeHides(sql, params, e.id, snoozes)) return false;
+  // Only the query that actually spells out the switch may be silenced by it.
+  if (/e\.warrantyAlertEnabled = 1/.test(sql) && (e.warrantyAlertEnabled ?? 1) !== 1) return false;
+
+  if (/e\.warrantyEndDate IS NOT NULL/.test(sql)) {
+    const [today, cutoff] = params as string[];
+    if (!e.warrantyEndDate) return false;
+    if (!(e.warrantyEndDate >= today && e.warrantyEndDate <= cutoff)) return false;
+    if (/e\.status != 'Expired'/.test(sql) && e.status === 'Expired') return false;
+    return true;
+  }
+  if (/DATE_ADD\(e\.calibrationDate/.test(sql)) {
+    if (!e.calibrationDate) return false;
+    return addMonths(e.calibrationDate, Number(params[0])) <= String(params[1]);
+  }
+  if (/e\.serialNumber = ''/.test(sql)) {
+    return !e.serialNumber || !e.warrantyStartDate;
+  }
+  return false;
+}
+
+function mockAlertWorld(world: AlertWorld): void {
+  const schedules = world.schedules ?? [];
+  const snoozes = world.snoozes ?? [];
+  const equipments = world.equipments ?? [];
+
+  topQuery.mockImplementation((sql: string, params: unknown[] = []) => {
+    const isCount = /SELECT COUNT\(\*\) AS cnt/.test(sql);
+    const limit = Number(/LIMIT (\d+)/.exec(sql)?.[1] ?? Infinity);
+
+    let rows: unknown[] | null = null;
+    if (/FROM service_schedules/.test(sql)) {
+      rows = schedules
+        .filter((s) => scheduleMatches(sql, params, s, snoozes))
+        .sort((a, b) => a.scheduledDate.localeCompare(b.scheduledDate));
+    } else if (/FROM customer_equipments e/.test(sql)) {
+      rows = equipments.filter((e) => equipmentMatches(sql, params, e, snoozes));
+    }
+    if (rows === null) return Promise.resolve([[]]);
+    // COUNT(*) has no LIMIT of its own — that is exactly why it exists.
+    if (isCount) return Promise.resolve([[{ cnt: rows.length }]]);
+    return Promise.resolve([rows.slice(0, limit)]);
+  });
+}
+
+/** Fixed "now": UTC 2026-09-05T03:00Z = Bangkok 2026-09-05 10:00 → today = 2026-09-05. */
+const NOW = '2026-09-05T03:00:00.000Z';
+const TODAY = '2026-09-05';
+
+describe('getAlerts — equipment-scoped upcomingSchedules (regression: the window must NOT change)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(NOW));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('still hides an equipment-scoped visit booked 30 days out, and still shows one inside the 7-day window', async () => {
+    mockAlertWorld({
+      schedules: [
+        { id: 'far', equipmentId: 'eq-1', customerId: null, scheduledDate: '2026-10-05', status: 'pending' },
+        { id: 'near', equipmentId: 'eq-1', customerId: null, scheduledDate: '2026-09-08', status: 'pending' },
+        { id: 'late', equipmentId: 'eq-2', customerId: null, scheduledDate: '2026-08-30', status: 'pending' },
+      ],
+    });
+
+    const alerts = await getAlerts();
+
+    expect(alerts.upcomingSchedules.map((s) => s.id)).toEqual(['late', 'near']);
+    expect(alerts.upcomingSchedules.find((s) => s.id === 'late')!.overdue).toBe(true);
+    expect(alerts.upcomingSchedules.find((s) => s.id === 'near')!.overdue).toBe(false);
+  });
+
+  it('still bounds the equipment-scoped query on exactly today + scheduleDays', async () => {
+    mockAlertWorld({});
+    await getAlerts(30, 7);
+
+    const call = topQuery.mock.calls.find(
+      ([sql]) => /FROM service_schedules/.test(String(sql)) && /s\.equipmentId IS NOT NULL/.test(String(sql))
+    )!;
+    expect(String(call[0])).toContain('s.scheduledDate <= ?');
+    expect(call[1][0]).toBe('2026-09-12'); // TODAY + 7
+  });
+
+  it('still widens with a custom scheduleDays, exactly as before the split', async () => {
+    mockAlertWorld({
+      schedules: [
+        { id: 'far', equipmentId: 'eq-1', customerId: null, scheduledDate: '2026-10-05', status: 'pending' },
+      ],
+    });
+
+    expect((await getAlerts(30, 7)).upcomingSchedules).toHaveLength(0);
+    expect((await getAlerts(30, 60)).upcomingSchedules.map((s) => s.id)).toEqual(['far']);
+  });
+
+  it('still excludes a non-pending equipment-scoped schedule', async () => {
+    mockAlertWorld({
+      schedules: [
+        { id: 'done', equipmentId: 'eq-1', customerId: null, scheduledDate: '2026-09-06', status: 'completed' },
+        { id: 'gone', equipmentId: 'eq-1', customerId: null, scheduledDate: '2026-09-06', status: 'cancelled' },
+      ],
+    });
+
+    expect((await getAlerts()).upcomingSchedules).toEqual([]);
+  });
+
+  it('keeps a phone_call booked AGAINST A MACHINE in the equipment category, on the same window', async () => {
+    // The split is by SCOPE, not by scheduleType.
+    mockAlertWorld({
+      schedules: [
+        { id: 'call-eq', equipmentId: 'eq-1', customerId: null, scheduleType: 'phone_call', scheduledDate: '2026-09-07', status: 'pending' },
+      ],
+    });
+
+    const alerts = await getAlerts();
+    expect(alerts.upcomingSchedules.map((s) => s.id)).toEqual(['call-eq']);
+    expect(alerts.customerCallFollowUps).toEqual([]);
+  });
+});
+
+describe('getAlerts — customerCallFollowUps (customer-scoped, deliberately unbounded)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(NOW));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const inAYear: FakeSchedule = {
+    id: 'call-1',
+    equipmentId: null,
+    customerId: 'cust-1',
+    scheduleType: 'phone_call',
+    scheduledDate: '2027-09-05',
+    status: 'pending',
+  };
+
+  it('shows a call booked a YEAR out immediately, and does not call it overdue', async () => {
+    mockAlertWorld({ schedules: [inAYear] });
+
+    const alerts = await getAlerts();
+
+    expect(alerts.customerCallFollowUps.map((s) => s.id)).toEqual(['call-1']);
+    expect(alerts.customerCallFollowUps[0].overdue).toBe(false);
+    expect(alerts.customerCallFollowUpsTotal).toBe(1);
+    // The old single-query behaviour would have hidden it for 358 days.
+    expect(alerts.upcomingSchedules).toEqual([]);
+  });
+
+  it('disappears the moment the call is completed (and when cancelled)', async () => {
+    mockAlertWorld({ schedules: [{ ...inAYear, status: 'completed' }] });
+    expect((await getAlerts()).customerCallFollowUps).toEqual([]);
+    expect((await getAlerts()).customerCallFollowUpsTotal).toBe(0);
+
+    mockAlertWorld({ schedules: [{ ...inAYear, status: 'cancelled' }] });
+    expect((await getAlerts()).customerCallFollowUps).toEqual([]);
+  });
+
+  it('flags a customer-scoped call whose date has passed as overdue', async () => {
+    mockAlertWorld({
+      schedules: [{ ...inAYear, id: 'call-old', scheduledDate: '2026-08-01' }],
+    });
+
+    const alerts = await getAlerts();
+    expect(alerts.customerCallFollowUps[0].overdue).toBe(true);
+  });
+
+  it('ignores scheduleDays entirely — 1 day or 365, the same calls come back', async () => {
+    mockAlertWorld({ schedules: [inAYear] });
+
+    const narrow = await getAlerts(30, 1);
+    const wide = await getAlerts(30, 365);
+
+    expect(narrow.customerCallFollowUps.map((s) => s.id)).toEqual(['call-1']);
+    expect(wide.customerCallFollowUps.map((s) => s.id)).toEqual(['call-1']);
+    expect(narrow.customerCallFollowUpsTotal).toBe(1);
+
+    const customerCall = topQuery.mock.calls.find(
+      ([sql]) =>
+        /FROM service_schedules/.test(String(sql)) &&
+        /s\.equipmentId IS NULL/.test(String(sql)) &&
+        !/SELECT COUNT/.test(String(sql))
+    )!;
+    expect(String(customerCall[0])).not.toContain('s.scheduledDate <=');
+  });
+
+  it('files every pending schedule in EXACTLY ONE category — nothing is counted twice', async () => {
+    mockAlertWorld({
+      schedules: [
+        { id: 'eq-soon', equipmentId: 'eq-1', customerId: null, scheduledDate: '2026-09-06', status: 'pending' },
+        { id: 'eq-far', equipmentId: 'eq-1', customerId: null, scheduledDate: '2026-12-01', status: 'pending' },
+        { id: 'cust-soon', equipmentId: null, customerId: 'cust-1', scheduledDate: '2026-09-06', status: 'pending' },
+        { id: 'cust-far', equipmentId: null, customerId: 'cust-2', scheduledDate: '2027-06-01', status: 'pending' },
+      ],
+    });
+
+    const alerts = await getAlerts();
+    const equipmentIds = alerts.upcomingSchedules.map((s) => s.id);
+    const callIds = alerts.customerCallFollowUps.map((s) => s.id);
+
+    expect(equipmentIds).toEqual(['eq-soon']);
+    expect(callIds).toEqual(['cust-soon', 'cust-far']);
+    expect(equipmentIds.filter((id) => callIds.includes(id))).toEqual([]);
+  });
+
+  it('caps the list at 100 rows but reports the true total (130)', async () => {
+    mockAlertWorld({
+      schedules: Array.from({ length: 130 }, (_, i) => ({
+        id: `call-${String(i).padStart(3, '0')}`,
+        equipmentId: null,
+        customerId: 'cust-1',
+        scheduledDate: '2026-09-06',
+        status: 'pending',
+      })),
+    });
+
+    const alerts = await getAlerts();
+
+    expect(alerts.customerCallFollowUps).toHaveLength(100);
+    expect(alerts.customerCallFollowUpsTotal).toBe(130);
+  });
+
+  it('reports 0 rather than NaN when the count query comes back empty', async () => {
+    topQuery.mockResolvedValue([[]]);
+    expect((await getAlerts()).customerCallFollowUpsTotal).toBe(0);
+  });
+});
+
+describe('getAlerts — an existing schedule snooze still applies after the split', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(NOW));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('BOTH schedule queries (and the count) still join alert_snoozes on alertType = \'schedule\'', async () => {
+    mockAlertWorld({});
+    await getAlerts();
+
+    const scheduleQueries = topQuery.mock.calls
+      .map(([sql]) => String(sql))
+      .filter((sql) => /FROM service_schedules/.test(sql));
+    expect(scheduleQueries).toHaveLength(3); // equipment list, call list, call count
+    for (const sql of scheduleQueries) {
+      expect(sql).toContain("LEFT JOIN alert_snoozes sno ON sno.alertType = 'schedule'");
+      expect(sql).toContain('sno.referenceId = s.id');
+      expect(sql).toContain('sno.snoozeUntil IS NULL OR sno.snoozeUntil <= ?');
+    }
+  });
+
+  it('a snooze taken under the OLD single-query feed still hides the call — and its count', async () => {
+    mockAlertWorld({
+      schedules: [
+        { id: 'call-1', equipmentId: null, customerId: 'cust-1', scheduledDate: '2026-09-06', status: 'pending' },
+        { id: 'call-2', equipmentId: null, customerId: 'cust-2', scheduledDate: '2026-09-07', status: 'pending' },
+      ],
+      snoozes: [{ alertType: 'schedule', referenceId: 'call-1', snoozeUntil: '2026-09-20T00:00:00.000Z' }],
+    });
+
+    const alerts = await getAlerts();
+
+    expect(alerts.customerCallFollowUps.map((s) => s.id)).toEqual(['call-2']);
+    expect(alerts.customerCallFollowUpsTotal).toBe(1);
+  });
+
+  it('still hides a snoozed equipment-scoped schedule', async () => {
+    mockAlertWorld({
+      schedules: [
+        { id: 'eq-1s', equipmentId: 'eq-1', customerId: null, scheduledDate: '2026-09-06', status: 'pending' },
+      ],
+      snoozes: [{ alertType: 'schedule', referenceId: 'eq-1s', snoozeUntil: '2026-09-20T00:00:00.000Z' }],
+    });
+
+    expect((await getAlerts()).upcomingSchedules).toEqual([]);
+  });
+
+  it('lets an EXPIRED snooze through again in both categories', async () => {
+    mockAlertWorld({
+      schedules: [
+        { id: 'call-1', equipmentId: null, customerId: 'cust-1', scheduledDate: '2026-09-06', status: 'pending' },
+        { id: 'eq-1s', equipmentId: 'eq-1', customerId: null, scheduledDate: '2026-09-06', status: 'pending' },
+      ],
+      snoozes: [
+        { alertType: 'schedule', referenceId: 'call-1', snoozeUntil: '2026-09-01T00:00:00.000Z' },
+        { alertType: 'schedule', referenceId: 'eq-1s', snoozeUntil: '2026-09-01T00:00:00.000Z' },
+      ],
+    });
+
+    const alerts = await getAlerts();
+    expect(alerts.customerCallFollowUps.map((s) => s.id)).toEqual(['call-1']);
+    expect(alerts.upcomingSchedules.map((s) => s.id)).toEqual(['eq-1s']);
+  });
+
+  it('does not let a snooze of ANOTHER alert type hide a call', async () => {
+    mockAlertWorld({
+      schedules: [
+        { id: 'call-1', equipmentId: null, customerId: 'cust-1', scheduledDate: '2026-09-06', status: 'pending' },
+      ],
+      snoozes: [{ alertType: 'warranty', referenceId: 'call-1', snoozeUntil: '2026-09-20T00:00:00.000Z' }],
+    });
+
+    expect((await getAlerts()).customerCallFollowUps.map((s) => s.id)).toEqual(['call-1']);
+  });
+});
+
+describe('getAlerts — warrantyAlertEnabled silences the warranty alert ONLY', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(NOW));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // One machine that would otherwise trip all three equipment alerts: warranty
+  // ending inside the 30-day window, a calibration older than 10 months, and no
+  // serial number recorded.
+  const noisyUnit: FakeEquipment = {
+    id: 'eq-1',
+    warrantyEndDate: '2026-09-20',
+    warrantyStartDate: null,
+    serialNumber: '',
+    status: 'Active',
+    calibrationDate: '2025-06-01',
+  };
+
+  it('warrantyAlertEnabled = 0 drops it from expiringWarranties but NOT from nearingCalibration or incompleteEquipments', async () => {
+    mockAlertWorld({ equipments: [{ ...noisyUnit, warrantyAlertEnabled: 0 }] });
+
+    const alerts = await getAlerts();
+
+    expect(alerts.expiringWarranties).toEqual([]);
+    expect(alerts.nearingCalibration.map((e) => e.id)).toEqual(['eq-1']);
+    expect(alerts.incompleteEquipments.map((e) => e.id)).toEqual(['eq-1']);
+    expect(alerts.incompleteEquipmentsTotal).toBe(1);
+  });
+
+  it('warrantyAlertEnabled = 1 alerts on all three, as always', async () => {
+    mockAlertWorld({ equipments: [{ ...noisyUnit, warrantyAlertEnabled: 1 }] });
+
+    const alerts = await getAlerts();
+
+    expect(alerts.expiringWarranties.map((e) => e.id)).toEqual(['eq-1']);
+    expect(alerts.nearingCalibration.map((e) => e.id)).toEqual(['eq-1']);
+    expect(alerts.incompleteEquipments.map((e) => e.id)).toEqual(['eq-1']);
+  });
+
+  it('a pre-existing unit that never set the column still alerts exactly as it did before v35', async () => {
+    // The column defaults to 1 and the SELECT COALESCEs a NULL to 1, so the
+    // migration cannot silently mute anybody's warranty reminders.
+    mockAlertWorld({ equipments: [noisyUnit] });
+
+    expect((await getAlerts()).expiringWarranties.map((e) => e.id)).toEqual(['eq-1']);
+  });
+
+  it('only the warranty query FILTERS on warrantyAlertEnabled (the others merely select it)', async () => {
+    mockAlertWorld({});
+    await getAlerts();
+
+    const sqlFor = (needle: RegExp) =>
+      String(topQuery.mock.calls.find(([sql]) => needle.test(String(sql)))![0]);
+
+    expect(sqlFor(/e\.warrantyEndDate IS NOT NULL/)).toContain('e.warrantyAlertEnabled = 1');
+    expect(sqlFor(/DATE_ADD\(e\.calibrationDate/)).not.toContain('e.warrantyAlertEnabled = 1');
+    expect(sqlFor(/e\.serialNumber = ''/)).not.toContain('e.warrantyAlertEnabled = 1');
+  });
+
+  it('exposes ownershipSource/warrantyAlertEnabled with safe defaults on every equipment read', async () => {
+    mockAlertWorld({});
+    await getAlerts();
+
+    const warrantySql = String(
+      topQuery.mock.calls.find(([sql]) => /e\.warrantyEndDate IS NOT NULL/.test(String(sql)))![0]
+    );
+    expect(warrantySql).toContain("COALESCE(e.ownershipSource, 'sold_by_us') AS ownershipSource");
+    expect(warrantySql).toContain('COALESCE(e.warrantyAlertEnabled, 1) AS warrantyAlertEnabled');
+  });
+});
+
+describe('getAlerts — every pre-existing key survives the split', () => {
+  it('returns all six original keys plus the two new customer-call keys', async () => {
+    topQuery.mockResolvedValue([[]]);
+
+    const alerts = await getAlerts();
+
+    expect(Object.keys(alerts).sort()).toEqual(
+      [
+        'customerCallFollowUps',
+        'customerCallFollowUpsTotal',
+        'expiringWarranties',
+        'incompleteEquipments',
+        'incompleteEquipmentsTotal',
+        'missingDocuments',
+        'nearingCalibration',
+        'upcomingSchedules',
+      ].sort()
+    );
+  });
+});

@@ -40,9 +40,9 @@ process.env.DB_USER = 'tester';
 process.env.DB_PASSWORD = 'pw';
 process.env.DB_NAME = 'testdb';
 
-// A version SELECT result that MATCHES SCHEMA_VERSION (33) → bootstrap fast-path,
+// A version SELECT result that MATCHES SCHEMA_VERSION (35) → bootstrap fast-path,
 // skipping DDL. Value is a string because settings stores VARCHAR values.
-const SCHEMA_VERSION = '34';
+const SCHEMA_VERSION = '35';
 const SCHEMA_MATCH: [Array<{ value: string }>, unknown[]] = [[{ value: SCHEMA_VERSION }], []];
 // An empty result → no schema_version row / no admin row → full bootstrap.
 const EMPTY: [unknown[], unknown[]] = [[], []];
@@ -738,6 +738,288 @@ describe('db.ts', () => {
         sqlOfCall(c).includes('INSERT INTO settings'),
       );
       expect(settingsCalls).toHaveLength(0);
+    });
+  });
+
+  // ── v35: task board tables + default-topic seed ──────────────────────────────
+  describe('v35 task board', () => {
+    it('issues the whole v35 DDL: three tables, every standalone index, the composite PK — and NOT ONE foreign key', async () => {
+      const db = await freshImport();
+      mockConnection.query.mockResolvedValue(EMPTY);
+
+      await db.getDbConnection();
+      const sql = bootstrapSql();
+      const hasSql = (re: RegExp) => sql.some((s) => re.test(s));
+
+      expect(hasSql(/CREATE TABLE IF NOT EXISTS task_topics/)).toBe(true);
+      expect(hasSql(/CREATE TABLE IF NOT EXISTS crm_tasks/)).toBe(true);
+      expect(hasSql(/CREATE TABLE IF NOT EXISTS task_links/)).toBe(true);
+
+      // Each index is also created standalone: a database whose table predates
+      // one of them never gets it from CREATE TABLE IF NOT EXISTS.
+      expect(hasSql(/CREATE INDEX idx_tt_active_sort ON task_topics \(isActive, sortOrder\)/)).toBe(true);
+      expect(hasSql(/CREATE INDEX idx_ct_status_due ON crm_tasks \(status, dueDate\)/)).toBe(true);
+      expect(hasSql(/CREATE INDEX idx_ct_topic ON crm_tasks \(topicId\)/)).toBe(true);
+      expect(hasSql(/CREATE INDEX idx_ct_createdAt ON crm_tasks \(createdAt\)/)).toBe(true);
+      expect(hasSql(/CREATE INDEX idx_tl_target ON task_links \(targetType, targetId\)/)).toBe(true);
+
+      const taskLinksDdl = sql.find((s) => /CREATE TABLE IF NOT EXISTS task_links/.test(s))!;
+      expect(taskLinksDdl).toMatch(/PRIMARY KEY \(taskId, targetType, targetId\)/);
+      // Every reference in this table group is a SOFT link. An FK on taskId
+      // would be a cascade nobody asked for; an FK on targetId would either
+      // block the 2-year quotation purge or let it destroy the task's history.
+      expect(taskLinksDdl).not.toMatch(/REFERENCES|FOREIGN KEY/i);
+      const crmTasksDdl = sql.find((s) => /CREATE TABLE IF NOT EXISTS crm_tasks/.test(s))!;
+      expect(crmTasksDdl).not.toMatch(/REFERENCES|FOREIGN KEY/i);
+      // dueDate is nullable ON PURPOSE — a post-it with no deadline is a valid
+      // task, and only dated ones are ever counted by the bell.
+      expect(crmTasksDdl).toMatch(/dueDate VARCHAR\(20\) DEFAULT NULL/);
+      expect(sql.some((s) => /ADD CONSTRAINT \w+ FOREIGN KEY[\s\S]*(task_links|crm_tasks|task_topics)/.test(s))).toBe(false);
+
+      // Stamping anything but 35 either re-runs the DDL forever or (if a burned
+      // number were reused) skips the whole migration, as v33 already did once.
+      expect(mockConnection.query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO settings'),
+        ['35'],
+      );
+    });
+
+    it('re-runs cleanly on a database where every v35 object already exists', async () => {
+      const dupKey = { code: 'ER_DUP_KEYNAME', message: 'Duplicate key name' };
+      const db = await freshImport();
+      mockConnection.query.mockImplementation((sql: string) => {
+        if (/CREATE INDEX (idx_tt_|idx_ct_|idx_tl_)/.test(sql)) return Promise.reject(dupKey);
+        return Promise.resolve(EMPTY);
+      });
+
+      await db.getDbConnection();
+
+      expect(mockConnection.query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO settings'),
+        [SCHEMA_VERSION],
+      );
+    });
+
+    it('adds ownershipSource and warrantyAlertEnabled as a PURELY ADDITIVE migration — no UPDATE/DELETE on existing units', async () => {
+      const db = await freshImport();
+      mockConnection.query.mockResolvedValue(EMPTY);
+
+      await db.getDbConnection();
+      const sql = bootstrapSql();
+
+      expect(
+        sql.some((s) =>
+          /ALTER TABLE customer_equipments ADD COLUMN IF NOT EXISTS ownershipSource VARCHAR\(20\) NOT NULL DEFAULT 'sold_by_us'/.test(s),
+        ),
+      ).toBe(true);
+      expect(
+        sql.some((s) =>
+          /ALTER TABLE customer_equipments ADD COLUMN IF NOT EXISTS warrantyAlertEnabled TINYINT\(1\) NOT NULL DEFAULT 1/.test(s),
+        ),
+      ).toBe(true);
+
+      // A backfill that guessed ownership from salesRecordId/quotationNumber
+      // would silently relabel hand-entered units we really did sell. Every
+      // pre-existing row must simply take the column defaults, which is exactly
+      // how the system behaved before the columns existed.
+      const mutations = sql.filter(
+        (s) => /^\s*(UPDATE|DELETE)\b/i.test(s) && /customer_equipments/i.test(s),
+      );
+      expect(mutations).toEqual([]);
+    });
+
+    it('adds each new customer_equipments column independently, so a partial prior run does not block the other', async () => {
+      const db = await freshImport();
+      const dupColumn = { code: 'ER_DUP_FIELDNAME', message: 'Duplicate column name' };
+      const added: string[] = [];
+      mockConnection.query.mockImplementation((sql: string) => {
+        if (/ADD COLUMN IF NOT EXISTS ownershipSource/.test(sql)) return Promise.reject(dupColumn);
+        if (/ADD COLUMN IF NOT EXISTS warrantyAlertEnabled/.test(sql)) {
+          added.push('warrantyAlertEnabled');
+        }
+        return Promise.resolve(EMPTY);
+      });
+
+      await db.getDbConnection();
+
+      expect(added).toEqual(['warrantyAlertEnabled']);
+      expect(mockConnection.query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO settings'),
+        [SCHEMA_VERSION],
+      );
+    });
+  });
+
+  // ── v35: the five default topics ─────────────────────────────────────────────
+  // Executed against a tiny in-memory stand-in for `task_topics`, so "seeds only
+  // into an empty table" is exercised as BEHAVIOUR, not as a string match. The
+  // simulator reads the real statement — is the NOT EXISTS guard on the whole
+  // set? is it an INSERT IGNORE? does it carry ON DUPLICATE KEY UPDATE? — and
+  // reproduces what each of those variants would actually do to existing rows.
+  describe('v35 default task topics seed', () => {
+    type FakeTopic = {
+      id: number;
+      name: string;
+      icon: string;
+      color: string;
+      sortOrder: number;
+      isActive: number;
+      createdAt: string;
+    };
+
+    const TOPIC_SEED = /INSERT\s+(?:IGNORE\s+)?INTO\s+task_topics/i;
+
+    /** The literal rows spelled out in the seed's derived table. */
+    function parseSeedRows(sql: string) {
+      const block = /FROM\s*\(([\s\S]*?)\)\s*AS\s+seed/i.exec(sql)?.[1] ?? '';
+      return block
+        .split(/UNION ALL/i)
+        .map((chunk) => chunk.trim())
+        .filter(Boolean)
+        .map((chunk) => {
+          const numbers = chunk.match(/\d+/g) ?? [];
+          const strings = [...chunk.matchAll(/'([^']*)'/g)].map((m) => m[1]);
+          return {
+            id: Number(numbers[0]),
+            name: strings[0],
+            icon: strings[1],
+            color: strings[2],
+            sortOrder: Number(numbers[1]),
+          };
+        });
+    }
+
+    function applyTopicSeed(sql: string, topics: FakeTopic[], createdAt: string): void {
+      const guardedOnWholeTable = /WHERE NOT EXISTS\s*\(\s*SELECT 1 FROM task_topics\s*\)/i.test(sql);
+      // The guard is what makes the seed describe "a brand-new installation"
+      // rather than "rows that must always exist".
+      if (guardedOnWholeTable && topics.length > 0) return;
+
+      const ignores = /INSERT\s+IGNORE/i.test(sql);
+      const upserts = /ON DUPLICATE KEY UPDATE/i.test(sql);
+      for (const row of parseSeedRows(sql)) {
+        const existing = topics.find((t) => t.id === row.id);
+        if (existing) {
+          if (upserts) {
+            // What a per-row upsert would do: re-assert the shipped
+            // name/colour/emoji and un-hide a topic the admin retired.
+            Object.assign(existing, row, { isActive: 1 });
+            continue;
+          }
+          if (ignores) continue;
+          throw { code: 'ER_DUP_ENTRY', message: `Duplicate entry '${row.id}' for key 'PRIMARY'` };
+        }
+        topics.push({ ...row, isActive: 1, createdAt });
+      }
+    }
+
+    function mockBootstrapSeeding(topics: FakeTopic[]): void {
+      mockConnection.query.mockImplementation((sql: string, params?: unknown[]) => {
+        if (TOPIC_SEED.test(sql)) {
+          applyTopicSeed(String(sql), topics, String((params as unknown[])?.[0] ?? ''));
+          return Promise.resolve([{ affectedRows: 0 }, []]);
+        }
+        return Promise.resolve(EMPTY);
+      });
+    }
+
+    it('seeds exactly the five default topics into an empty table', async () => {
+      const topics: FakeTopic[] = [];
+      const db = await freshImport();
+      mockBootstrapSeeding(topics);
+
+      await db.getDbConnection();
+
+      expect(topics).toHaveLength(5);
+      expect(topics.map((t) => t.id)).toEqual([1, 2, 3, 4, 5]);
+      expect(topics.map((t) => t.sortOrder)).toEqual([1, 2, 3, 4, 5]);
+      expect(topics.every((t) => t.isActive === 1)).toBe(true);
+      expect(topics.every((t) => t.name.length > 0 && t.icon.length > 0)).toBe(true);
+      // createdAt is bound (an ISO string), never written as a SQL NOW().
+      expect(topics.every((t) => !Number.isNaN(Date.parse(t.createdAt)))).toBe(true);
+    });
+
+    it('adds nothing on a second bootstrap — five rows stay five rows', async () => {
+      const topics: FakeTopic[] = [];
+      const first = await freshImport();
+      mockBootstrapSeeding(topics);
+      await first.getDbConnection();
+      const afterFirst = topics.map((t) => ({ ...t }));
+
+      const second = await freshImport();
+      mockConnection.query.mockReset();
+      mockBootstrapSeeding(topics);
+      await second.getDbConnection();
+
+      expect(topics).toEqual(afterFirst);
+    });
+
+    it('never overwrites a renamed/recoloured topic, never un-hides one, and never resurrects a deleted one', async () => {
+      // The admin has since: renamed + recoloured #1, hidden #4, and deleted #2
+      // and #5 outright. A new deploy must leave every one of those decisions
+      // standing — the seed only ever describes a brand-new installation.
+      const topics: FakeTopic[] = [
+        { id: 1, name: 'โทรหาเจ้าประจำ', icon: '☎️', color: 'rose', sortOrder: 1, isActive: 1, createdAt: 'seeded' },
+        { id: 3, name: 'รอทำใบเสนอราคา', icon: '📄', color: 'amber', sortOrder: 3, isActive: 1, createdAt: 'seeded' },
+        { id: 4, name: 'นัดเข้า Service', icon: '🔧', color: 'violet', sortOrder: 4, isActive: 0, createdAt: 'seeded' },
+        { id: 9, name: 'ทวงหนี้', icon: '💸', color: 'teal', sortOrder: 9, isActive: 1, createdAt: 'own' },
+      ];
+      const snapshot = topics.map((t) => ({ ...t }));
+
+      const db = await freshImport();
+      mockBootstrapSeeding(topics);
+      await db.getDbConnection();
+
+      expect(topics).toEqual(snapshot);
+    });
+
+    it('stands down when a concurrent bootstrap wins the seed race, but still stamps the version', async () => {
+      const db = await freshImport();
+      const dupEntry = { code: 'ER_DUP_ENTRY', message: "Duplicate entry '1' for key 'PRIMARY'" };
+      mockConnection.query.mockImplementation((sql: string) => {
+        if (TOPIC_SEED.test(sql)) return Promise.reject(dupEntry);
+        return Promise.resolve(EMPTY);
+      });
+
+      await db.getDbConnection();
+
+      // The other instance wrote exactly these rows; failing the boot over it
+      // would take the app down for nothing.
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('task_topics seed lost a race'),
+        'ER_DUP_ENTRY',
+      );
+      expect(mockConnection.query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO settings'),
+        [SCHEMA_VERSION],
+      );
+    });
+
+    it('propagates a real seed failure and never stamps the version over it', async () => {
+      const db = await freshImport();
+      const fatal = { code: 'ER_NO_SUCH_TABLE', message: "Table 'task_topics' doesn't exist" };
+      mockConnection.query.mockImplementation((sql: string) => {
+        if (TOPIC_SEED.test(sql)) return Promise.reject(fatal);
+        return Promise.resolve(EMPTY);
+      });
+
+      await expect(db.getDbConnection()).rejects.toBe(fatal);
+      const settingsCalls = mockConnection.query.mock.calls.filter((c) =>
+        sqlOfCall(c).includes('INSERT INTO settings'),
+      );
+      expect(settingsCalls).toHaveLength(0);
+    });
+
+    it('creates task_topics before seeding it', async () => {
+      const db = await freshImport();
+      mockConnection.query.mockResolvedValue(EMPTY);
+
+      await db.getDbConnection();
+
+      const tableIdx = indexOfSql('CREATE TABLE IF NOT EXISTS task_topics');
+      const seedIdx = indexOfSql(TOPIC_SEED);
+      expect(tableIdx).toBeGreaterThanOrEqual(0);
+      expect(seedIdx).toBeGreaterThan(tableIdx);
     });
   });
 

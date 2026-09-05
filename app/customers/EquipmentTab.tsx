@@ -36,6 +36,53 @@ function stripHtml(html: string | null | undefined): string {
   return html.replace(/<[^>]*>/g, "").trim();
 }
 
+/**
+ * Days until the warranty ends (negative once past), or null when there is no
+ * usable end date. Module-level on purpose: the filtered list below is computed
+ * during render, ABOVE where the component's other helpers are declared, so a
+ * `const` arrow inside the component would be in its temporal dead zone the
+ * moment a warranty filter is picked.
+ */
+function warrantyDaysLeft(endDate: unknown): number | null {
+  if (!endDate || typeof endDate !== "string") return null;
+
+  const parts = endDate.split("T")[0].split("-");
+  if (parts.length < 3) return null;
+
+  // Parse as local midnight to avoid timezone offsets
+  const [year, month, day] = parts.map(Number);
+  const end = new Date(year, month - 1, day).getTime();
+  if (isNaN(end)) return null;
+
+  // Get today at local midnight
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+
+  const diff = Math.ceil((end - today) / 86400000);
+  return isNaN(diff) ? null : diff;
+}
+
+/** Full Thai wording for the machine's origin — the raw DB value never reaches
+ * a screen or an export file. Rows written before the column existed read back
+ * as "sold_by_us" (the migration never guessed from salesRecordId). */
+function ownershipLabel(source: CustomerEquipment["ownershipSource"]): string {
+  return source === "customer_owned" ? "ลูกค้าซื้อมาเอง เราดูแลให้" : "เราขายเอง";
+}
+
+/** TINYINT(1) → 0/1 on read, and "never set" means ON. */
+function warrantyAlertOn(eq: CustomerEquipment): boolean {
+  return Boolean(eq.warrantyAlertEnabled ?? true);
+}
+
+/** Every label carries the "ที่มา:" prefix, including the chosen one: the
+ * closed button sits beside the warranty filter, and a bare "เราขายเอง" there
+ * would not say which of the two filters is narrowing the list. */
+const OWNERSHIP_FILTER_OPTIONS: SearchableDropdownOption[] = [
+  { value: "all", label: "ที่มาของเครื่อง: ทั้งหมด" },
+  { value: "sold_by_us", label: "ที่มา: เราขายเอง" },
+  { value: "customer_owned", label: "ที่มา: ลูกค้าซื้อมาเอง เราดูแลให้" },
+];
+
 // ── Interfaces for lookups ───────────────────────────────────────────────────
 
 interface Company {
@@ -99,6 +146,9 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
   // Search and Filter
   const [searchText, setSearchText] = useState("");
   const [filterType, setFilterType] = useState("all");
+  // "ที่มาของเครื่อง" — ANDs with the search box and the warranty filter above,
+  // it does not replace either (spec: equipment-ownership).
+  const [filterSource, setFilterSource] = useState("all");
 
   // Pagination
   const [currentPage, setCurrentPage] = useState(1);
@@ -106,7 +156,7 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchText, filterType, equipments]);
+  }, [searchText, filterType, filterSource, equipments]);
 
   // Double-submit guard
   const [isSaving, setIsSaving] = useState(false);
@@ -118,13 +168,22 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
     if (isExporting) return;
     setIsExporting(true);
     try {
+      // Exports WHAT IS ON SCREEN: the rows matching the search box, the
+      // warranty filter and the ownership filter as they currently stand — the
+      // ownership filter exists precisely so its result can be counted and
+      // worked from, which means the file has to be that same result.
+      const exportRows = filtered;
+      const exportIds = new Set(exportRows.map((eq) => eq.id));
+
       // Fetch all schedules for a complete backup. This sheet is equipment
       // data specifically — customer-scoped call schedules (no equipmentId)
-      // aren't equipment history, so they're excluded here.
+      // aren't equipment history, so they're excluded here. Narrowed to the
+      // exported machines too, so the two sheets describe the same set.
       const schedRes = await fetch("/api/admin/schedules");
       const rawSchedules: ServiceSchedule[] = schedRes.ok ? await schedRes.json() : [];
       const allSchedules = rawSchedules.filter(
-        (s): s is ServiceSchedule & { equipmentId: string } => !!s.equipmentId
+        (s): s is ServiceSchedule & { equipmentId: string } =>
+          !!s.equipmentId && exportIds.has(s.equipmentId)
       );
 
       // Group schedules by equipmentId
@@ -136,7 +195,7 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
       });
 
       // Sheet 1: Equipment
-      const eqData = equipments.map((eq) => {
+      const eqData = exportRows.map((eq) => {
         const eqSchedules = schedulesByEq.get(eq.id) || [];
         // Sort schedules by date descending (newest first)
         eqSchedules.sort((a, b) => new Date(b.scheduledDate).getTime() - new Date(a.scheduledDate).getTime());
@@ -152,6 +211,10 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
           "บริษัท": eq.companyName || "",
           "สินค้า": stripHtml(eq.productName) || eq.productId,
           "Serial Number": eq.serialNumber,
+          // Full Thai wording, never the raw "sold_by_us"/"customer_owned" —
+          // this column is meant to be counted and read by a human.
+          "ที่มาของเครื่อง": ownershipLabel(eq.ownershipSource),
+          "เตือนประกันใกล้หมด": warrantyAlertOn(eq) ? "เปิด" : "ปิด",
           "เลขที่ใบเสนอราคา": eq.quotationNumber,
           "เลขที่ใบรับประกัน": eq.warrantyCertNumber,
           "ประเภทประกัน": eq.warrantyType,
@@ -311,9 +374,18 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
         if (isExpired || daysLeft === null || daysLeft <= 30 || daysLeft > 60) return false;
       }
     }
-    
+
+    // AND, never OR: "which machines do we service that we did NOT sell" is
+    // still answerable while a search term and a warranty window are active.
+    if (filterSource !== "all") {
+      const source = eq.ownershipSource === "customer_owned" ? "customer_owned" : "sold_by_us";
+      if (source !== filterSource) return false;
+    }
+
     return true;
   });
+
+  const isFiltered = !!searchText || filterType !== "all" || filterSource !== "all";
 
   const paginatedEquipments = filtered.slice(
     (currentPage - 1) * itemsPerPage,
@@ -415,25 +487,6 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
 
   // ── Helpers ────────────────────────────────────────────────────────────────
 
-  const warrantyDaysLeft = (endDate: any) => {
-    if (!endDate || typeof endDate !== "string") return null;
-    
-    const parts = endDate.split("T")[0].split("-");
-    if (parts.length < 3) return null;
-    
-    // Parse as local midnight to avoid timezone offsets
-    const [year, month, day] = parts.map(Number);
-    const end = new Date(year, month - 1, day).getTime();
-    if (isNaN(end)) return null;
-    
-    // Get today at local midnight
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-    
-    const diff = Math.ceil((end - today) / 86400000);
-    return isNaN(diff) ? null : diff;
-  };
-
   const statusBadge = (eq: CustomerEquipment) => {
     const daysLeft = warrantyDaysLeft(eq.warrantyEndDate);
     const isExpired = eq.status === "Expired" || (daysLeft !== null && daysLeft < 0);
@@ -441,6 +494,23 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
     if (isExpired)
       return <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-red-100 text-red-700">Expired</span>;
     return <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-green-100 text-green-700">Active</span>;
+  };
+
+  // Two visibly different colours, not two shades of one: "we sold it" and "the
+  // customer bought it elsewhere" have to be tellable apart at a glance while
+  // scanning the list, since they change what the document columns even mean.
+  const ownershipBadge = (eq: CustomerEquipment) => {
+    if (eq.ownershipSource === "customer_owned")
+      return (
+        <span className="inline-block px-2.5 py-1 text-xs font-semibold rounded-full bg-violet-100 text-violet-700">
+          🤝 {ownershipLabel("customer_owned")}
+        </span>
+      );
+    return (
+      <span className="inline-block px-2.5 py-1 text-xs font-semibold rounded-full bg-teal-100 text-teal-700 whitespace-nowrap">
+        🏷️ {ownershipLabel("sold_by_us")}
+      </span>
+    );
   };
 
   const scheduleTypeBadge = (type: string) => {
@@ -519,7 +589,28 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
             buttonClassName="h-full min-h-[46px] border-gray-200 bg-white"
           />
         </div>
+        <div className="w-full sm:w-72 shrink-0 relative z-[5]">
+          <SearchableDropdown
+            options={OWNERSHIP_FILTER_OPTIONS}
+            value={filterSource}
+            onChange={setFilterSource}
+            searchable={false}
+            buttonClassName="h-full min-h-[46px] border-gray-200 bg-white"
+          />
+        </div>
       </div>
+
+      {/* The count the ownership filter exists to produce ("how many machines
+          do we look after that we didn't sell?") — shown against the total so
+          a narrow result never reads as missing data. */}
+      {!isLoading && isFiltered && (
+        <div className="-mt-3 mb-5 text-sm text-gray-500">
+          พบ <strong className="text-gray-700">{filtered.length}</strong> รายการที่ตรงกับตัวกรอง จากทั้งหมด {equipments.length} รายการ
+          {filterSource !== "all" && (
+            <span className="text-gray-400"> · ที่มา: {ownershipLabel(filterSource as CustomerEquipment["ownershipSource"])}</span>
+          )}
+        </div>
+      )}
 
       {/* Table */}
       <div className="overflow-x-auto">
@@ -529,6 +620,7 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
               <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">ลูกค้า / บริษัท</th>
               <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">สินค้า</th>
               <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">S/N</th>
+              <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">ที่มาของเครื่อง</th>
               <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">ประกัน</th>
               <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">หมดประกัน</th>
               <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">สถานะ</th>
@@ -542,6 +634,7 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
                   <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-36"></div><div className="h-3 bg-gray-100 rounded w-24 mt-1"></div></td>
                   <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-40"></div></td>
                   <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-20"></div></td>
+                  <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-24"></div></td>
                   <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-16"></div></td>
                   <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-24"></div></td>
                   <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-16"></div></td>
@@ -550,16 +643,30 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
               ))
             ) : filtered.length === 0 ? (
               <tr>
-                <td colSpan={7} className="py-16 text-center">
+                <td colSpan={8} className="py-16 text-center">
                   <div className="flex flex-col items-center gap-3">
                     <div className="text-6xl">📦</div>
-                    <p className="text-gray-400 text-lg">ยังไม่มีอุปกรณ์ที่บันทึกไว้</p>
-                    <button
-                      onClick={() => { setEditing({}); setSubmitAttempted(false); setIsModalOpen(true); }}
-                      className="mt-2 px-4 py-2 bg-orange-500 text-white rounded-xl hover:bg-orange-600 transition-all text-sm font-semibold"
-                    >
-                      + เพิ่มอุปกรณ์ตัวแรก
-                    </button>
+                    {isFiltered ? (
+                      <>
+                        <p className="text-gray-400 text-lg">ไม่พบอุปกรณ์ที่ตรงกับตัวกรอง</p>
+                        <button
+                          onClick={() => { setSearchText(""); setFilterType("all"); setFilterSource("all"); }}
+                          className="mt-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 transition-all text-sm font-semibold"
+                        >
+                          ล้างตัวกรองทั้งหมด
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <p className="text-gray-400 text-lg">ยังไม่มีอุปกรณ์ที่บันทึกไว้</p>
+                        <button
+                          onClick={() => { setEditing({}); setSubmitAttempted(false); setIsModalOpen(true); }}
+                          className="mt-2 px-4 py-2 bg-orange-500 text-white rounded-xl hover:bg-orange-600 transition-all text-sm font-semibold"
+                        >
+                          + เพิ่มอุปกรณ์ตัวแรก
+                        </button>
+                      </>
+                    )}
                   </div>
                 </td>
               </tr>
@@ -585,6 +692,7 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
                       </div>
                     </td>
                     <td className="py-4 pr-4 text-sm text-gray-600 font-mono">{eq.serialNumber || "—"}</td>
+                    <td className="py-4 pr-4">{ownershipBadge(eq)}</td>
                     <td className="py-4 pr-4 text-sm text-gray-600">{eq.warrantyType || "—"}</td>
                     <td className="py-4 pr-4">
                       {eq.warrantyEndDate ? (
@@ -597,6 +705,16 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
                           )}
                         </div>
                       ) : <span className="text-gray-300">—</span>}
+                      {/* Why this machine never shows up in the warranty alert
+                          — visible from the list, without opening the form. */}
+                      {!warrantyAlertOn(eq) && (
+                        <div
+                          className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-semibold rounded-full bg-slate-100 text-slate-500 border border-slate-200"
+                          title="ปิดการเตือนประกันใกล้หมดไว้ — เครื่องนี้จะไม่ขึ้นในหน้าแจ้งเตือน แต่วันประกันยังถูกเก็บไว้ครบ (การเตือนสอบเทียบ/ข้อมูลไม่ครบ ยังทำงานตามปกติ)"
+                        >
+                          🔕 ปิดเตือนประกัน
+                        </div>
+                      )}
                     </td>
                     <td className="py-4 pr-4">{statusBadge(eq)}</td>
                     <td className="py-4">

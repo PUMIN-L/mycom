@@ -3,13 +3,41 @@ import React, { useState, useEffect, useMemo } from "react";
 import DatePicker from "../DatePicker";
 import SearchableDropdown from "../SearchableDropdown";
 import type { SearchableDropdownOption } from "../SearchableDropdown";
-import type { CustomerEquipment } from "../../lib/types";
+import type { CustomerEquipment, EquipmentOwnershipSource } from "../../lib/types";
 import { toLocalDateString } from "../../lib/dateFormat";
 
 // Note: stripHtml is simplified here since we can't easily import it from the dashboard types without creating circular dependencies.
 function stripHtml(html?: string): string {
   if (!html) return "";
   return html.replace(/<[^>]*>/g, "");
+}
+
+/** Where the machine came from. Two values only — the API rejects anything
+ * else with a 400 rather than coercing it (spec: equipment-ownership). */
+const OWNERSHIP_OPTIONS: SearchableDropdownOption[] = [
+  {
+    value: "sold_by_us",
+    label: "เราขายเอง",
+    subLabel: "เราเป็นผู้ขายเครื่องนี้ เอกสารทั้งหมดออกจากระบบเรา",
+  },
+  {
+    value: "customer_owned",
+    label: "ลูกค้าซื้อมาเอง เราดูแลให้",
+    subLabel: "ลูกค้าซื้อจากผู้ขายรายอื่น เรารับดูแล/บริการต่อ",
+  },
+];
+
+/** Rows written before these columns existed read back as the default. */
+function normalizeOwnershipSource(
+  value: CustomerEquipment["ownershipSource"]
+): EquipmentOwnershipSource {
+  return value === "customer_owned" ? "customer_owned" : "sold_by_us";
+}
+
+/** Stored as TINYINT(1), so a read hands back 0/1 — and "never set" means ON
+ * (every machine alerted before this switch existed). */
+function normalizeWarrantyAlert(value: CustomerEquipment["warrantyAlertEnabled"]): boolean {
+  return Boolean(value ?? true);
 }
 
 interface EquipmentEditModalProps {
@@ -83,6 +111,13 @@ export default function EquipmentEditModal({
     return opts;
   }, [products, editing.id, editing.productId, editing.productName]);
 
+  // Derived (never stored back into `editing` on mount) so an untouched legacy
+  // row still SHOWS the defaults without a phantom edit, and the save below
+  // sends exactly what the form displays.
+  const ownershipSource = normalizeOwnershipSource(editing?.ownershipSource);
+  const warrantyAlertEnabled = normalizeWarrantyAlert(editing?.warrantyAlertEnabled);
+  const isCustomerOwned = ownershipSource === "customer_owned";
+
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isSaving) return;
@@ -106,6 +141,11 @@ export default function EquipmentEditModal({
       const payload = {
         ...editing,
         productId: editing.productId === "_custom" ? "" : editing.productId,
+        // Always explicit: a row saved from this form states its source and its
+        // alert switch outright, so a legacy row that never had them stops
+        // depending on the column default the moment anyone edits it.
+        ownershipSource,
+        warrantyAlertEnabled,
       };
 
       const res = await fetch(url, {
@@ -170,28 +210,64 @@ export default function EquipmentEditModal({
             />
           </div>
 
+          {/* Ownership source — deliberately ABOVE the document fields: it is
+              what decides whether the numbers below are our own documents or
+              another vendor's. Switching it only relabels them; nothing typed
+              is ever cleared. */}
+          <div className="relative z-40">
+            <label className="block text-sm font-semibold text-gray-700 mb-1.5">ที่มาของเครื่อง</label>
+            <SearchableDropdown
+              options={OWNERSHIP_OPTIONS}
+              value={ownershipSource}
+              onChange={(v) =>
+                setEditing((prev) => ({
+                  ...prev,
+                  ownershipSource: v === "customer_owned" ? "customer_owned" : "sold_by_us",
+                }))
+              }
+              searchable={false}
+            />
+            <p className="text-xs text-gray-400 mt-1">
+              เลือกว่าเครื่องนี้เราเป็นคนขายเอง หรือลูกค้าซื้อมาจากผู้ขายรายอื่นแล้วเรารับดูแลให้ —
+              ค่านี้เป็นตัวกำหนดความหมายของเลขที่ใบเสนอราคา/ใบรับประกันด้านล่าง
+              และ<strong className="text-gray-500">ไม่มีผล</strong>ต่อการเปิด/ปิดเตือนประกัน (เลือกแยกกันได้รายเครื่อง)
+            </p>
+          </div>
+
           {/* Document refs */}
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-1.5">เลขที่ใบเสนอราคา</label>
-              <input
-                type="text"
-                value={editing?.quotationNumber || ""}
-                onChange={(e) => setEditing((prev) => ({ ...prev, quotationNumber: e.target.value }))}
-                className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400"
-                placeholder="QT-XXXXX"
-              />
+          <div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1.5">
+                  {isCustomerOwned ? "เลขที่ใบเสนอราคา (ของผู้ขายรายอื่น)" : "เลขที่ใบเสนอราคา"}
+                </label>
+                <input
+                  type="text"
+                  value={editing?.quotationNumber || ""}
+                  onChange={(e) => setEditing((prev) => ({ ...prev, quotationNumber: e.target.value }))}
+                  className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400"
+                  placeholder="QT-XXXXX"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1.5">
+                  {isCustomerOwned ? "เลขที่ใบรับประกัน (ของผู้ขายรายอื่น)" : "เลขที่ใบรับประกัน"}
+                </label>
+                <input
+                  type="text"
+                  value={editing?.warrantyCertNumber || ""}
+                  onChange={(e) => setEditing((prev) => ({ ...prev, warrantyCertNumber: e.target.value }))}
+                  className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400"
+                  placeholder="WR-XXXXX"
+                />
+              </div>
             </div>
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-1.5">เลขที่ใบรับประกัน</label>
-              <input
-                type="text"
-                value={editing?.warrantyCertNumber || ""}
-                onChange={(e) => setEditing((prev) => ({ ...prev, warrantyCertNumber: e.target.value }))}
-                className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400"
-                placeholder="WR-XXXXX"
-              />
-            </div>
+            {isCustomerOwned && (
+              <p className="text-xs text-amber-600 mt-1.5">
+                เครื่องนี้ลูกค้าซื้อมาเอง เลขเอกสารทั้งสองช่องนี้จึงเป็นเอกสารของ<strong>ผู้ขายรายอื่น</strong>
+                ไม่ใช่เอกสารที่ออกจากระบบเรา (ค้นย้อนกลับในระบบไม่ได้) — ยังกรอกไว้อ้างอิงได้ตามปกติ
+              </p>
+            )}
           </div>
 
           {/* Warranty */}
@@ -223,6 +299,54 @@ export default function EquipmentEditModal({
                 placeholderText="ไม่ระบุ"
                 isClearable
               />
+            </div>
+          </div>
+
+          {/* Warranty alert switch — sits with the dates it controls. The
+              explanation is ALWAYS visible, not revealed on switching off:
+              someone has to be able to read what turning it off costs BEFORE
+              they turn it off. */}
+          <div className="rounded-xl border border-gray-200 bg-gray-50/70 p-4">
+            <div className="flex items-start gap-3">
+              <button
+                type="button"
+                role="switch"
+                aria-label="เตือนเมื่อประกันใกล้หมด"
+                aria-checked={warrantyAlertEnabled}
+                onClick={() =>
+                  setEditing((prev) => ({ ...prev, warrantyAlertEnabled: !warrantyAlertEnabled }))
+                }
+                className={`relative shrink-0 mt-0.5 w-11 h-6 rounded-full transition-colors cursor-pointer ${
+                  warrantyAlertEnabled ? "bg-indigo-600" : "bg-gray-300"
+                }`}
+              >
+                <span
+                  className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${
+                    warrantyAlertEnabled ? "translate-x-5" : "translate-x-0"
+                  }`}
+                />
+              </button>
+              <span className="min-w-0">
+                <span className="block text-sm font-semibold text-gray-700">
+                  เตือนเมื่อประกันใกล้หมด
+                  <span className={`ml-2 text-xs font-semibold ${warrantyAlertEnabled ? "text-indigo-600" : "text-gray-400"}`}>
+                    {warrantyAlertEnabled ? "เปิดอยู่" : "ปิดอยู่"}
+                  </span>
+                </span>
+                <span className="block text-xs text-gray-500 mt-1 leading-relaxed">
+                  ปิดแล้วเครื่องนี้จะไม่ขึ้นในแจ้งเตือน &quot;ประกันใกล้หมด&quot; —
+                  <strong className="text-gray-600"> วันเริ่ม/หมดประกันยังถูกเก็บไว้ครบ ไม่ถูกลบ</strong>
+                  ยังดูได้จากรายละเอียดเครื่องเหมือนเดิม
+                </span>
+                <span className="block text-xs text-gray-400 mt-1 leading-relaxed">
+                  สวิตช์นี้แยกจาก &quot;ที่มาของเครื่อง&quot; อย่างสิ้นเชิง เลือกได้เองรายเครื่อง —
+                  เครื่องที่ลูกค้าซื้อมาเองแต่เรารับประกัน/ดูแลต่อ ก็เปิดเตือนได้
+                  ส่วนเครื่องที่เราขายเองแต่ลูกค้าไม่ต่อประกันแล้ว ก็ปิดได้
+                </span>
+                <span className="block text-xs text-gray-400 mt-1 leading-relaxed">
+                  ไม่มีผลกับการเตือน &quot;ใกล้ถึงกำหนดสอบเทียบ&quot; และ &quot;ข้อมูลไม่ครบ&quot; — สองรายการนั้นยังเตือนตามปกติ
+                </span>
+              </span>
             </div>
           </div>
 

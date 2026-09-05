@@ -12,7 +12,7 @@ import type { QueryResult, FieldPacket, RowDataPacket } from "mysql2";
 // did not lower the 33 already written to `settings`, so the next change to
 // reuse 33 was skipped entirely and its tables were never created in
 // production. Reverting a migration means moving FORWARD to a new number.
-const SCHEMA_VERSION = 34;
+const SCHEMA_VERSION = 35;
 
 type DbPool = ReturnType<typeof mysql.createPool>;
 
@@ -526,6 +526,8 @@ async function bootstrapSchemaOnce(): Promise<void> {
           status VARCHAR(20) NOT NULL DEFAULT 'Active',
           note TEXT NULL,
           calibrationDate VARCHAR(20) DEFAULT NULL,
+          ownershipSource VARCHAR(20) NOT NULL DEFAULT 'sold_by_us',
+          warrantyAlertEnabled TINYINT(1) NOT NULL DEFAULT 1,
           createdAt VARCHAR(255) NOT NULL,
           INDEX idx_ce_customer (customerId),
           INDEX idx_ce_warrantyEnd (warrantyEndDate),
@@ -571,6 +573,30 @@ async function bootstrapSchemaOnce(): Promise<void> {
       );
     } catch (error) {
       if (!isBenignSchemaError(error)) throw error;
+    }
+    // v35: "ownershipSource" (did WE sell this unit, or did the customer buy it
+    // elsewhere and we merely service it) and "warrantyAlertEnabled" (per-unit
+    // switch for the "warranty expiring" alert only — calibration and
+    // incomplete-record alerts ignore it).
+    //
+    // ADDITIVE ONLY — deliberately NO `UPDATE` of existing rows anywhere on this
+    // path. Every pre-existing unit takes the column defaults ('sold_by_us' +
+    // alerts on), which is EXACTLY how the system behaved before this column
+    // existed. Guessing the source from `salesRecordId`/`quotationNumber` was
+    // rejected on purpose: plenty of units we did sell were entered by hand
+    // before sales records existed and have an empty `salesRecordId`, so a
+    // heuristic would silently mislabel them as customer-owned with no way to
+    // tell a guess from a confirmed value. Reclassifying is an admin decision,
+    // made per unit.
+    for (const columnDef of [
+      "ADD COLUMN IF NOT EXISTS ownershipSource VARCHAR(20) NOT NULL DEFAULT 'sold_by_us'",
+      "ADD COLUMN IF NOT EXISTS warrantyAlertEnabled TINYINT(1) NOT NULL DEFAULT 1",
+    ]) {
+      try {
+        await connection.query(`ALTER TABLE customer_equipments ${columnDef}`);
+      } catch (error) {
+        if (!isBenignSchemaError(error)) throw error;
+      }
     }
     // Drop fk_ce_customer so equipments can be created without a customer
     // (serial numbers need to be saved even when no customer is selected)
@@ -888,6 +914,154 @@ async function bootstrapSchemaOnce(): Promise<void> {
           INDEX idx_alert_snoozes_until (snoozeUntil)
         )
       `);
+
+    // ── CRM task board (v35): topics + manual tasks + cross-entity links ─────
+    //
+    // These three tables back the hand-written "things I need to remember" board
+    // on /crm/alerts, which is a separate system from the automatic alert feed:
+    // nothing here is ever created, closed or deleted by the system.
+
+    // Topics are DATA, not an enum — the owner adds/renames/recolours/reorders
+    // them at runtime, so they cannot live as a constant in the code.
+    // `color` holds a TOKEN ("blue", "amber", …) that the UI maps to a class;
+    // a raw CSS value from a user must never reach a style/class attribute.
+    // Retiring a topic is `isActive = 0`, never a DELETE, so the tasks filed
+    // under it keep their label.
+    await connection.query(`
+        CREATE TABLE IF NOT EXISTS task_topics (
+          id INT PRIMARY KEY,
+          name VARCHAR(255) NOT NULL,
+          icon VARCHAR(16) NOT NULL DEFAULT '',
+          color VARCHAR(32) NOT NULL DEFAULT '',
+          sortOrder INT DEFAULT 0,
+          isActive TINYINT(1) NOT NULL DEFAULT 1,
+          createdAt VARCHAR(255) NOT NULL,
+          INDEX idx_tt_active_sort (isActive, sortOrder)
+        )
+      `);
+    // Also create the index standalone: a database whose table predates it
+    // (partially applied earlier run) would never get it from CREATE TABLE
+    // IF NOT EXISTS. ER_DUP_KEYNAME on the fresh-DB path is benign.
+    try {
+      await connection.query(
+        `CREATE INDEX idx_tt_active_sort ON task_topics (isActive, sortOrder)`
+      );
+    } catch (error) {
+      if (!isBenignSchemaError(error)) throw error;
+    }
+
+    // `dueDate` is nullable ON PURPOSE: a note with no deadline is a complete,
+    // valid task ("call this customer back sometime"), and only tasks that have
+    // a due date which has already arrived are counted by the bell.
+    // `topicId` is a soft reference with no FK — see the task_links note below
+    // for why this whole table group avoids foreign keys.
+    await connection.query(`
+        CREATE TABLE IF NOT EXISTS crm_tasks (
+          id VARCHAR(36) PRIMARY KEY,
+          topicId INT NOT NULL,
+          title VARCHAR(255) NOT NULL,
+          detail TEXT NULL,
+          dueDate VARCHAR(20) DEFAULT NULL,
+          status VARCHAR(20) NOT NULL DEFAULT 'pending',
+          completedAt VARCHAR(255) DEFAULT NULL,
+          createdAt VARCHAR(255) NOT NULL,
+          INDEX idx_ct_status_due (status, dueDate),
+          INDEX idx_ct_topic (topicId),
+          INDEX idx_ct_createdAt (createdAt)
+        )
+      `);
+    for (const indexDef of [
+      "CREATE INDEX idx_ct_status_due ON crm_tasks (status, dueDate)",
+      "CREATE INDEX idx_ct_topic ON crm_tasks (topicId)",
+      "CREATE INDEX idx_ct_createdAt ON crm_tasks (createdAt)",
+    ]) {
+      try {
+        await connection.query(indexDef);
+      } catch (error) {
+        if (!isBenignSchemaError(error)) throw error;
+      }
+    }
+
+    // Polymorphic link rows, keyed like `alert_snoozes (alertType, referenceId)`.
+    //
+    // NO FOREIGN KEY ON THIS TABLE AT ALL — not on `targetId`, and deliberately
+    // NOT on `taskId` either, so the whole table follows ONE rule instead of
+    // two. `targetId` must stay soft because the targets die independently of
+    // the task: quotations are hard-deleted by the 2-year retention cron, and an
+    // FK would either block that purge or (with ON DELETE CASCADE) quietly
+    // destroy the link — and with it the only record of what the task was about.
+    // The same reasoning already governs `sales_records.quotationId` and
+    // `customer_equipments.salesRecordId`. Extending it to `taskId` costs one
+    // explicit DELETE: deleting a task removes its own link rows in the SAME
+    // withTransaction (see taskStore.deleteTask); nothing cascades on its own,
+    // and nothing here is ever cleaned up automatically — a link whose target
+    // has been purged is KEPT and rendered as "ถูกลบแล้ว".
+    //
+    // `label` is a SNAPSHOT taken at link time (customer name, product + S/N,
+    // quotation docNo, document title) and is deliberately NEVER re-synced with
+    // the target. Display prefers the target's CURRENT name while the target
+    // still exists and falls back to this snapshot once it is gone — which is
+    // the entire point: it is what keeps a chip readable after its target has
+    // been deleted or purged.
+    await connection.query(`
+        CREATE TABLE IF NOT EXISTS task_links (
+          taskId VARCHAR(36) NOT NULL,
+          targetType VARCHAR(20) NOT NULL,
+          targetId VARCHAR(255) NOT NULL,
+          label VARCHAR(255) NOT NULL DEFAULT '',
+          createdAt VARCHAR(255) NOT NULL,
+          PRIMARY KEY (taskId, targetType, targetId),
+          INDEX idx_tl_target (targetType, targetId)
+        )
+      `);
+    try {
+      await connection.query(
+        `CREATE INDEX idx_tl_target ON task_links (targetType, targetId)`
+      );
+    } catch (error) {
+      if (!isBenignSchemaError(error)) throw error;
+    }
+
+    // ── Seed the five default topics — ONLY while the table is fully empty ────
+    //
+    // The guard is `WHERE NOT EXISTS (SELECT 1 FROM task_topics)` on the WHOLE
+    // set, NOT a per-id `INSERT IGNORE`. Seeding row-by-row would resurrect a
+    // topic the admin deleted, and re-assert a name/colour/emoji he changed, on
+    // the next deploy — the seed only ever describes the state of a brand-new
+    // installation. Rows that already exist (renamed, recoloured, hidden with
+    // isActive = 0, or deleted outright) are therefore left exactly as they are.
+    //
+    // A single statement is atomic on its own; withTransaction() cannot be used
+    // here because it awaits the very init promise this bootstrap is fulfilling.
+    try {
+      await connection.query(
+        `
+        INSERT INTO task_topics (id, name, icon, color, sortOrder, isActive, createdAt)
+        SELECT seed.id, seed.name, seed.icon, seed.color, seed.sortOrder, 1, ?
+        FROM (
+                     SELECT 1 AS id, 'โทรหาลูกค้า'      AS name, '📞' AS icon, 'blue'    AS color, 1 AS sortOrder
+          UNION ALL SELECT 2,       'นัดเข้าไปหาลูกค้า',         '🚗',        'emerald',          2
+          UNION ALL SELECT 3,       'รอทำใบเสนอราคา',            '📄',        'amber',            3
+          UNION ALL SELECT 4,       'นัดเข้า Service',           '🔧',        'violet',           4
+          UNION ALL SELECT 5,       'อื่นๆ',                     '📌',        'slate',            5
+        ) AS seed
+        WHERE NOT EXISTS (SELECT 1 FROM task_topics)
+      `,
+        [new Date().toISOString()]
+      );
+    } catch (error) {
+      // Two instances booting at once legitimately race here: both see an empty
+      // table and both try to insert ids 1-5. The loser hits a duplicate primary
+      // key / lock timeout / TiDB write conflict — in every one of those cases
+      // the winner wrote exactly these same rows, so standing down is correct
+      // and must NOT fail the whole bootstrap. Anything else propagates, so
+      // schema_version is never stamped over a skipped seed.
+      if (!isConcurrentWriteError(error)) throw error;
+      console.warn(
+        "task_topics seed lost a race with a concurrent bootstrap; the other instance owns it:",
+        (error as { code?: string }).code
+      );
+    }
 
     // ── Recurring expense templates (v29) ────────────────────────────────────
     // A template for a monthly cost (rent, salary, ...) that repeats every

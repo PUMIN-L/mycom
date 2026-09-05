@@ -11,12 +11,38 @@ import type {
   CrmAlerts,
   SalesRecord,
 } from "./types";
-import { SCHEDULE_TYPES, SCHEDULE_STATUSES, CALIBRATION_VALIDITY_MONTHS } from "./types";
+import {
+  SCHEDULE_TYPES,
+  SCHEDULE_STATUSES,
+  CALIBRATION_VALIDITY_MONTHS,
+  EQUIPMENT_OWNERSHIP_SOURCES,
+} from "./types";
+import {
+  ALERT_WARRANTY_DAYS,
+  ALERT_SCHEDULE_DAYS,
+  CALIBRATION_ALERT_LEAD_MONTHS,
+  ALERT_LIST_DISPLAY_LIMIT,
+  MISSING_DELIVERY_DOC_DAYS,
+  MISSING_RECEIPT_DOC_DAYS,
+} from "./alertThresholds";
 
 // Re-exported so callers can keep importing from "./crmStore".
 export type { CustomerEquipment, ServiceSchedule, ServiceLog, CrmAlerts } from "./types";
 export type { ScheduleType, ScheduleStatus } from "./types";
 export { SCHEDULE_TYPES, SCHEDULE_STATUSES } from "./types";
+// The thresholds this store's queries run on, re-exported so a caller that
+// already imports getAlerts() can read the exact numbers behind it from the
+// same module (tasks.md 18.14). They are DEFINED in ./alertThresholds so the
+// client-side guide panel can import them without pulling mysql2 into the
+// browser bundle — never redeclare any of them here.
+export {
+  ALERT_WARRANTY_DAYS,
+  ALERT_SCHEDULE_DAYS,
+  CALIBRATION_ALERT_LEAD_MONTHS,
+  ALERT_LIST_DISPLAY_LIMIT,
+  MISSING_DELIVERY_DOC_DAYS,
+  MISSING_RECEIPT_DOC_DAYS,
+} from "./alertThresholds";
 
 // CRM: sold-equipment + warranty tracking, service/phone-call schedules, and
 // post-action logs. All document "attachments" are TEXT reference numbers —
@@ -45,9 +71,14 @@ export class ScheduleCompletionRequiresLogError extends Error {
 // Joined SELECT used by every equipment read: names for display come from the
 // live customers/companies/products rows (LEFT JOIN so a deleted product —
 // loose reference by design — degrades to null, not a broken row).
+// ownershipSource/warrantyAlertEnabled arrive via e.* but are spelled out so
+// cards and modals have a documented, defaulted value even on a row written
+// before those columns existed.
 const EQUIPMENT_SELECT = `
   SELECT e.*, c.name AS customerName, co.name AS companyName,
-         COALESCE(NULLIF(e.productName, ''), p.title_th) AS productName, p.image AS productImage
+         COALESCE(NULLIF(e.productName, ''), p.title_th) AS productName, p.image AS productImage,
+         COALESCE(e.ownershipSource, 'sold_by_us') AS ownershipSource,
+         COALESCE(e.warrantyAlertEnabled, 1) AS warrantyAlertEnabled
   FROM customer_equipments e
   LEFT JOIN customers c ON e.customerId = c.id
   LEFT JOIN companies co ON c.companyId = co.id
@@ -81,6 +112,31 @@ export async function getEquipment(
   return (rows[0] as CustomerEquipment) || null;
 }
 
+/** Last line of defence for the ownership column: the API rejects anything
+ * outside the two known values with a 400 (never coerces it silently — see
+ * app/api/admin/equipments/**), so by the time a value reaches here an unknown
+ * one can only come from an internal caller. Storing it would put a value in
+ * the DB that no filter, badge or export knows how to render, so it falls back
+ * to the documented default instead. */
+function normalizeOwnershipSource(
+  value: CustomerEquipment["ownershipSource"]
+): CustomerEquipment["ownershipSource"] {
+  return EQUIPMENT_OWNERSHIP_SOURCES.includes(
+    value as (typeof EQUIPMENT_OWNERSHIP_SOURCES)[number]
+  )
+    ? value
+    : "sold_by_us";
+}
+
+/** warrantyAlertEnabled is a TINYINT(1): reads hand back 0/1, the client sends
+ * a JSON boolean, and "not supplied at all" must mean ON (the pre-existing
+ * behaviour — every machine alerted). Returns the 0/1 the column wants. */
+function normalizeWarrantyAlertEnabled(value: unknown): number {
+  if (value === undefined || value === null) return 1;
+  if (value === 0 || value === "0" || value === false || value === "false") return 0;
+  return 1;
+}
+
 function cleanEquipment(data: Partial<CustomerEquipment>) {
   // "_custom" is a UI-only sentinel (EquipmentEditModal) for "no catalog
   // product selected" — the client already maps it back to "" before sending,
@@ -106,6 +162,11 @@ function cleanEquipment(data: Partial<CustomerEquipment>) {
     calibrationDate: data.calibrationDate
       ? sanitizePlainText(String(data.calibrationDate)).substring(0, 10) || null
       : null,
+    // Both default to the pre-change behaviour ("we sold it", alert on) so a
+    // caller that never heard of these fields — the sale form's equipment sync
+    // included — writes exactly what the migration wrote for legacy rows.
+    ownershipSource: normalizeOwnershipSource(data.ownershipSource),
+    warrantyAlertEnabled: normalizeWarrantyAlertEnabled(data.warrantyAlertEnabled),
   };
 }
 
@@ -119,8 +180,8 @@ export async function addEquipment(
     `INSERT INTO customer_equipments
        (id, salesRecordId, customerId, productId, productName, serialNumber, quotationNumber,
         warrantyCertNumber, warrantyType, warrantyStartDate, warrantyEndDate,
-        status, calibrationDate, createdAt)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        status, ownershipSource, warrantyAlertEnabled, calibrationDate, createdAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
       v.salesRecordId,
@@ -134,6 +195,8 @@ export async function addEquipment(
       v.warrantyStartDate,
       v.warrantyEndDate,
       v.status,
+      v.ownershipSource,
+      v.warrantyAlertEnabled,
       v.calibrationDate,
       now,
     ]
@@ -315,6 +378,10 @@ async function runEquipmentSync(
   // but free-text-editable in EquipmentEditModal, so a submission that omits it
   // (COALESCE/NULLIF → the column keeps its current value) must never erase a
   // warranty someone typed by hand. Same param count/order as before.
+  // ownershipSource/warrantyAlertEnabled are deliberately ABSENT from this
+  // UPDATE: re-saving a sale must not reclassify a machine an admin has since
+  // marked "customer_owned", nor re-arm a warranty alert they switched off.
+  // Those two are only ever set on INSERT (defaults) or from the equipment form.
   for (const { existingId, row } of pairs) {
     const v = cleanEquipment(row.data);
     await conn.query(
@@ -348,12 +415,16 @@ async function runEquipmentSync(
     const newId = crypto.randomUUID();
     const now = new Date().toISOString();
     const v = cleanEquipment({ ...rows[i].data, salesRecordId });
+    // A machine born from a sale is by definition one WE sold, and its
+    // warranty alert starts on — nobody has to pick either (task 16.10). The
+    // sale form never sends these fields, so cleanEquipment's defaults are what
+    // land here; if a caller ever does send them, its choice is honoured.
     await conn.query(
       `INSERT INTO customer_equipments
          (id, salesRecordId, customerId, productId, productName, serialNumber, quotationNumber,
           warrantyCertNumber, warrantyType, warrantyStartDate, warrantyEndDate,
-          status, createdAt)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          status, ownershipSource, warrantyAlertEnabled, createdAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         newId,
         v.salesRecordId,
@@ -367,6 +438,8 @@ async function runEquipmentSync(
         v.warrantyStartDate,
         v.warrantyEndDate,
         v.status,
+        v.ownershipSource,
+        v.warrantyAlertEnabled,
         now,
       ]
     );
@@ -545,7 +618,8 @@ export async function updateEquipment(
     `UPDATE customer_equipments SET
        customerId = ?, productId = ?, productName = ?, serialNumber = ?, quotationNumber = ?,
        warrantyCertNumber = ?, warrantyType = ?, warrantyStartDate = ?,
-       warrantyEndDate = ?, status = ?, note = ?, calibrationDate = ?
+       warrantyEndDate = ?, status = ?, note = ?, calibrationDate = ?,
+       ownershipSource = ?, warrantyAlertEnabled = ?
      WHERE id = ?`,
     [
       v.customerId,
@@ -560,6 +634,11 @@ export async function updateEquipment(
       v.status,
       v.note,
       v.calibrationDate,
+      // `merged` is {...existing, ...data}, so a partial update that omits
+      // these two writes the row's CURRENT values straight back — it can never
+      // reset a machine to "we sold it / alert on" behind the admin's back.
+      v.ownershipSource,
+      v.warrantyAlertEnabled,
       id,
     ]
   );
@@ -777,9 +856,13 @@ export async function completeScheduleWithLog(
 
 /**
  * Alert feed for /admin/alerts:
- * - equipment whose warranty ends within `warrantyDays` (default 30) and is not
- *   already past — sorted soonest-first;
- * - pending schedules due within `scheduleDays` (default 7) OR already overdue.
+ * - equipment whose warranty ends within `warrantyDays` (default 30), is not
+ *   already past, and still has its per-machine warranty alert switched on —
+ *   sorted soonest-first;
+ * - pending EQUIPMENT-scoped schedules due within `scheduleDays` (default 7) OR
+ *   already overdue (`upcomingSchedules`);
+ * - pending CUSTOMER-scoped follow-up calls, with no date window at all
+ *   (`customerCallFollowUps`) — see the query below for why.
  * Date comparison is lexical on YYYY-MM-DD strings (sorts chronologically).
  */
 // The server runs at UTC (Vercel) but the team is in Thailand (UTC+7, no
@@ -792,25 +875,51 @@ export async function completeScheduleWithLog(
 
 // The alert starts CALIBRATION_ALERT_LEAD_MONTHS before the 1-year
 // (CALIBRATION_VALIDITY_MONTHS) calibration anniversary — i.e. once 10
-// months (12 - 2) have passed since the last calibrationDate.
-const CALIBRATION_ALERT_LEAD_MONTHS = 2;
+// months (12 - 2) have passed since the last calibrationDate. Both constants
+// are imported, never literals: the in-page guide renders the same values.
 
+// Both schedule feeds read the same joined shape — one source for the SELECT
+// and JOIN block so the equipment-scoped feed keeps returning exactly the
+// columns it has always returned, and the customer-scoped one resolves its
+// customer/company through the same COALESCE(c2/co2) path. The two categories
+// differ ONLY in their WHERE clause.
+const SCHEDULE_ALERT_SELECT = `
+  SELECT s.*, COALESCE(e.customerId, s.customerId) AS customerId, e.serialNumber,
+         COALESCE(c.name, c2.name) AS customerName,
+         COALESCE(co.name, co2.name) AS companyName,
+         p.title_th AS productName
+  FROM service_schedules s
+  LEFT JOIN customer_equipments e ON s.equipmentId = e.id
+  LEFT JOIN customers c ON e.customerId = c.id
+  LEFT JOIN companies co ON c.companyId = co.id
+  LEFT JOIN products p ON e.productId = p.id
+  LEFT JOIN customers c2 ON s.customerId = c2.id
+  LEFT JOIN companies co2 ON c2.companyId = co2.id
+  LEFT JOIN alert_snoozes sno ON sno.alertType = 'schedule' AND sno.referenceId = s.id`;
+
+// `dueTaskCount` is composed by GET /api/admin/alerts from taskStore's
+// countDueTasks() — the manual task board is not part of the computed alert
+// feed and must not couple this store to it.
 export async function getAlerts(
-  warrantyDays = 30,
-  scheduleDays = 7
-): Promise<CrmAlerts> {
+  warrantyDays = ALERT_WARRANTY_DAYS,
+  scheduleDays = ALERT_SCHEDULE_DAYS
+): Promise<Omit<CrmAlerts, "dueTaskCount">> {
   const today = bangkokDateString(new Date());
   const warrantyCutoff = bangkokDateString(new Date(Date.now() + warrantyDays * 86400000));
   const scheduleCutoff = bangkokDateString(new Date(Date.now() + scheduleDays * 86400000));
 
   const nowIso = new Date().toISOString();
 
+  // warrantyAlertEnabled silences THIS alert only — the calibration and
+  // incomplete-data queries below deliberately ignore it, so switching off a
+  // machine's warranty reminder never hides the machine itself.
   const [warrantyRows] = await query<RowDataPacket[]>(
     `${EQUIPMENT_SELECT}
      LEFT JOIN alert_snoozes sno ON sno.alertType = 'warranty' AND sno.referenceId = e.id
      WHERE e.warrantyEndDate IS NOT NULL
        AND e.warrantyEndDate >= ? AND e.warrantyEndDate <= ?
        AND e.status != 'Expired'
+       AND e.warrantyAlertEnabled = 1
        AND (sno.snoozeUntil IS NULL OR sno.snoozeUntil <= ?)
      ORDER BY e.warrantyEndDate ASC`,
     [today, warrantyCutoff, nowIso]
@@ -836,11 +945,11 @@ export async function getAlerts(
      LEFT JOIN alert_snoozes sno ON sno.alertType = 'incomplete' AND sno.referenceId = e.id
      WHERE (e.serialNumber = '' OR e.serialNumber IS NULL OR e.warrantyStartDate IS NULL)
        AND (sno.snoozeUntil IS NULL OR sno.snoozeUntil <= ?)
-     ORDER BY e.createdAt DESC LIMIT 100`,
+     ORDER BY e.createdAt DESC LIMIT ${ALERT_LIST_DISPLAY_LIMIT}`,
     [nowIso]
   );
 
-  // The list above is capped at 100 for display; count the true total
+  // The list above is capped for display; count the true total
   // (same filter, no cap) so callers can show "and N more" instead of
   // silently hiding a backlog beyond the cap.
   const [incompleteCountRows] = await query<RowDataPacket[]>(
@@ -856,24 +965,48 @@ export async function getAlerts(
   // A schedule's customer/company come from its linked equipment's customer
   // when equipment-scoped, or straight from s.customerId when customer-scoped
   // (no equipment) — COALESCE picks whichever join path actually matched.
+  //
+  // Equipment-scoped feed: unchanged behaviour — pending and due within the
+  // scheduleDays window (or already overdue). Splitting the categories is done
+  // by SCOPE, not by scheduleType: a phone_call booked against a machine stays
+  // here, on the same window it has always used.
   const [scheduleRows] = await query<RowDataPacket[]>(
-    `SELECT s.*, COALESCE(e.customerId, s.customerId) AS customerId, e.serialNumber,
-            COALESCE(c.name, c2.name) AS customerName,
-            COALESCE(co.name, co2.name) AS companyName,
-            p.title_th AS productName
-     FROM service_schedules s
-     LEFT JOIN customer_equipments e ON s.equipmentId = e.id
-     LEFT JOIN customers c ON e.customerId = c.id
-     LEFT JOIN companies co ON c.companyId = co.id
-     LEFT JOIN products p ON e.productId = p.id
-     LEFT JOIN customers c2 ON s.customerId = c2.id
-     LEFT JOIN companies co2 ON c2.companyId = co2.id
-     LEFT JOIN alert_snoozes sno ON sno.alertType = 'schedule' AND sno.referenceId = s.id
-     WHERE s.status = 'pending' AND s.scheduledDate <= ?
+    `${SCHEDULE_ALERT_SELECT}
+     WHERE s.equipmentId IS NOT NULL
+       AND s.status = 'pending' AND s.scheduledDate <= ?
        AND (sno.snoozeUntil IS NULL OR sno.snoozeUntil <= ?)
      ORDER BY s.scheduledDate ASC`,
     [scheduleCutoff, nowIso]
   );
+
+  // Customer-scoped follow-up calls: NO date window at all. A call booked six
+  // months out has to be visible the moment it is booked (booking it used to
+  // look like it did nothing until it came within scheduleDays), and stays
+  // until it is completed or cancelled. Snoozes still read the SAME
+  // alertType = 'schedule' rows, so calls an admin already snoozed under the
+  // single-query version stay snoozed.
+  const [customerCallRows] = await query<RowDataPacket[]>(
+    `${SCHEDULE_ALERT_SELECT}
+     WHERE s.equipmentId IS NULL AND s.customerId IS NOT NULL
+       AND s.status = 'pending'
+       AND (sno.snoozeUntil IS NULL OR sno.snoozeUntil <= ?)
+     ORDER BY s.scheduledDate ASC LIMIT ${ALERT_LIST_DISPLAY_LIMIT}`,
+    [nowIso]
+  );
+
+  // Unbounded by date, so the list above is capped for display; count
+  // the true total (same filter, no cap) so callers can show "and N more" and
+  // the notification bell counts the backlog rather than the truncated array.
+  const [customerCallCountRows] = await query<RowDataPacket[]>(
+    `SELECT COUNT(*) AS cnt
+     FROM service_schedules s
+     LEFT JOIN alert_snoozes sno ON sno.alertType = 'schedule' AND sno.referenceId = s.id
+     WHERE s.equipmentId IS NULL AND s.customerId IS NOT NULL
+       AND s.status = 'pending'
+       AND (sno.snoozeUntil IS NULL OR sno.snoozeUntil <= ?)`,
+    [nowIso]
+  );
+  const customerCallFollowUpsTotal = Number(customerCallCountRows[0]?.cnt) || 0;
 
   const [missingDocRows] = await query<RowDataPacket[]>(
     `SELECT sr.*,
@@ -886,11 +1019,16 @@ export async function getAlerts(
      LEFT JOIN customers c ON sr.customerId = c.id
      LEFT JOIN companies co ON sr.companyId = co.id
      LEFT JOIN alert_snoozes sno ON sno.alertType = 'missing_doc' AND sno.referenceId = sr.id
-     WHERE 
-       ((sr.saleType = 'equipment' AND sr.deliveryRef = '' AND DATEDIFF(?, sr.saleDate) >= 20)
-       OR (sr.invoiceRef != '' AND sr.receiptRef = '' AND DATEDIFF(?, sr.saleDate) >= 30))
+     WHERE
+       ((sr.saleType = 'equipment' AND sr.deliveryRef = ''
+         AND DATEDIFF(?, sr.saleDate) >= ${MISSING_DELIVERY_DOC_DAYS})
+       OR (sr.invoiceRef != '' AND sr.receiptRef = ''
+         AND DATEDIFF(?, sr.saleDate) >= ${MISSING_RECEIPT_DOC_DAYS}))
        AND (sno.snoozeUntil IS NULL OR sno.snoozeUntil <= ?)
      ORDER BY sr.saleDate ASC`,
+    // The two day thresholds are module constants interpolated into the SQL
+    // (never user input) so the guide panel can quote the same numbers; the
+    // bound params stay exactly what they were: today, today, now.
     [today, today, nowIso]
   );
 
@@ -903,6 +1041,11 @@ export async function getAlerts(
     upcomingSchedules: (scheduleRows as CrmAlerts["upcomingSchedules"]).map(
       (s) => ({ ...s, overdue: s.scheduledDate < today })
     ),
+    // Same overdue rule as above: a future call is shown but is NOT overdue.
+    customerCallFollowUps: (customerCallRows as CrmAlerts["customerCallFollowUps"]).map(
+      (s) => ({ ...s, overdue: s.scheduledDate < today })
+    ),
+    customerCallFollowUpsTotal,
   };
 }
 

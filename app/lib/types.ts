@@ -123,6 +123,11 @@ export type ScheduleType = (typeof SCHEDULE_TYPES)[number];
 export const SCHEDULE_STATUSES = ["pending", "completed", "cancelled"] as const;
 export type ScheduleStatus = (typeof SCHEDULE_STATUSES)[number];
 
+/** Where a machine came from. Display/filter information only — it never
+ * changes which alerts fire (that is `warrantyAlertEnabled`'s job). */
+export const EQUIPMENT_OWNERSHIP_SOURCES = ["sold_by_us", "customer_owned"] as const;
+export type EquipmentOwnershipSource = (typeof EQUIPMENT_OWNERSHIP_SOURCES)[number];
+
 export interface CustomerEquipment {
   id: string;
   salesRecordId?: string;
@@ -141,6 +146,14 @@ export interface CustomerEquipment {
   /** Date of the last calibration performed. The alert feed warns 10 months
    * after this date (see getAlerts()'s "nearingCalibration"). */
   calibrationDate?: string | null; // YYYY-MM-DD
+  /** "sold_by_us" (default) | "customer_owned". Pre-existing rows keep the
+   * default — the migration never reclassifies anything. */
+  ownershipSource?: EquipmentOwnershipSource;
+  /** Per-unit switch for the "warranty expiring" alert ONLY (calibration and
+   * incomplete-record alerts ignore it). Stored as TINYINT(1), so reads that
+   * pass rows straight through hand back 0/1 — coerce with Boolean() before
+   * comparing strictly. */
+  warrantyAlertEnabled?: boolean;
   createdAt: string;
   // Joined display fields (present on reads)
   customerName?: string;
@@ -226,6 +239,8 @@ export interface CrmAlerts {
    * exceed incompleteEquipments.length since that list is capped. */
   incompleteEquipmentsTotal: number;
   missingDocuments: SalesRecord[];
+  /** Equipment-scoped service schedules due within the `scheduleDays` window
+   * (default 7) or already overdue — unchanged behaviour. */
   upcomingSchedules: Array<
     ServiceSchedule & {
       customerId?: string;
@@ -236,6 +251,91 @@ export interface CrmAlerts {
       overdue: boolean;
     }
   >;
+  /** Customer-scoped follow-up calls (no equipment). Deliberately has NO day
+   * window: a call booked six months out shows the moment it is booked and
+   * stays until it is completed — booking one used to look like it did
+   * nothing for weeks. Capped at 100 rows for display. */
+  customerCallFollowUps: Array<
+    ServiceSchedule & {
+      customerId?: string;
+      customerName?: string;
+      companyName?: string;
+      overdue: boolean;
+    }
+  >;
+  /** True count of customer-scoped follow-ups, which can exceed
+   * customerCallFollowUps.length since that list is capped. */
+  customerCallFollowUpsTotal: number;
+  /** Pending board tasks whose dueDate has ARRIVED (Bangkok calendar day).
+   * Tasks with no due date, and tasks due later, are excluded on purpose —
+   * see countDueTasks() in taskStore.ts. */
+  dueTaskCount: number;
+}
+
+// ── CRM: manual task board ("post-it notes" the admin writes for himself) ────
+
+/** Allowed `task_topics.color` values. A colour is stored as one of these
+ * TOKENS, never as raw CSS/hex from the user, so nothing from the DB is ever
+ * concatenated into a class or style attribute. Unknown tokens render neutral. */
+export const TASK_TOPIC_COLORS = [
+  "blue",
+  "amber",
+  "green",
+  "rose",
+  "purple",
+  "teal",
+  "slate",
+] as const;
+export type TaskTopicColor = (typeof TASK_TOPIC_COLORS)[number];
+
+export const TASK_LINK_TARGETS = ["customer", "equipment", "quotation", "document"] as const;
+export type TaskLinkTarget = (typeof TASK_LINK_TARGETS)[number];
+
+export const TASK_STATUSES = ["pending", "done"] as const;
+export type TaskStatus = (typeof TASK_STATUSES)[number];
+
+/** A user-extensible task heading. Rows, not an enum — the owner adds his own
+ * headings over time. Retiring one is `isActive = false` (hide), never a
+ * DELETE, so the tasks filed under it survive. */
+export interface TaskTopic {
+  id: number;
+  name: string;
+  icon: string; // emoji
+  color: string; // TASK_TOPIC_COLORS token
+  sortOrder: number;
+  isActive: boolean;
+  createdAt: string;
+}
+
+/** A soft link from a task to a customer / machine / quotation / document.
+ * `label` is a SNAPSHOT taken when the link was made and is deliberately
+ * never re-synced: when the target has been deleted or purged, it is the only
+ * remaining evidence of what the task referred to. */
+export interface TaskLink {
+  taskId: string;
+  targetType: TaskLinkTarget;
+  targetId: string;
+  label: string;
+  createdAt: string;
+}
+
+export interface CrmTask {
+  id: string;
+  topicId: number;
+  title: string;
+  detail: string | null;
+  /** YYYY-MM-DD, or null — a task with no due date is a perfectly valid
+   * post-it, so this is nullable on purpose. */
+  dueDate: string | null;
+  status: TaskStatus;
+  completedAt: string | null;
+  createdAt: string;
+  // Joined display fields (present on reads). A task whose topic row is gone
+  // still loads, with the fallback heading — it is never hidden or dropped.
+  topicName?: string;
+  topicIcon?: string;
+  topicColor?: string;
+  links?: TaskLink[];
 }
 
 export interface Expense {

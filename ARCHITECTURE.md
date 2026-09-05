@@ -178,7 +178,7 @@ manual auth checks — that's the duplication this replaced.
 | `GET /api/auth/me`, `POST /api/auth/login`/`logout` | `POST /api/upload`, `DELETE /api/upload/delete` | |
 | `POST /api/contact` (sends email)               | all `/api/quotations/**` (GET/POST/[id]/docnos) | `cleanup` = **cron** (`CRON_SECRET`) |
 | `GET /api/health`                               | `GET`/`PUT /api/settings/contact-email` | |
-| —                                               | all `/api/admin/**`, incl. `POST`/`GET /api/admin/sales` + `[id]/items` and `GET /api/admin/equipments/serial-check` (§8a) | |
+| —                                               | all `/api/admin/**`, incl. `POST`/`GET /api/admin/sales` + `[id]/items` and `GET /api/admin/equipments/serial-check` (§8a), plus the task board's `/api/admin/tasks/**` + `/api/admin/task-topics/**` (§8c) | |
 
 > History note: content + upload mutations were originally **unauthenticated**
 > (only the client UI was gated). They now call `requireAuth()` server-side. Keep
@@ -371,6 +371,70 @@ Product cost lives on the **line item**, and only there:
   a `withTransaction` retry), and `recalcCostAmount` / `recalcSaleTotals`
   re-derive the cached totals under `SELECT … FOR UPDATE` on the sale row.
 
+### 8c. The manual task board (schema v35) — not an alert
+The alert feed shows only what the *system* computed. The board that shares the
+`/crm/alerts` page is the opposite: post-it notes the owner writes for himself
+("โทรหาเจ้านี้", "ทำใบเสนอราคาให้เจ้านั้น"). Nothing on it is ever created,
+completed or deleted by the system, it is not part of the alert tab strip, and
+it **never writes to `alert_snoozes`** — a task has no snooze. Store:
+[`app/lib/taskStore.ts`](./app/lib/taskStore.ts); UI: `TaskBoardSection` /
+`TaskFormModal` / `TaskLinkChips` / `TaskTopicManagerModal`.
+
+Three tables, **no foreign key on any of them**:
+
+| Table | Key | Indexes |
+| ----- | --- | ------- |
+| `task_topics` | `id INT` PK | `idx_tt_active_sort (isActive, sortOrder)` — "active topics in the order the admin arranged" |
+| `crm_tasks` | `id VARCHAR(36)` PK | `idx_ct_status_due (status, dueDate)` (the bell's count), `idx_ct_topic (topicId)` (the topic filter), `idx_ct_createdAt` (ordering the undated tasks) |
+| `task_links` | composite PK `(taskId, targetType, targetId)` | `idx_tl_target (targetType, targetId)` |
+
+- Topics are **rows, not an enum** — the owner adds/renames/recolours/reorders
+  them at runtime. `color` stores a **token** (`blue`, `amber`, …) that the UI
+  maps to a class; a raw CSS value from a user must never reach a `class`/`style`
+  attribute. Retiring a topic is `isActive = 0`; `DELETE` is refused (400,
+  `TopicInUseError`) while any task — pending *or* done — still references it.
+  The five default topics are seeded only while the table is **entirely empty**,
+  so a deploy never resurrects a deleted topic or re-asserts a renamed one.
+- `crm_tasks.dueDate` is **nullable on purpose**: "call this customer back
+  sometime" is a complete task. Listing order is overdue → due today → due later
+  → undated (newest first).
+- `task_links.targetType` ∈ `TASK_LINK_TARGETS` (`customer` | `equipment` |
+  `quotation` | `document`), keyed exactly like `alert_snoozes
+  (alertType, referenceId)`.
+
+**Why the links are soft, `taskId` included.** Link targets die independently of
+the task: quotations are hard-deleted by the 2-year retention cron (§8), so an FK
+on `targetId` would either block that purge or (with `ON DELETE CASCADE`) destroy
+the link — and with it the only record of what the task was about. A link must
+never take a task down with it. The same reasoning already governs
+`sales_records.quotationId` (§8a). Leaving `taskId` unconstrained too keeps **one
+rule for the whole table** and costs exactly one explicit DELETE: `deleteTask`
+drops that task's own link rows inside the same `withTransaction`. Nothing here
+is ever cleaned up automatically — a link whose target has been purged is
+**kept** and rendered as "ถูกลบแล้ว".
+
+**`label` is a snapshot taken at link time and is deliberately never re-synced.**
+Display prefers the target's *current* name while the target still exists and
+falls back to the stored label once it is gone. That fallback is the entire
+point: it is what keeps a chip readable after its target has been deleted or
+purged. Do not "fix" it into a live lookup.
+
+| Route (all `requireAuth()`) | What it does |
+| --------------------------- | ------------ |
+| `GET /api/admin/tasks` | board listing, `?topicId=&status=&limit=`, each task's links attached. Filtering is a **view** — it writes nothing |
+| `POST /api/admin/tasks` | create a task **plus all of its links** in one transaction. The topic must exist and still be active |
+| `PATCH /api/admin/tasks/[id]` | edit fields, flip `status` (done/pending), and/or **replace the whole link set**. An absent field is left alone; `dueDate: null`/`""` clears it |
+| `DELETE /api/admin/tasks/[id]` | permanent, confirm-gated in the UI; drops this task's link rows in the same transaction and never touches the targets |
+| `GET /api/admin/task-topics` | active topics (`?includeHidden=1` for the manage-topics modal) |
+| `POST /api/admin/task-topics` · `PATCH /api/admin/task-topics/[id]` | add / rename / re-emoji / recolour / hide-restore (`isActive`) |
+| `PATCH /api/admin/task-topics/reorder` | the whole new order in one transaction; unknown ids are ignored so a stale tab can't break it. The static segment wins over the sibling `[id]` route |
+
+`GET /api/admin/alerts` gained three keys and **kept every old one**:
+`customerCallFollowUps` (capped at 100 rows for display),
+`customerCallFollowUpsTotal` (the true count) and `dueTaskCount`. The last is
+composed in the route from `countDueTasks()` — `crmStore` must not learn about
+the board.
+
 ### 9. Email (contact form) + lead persistence
 [`app/lib/mailer.ts`](./app/lib/mailer.ts) sends via SMTP (`nodemailer`, Gmail by
 default). The public `POST /api/contact` **persists the lead to `contact_messages`
@@ -463,7 +527,9 @@ components.
   `billing_documents`, `customer_equipments`, `service_schedules`,
   `service_logs`, `sales_records`, **`sales_record_items`** (v33 — one row per
   product line under a sale, see §8a), `sale_cost_items`, `expenses`,
-  `recurring_expenses`, `alert_snoozes`.
+  `recurring_expenses`, `alert_snoozes`, plus the manual task board (v35) —
+  **`task_topics`**, **`crm_tasks`**, **`task_links`** (see §8c; `task_links`
+  has a composite PK and, like the rest of that group, no foreign keys).
 
 > ⚠️ The seed inserts an `admin` user (id `admin-001`) from `ADMIN_USERNAME` /
 > `ADMIN_PASSWORD` (env, **not** source) — but only if the row doesn't already
@@ -618,3 +684,67 @@ Tackle in small, verifiable steps — the test suite is now a safety net for the
 - **No upper bound, unlike warranty alerts:** the `nearingCalibration` query in `getAlerts()` (`app/lib/crmStore.ts`) has only a lower bound (`DATE_ADD(calibrationDate, INTERVAL 10 MONTH) <= today`). Warranty alerts stop firing once `status = 'Expired'`, but nothing marks a calibration "handled" except recording a new `calibrationDate` — so once overdue, it must keep alerting indefinitely (shown as "เลยกำหนดสอบเทียบ" in `app/crm/alerts/page.tsx`) rather than silently disappearing after some window.
 - The due date shown to admins (`calibrationDueDate()` helper in `app/crm/alerts/page.tsx`) is `calibrationDate + CALIBRATION_VALIDITY_MONTHS` (12 months, via `addMonthsToDateString()` in `app/lib/dateFormat.ts`) — this is the true due date the customer sees, not the 10-month alert-trigger point. Don't conflate the two when touching this UI.
 - Related but separate: `declineWarrantyRenewal()` in `crmStore.ts` is a warranty-only flow (flips equipment `status` to `Expired` + appends a note) triggered from the warranty alert card in `app/crm/alerts/page.tsx`. It has no calibration equivalent — a calibration alert can only be cleared by entering a new `calibrationDate`.
+
+**2. The schedule alert is now TWO categories, split by scope**
+`getAlerts()` runs the same joined SELECT (`SCHEDULE_ALERT_SELECT`) twice; the
+two feeds differ **only** in their `WHERE` clause:
+
+| Key | Rows | Window |
+| --- | ---- | ------ |
+| `upcomingSchedules` | `s.equipmentId IS NOT NULL`, pending | due within `scheduleDays` (default 7, `?scheduleDays=` widens **this one only**) or already overdue — unchanged behaviour |
+| `customerCallFollowUps` | `s.equipmentId IS NULL AND s.customerId IS NOT NULL`, pending | **none at all** — capped at 100 rows, with `customerCallFollowUpsTotal` carrying the true count |
+
+- **Why they differ:** an equipment-scoped visit is service work that only
+  becomes actionable near its date, so a window keeps the grid readable. A
+  customer follow-up call booked six months out is a promise made to a customer
+  and has to be visible the moment it is booked — under the old shared 7-day
+  window, booking one looked like it had done nothing.
+- The split is by **scope, not `scheduleType`**: a `phone_call` booked against a
+  machine stays in the equipment feed on the 7-day window.
+- ⚠️ **Both feeds still snooze under `alertType = "schedule"`** — one shared
+  `LEFT JOIN alert_snoozes`. Keep it that way. Giving the customer-scoped feed
+  its own alertType would silently **un-snooze** every call an admin had already
+  snoozed, because those existing rows are keyed on `"schedule"`.
+- Both mark `overdue = scheduledDate < today` (Bangkok date), so a future call is
+  shown but is not overdue.
+
+**3. What the bell actually counts**
+`GlobalAdminBell` sums these keys from `GET /api/admin/alerts`, each read
+defensively (a missing key counts as 0 — a tab left open across a deploy is still
+talking to the old build):
+`expiringWarranties` + `nearingCalibration` + `upcomingSchedules` +
+`incompleteEquipmentsTotal` + `missingDocuments` + `customerCallFollowUpsTotal` +
+`dueTaskCount`. Where a list is capped at 100 the **total** is used, never
+`.length`.
+- `dueTaskCount` (`countDueTasks()` in `taskStore.ts`, §8c) counts **only tasks
+  whose due date has arrived** — `status = 'pending'` AND a non-empty `dueDate`
+  `<=` today in Asia/Bangkok. Undated tasks and tasks due later are excluded on
+  purpose: the bell means "act now", and a to-do list must not inflate it into a
+  number nobody trusts. That is why the API sends a count instead of a task total.
+
+**4. Equipment ownership + a per-machine warranty-alert switch (v35)**
+`customer_equipments` gained two columns:
+- `ownershipSource VARCHAR(20) NOT NULL DEFAULT 'sold_by_us'` —
+  `sold_by_us` | `customer_owned` (`EQUIPMENT_OWNERSHIP_SOURCES` in `types.ts`).
+  Descriptive metadata: it changes no alert.
+- `warrantyAlertEnabled TINYINT(1) NOT NULL DEFAULT 1` — the per-unit off switch.
+
+The migration is **additive only — no `UPDATE` of existing rows anywhere on that
+path**. Every pre-existing machine takes the defaults (`sold_by_us`, alerts on),
+which is exactly how the system behaved before the columns existed. Nothing was
+reclassified automatically, on purpose: guessing the source from
+`salesRecordId`/`quotationNumber` was rejected because plenty of units we really
+did sell were hand-entered before sales records existed and have an empty
+`salesRecordId`, so a heuristic would mislabel them as customer-owned with no way
+to tell a guess from a confirmed value. Reclassifying is a per-unit admin
+decision.
+
+> 🔎 **Debugging "why does this machine never alert?" — check
+> `warrantyAlertEnabled` first.** The `expiringWarranties` query ANDs
+> `e.warrantyAlertEnabled = 1`, so a machine that is well inside the 30-day
+> window still shows nothing when the switch is off. It silences the **warranty**
+> alert only: the calibration and incomplete-record queries deliberately ignore
+> it, so a silenced machine still surfaces there. The older suspects are still
+> worth a look after that — `status = 'Expired'` (also excluded), a live row in
+> `alert_snoozes` for `('warranty', <equipmentId>)`, or simply no
+> `warrantyEndDate`.

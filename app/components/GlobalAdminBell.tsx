@@ -28,12 +28,22 @@ export default function GlobalAdminBell() {
         const res = await fetch("/api/admin/alerts?t=" + Date.now());
         if (res.ok) {
           const data = await res.json();
+          // Every key is read defensively: a browser tab left open across a
+          // deploy can still be talking to the old build, and a missing key
+          // must count as 0 rather than turn the whole sum into NaN.
           const total =
             (data.expiringWarranties?.length || 0) +
             (data.nearingCalibration?.length || 0) +
             (data.upcomingSchedules?.length || 0) +
             (data.incompleteEquipmentsTotal ?? data.incompleteEquipments?.length ?? 0) +
-            (data.missingDocuments?.length || 0);
+            (data.missingDocuments?.length || 0) +
+            // True pending follow-up-call count, NOT customerCallFollowUps.length
+            // — that array is capped at 100 rows for display.
+            (data.customerCallFollowUpsTotal ?? data.customerCallFollowUps?.length ?? 0) +
+            // Board tasks whose due date has ARRIVED. Tasks with no due date and
+            // tasks due later are deliberately excluded — that is why the API
+            // sends a separate count instead of a task total.
+            (data.dueTaskCount ?? 0);
           setAlertsCount(total);
         }
       } catch (err) {

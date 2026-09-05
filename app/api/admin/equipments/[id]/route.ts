@@ -7,8 +7,53 @@ import {
   listSchedules,
 } from "../../../../lib/crmStore";
 import { isValidDateString } from "../../../../lib/dateFormat";
+import { EQUIPMENT_OWNERSHIP_SOURCES } from "../../../../lib/types";
 import { getSetting, setSetting } from "../../../../lib/settingsStore";
 import { recordOtpFailure, clearOtpAttempts } from "../../../../lib/otpAttempts";
+
+/**
+ * Guards the two ownership columns (spec: equipment-ownership). Returns a Thai
+ * 400 for anything outside the known values — an unrecognised source is NEVER
+ * quietly folded into the default, because "we sold it" is a claim about a real
+ * deal and the whole point of the column is telling a confirmed classification
+ * apart from a guessed one.
+ *
+ * An ABSENT field is not an error, and must not become one: this route takes
+ * partial payloads, and `updateEquipment` merges over the stored row, so
+ * omitting these two leaves the machine's own source and alert switch exactly
+ * as they were. Twin of the copy in ../route.ts — duplicated rather than
+ * shared, since a Next.js route module may only export route handlers.
+ */
+function validateOwnershipFields(
+  data: Record<string, unknown>
+): NextResponse | null {
+  if (data.ownershipSource !== undefined) {
+    const ok =
+      typeof data.ownershipSource === "string" &&
+      (EQUIPMENT_OWNERSHIP_SOURCES as readonly string[]).includes(
+        data.ownershipSource
+      );
+    if (!ok) {
+      return jsonError(
+        'ที่มาของเครื่องไม่ถูกต้อง — ต้องเป็น "เราขายเอง" (sold_by_us) หรือ "ลูกค้าซื้อมาเอง เราดูแลให้" (customer_owned) เท่านั้น',
+        400
+      );
+    }
+  }
+  if (data.warrantyAlertEnabled !== undefined) {
+    const v = data.warrantyAlertEnabled;
+    // 0/1 are accepted too: reads hand the client back the raw TINYINT(1) and
+    // the equipment form echoes the whole record straight back on save.
+    const ok = typeof v === "boolean" || v === 0 || v === 1;
+    if (!ok) {
+      return jsonError(
+        "ค่าการเตือนประกันใกล้หมดไม่ถูกต้อง — ต้องเป็นเปิด (true) หรือปิด (false) เท่านั้น",
+        400
+      );
+    }
+  }
+  return null;
+}
 
 // GET /api/admin/equipments/[id] — single equipment with joined display names.
 export const GET = withRoute(
@@ -44,6 +89,8 @@ export const PUT = withRoute(
     if (data.calibrationDate && !isValidDateString(data.calibrationDate)) {
       return jsonError("calibrationDate must be a valid date (YYYY-MM-DD)", 400);
     }
+    const ownershipError = validateOwnershipFields(data);
+    if (ownershipError) return ownershipError;
     const updated = await updateEquipment(id, data);
     if (!updated) return jsonError("ไม่พบอุปกรณ์", 404);
     return NextResponse.json(updated);

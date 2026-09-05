@@ -1,6 +1,6 @@
 "use client";
-import { useState, useEffect, Suspense } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useEffect, useRef, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "../context/AuthContext";
 import Toast from "../components/Toast";
 import Link from "next/link";
@@ -43,24 +43,118 @@ interface Salesperson {
   note: string;
 }
 
+type CustomersTab = "customers" | "companies" | "salespeople" | "equipments";
+
+// Deep-link `?tab=` values. Task-board link chips (and the dashboard's existing
+// `/customers?tab=equipment` link) are hand-written URLs, so every spelling a
+// caller might reasonably use maps to a real tab; anything else is ignored and
+// the page opens on its normal default.
+const DEEP_LINK_TABS: Record<string, CustomersTab> = {
+  customer: "customers",
+  customers: "customers",
+  company: "companies",
+  companies: "companies",
+  sales: "salespeople",
+  salesperson: "salespeople",
+  salespeople: "salespeople",
+  equipment: "equipments",
+  equipments: "equipments",
+};
+
+// Drop the deep-link parameters once they have been acted on, so closing the
+// modal (or a refresh) doesn't reopen it. Same trick as `app/suppliers/page.tsx`.
+function stripDeepLinkParams(keys: string[]) {
+  if (typeof window === "undefined") return;
+  const params = new URLSearchParams(window.location.search);
+  keys.forEach((key) => params.delete(key));
+  const qs = params.toString();
+  window.history.replaceState({}, "", window.location.pathname + (qs ? `?${qs}` : ""));
+}
+
 function CustomersInner() {
   const router = useRouter();
   const { isLoggedIn, isLoading } = useAuth();
-  const [activeTab, setActiveTab] = useState<"customers" | "companies" | "salespeople" | "equipments">("customers");
+  const searchParams = useSearchParams();
+  const [activeTab, setActiveTab] = useState<CustomersTab>("customers");
+
+  // ── Deep linking ───────────────────────────────────────────────────────────
+  // A task-board link chip points here to open one customer, or one machine's
+  // detail modal on the equipment tab. Those chips are soft links: the customer
+  // or machine they name may well have been deleted since (the whole point of
+  // `task_links` carrying no foreign keys), so a dead id must land on the normal
+  // page plus a plain notice — never an error page and never a blank screen.
+  const [deepLinkNotice, setDeepLinkNotice] = useState<string | null>(null);
+  const [pendingCustomerId, setPendingCustomerId] = useState<string | null>(null);
+  const deepLinkReadRef = useRef(false);
 
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      const params = new URLSearchParams(window.location.search);
-      if (params.get("tab") === "equipment") {
-        setActiveTab("equipments");
+    // Read once per mount: after this the URL is rewritten, and re-reading it
+    // would only fight the user's own clicking around.
+    if (deepLinkReadRef.current) return;
+    deepLinkReadRef.current = true;
+
+    const rawTab = (searchParams.get("tab") || "").trim().toLowerCase();
+    const tabFromParam = DEEP_LINK_TABS[rawTab];
+    const bareId = (searchParams.get("id") || "").trim();
+    const customerId =
+      (searchParams.get("customerId") || searchParams.get("customer") || "").trim() ||
+      (tabFromParam !== "equipments" ? bareId : "");
+    const equipmentId =
+      (searchParams.get("equipmentId") || searchParams.get("edit_eq") || "").trim() ||
+      (tabFromParam === "equipments" ? bareId : "");
+
+    // An explicit tab wins; otherwise the kind of id given picks the tab for us.
+    const tab = tabFromParam || (equipmentId ? "equipments" : customerId ? "customers" : null);
+    if (tab) setActiveTab(tab);
+
+    // Nothing to deep-link to — the page behaves exactly as it always has.
+    if (!customerId && !equipmentId) return;
+
+    // The customer list is fetched below; opening waits for it (see next effect).
+    if (customerId) setPendingCustomerId(customerId);
+
+    if (equipmentId) {
+      // `EquipmentTab` already opens a machine's detail modal from
+      // `?edit_eq=<id>&action=view`, which it reads off window.location once its
+      // own list has loaded. Normalising the URL here — synchronously, before
+      // that tab is even mounted — is what makes the friendlier `?equipmentId=`
+      // spelling work without reaching into that component.
+      if (typeof window !== "undefined") {
+        window.history.replaceState(
+          {},
+          "",
+          `${window.location.pathname}?tab=equipment&edit_eq=${encodeURIComponent(equipmentId)}&action=view`
+        );
       }
+      // That component stays silent when the id matches nothing, so confirm the
+      // machine separately: one cheap GET, purely to be able to say "ถูกลบไปแล้ว"
+      // instead of leaving the admin staring at a list that never opened.
+      (async () => {
+        try {
+          const res = await fetch(`/api/admin/equipments/${encodeURIComponent(equipmentId)}`);
+          if (res.status === 404) {
+            setDeepLinkNotice("ไม่พบเครื่องที่ลิงก์อ้างถึง (อาจถูกลบไปแล้ว) — แสดงรายการอุปกรณ์ตามปกติ");
+            // `EquipmentTab` only clears these params when it *finds* the
+            // machine, so a dead id would otherwise sit in the URL and replay
+            // this notice on every refresh. The tab itself stays.
+            stripDeepLinkParams(["equipmentId", "edit_eq", "action", "id"]);
+          }
+        } catch {
+          // A network hiccup is not proof the machine is gone: say nothing and
+          // let the equipment tab load normally.
+        }
+      })();
     }
-  }, []);
+  }, [searchParams]);
 
   const [companies, setCompanies] = useState<Company[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [salespeople, setSalespeople] = useState<Salesperson[]>([]);
   const [isLoadingData, setIsLoadingData] = useState(true);
+  // Whether `/api/customers` actually answered. A deep link that finds no
+  // matching customer means two very different things depending on this, and an
+  // empty list is not by itself proof of a failure (a fresh DB has none).
+  const [customersLoaded, setCustomersLoaded] = useState(false);
   
   const [isCompanyModalOpen, setIsCompanyModalOpen] = useState(false);
   const [isCustomerModalOpen, setIsCustomerModalOpen] = useState(false);
@@ -108,6 +202,24 @@ function CustomersInner() {
     setIsEditingCustomerNote(false);
   }, [viewingCustomer?.id]);
 
+  // Second half of the customer deep link (the reader sits at the top of this
+  // component): the id can only be matched once the customer list has arrived.
+  useEffect(() => {
+    if (!pendingCustomerId || isLoadingData) return;
+    const target = customers.find((c) => c.id === pendingCustomerId);
+    if (target) {
+      setViewingCustomer(target);
+    } else if (!customersLoaded) {
+      // Distinguish "the list never loaded" from "this customer is gone" —
+      // claiming a deletion that didn't happen would be worse than saying nothing.
+      setDeepLinkNotice("เปิดลูกค้าที่ลิงก์อ้างถึงไม่ได้ เพราะโหลดรายชื่อลูกค้าไม่สำเร็จ");
+    } else {
+      setDeepLinkNotice("ไม่พบลูกค้าที่ลิงก์อ้างถึง (อาจถูกลบไปแล้ว) — แสดงหน้ารายชื่อลูกค้าตามปกติ");
+    }
+    setPendingCustomerId(null);
+    stripDeepLinkParams(["customerId", "customer", "id"]);
+  }, [pendingCustomerId, customers, customersLoaded, isLoadingData]);
+
   const handleSaveCustomerNote = async () => {
     if (!viewingCustomer || isSavingCustomerNote) return;
     if (customerNoteDraft.length > 2000) {
@@ -145,12 +257,14 @@ function CustomersInner() {
       ]);
       if (compRes.ok) setCompanies(await compRes.json());
       if (custRes.ok) setCustomers(await custRes.json());
+      setCustomersLoaded(custRes.ok);
       if (salesRes.ok) setSalespeople(await salesRes.json());
       if (!compRes.ok || !custRes.ok || !salesRes.ok) {
         showToast("โหลดข้อมูลบางส่วนไม่สำเร็จ กรุณาลองใหม่", "error");
       }
     } catch (err) {
       console.error(err);
+      setCustomersLoaded(false);
       showToast("Error fetching data", "error");
     } finally {
       setIsLoadingData(false);
@@ -385,6 +499,23 @@ function CustomersInner() {
             </Link>
           </div>
         </div>
+
+        {/* Deep-link notice — a link chip pointed at a record that is no longer
+            here. The page itself is fine; this just explains the empty landing. */}
+        {deepLinkNotice && (
+          <div className="mb-6 flex items-start gap-3 bg-amber-50 border border-amber-200 text-amber-800 rounded-2xl px-5 py-4">
+            <span className="text-lg leading-none mt-0.5">⚠️</span>
+            <p className="flex-1 text-sm font-medium">{deepLinkNotice}</p>
+            <button
+              type="button"
+              onClick={() => setDeepLinkNotice(null)}
+              aria-label="ปิดข้อความแจ้งเตือน"
+              className="p-1 text-amber-500 hover:text-amber-700 hover:bg-amber-100 rounded-full transition-colors shrink-0"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+            </button>
+          </div>
+        )}
 
         {/* Custom Tabs */}
         <div className="flex space-x-1 bg-gray-200/50 p-1.5 rounded-2xl w-fit mb-8 shadow-inner">

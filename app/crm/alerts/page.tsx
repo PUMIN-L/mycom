@@ -1,19 +1,51 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "../../context/AuthContext";
 import Toast from "../../components/Toast";
 import ConfirmDialog from "../../components/ConfirmDialog";
+import DatePicker from "../../components/DatePicker";
 import SearchableDropdown from "../../components/SearchableDropdown";
 import type { SearchableDropdownOption } from "../../components/SearchableDropdown";
-import { CALIBRATION_VALIDITY_MONTHS, type CrmAlerts, type CustomerEquipment } from "../../lib/types";
-import { toLocalDateString, bangkokDateAtHour, bangkokDateAtHourFromNow, addMonthsToDateString } from "../../lib/dateFormat";
+import {
+  CALIBRATION_VALIDITY_MONTHS,
+  type CrmAlerts,
+  type CrmTask,
+  type CustomerEquipment,
+  type TaskTopic,
+} from "../../lib/types";
+import {
+  toLocalDateString,
+  bangkokDateString,
+  bangkokDateAtHour,
+  bangkokDateAtHourFromNow,
+  addMonthsToDateString,
+} from "../../lib/dateFormat";
+import { dueMarkerOf } from "../../lib/taskBoard";
+import { resolveAlertEditRoute } from "../../lib/alertEditRoute";
 
 // Import Modals
 import EquipmentEditModal from "../../components/modals/EquipmentEditModal";
 import EquipmentDetailsModal from "../../components/modals/EquipmentDetailsModal";
 import SalesRecordEditModal from "../../components/modals/SalesRecordEditModal";
+
+// The manual task board ("post-it notes the owner wrote for himself"). It is
+// NOT an alert: it lives in its own block below the alert grid, never in the
+// tab strip, and its cards never carry a snooze button.
+import TaskBoardSection from "../../components/TaskBoardSection";
+import TaskFormModal from "../../components/TaskFormModal";
+import TaskTopicManagerModal from "../../components/TaskTopicManagerModal";
+
+// The in-page user guide (tasks.md 18). It is opened by a boolean below and
+// nothing else — no route, no query string — so reading it never changes the
+// URL nor the alert tab the admin had selected (18.13).
+import AlertsGuidePanel from "../../components/AlertsGuidePanel";
+import {
+  ALERT_WARRANTY_DAYS,
+  ALERT_SCHEDULE_DAYS,
+  ALERT_LIST_DISPLAY_LIMIT,
+} from "../../lib/alertThresholds";
 
 /** The snooze durations, in the order the old <select> listed them. Module
  *  scope so the array identity never changes between renders. */
@@ -25,14 +57,47 @@ const SNOOZE_DAY_OPTIONS: SearchableDropdownOption[] = [
   { value: "30", label: "1 เดือน" },
 ];
 
+/** How many rows `getAlerts()` sends for the capped categories. The overflow
+ *  line under the grid quotes it, so it is not retyped in prose — and it is now
+ *  the SAME constant the query and the guide panel read (tasks.md 18.14). */
+const ALERT_ROW_CAP = ALERT_LIST_DISPLAY_LIMIT;
+
+/** "YYYY-MM-DD" → a LOCAL Date. `new Date("2026-09-05")` is UTC midnight, which
+ *  the picker would show as the 4th on any machine west of Greenwich. */
+function parseDateValue(value: string): Date | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value ?? "").trim());
+  if (!match) return null;
+  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+/** A customer-scoped follow-up call being edited in the small schedule form.
+ *  These calls have no equipment, so there is nothing to load first — the form
+ *  opens straight from the card (tasks 10.2 / 10.5). */
+interface ScheduleEditState {
+  id: string;
+  scheduledDate: string;
+  assignedToAdminId: string;
+  notes: string;
+  customerName: string;
+}
+
 export default function AlertsPage() {
   const router = useRouter();
   const { isLoggedIn, isLoading: authLoading } = useAuth();
   const [alerts, setAlerts] = useState<CrmAlerts | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  /** Thai, user-facing. Set when the WHOLE alerts payload failed. While it is
+   *  set no tab renders a count — a 0 would read as "ไม่มีรายการ", which is a
+   *  different fact from "โหลดไม่ได้" (tasks 11.16 / 11.17). */
+  const [alertsError, setAlertsError] = useState<string | null>(null);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [activeTab, setActiveTab] = useState("all");
+  /** The in-page guide. Deliberately plain local state and nothing else: it
+   *  never touches the router or `activeTab`, so opening and closing it leaves
+   *  the URL at /crm/alerts and the selected tab exactly where it was (18.13). */
+  const [isGuideOpen, setIsGuideOpen] = useState(false);
 
   // Snooze state
   const [snoozeAlertTarget, setSnoozeAlertTarget] = useState<{ type: string; id: string } | null>(null);
@@ -57,9 +122,26 @@ export default function AlertsPage() {
 
   // View Details Modal
   const [selectedAlert, setSelectedAlert] = useState<{
-    type: "schedule" | "warranty" | "calibration" | "incomplete" | "missing_doc";
+    type: "schedule" | "customer_call" | "warranty" | "calibration" | "incomplete" | "missing_doc";
     data: any;
   } | null>(null);
+
+  // Edit form for a customer-scoped follow-up call (no equipment involved).
+  const [editingSchedule, setEditingSchedule] = useState<ScheduleEditState | null>(null);
+  const [isSavingSchedule, setIsSavingSchedule] = useState(false);
+
+  // ── Task board (its own block, its own data, its own failures) ─────────────
+  // The topic list is owned HERE so the topic-manager modal can hand back a
+  // fresh, reordered set without the board refetching (TaskTopicManagerModal
+  // props). The board gets every topic, hidden ones included; the create/edit
+  // form only gets the active ones.
+  const [topics, setTopics] = useState<TaskTopic[]>([]);
+  const [topicsLoading, setTopicsLoading] = useState(true);
+  const [topicsError, setTopicsError] = useState<string | null>(null);
+  const [boardRefreshKey, setBoardRefreshKey] = useState(0);
+  const [taskModal, setTaskModal] = useState<{ task: CrmTask | null } | null>(null);
+  const [revealTask, setRevealTask] = useState<CrmTask | null>(null);
+  const [showTopicManager, setShowTopicManager] = useState(false);
 
   // "ลูกค้าไม่ต่อประกัน" confirmation
   const [declineRenewalTarget, setDeclineRenewalTarget] = useState<CustomerEquipment | null>(null);
@@ -69,34 +151,80 @@ export default function AlertsPage() {
     if (!authLoading && !isLoggedIn) router.replace("/login");
   }, [isLoggedIn, authLoading, router]);
 
-  const showToast = (message: string, type: "success" | "error") => {
+  // Stable identity: TaskBoardSection lists its callbacks in an effect's
+  // dependency array, so a fresh arrow on every render would restart its fetch
+  // in a loop.
+  const showToast = useCallback((message: string, type: "success" | "error") => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3000);
-  };
+  }, []);
+
+  const handleUnauthorized = useCallback(() => {
+    router.replace("/login");
+  }, [router]);
 
   const fetchAlerts = async () => {
     setIsLoading(true);
     try {
-      const res = await fetch("/api/admin/alerts");
+      // The windows are sent explicitly, from the same constants the guide
+      // panel renders, so "the guide quotes what this load actually asked for"
+      // stays true even if the route's defaults ever drift (tasks.md 18.14).
+      const res = await fetch(
+        `/api/admin/alerts?warrantyDays=${ALERT_WARRANTY_DAYS}&scheduleDays=${ALERT_SCHEDULE_DAYS}`
+      );
       if (res.ok) {
         setAlerts(await res.json());
+        setAlertsError(null);
       } else if (res.status === 401) {
         router.replace("/login");
       } else {
+        // Keep whatever was already on screen (a refresh that fails should not
+        // wipe a working page) and raise the banner. `alertsError` is what
+        // suppresses the counts and the "ไม่มีแจ้งเตือน 🎉" empty state.
+        setAlertsError("โหลดข้อมูลแจ้งเตือนไม่สำเร็จ");
         showToast("โหลดข้อมูลแจ้งเตือนไม่สำเร็จ", "error");
       }
     } catch (err) {
       console.error(err);
+      setAlertsError("โหลดข้อมูลแจ้งเตือนไม่สำเร็จ");
       showToast("โหลดข้อมูลแจ้งเตือนไม่สำเร็จ", "error");
     } finally {
       setIsLoading(false);
     }
   };
 
+  /** Topics for the board. Deliberately a SEPARATE request from the alerts:
+   *  when this one fails the board still lists its tasks (with a retry next to
+   *  the chips) and the alert feed is untouched — tasks.md 11.16. */
+  const fetchTopics = useCallback(async () => {
+    setTopicsLoading(true);
+    try {
+      const res = await fetch("/api/admin/task-topics?includeHidden=1");
+      if (res.status === 401) {
+        handleUnauthorized();
+        setTopicsError("เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่");
+        return;
+      }
+      if (!res.ok) throw new Error("โหลดหัวข้องานไม่สำเร็จ");
+      const data = await res.json();
+      setTopics(Array.isArray(data) ? (data as TaskTopic[]) : []);
+      setTopicsError(null);
+    } catch (err) {
+      console.error(err);
+      setTopicsError("โหลดหัวข้องานไม่สำเร็จ");
+    } finally {
+      setTopicsLoading(false);
+    }
+  }, [handleUnauthorized]);
+
   useEffect(() => {
     if (isLoggedIn) fetchAlerts();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLoggedIn]);
+
+  useEffect(() => {
+    if (isLoggedIn) fetchTopics();
+  }, [isLoggedIn, fetchTopics]);
 
   const handleComplete = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -194,31 +322,95 @@ export default function AlertsPage() {
     }
   };
 
+  /**
+   * The edit button on every alert card and in the details modal.
+   *
+   * The decision of WHERE to go lives in `resolveAlertEditRoute` (pure, unit
+   * tested — tasks 10.1-10.5 / 17.5). It exists because this used to assume
+   * every schedule has an `equipmentId` and fetched
+   * `/api/admin/equipments/undefined` for a customer-scoped call, which failed
+   * every single time. Equipment-scoped schedules keep the exact old path,
+   * failing load and all.
+   */
   const handleEditClick = async (alertTarget?: any) => {
     const target = alertTarget || selectedAlert;
-    if (!target) return;
-    
-    if (target.type === "missing_doc") {
-      setEditingSalesRecordId(target.data.id);
+    const route = resolveAlertEditRoute(target);
+
+    if (route.kind === "none") return;
+
+    if (route.kind === "sales_record") {
+      setEditingSalesRecordId(route.salesRecordId);
       setSelectedAlert(null);
-    } else if (target.type === "schedule") {
-      try {
-        const eqId = target.data.equipmentId;
-        const res = await fetch(`/api/admin/equipments/${eqId}`);
-        if (res.ok) {
-          const eq = await res.json();
-          setViewingEquipmentDetails(eq);
-          setSelectedAlert(null);
-        } else {
-          showToast("โหลดข้อมูลอุปกรณ์ไม่สำเร็จ", "error");
-        }
-      } catch {
-        showToast("โหลดข้อมูลอุปกรณ์ไม่สำเร็จ", "error");
-      }
-    } else {
-      // warranty or incomplete -> target.data IS the equipment
+      return;
+    }
+
+    if (route.kind === "schedule_form") {
+      // No equipment on this schedule — open the form directly. Nothing is
+      // fetched, so nothing can fail here.
+      setEditingSchedule({
+        id: route.scheduleId,
+        scheduledDate: target.data?.scheduledDate || "",
+        assignedToAdminId: target.data?.assignedToAdminId || "",
+        notes: target.data?.notes || "",
+        customerName: target.data?.customerName || target.data?.companyName || "ลูกค้าทั่วไป",
+      });
+      setSelectedAlert(null);
+      return;
+    }
+
+    if (route.kind === "equipment_inline") {
+      // warranty / calibration / incomplete -> target.data IS the equipment
       setEditingEquipment(target.data);
       setSelectedAlert(null);
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/admin/equipments/${encodeURIComponent(route.equipmentId)}`);
+      if (res.ok) {
+        const eq = await res.json();
+        setViewingEquipmentDetails(eq);
+        setSelectedAlert(null);
+      } else {
+        showToast("โหลดข้อมูลอุปกรณ์ไม่สำเร็จ", "error");
+      }
+    } catch {
+      showToast("โหลดข้อมูลอุปกรณ์ไม่สำเร็จ", "error");
+    }
+  };
+
+  const handleSaveSchedule = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingSchedule || isSavingSchedule) return;
+    if (!editingSchedule.scheduledDate) {
+      showToast("กรุณาระบุวันที่นัด", "error");
+      return;
+    }
+    setIsSavingSchedule(true);
+    try {
+      // Partial body on purpose: `updateSchedule` merges onto the stored row,
+      // so the fields this form does not show (type, status) keep their values.
+      const res = await fetch(`/api/admin/schedules/${editingSchedule.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          scheduledDate: editingSchedule.scheduledDate,
+          assignedToAdminId: editingSchedule.assignedToAdminId,
+          notes: editingSchedule.notes,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "บันทึกนัดหมายไม่สำเร็จ");
+      }
+      showToast("บันทึกนัดหมายสำเร็จ", "success");
+      setEditingSchedule(null);
+      fetchAlerts();
+    } catch (err) {
+      console.error(err);
+      showToast(err instanceof Error ? err.message : "บันทึกนัดหมายไม่สำเร็จ", "error");
+    } finally {
+      setIsSavingSchedule(false);
     }
   };
 
@@ -246,12 +438,27 @@ export default function AlertsPage() {
     );
   }
 
+  // Today's Asia/Bangkok calendar day — the same day the server flagged
+  // `overdue` by, so a laptop in another timezone cannot disagree with it.
+  const today = bangkokDateString(new Date());
+
+  // The follow-up-call category can be missing from an otherwise fine payload
+  // (an older deploy answering, a partially written response). That is a
+  // FAILURE of this one category, not "there are none": its tab shows a Thai
+  // message with its own retry and NO count, while the rest of the feed and the
+  // task board carry on (task 11.16).
+  const callFollowUps = Array.isArray(alerts?.customerCallFollowUps)
+    ? alerts!.customerCallFollowUps
+    : null;
+  const callFollowUpsFailed = alerts !== null && callFollowUps === null;
+
   const allAlerts = alerts
     ? [
         ...(alerts.expiringWarranties || []).map((data) => ({ type: "warranty" as const, data })),
         ...(alerts.nearingCalibration || []).map((data) => ({ type: "calibration" as const, data })),
         ...(alerts.incompleteEquipments || []).map((data) => ({ type: "incomplete" as const, data })),
         ...(alerts.upcomingSchedules || []).map((data) => ({ type: "schedule" as const, data })),
+        ...(callFollowUps || []).map((data) => ({ type: "customer_call" as const, data })),
         ...(alerts.missingDocuments || []).map((data) => ({ type: "missing_doc" as const, data })),
       ]
     : [];
@@ -260,9 +467,10 @@ export default function AlertsPage() {
   
   // Custom sort to put overdue/urgent items first
   filteredAlerts.sort((a, b) => {
-    // 1. Overdue schedules first
-    const aIsOverdue = a.type === "schedule" && a.data.overdue;
-    const bIsOverdue = b.type === "schedule" && b.data.overdue;
+    // 1. Overdue schedules first — follow-up calls included: an overdue call is
+    //    just as late as an overdue service visit.
+    const aIsOverdue = (a.type === "schedule" || a.type === "customer_call") && a.data.overdue;
+    const bIsOverdue = (b.type === "schedule" || b.type === "customer_call") && b.data.overdue;
     if (aIsOverdue && !bIsOverdue) return -1;
     if (!aIsOverdue && bIsOverdue) return 1;
 
@@ -282,14 +490,47 @@ export default function AlertsPage() {
   const incompleteTotal = alerts?.incompleteEquipmentsTotal ?? alerts?.incompleteEquipments?.length ?? 0;
   const incompleteHiddenCount = Math.max(0, incompleteTotal - (alerts?.incompleteEquipments?.length || 0));
 
-  const tabOptions = [
-    { id: "all", label: "ทั้งหมด", count: allAlerts.length - (alerts?.incompleteEquipments?.length || 0) + incompleteTotal, color: "bg-gray-100 text-gray-700" },
-    { id: "schedule", label: "กำหนดการ", count: alerts?.upcomingSchedules?.length || 0, color: "bg-blue-50 text-blue-700 border-blue-200" },
-    { id: "warranty", label: "ประกันใกล้หมด", count: alerts?.expiringWarranties?.length || 0, color: "bg-orange-50 text-orange-700 border-orange-200" },
-    { id: "calibration", label: "ใกล้ถึงกำหนดสอบเทียบ", count: alerts?.nearingCalibration?.length || 0, color: "bg-cyan-50 text-cyan-700 border-cyan-200" },
-    { id: "incomplete", label: "ข้อมูลไม่ครบ", count: incompleteTotal, color: "bg-rose-50 text-rose-700 border-rose-200" },
-    { id: "missing_doc", label: "เอกสารค้าง", count: alerts?.missingDocuments?.length || 0, color: "bg-red-50 text-red-700 border-red-200" },
+  // The TRUE number of follow-up calls, not the length of the capped array —
+  // exactly how `incompleteTotal` above works. `?? length` keeps the tab honest
+  // if an older API build answers without the total.
+  const callFollowUpsTotal = callFollowUps
+    ? alerts?.customerCallFollowUpsTotal ?? callFollowUps.length
+    : 0;
+  const callFollowUpsHiddenCount = Math.max(0, callFollowUpsTotal - (callFollowUps?.length || 0));
+
+  // `null` count = "we do not know", rendered as "–". A tab must never show 0
+  // for a list that failed to load or has not arrived yet — 0 has to keep
+  // meaning "ไม่มีรายการ" (task 11.16). A payload we DO have is still shown
+  // after a failed refresh (with the banner saying it may be stale): stale is a
+  // different thing from unknown.
+  const countOr = (value: number) => (alerts ? value : null);
+
+  const tabOptions: { id: string; label: string; count: number | null; color: string }[] = [
+    {
+      id: "all",
+      label: "ทั้งหมด",
+      // Built from the TRUE totals of the two capped categories, so that
+      // (cards on screen) + (the "และอีก N รายการ" lines under the grid) adds
+      // up to exactly this number — nothing is hidden without being counted.
+      count: countOr(
+        allAlerts.length
+          - (alerts?.incompleteEquipments?.length || 0) + incompleteTotal
+          - (callFollowUps?.length || 0) + callFollowUpsTotal
+      ),
+      color: "bg-gray-100 text-gray-700",
+    },
+    { id: "schedule", label: "กำหนดการ", count: countOr(alerts?.upcomingSchedules?.length || 0), color: "bg-blue-50 text-blue-700 border-blue-200" },
+    // Its own tone, distinct from "กำหนดการ" blue: these calls are a different
+    // category now, not a subset of the service schedules (task 9.1).
+    { id: "customer_call", label: "นัดโทรลูกค้า", count: callFollowUpsFailed ? null : countOr(callFollowUpsTotal), color: "bg-violet-50 text-violet-700 border-violet-200" },
+    { id: "warranty", label: "ประกันใกล้หมด", count: countOr(alerts?.expiringWarranties?.length || 0), color: "bg-orange-50 text-orange-700 border-orange-200" },
+    { id: "calibration", label: "ใกล้ถึงกำหนดสอบเทียบ", count: countOr(alerts?.nearingCalibration?.length || 0), color: "bg-cyan-50 text-cyan-700 border-cyan-200" },
+    { id: "incomplete", label: "ข้อมูลไม่ครบ", count: countOr(incompleteTotal), color: "bg-rose-50 text-rose-700 border-rose-200" },
+    { id: "missing_doc", label: "เอกสารค้าง", count: countOr(alerts?.missingDocuments?.length || 0), color: "bg-red-50 text-red-700 border-red-200" },
   ];
+
+  // ── Task board wiring ─────────────────────────────────────────────────────
+  const activeTopics = topics.filter((topic) => topic.isActive !== false);
 
   return (
     <div className="min-h-screen bg-gray-50/50">
@@ -317,7 +558,9 @@ export default function AlertsPage() {
               </div>
               <p className="text-sm text-gray-500 font-medium ml-13">รวมรายการที่ต้องติดตามและอัปเดต</p>
             </div>
-            <div className="flex items-center gap-3">
+            {/* flex-wrap: the guide button is a third item in this row, which
+                would otherwise push the header wider than a 360px phone. */}
+            <div className="flex flex-wrap items-center gap-3">
               {/* ปุ่มกลับไประบบจัดการ — มุมขวาบน สไตล์เดียวกับหน้า admin อื่นๆ */}
               <Link
                 href="/adminpanel"
@@ -325,6 +568,16 @@ export default function AlertsPage() {
               >
                 🏠 กลับไประบบจัดการ
               </Link>
+              {/* คู่มือการใช้งาน — เปิดอ่านได้ตลอดโดยไม่ต้องออกจากหน้านี้ */}
+              <button
+                onClick={() => setIsGuideOpen(true)}
+                className="px-4 py-2 bg-white border border-gray-200 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 hover:border-gray-300 transition-all text-sm shadow-sm flex items-center gap-2 whitespace-nowrap"
+                aria-haspopup="dialog"
+                aria-expanded={isGuideOpen}
+                title="อธิบายว่าแต่ละแจ้งเตือนขึ้นเพราะอะไร และทำอย่างไรถึงจะหายไป"
+              >
+                📖 คู่มือการใช้งาน
+              </button>
               <button
                 onClick={fetchAlerts}
                 className="px-4 py-2 bg-white border border-gray-200 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 hover:border-gray-300 transition-all text-sm shadow-sm flex items-center gap-2"
@@ -348,10 +601,15 @@ export default function AlertsPage() {
                 }`}
               >
                 {tab.label}
-                <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${
-                  activeTab === tab.id ? "bg-white/20 text-white" : tab.color
-                }`}>
-                  {tab.count}
+                <span
+                  className={`px-2 py-0.5 rounded-full text-xs font-bold ${
+                    activeTab === tab.id ? "bg-white/20 text-white" : tab.color
+                  }`}
+                  title={tab.count === null ? "ยังไม่ทราบจำนวน (โหลดไม่สำเร็จ)" : undefined}
+                >
+                  {/* "–" not 0: a failed or unfinished load must not claim the
+                      category is empty (task 11.16). */}
+                  {tab.count === null ? "–" : tab.count}
                 </span>
               </button>
             ))}
@@ -360,10 +618,60 @@ export default function AlertsPage() {
       </div>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8">
+        {/* Stale data is still on screen after a failed refresh — say so instead
+            of pretending the numbers are current (task 11.17). */}
+        {alertsError && alerts && !isLoading && (
+          <div className="mb-6 flex flex-col sm:flex-row sm:items-center gap-3 bg-red-50 border border-red-200 rounded-2xl px-5 py-4">
+            <div className="flex-1">
+              <p className="font-bold text-red-800">⚠️ {alertsError}</p>
+              <p className="text-sm text-red-700 mt-0.5">ข้อมูลที่เห็นอยู่อาจไม่ใช่ข้อมูลล่าสุด</p>
+            </div>
+            <button
+              onClick={fetchAlerts}
+              className="px-4 py-2 bg-white border border-red-200 text-red-700 font-semibold rounded-xl hover:bg-red-100 transition-all text-sm shadow-sm whitespace-nowrap self-start sm:self-auto"
+            >
+              🔄 รีเฟรช
+            </button>
+          </div>
+        )}
+
         {isLoading ? (
           <div className="flex flex-col items-center justify-center py-20 text-gray-400">
              <div className="w-10 h-10 border-4 border-gray-200 border-t-gray-500 rounded-full animate-spin mb-4"></div>
              <p className="font-medium">กำลังโหลดข้อมูล...</p>
+          </div>
+        ) : alertsError && !alerts ? (
+          /* The whole payload failed and there is nothing to fall back on.
+             Never the white screen, and never "ไม่มีแจ้งเตือน 🎉" — which would
+             claim there is nothing to do (task 11.17). */
+          <div className="bg-white rounded-3xl border border-red-100 p-16 text-center shadow-sm">
+            <div className="text-6xl mb-4 opacity-60">📡</div>
+            <h3 className="text-xl font-bold text-gray-800 mb-2">โหลดข้อมูลแจ้งเตือนไม่สำเร็จ</h3>
+            <p className="text-gray-500 mb-6">
+              ยังไม่ทราบว่ามีรายการค้างอยู่กี่รายการ กรุณาลองใหม่อีกครั้ง
+            </p>
+            <button
+              onClick={fetchAlerts}
+              className="px-6 py-2.5 bg-gray-900 text-white font-semibold rounded-xl hover:bg-gray-800 transition-all text-sm shadow-sm"
+            >
+              🔄 รีเฟรช
+            </button>
+            <p className="text-xs text-gray-400 mt-6">
+              กระดานงาน “สิ่งที่ต้องทำ” ด้านล่างยังใช้งานได้ตามปกติ
+            </p>
+          </div>
+        ) : activeTab === "customer_call" && callFollowUpsFailed ? (
+          /* Only THIS category is broken — the other tabs still work. */
+          <div className="bg-white rounded-3xl border border-violet-100 p-16 text-center shadow-sm">
+            <div className="text-6xl mb-4 opacity-60">📞</div>
+            <h3 className="text-xl font-bold text-gray-800 mb-2">โหลดรายการนัดโทรลูกค้าไม่สำเร็จ</h3>
+            <p className="text-gray-500 mb-6">หมวดอื่นยังแสดงผลได้ตามปกติ</p>
+            <button
+              onClick={fetchAlerts}
+              className="px-6 py-2.5 bg-violet-600 text-white font-semibold rounded-xl hover:bg-violet-700 transition-all text-sm shadow-sm"
+            >
+              🔄 ลองใหม่
+            </button>
           </div>
         ) : filteredAlerts.length === 0 ? (
           <div className="bg-white rounded-3xl border border-gray-100 p-16 text-center shadow-sm">
@@ -412,6 +720,66 @@ export default function AlertsPage() {
                         title="เลื่อนแจ้งเตือน"
                       >
                          ⏱️
+                      </button>
+                    </div>
+                  </div>
+                );
+              }
+
+              if (alert.type === "customer_call") {
+                // A follow-up call is NOT tied to a machine, so this card shows
+                // no product and no serial — there are none (task 9.3).
+                const isOverdue = alert.data.overdue;
+                // Future dates read as "อีก N วัน" in the category's own violet,
+                // never the red of something already late (task 9.4).
+                const marker = dueMarkerOf(alert.data.scheduledDate, today);
+                return (
+                  <div key={idx} onClick={() => setSelectedAlert(alert)} className="bg-white rounded-2xl p-5 border border-gray-100 hover:border-violet-200 hover:shadow-lg transition-all cursor-pointer group relative overflow-hidden flex flex-col">
+                    <div className={`absolute top-0 left-0 w-1 h-full ${isOverdue ? "bg-red-500" : "bg-violet-500"}`}></div>
+                    <div className="flex justify-between items-start mb-4 gap-2">
+                      <div className={`px-2.5 py-1 rounded-md text-xs font-bold flex items-center gap-1.5 ${isOverdue ? "bg-red-50 text-red-700" : "bg-violet-50 text-violet-700"}`}>
+                        📞 นัดโทรลูกค้า
+                      </div>
+                      <span className={`text-xs font-bold whitespace-nowrap ${isOverdue ? "text-red-600 bg-red-50 px-2 py-0.5 rounded-full" : "text-violet-700 bg-violet-50 px-2 py-0.5 rounded-full"}`}>
+                        {isOverdue ? "เลยกำหนด" : marker.label}
+                      </span>
+                    </div>
+
+                    <h4 className="font-bold text-gray-900 mb-1 line-clamp-1">{alert.data.customerName || "ลูกค้าทั่วไป"}</h4>
+                    {alert.data.companyName && (
+                      <p className="text-sm text-gray-500 mb-1 line-clamp-1">{alert.data.companyName}</p>
+                    )}
+                    <p className="text-xs font-semibold text-gray-600 mb-2">
+                      วันที่นัด: {alert.data.scheduledDate || "—"}
+                    </p>
+                    <p className="text-sm text-gray-500 mb-4 line-clamp-2">
+                      {alert.data.notes || "ไม่มีโน้ต"}
+                    </p>
+
+                    <div className="mt-auto pt-2 flex gap-2 w-full">
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleEditClick(alert); }}
+                        className="flex-1 px-3 py-2 bg-gray-50 text-gray-700 text-sm font-semibold rounded-xl hover:bg-gray-100 transition-colors flex items-center justify-center gap-1.5"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                        แก้ไข
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setCompletingId(alert.data.id); }}
+                        className="flex-1 px-3 py-2 bg-emerald-50 text-emerald-700 text-sm font-semibold rounded-xl hover:bg-emerald-100 transition-colors flex items-center justify-center gap-1.5"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" /></svg>
+                        เสร็จแล้ว
+                      </button>
+                      <button
+                        // alertType stays "schedule" — the SAME value the split
+                        // query still reads, so calls snoozed before this change
+                        // are still snoozed (task 9.5).
+                        onClick={(e) => { e.stopPropagation(); setSnoozeAlertTarget({ type: "schedule", id: alert.data.id }); }}
+                        className="px-3 py-2 bg-amber-50 text-amber-700 text-sm font-semibold rounded-xl hover:bg-amber-100 transition-colors flex items-center justify-center gap-1.5"
+                        title="เลื่อนแจ้งเตือน"
+                      >
+                        ⏱️
                       </button>
                     </div>
                   </div>
@@ -563,9 +931,48 @@ export default function AlertsPage() {
         )}
         {(activeTab === "all" || activeTab === "incomplete") && incompleteHiddenCount > 0 && (
           <p className="text-center text-sm text-gray-500 mt-6">
-            และอีก {incompleteHiddenCount} รายการที่ข้อมูลไม่ครบ (แสดงผลสูงสุด 100 รายการ)
+            และอีก {incompleteHiddenCount} รายการที่ข้อมูลไม่ครบ (แสดงผลสูงสุด {ALERT_ROW_CAP} รายการ)
           </p>
         )}
+        {/* Same treatment as ข้อมูลไม่ครบ: the category has no date window, so
+            the backlog can be long. Say how much is over the cap instead of
+            quietly dropping it (task 9.8). */}
+        {(activeTab === "all" || activeTab === "customer_call") && callFollowUpsHiddenCount > 0 && (
+          <p className="text-center text-sm text-gray-500 mt-3">
+            และอีก {callFollowUpsHiddenCount} รายการนัดโทรลูกค้า (แสดงผลสูงสุด {ALERT_ROW_CAP} รายการ)
+          </p>
+        )}
+        {/* On "ทั้งหมด" the missing call cards would otherwise be invisible. */}
+        {activeTab === "all" && callFollowUpsFailed && !isLoading && (
+          <p className="text-center text-sm text-gray-500 mt-3">
+            ⚠️ โหลดรายการ “นัดโทรลูกค้า” ไม่สำเร็จ จึงยังไม่แสดงในหน้านี้{" "}
+            <button onClick={fetchAlerts} className="font-semibold text-violet-700 underline underline-offset-2 hover:text-violet-800">
+              ลองใหม่
+            </button>
+          </p>
+        )}
+
+        {/* ── กระดานงานที่บันทึกเอง ───────────────────────────────────────────
+            A SEPARATE block, deliberately outside the alert grid above and
+            outside every branch of it: it is not an alert, it is not a tab, and
+            it stays in the same place no matter which alert tab is selected —
+            including while the alert feed is loading or has failed entirely
+            (tasks 11.1-11.3, 11.16). */}
+        <div className="mt-10 pt-8 border-t border-gray-200">
+          <TaskBoardSection
+            topics={topics}
+            topicsLoading={topicsLoading}
+            topicsError={topicsError}
+            onRetryTopics={fetchTopics}
+            onCreateTask={() => setTaskModal({ task: null })}
+            onEditTask={(task) => setTaskModal({ task })}
+            onManageTopics={() => setShowTopicManager(true)}
+            refreshKey={boardRefreshKey}
+            revealTask={revealTask}
+            onToast={showToast}
+            onUnauthorized={handleUnauthorized}
+          />
+        </div>
       </div>
 
       {/* ── Complete Schedule Modal ─────────────────────────────────────── */}
@@ -765,17 +1172,25 @@ export default function AlertsPage() {
                   <div className="text-gray-500 mb-1">บริษัท</div>
                   <div className="font-semibold text-gray-800">{selectedAlert.data.companyName || "—"}</div>
                 </div>
-                <div className="col-span-2">
-                  <div className="text-gray-500 mb-1">สินค้า</div>
-                  <div className="font-semibold text-gray-800" dangerouslySetInnerHTML={{ __html: selectedAlert.data.productName || "—" }} />
-                </div>
-                
-                {selectedAlert.type === "schedule" && (
+                {/* A customer-scoped call has no machine behind it, so there is
+                    no product row to show (task 9.3). */}
+                {selectedAlert.type !== "customer_call" && (
+                  <div className="col-span-2">
+                    <div className="text-gray-500 mb-1">สินค้า</div>
+                    <div className="font-semibold text-gray-800" dangerouslySetInnerHTML={{ __html: selectedAlert.data.productName || "—" }} />
+                  </div>
+                )}
+
+                {(selectedAlert.type === "schedule" || selectedAlert.type === "customer_call") && (
                   <>
                     <div>
                       <div className="text-gray-500 mb-1">ประเภท</div>
                       <div className="font-semibold text-gray-800">
-                        {selectedAlert.data.scheduleType === "service" ? "Service" : "โทรติดตาม"}
+                        {selectedAlert.type === "customer_call"
+                          ? "นัดโทรลูกค้า"
+                          : selectedAlert.data.scheduleType === "service"
+                            ? "Service"
+                            : "โทรติดตาม"}
                       </div>
                     </div>
                     <div>
@@ -950,7 +1365,124 @@ export default function AlertsPage() {
           }}
         />
       )}
-      
+
+      {/* ── Edit a customer-scoped follow-up call ───────────────────────────
+          The whole point of the fix in `handleEditClick`: this form opens with
+          no equipment request at all, because there is no equipment. */}
+      {editingSchedule && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm animate-in fade-in" onClick={() => !isSavingSchedule && setEditingSchedule(null)}>
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden animate-in zoom-in-95" onClick={(e) => e.stopPropagation()}>
+            <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
+              <h2 className="text-lg font-bold text-gray-800">📞 แก้ไขนัดโทรลูกค้า</h2>
+              <button
+                onClick={() => setEditingSchedule(null)}
+                className="p-2 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            <form onSubmit={handleSaveSchedule} className="p-6 space-y-4">
+              <div>
+                <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">ลูกค้า</div>
+                <div className="font-semibold text-gray-800">{editingSchedule.customerName}</div>
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">วันที่นัด <span className="text-red-500">*</span></label>
+                {/* Project rule: dates use DatePicker, never a native control. */}
+                <DatePicker
+                  selected={parseDateValue(editingSchedule.scheduledDate)}
+                  onChange={(date) =>
+                    setEditingSchedule((prev) =>
+                      prev ? { ...prev, scheduledDate: date ? toLocalDateString(date) : "" } : prev
+                    )
+                  }
+                  placeholderText="เลือกวันที่นัด"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">ผู้รับผิดชอบ</label>
+                <input
+                  type="text"
+                  value={editingSchedule.assignedToAdminId}
+                  onChange={(e) =>
+                    setEditingSchedule((prev) => (prev ? { ...prev, assignedToAdminId: e.target.value } : prev))
+                  }
+                  className="w-full px-4 py-2 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500"
+                  placeholder="ชื่อผู้ที่จะโทรหาลูกค้า"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">โน้ต</label>
+                <textarea
+                  value={editingSchedule.notes}
+                  onChange={(e) =>
+                    setEditingSchedule((prev) => (prev ? { ...prev, notes: e.target.value } : prev))
+                  }
+                  rows={3}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 resize-y"
+                  placeholder="เรื่องที่ต้องคุยกับลูกค้า..."
+                />
+              </div>
+              <div className="pt-2 flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setEditingSchedule(null)}
+                  className="px-5 py-2.5 text-gray-600 font-medium hover:bg-gray-100 rounded-xl transition-colors"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingSchedule}
+                  className="px-6 py-2.5 bg-violet-600 hover:bg-violet-700 text-white font-semibold rounded-xl shadow-sm disabled:opacity-50 transition-colors"
+                >
+                  {isSavingSchedule ? "กำลังบันทึก..." : "บันทึกข้อมูล"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── Task board modals ───────────────────────────────────────────────
+          `revealTask` is what makes a save visible: the board switches to the
+          view/filter that shows it and says which topic it landed under. */}
+      {taskModal && (
+        <TaskFormModal
+          task={taskModal.task}
+          topics={activeTopics}
+          onClose={() => setTaskModal(null)}
+          onSaved={(task) => {
+            setTaskModal(null);
+            setRevealTask(task);
+            showToast("บันทึกงานสำเร็จ", "success");
+          }}
+        />
+      )}
+
+      {showTopicManager && (
+        <TaskTopicManagerModal
+          initialTopics={topics}
+          onClose={() => setShowTopicManager(false)}
+          onTopicsChanged={(next) => setTopics(next)}
+          // A rename or recolour rewrites no task row, but every card displays
+          // it — so the list has to be re-pulled.
+          onSaveSuccess={() => setBoardRefreshKey((key) => key + 1)}
+        />
+      )}
+
+      {/* ── คู่มือการใช้งาน ─────────────────────────────────────────────────
+          Rendered last so it sits above every other layer, and fed the exact
+          windows this page requested from /api/admin/alerts — the guide quotes
+          those, never a number typed into its own text (tasks.md 18.14). */}
+      {isGuideOpen && (
+        <AlertsGuidePanel
+          warrantyDays={ALERT_WARRANTY_DAYS}
+          scheduleDays={ALERT_SCHEDULE_DAYS}
+          onClose={() => setIsGuideOpen(false)}
+        />
+      )}
+
     </div>
   );
 }
