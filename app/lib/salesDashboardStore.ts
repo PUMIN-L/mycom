@@ -256,13 +256,31 @@ export async function getSalesRecord(id: string): Promise<SalesRecord | null> {
   );
   const record = (rows && rows[0] as SalesRecord) || null;
   if (record) {
+    // `equipments` carries the ROW ID of each machine, in the same order as the
+    // flat `serialNumbers` list the legacy sale form renders. The edit form
+    // sends those ids back on save, which is what keeps every box bound to the
+    // machine it was loaded from (pass 0 in `runEquipmentSync`) instead of to
+    // whatever position it happens to sit in. `serialNumbers` is kept as it
+    // was — ViewRecordModal and the form's own inputs read it.
+    // `id ASC` breaks the tie when two machines were inserted in the same
+    // millisecond: `createdAt` is a VARCHAR ISO string, so without it the two
+    // reads that define "position" could disagree with each other.
     const result = await query<RowDataPacket[]>(
-      `SELECT serialNumber FROM customer_equipments WHERE salesRecordId = ? ORDER BY createdAt ASC`,
+      `SELECT id, serialNumber, productId, productName FROM customer_equipments
+        WHERE salesRecordId = ? ORDER BY createdAt ASC, id ASC`,
       [id]
     );
     if (result && Array.isArray(result[0])) {
-      record.serialNumbers = result[0].map((eq: any) => eq.serialNumber);
+      const machines = result[0].map((eq: any) => ({
+        id: String(eq.id || ""),
+        serialNumber: String(eq.serialNumber || ""),
+        productId: String(eq.productId || ""),
+        productName: String(eq.productName || ""),
+      }));
+      record.equipments = machines;
+      record.serialNumbers = machines.map((eq) => eq.serialNumber);
     } else {
+      record.equipments = [];
       record.serialNumbers = [];
     }
   }

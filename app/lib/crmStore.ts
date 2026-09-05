@@ -215,6 +215,13 @@ const MAX_EQUIPMENT_ROWS = 50;
  * whatever a row leaves out falls back to the sale-level `shared` template, so
  * a single-model bill can still be described with bare serials. */
 export interface EquipmentRowInput {
+  /** The `customer_equipments.id` this submitted machine ALREADY is, when the
+   * caller loaded it from this sale (the sale edit form does). It is a
+   * SELECTOR, never an address: the sync only ever looks it up among the rows
+   * already linked to this sales record, so an id belonging to another sale (or
+   * to nothing at all) is ignored and the row falls back to serial/position
+   * matching. It is never written — an INSERT always mints its own id. */
+  id?: string;
   serialNumber: string;
   productId?: string;
   productName?: string;
@@ -243,7 +250,20 @@ function productGroupKey(productId: string | undefined): string {
   return id === "_custom" ? "" : id;
 }
 
-type ResolvedRow = { group: string; data: Partial<CustomerEquipment> };
+type ResolvedRow = {
+  group: string;
+  data: Partial<CustomerEquipment>;
+  /** The existing row this submission claims to BE, if the caller knew it.
+   * Deliberately kept OUT of `data`: `cleanEquipment` must never see it, so it
+   * cannot reach the INSERT column list and let a caller dictate a primary key. */
+  existingId?: string;
+  /** True when this row named no model of its own and took the sale-level one.
+   * An inherited model is an assumption, not a statement about the machine. */
+  inheritsProduct: boolean;
+  /** Same for the warranty dates: nothing per-machine was submitted, so the
+   * bill-level pair is all we have. */
+  inheritsWarrantyDates: boolean;
+};
 
 /** Merge one submitted machine over the sale-level template. A row that names
  * its own model owns BOTH product fields, so a P2 machine in a mixed bill can
@@ -257,6 +277,10 @@ function resolveEquipmentRow(
   const productId = ownsProduct ? row.productId || "" : shared.productId || "";
   return {
     group: productGroupKey(productId),
+    existingId: String(row.id || "").trim() || undefined,
+    inheritsProduct: !ownsProduct,
+    inheritsWarrantyDates:
+      row.warrantyStartDate === undefined && row.warrantyEndDate === undefined,
     data: {
       ...shared,
       salesRecordId,
@@ -288,17 +312,72 @@ async function runEquipmentSync(
   rows: ResolvedRow[]
 ): Promise<void> {
   const [existingRows] = await conn.query(
-    `SELECT id, serialNumber FROM customer_equipments WHERE salesRecordId = ? ORDER BY createdAt ASC`,
+    `SELECT id, serialNumber FROM customer_equipments WHERE salesRecordId = ? ORDER BY createdAt ASC, id ASC`,
     [salesRecordId]
   );
-  const existingEqs = (Array.isArray(existingRows) ? existingRows : []) as {
-    id: string;
-    serialNumber: string;
-  }[];
+  // `id` is normalized to a string HERE, once, so every later comparison,
+  // Set membership and bound parameter sees the same type. Pass 0 matches ids
+  // with `===`; a driver that ever handed back a non-string id (or a row with
+  // no id at all) would otherwise fail that match silently and drop the machine
+  // into the POSITIONAL pass — i.e. bind it to whichever row happened to be
+  // next — which is exactly the wrong-machine rebind this whole function
+  // exists to prevent. A row with no usable id is dropped: nothing can be
+  // matched, updated or unlinked by `WHERE id = ''` anyway.
+  const existingEqs = (Array.isArray(existingRows) ? existingRows : [])
+    .filter((r): r is Record<string, unknown> => !!r && typeof r === "object")
+    .map((r) => ({
+      id: String(r.id ?? "").trim(),
+      serialNumber: (r.serialNumber ?? "") as string,
+    }))
+    .filter((r) => r.id !== "");
 
   const existingUsed = new Set<string>();
   const wantedUsed = new Set<number>();
   const pairs: { existingId: string; row: ResolvedRow }[] = [];
+  /** Submitted slots that named a machine of THIS sale which another slot had
+   * already claimed — a self-contradictory payload. See pass 0. */
+  const contradictedIdRows = new Set<number>();
+
+  // Pass 0 — ROW IDENTITY, the strongest claim there is: the caller loaded this
+  // machine from this very sale and is handing its row id back. It outranks the
+  // serial pass (a serial can be blank, mistyped, or typed into the wrong box —
+  // the id cannot) and the positional pass (which is a guess about order).
+  //
+  // The id is matched ONLY inside `existingEqs`, which the SELECT above already
+  // restricted to `salesRecordId = ?`. An id from another sale, a deleted row,
+  // or a hostile client simply is not in that array: the row then falls through
+  // to pass 1 and pass 2 exactly as if no id had been sent. There is no
+  // `UPDATE ... WHERE id = ?` reachable from a caller-supplied id, and nothing
+  // here ever inserts a row with one.
+  for (let i = 0; i < rows.length; i++) {
+    const wantedId = rows[i].existingId;
+    if (!wantedId) continue;
+    const match = existingEqs.find((eq) => !existingUsed.has(eq.id) && eq.id === wantedId);
+    if (match) {
+      // `existingUsed` is what makes the same id submitted twice pair only
+      // once — the second occurrence finds it taken and falls through.
+      existingUsed.add(match.id);
+      wantedUsed.add(i);
+      pairs.push({ existingId: match.id, row: rows[i] });
+    } else if (existingEqs.some((eq) => eq.id === wantedId)) {
+      // The id IS one of this sale's machines, but an earlier slot already
+      // claimed it: the payload says two different boxes are the same physical
+      // machine, which cannot be true. A claim we know to be broken must not be
+      // rewarded with SOMEONE ELSE'S row — letting this slot into the positional
+      // pass would hand it whichever machine is next in line and stamp that
+      // machine with this slot's serial, silently moving a real unit's service
+      // history. It still gets the SERIAL pass (a serial is its own identity
+      // claim, independent of the bad id); with no serial match it becomes a
+      // NEW row instead, and the machine it would have overwritten is unlinked,
+      // never deleted — its history stays intact under the customer.
+      //
+      // A FOREIGN id — one that names no machine of this sale (another sale, a
+      // deleted row, a stale tab) — is deliberately NOT treated this way: it
+      // asserts nothing about this sale, so it degrades to serial-then-position
+      // exactly as a payload with no ids at all always has.
+      contradictedIdRows.add(i);
+    }
+  }
 
   // Pass 1 — identity match: pair a submitted serial to the existing row
   // that already has that exact (normalized) serial. This is what keeps a
@@ -319,19 +398,27 @@ async function runEquipmentSync(
   }
 
   const remainingExisting = existingEqs.filter((eq) => !existingUsed.has(eq.id));
+  /** Slots the POSITIONAL pass may still fill. A contradicted-id slot is
+   * excluded (it is going to insert), so it can neither be handed a machine nor
+   * drag an extra product group into the grouped-fallback decision below. */
+  const positionalCandidate = (i: number) =>
+    !wantedUsed.has(i) && !contradictedIdRows.has(i);
   const unpairedGroups = new Set(
-    rows.filter((_, i) => !wantedUsed.has(i)).map((r) => r.group)
+    rows.filter((_, i) => positionalCandidate(i)).map((r) => r.group)
   );
 
-  // Positional fallback has to stay INSIDE one product group, or two models in
-  // the same bill trade rows while their serials are still blank. Which model
-  // each existing row holds is only worth reading when the leftovers actually
-  // span more than one group — a single-model bill pairs positionally as it
-  // always has.
+  // Which model each existing row holds. Read when EITHER
+  //  (a) the positional fallback below needs it — leftovers spanning more than
+  //      one product group would otherwise trade rows while serials are blank; or
+  //  (b) some submitted row inherited its model/warranty from the sale-level
+  //      template, in which case we have to know whether that one template can
+  //      honestly describe these machines at all (see `saleIsMixedModel`).
+  const groupedFallbackNeeded = unpairedGroups.size > 1 && remainingExisting.length > 0;
+  const inheritsTemplate = rows.some((r) => r.inheritsProduct || r.inheritsWarrantyDates);
   let modelById: Map<string, string> | null = null;
-  if (unpairedGroups.size > 1 && remainingExisting.length > 0) {
+  if (existingEqs.length > 0 && (groupedFallbackNeeded || inheritsTemplate)) {
     const [modelRows] = await conn.query(
-      `SELECT id, productId FROM customer_equipments WHERE salesRecordId = ? ORDER BY createdAt ASC`,
+      `SELECT id, productId FROM customer_equipments WHERE salesRecordId = ? ORDER BY createdAt ASC, id ASC`,
       [salesRecordId]
     );
     if (Array.isArray(modelRows) && modelRows.every((r) => r && typeof r.id === "string")) {
@@ -344,13 +431,29 @@ async function runEquipmentSync(
     }
   }
 
+  // Does this sale's machine list hold MORE THAN ONE model? If it does, the
+  // sale-level template — one product, one warranty pair, which is all the
+  // legacy sale form can express — is a statement about the bill's MAIN line,
+  // not about each machine. Stamping it over every row is how a ตู้อบ ends up
+  // filed as a เครื่องวัด with the wrong warranty (see the UPDATE below).
+  // Unknown (no rows read, or a driver that answered something unexpected) is
+  // treated as NOT mixed, i.e. exactly today's behaviour.
+  const saleIsMixedModel = modelById ? new Set(modelById.values()).size > 1 : false;
+
   // Pass 2 — positional fallback for whatever's left (blank serials, or a
   // serial with no existing match): pair remaining submitted slots with
   // remaining existing rows in original order. Preserves the old behavior
   // for equipment that has no serial yet, so unrelated edits don't spawn
   // duplicate rows.
+  //
+  // The per-group queues are used ONLY when the leftovers genuinely span more
+  // than one group (`groupedFallbackNeeded`). `modelById` is now read in more
+  // cases than that, and grouping a single-group submission by the EXISTING
+  // rows' models would refuse to pair a template-model row with a machine of
+  // another model — inserting a duplicate and unlinking the original instead.
+  const useGroupedFallback = groupedFallbackNeeded && modelById !== null;
   const queues = new Map<string, { id: string; serialNumber: string }[]>();
-  if (modelById) {
+  if (useGroupedFallback && modelById) {
     for (const eq of remainingExisting) {
       const g = modelById.get(eq.id) ?? "";
       const q = queues.get(g);
@@ -360,9 +463,9 @@ async function runEquipmentSync(
   }
   let cursor = 0;
   for (let i = 0; i < rows.length; i++) {
-    if (wantedUsed.has(i)) continue;
+    if (!positionalCandidate(i)) continue;
     let eq: { id: string; serialNumber: string } | undefined;
-    if (modelById) {
+    if (useGroupedFallback) {
       eq = queues.get(rows[i].group)?.shift();
     } else if (cursor < remainingExisting.length) {
       eq = remainingExisting[cursor++];
@@ -374,35 +477,56 @@ async function runEquipmentSync(
   }
 
   // Update every matched row with ITS OWN machine data — never another row's.
-  // warrantyType is the one field an update may not blank: it is optional here
-  // but free-text-editable in EquipmentEditModal, so a submission that omits it
-  // (COALESCE/NULLIF → the column keeps its current value) must never erase a
-  // warranty someone typed by hand. Same param count/order as before.
-  // ownershipSource/warrantyAlertEnabled are deliberately ABSENT from this
-  // UPDATE: re-saving a sale must not reclassify a machine an admin has since
-  // marked "customer_owned", nor re-arm a warranty alert they switched off.
-  // Those two are only ever set on INSERT (defaults) or from the equipment form.
+  //
+  // A sale save may not erase what the sale form cannot describe:
+  //  • warrantyType and warrantyCertNumber are free-text, hand-edited in
+  //    EquipmentEditModal, and the sale form has no field for either (the sale
+  //    routes send a literal ""). A blank therefore means "no opinion", not
+  //    "erase": COALESCE/NULLIF keeps whatever the column holds.
+  //  • productId/productName/warrantyStartDate/warrantyEndDate are dropped from
+  //    the statement entirely for a row that INHERITED them from the sale-level
+  //    template on a bill whose machines are NOT all one model. One product and
+  //    one warranty pair cannot describe a mixed bill, so the sale's main-line
+  //    values must not be stamped over a machine of a different model. A row
+  //    that submits its own model/dates always writes them, and a genuine
+  //    single-model sale is untouched by this rule — changing the product there
+  //    still updates every machine on the bill.
+  //  • status is gone from the UPDATE for the same reason ownershipSource and
+  //    warrantyAlertEnabled are: the sale form has no such field, both sale
+  //    routes hardcode "Active", and writing it would silently resurrect a
+  //    machine that `declineWarrantyRenewal` (or an admin) marked Expired and
+  //    push it back into the warranty-expiry alert feed. Status is set on
+  //    INSERT (defaults) or from the equipment form, nowhere else.
   for (const { existingId, row } of pairs) {
     const v = cleanEquipment(row.data);
+    const keepModel = saleIsMixedModel && row.inheritsProduct;
+    const keepWarrantyDates = saleIsMixedModel && row.inheritsWarrantyDates;
+    const sets: string[] = [];
+    const params: unknown[] = [];
+    const set = (fragment: string, value: unknown) => {
+      sets.push(fragment);
+      params.push(value);
+    };
+    set("customerId = ?", v.customerId);
+    if (!keepModel) {
+      set("productId = ?", v.productId);
+      set("productName = ?", v.productName);
+    }
+    set("serialNumber = ?", v.serialNumber);
+    set("quotationNumber = ?", v.quotationNumber);
+    set(
+      "warrantyCertNumber = COALESCE(NULLIF(?, ''), warrantyCertNumber)",
+      v.warrantyCertNumber
+    );
+    set("warrantyType = COALESCE(NULLIF(?, ''), warrantyType)", v.warrantyType);
+    if (!keepWarrantyDates) {
+      set("warrantyStartDate = ?", v.warrantyStartDate);
+      set("warrantyEndDate = ?", v.warrantyEndDate);
+    }
+    params.push(existingId);
     await conn.query(
-      `UPDATE customer_equipments SET
-         customerId = ?, productId = ?, productName = ?, serialNumber = ?, quotationNumber = ?,
-         warrantyCertNumber = ?, warrantyType = COALESCE(NULLIF(?, ''), warrantyType),
-         warrantyStartDate = ?, warrantyEndDate = ?, status = ?
-       WHERE id = ?`,
-      [
-        v.customerId,
-        v.productId,
-        v.productName,
-        v.serialNumber,
-        v.quotationNumber,
-        v.warrantyCertNumber,
-        v.warrantyType,
-        v.warrantyStartDate,
-        v.warrantyEndDate,
-        v.status,
-        existingId,
-      ]
+      `UPDATE customer_equipments SET ${sets.join(", ")} WHERE id = ?`,
+      params
     );
   }
 
@@ -470,7 +594,18 @@ async function runEquipmentSync(
  * hand-edited as free text in the equipment modal. Clearing it is that modal's
  * job, not the sale form's.
  *
- * NEVER deletes a row: matching is by SERIAL IDENTITY first (so
+ * NEVER deletes a row. Matching runs in three passes, strongest claim first:
+ * ROW ID → SERIAL → POSITION. A row that carries the `customer_equipments.id`
+ * it was loaded from (the sale edit form sends them back) stays on THAT row
+ * whatever else changes — which is what lets two blank-serial machines of the
+ * same model survive a re-save that reorders them. An id that is not among the
+ * rows currently linked to this sale is ignored, not trusted: it degrades to
+ * the serial/positional behaviour below, so a stale or foreign id can never
+ * reach another sale's machine. An id that IS one of this sale's machines but
+ * was already claimed by an earlier entry is a payload that contradicts itself;
+ * that entry keeps the serial pass but is barred from the positional one, so a
+ * duplicated id can never be handed an unrelated machine and stamp its serial
+ * over it — it becomes a new row instead. Then by SERIAL IDENTITY (so
  * reordering/editing the list can't silently mix up which physical unit owns
  * which service history — the bug this replaced), falling back to positional
  * pairing only for entries with no serial yet (so records that have never had

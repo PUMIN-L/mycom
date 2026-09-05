@@ -89,14 +89,18 @@ function withSerials(lines: SaleLineDraft[], prefix = 'SN'): SaleLineDraft[] {
 
 /**
  * Give every line a real product cost. `buildLineDrafts` starts every line at
- * costAmount 0 and report 6 made that a blocker, so "a fully filled form" in
- * the validator tests below means serials AND costs.
+ * costAmount 0 and report 6 made that a blocker, so a form that passes the
+ * validator needs a cost on every ticked line. Since report 7 the COST is the
+ * only per-line required field left — serials are optional — so `withCosts`
+ * alone is enough to make a form saveable.
  */
 function withCosts(lines: SaleLineDraft[], amount = 90000): SaleLineDraft[] {
   return lines.map((l) => ({ ...l, costAmount: amount }));
 }
 
-/** Ticked + serialled + costed: the shortest way to say "nothing is missing". */
+/** Ticked + serialled + costed. Serials are no longer needed to pass the
+ * validator (report 7) — they stay here so the "fully filled" fixture also
+ * exercises the serial-carrying paths of `buildSalePayload`. */
 function filled(lines: SaleLineDraft[]): SaleLineDraft[] {
   return withCosts(withSerials(lines));
 }
@@ -1024,7 +1028,13 @@ describe('collectSerials', () => {
   });
 });
 
-describe('findMissingSerials (task 12.11)', () => {
+/**
+ * Task 12.11, re-cast by report 7: the list is still exact (it points at the
+ * precise line + machine), but it is ADVICE the editor renders as "these
+ * machines will show up under ข้อมูลไม่ครบ", never a blocker. The
+ * `validateLineDrafts` block above owns that half of the contract.
+ */
+describe('findMissingSerials (task 12.11 — advisory since report 7)', () => {
   it('points at every blank machine of every ticked line', () => {
     const lines = drafts();
     lines[0] = {
@@ -1111,6 +1121,19 @@ describe('validateLineDrafts (the only hard blockers)', () => {
     expect(validateLineDrafts(filled(drafts()))).toEqual([]);
   });
 
+  it('passes a whole bill whose machines have NO serial at all (report 7)', () => {
+    // Every line ticked and costed, every machine's serial still blank: this is
+    // the exact bill the owner could not record before, and it must save.
+    const lines = withCosts(drafts());
+    expect(findMissingSerials(lines)).toHaveLength(6); // 3 + 1 + 2 machines
+    expect(validateLineDrafts(lines)).toEqual([]);
+    // …and the payload really does carry those blank-serial machines, so the
+    // ข้อมูลไม่ครบ alert has a row per machine to fire on.
+    const payload = buildSalePayload(lines);
+    expect(payload.equipments).toHaveLength(6);
+    expect(payload.equipments.every((e) => e.serialNumber === '')).toBe(true);
+  });
+
   it('blocks when no line is ticked', () => {
     const none = drafts().map((l) => ({ ...l, selected: false }));
     expect(validateLineDrafts(none)).toEqual(['กรุณาเลือกรายการสินค้าอย่างน้อย 1 รายการ']);
@@ -1123,13 +1146,29 @@ describe('validateLineDrafts (the only hard blockers)', () => {
     }
   });
 
-  it('blocks a missing serial and names the line and the machine', () => {
+  /**
+   * REVERSED BY REPORT 7 (was: "blocks a missing serial and names the line and
+   * the machine"). The owner hit a bill whose serials were not in hand yet, so
+   * a blank serial saves and the machine is chased by the «ข้อมูลไม่ครบ» alert
+   * instead. This test now pins the OPPOSITE and names the reason, so nobody
+   * restores the block by "fixing a failing test".
+   */
+  it('does NOT block a missing serial — it is chased by the ข้อมูลไม่ครบ alert instead (report 7)', () => {
     const lines = drafts().map((l) => ({ ...l, selected: false }));
     lines[2] = { ...lines[2], selected: true, costAmount: 40000 };
+    // Two machines on that line, neither with a serial…
+    expect(lines[2].machines.every((m) => m.serialNumber === '')).toBe(true);
+    expect(findMissingSerials(lines)).toHaveLength(2);
+    // …and the form saves anyway: no error at all, and nothing mentioning serials.
+    expect(validateLineDrafts(lines)).toEqual([]);
+  });
+
+  it('never mentions Serial Number among the blockers, whatever else is wrong (report 7)', () => {
+    // A form that is broken in every OTHER way still says nothing about serials.
+    const lines = [{ ...drafts()[0], qty: 0, costAmount: 0 }];
     const errors = validateLineDrafts(lines);
-    expect(errors).toHaveLength(2);
-    expect(errors[0]).toContain('เครื่องที่ 1');
-    expect(errors[0]).toContain('เครื่องวัด C');
+    expect(errors.length).toBeGreaterThan(0);
+    expect(errors.some((e) => e.toLowerCase().includes('serial'))).toBe(false);
   });
 
   it('blocks a bill over the API machine cap', () => {

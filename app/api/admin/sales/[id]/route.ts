@@ -5,9 +5,52 @@ import {
   updateSalesRecord,
   deleteSalesRecord,
 } from "../../../../lib/salesDashboardStore";
-import { syncEquipmentsForSalesRecord, cleanupEquipmentsForSalesRecord } from "../../../../lib/crmStore";
+import {
+  syncEquipmentRowsForSalesRecord,
+  cleanupEquipmentsForSalesRecord,
+  type EquipmentRowInput,
+} from "../../../../lib/crmStore";
 
 type Ctx = { params: Promise<{ id: string }> };
+
+/**
+ * The machines this save is talking about, as (row id, serial) pairs.
+ *
+ * The edit form loads the sale's machines and sends them back in
+ * `equipments: [{ id, serialNumber }]`, so each box stays bound to the row it
+ * was loaded from even while its serial is still blank or being corrected —
+ * position alone used to decide that, and got it wrong whenever the admin typed
+ * the serials in any order but the rows' (invisible) creation order.
+ *
+ * `serialNumbers` remains the fallback for any client that sends only serials
+ * (and for a box the admin added beyond the machines that were loaded): a row
+ * with no id behaves exactly as it always has — serial first, then position.
+ *
+ * The pairing is built BEFORE the qty clamp and sliced as ONE list: ids and
+ * serials sliced separately is precisely how an off-by-one rebind would be
+ * reintroduced, and pass 0 would then write it confidently.
+ */
+function equipmentRowsFromBody(body: any): EquipmentRowInput[] | null {
+  // An EMPTY `equipments` array is not an instruction to detach every machine
+  // on the bill — an equipment sale always has qty >= 1, so it only ever means
+  // the client had nothing to say here. Falling through to `serialNumbers`
+  // keeps the pre-existing behaviour for a caller that sends both (which the
+  // sale forms do); taking the empty list at face value would unlink every
+  // machine on the sale, orphaning its warranty and service history.
+  if (Array.isArray(body.equipments) && body.equipments.length > 0) {
+    return body.equipments.map((raw: unknown) => {
+      const row = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+      const id = typeof row.id === "string" ? row.id.trim() : "";
+      const serialNumber =
+        typeof row.serialNumber === "string" ? row.serialNumber : "";
+      return id ? { id, serialNumber } : { serialNumber };
+    });
+  }
+  if (Array.isArray(body.serialNumbers)) {
+    return body.serialNumbers.map((sn: unknown) => ({ serialNumber: String(sn ?? "") }));
+  }
+  return null;
+}
 
 // GET /api/admin/sales/[id] — single sales record
 export const GET = withRoute(
@@ -51,13 +94,15 @@ export const PUT = withRoute(
 
     // Sync equipments if sale type is equipment
     let equipmentWarning: string | null = null;
-    if (body.saleType === "equipment" && Array.isArray(body.serialNumbers)) {
+    const equipmentRows =
+      body.saleType === "equipment" ? equipmentRowsFromBody(body) : null;
+    if (equipmentRows) {
       const customerId = body.customerId || updated.customerId || "";
-      // Trim serial numbers to match qty (frontend may send stale entries beyond qty)
+      // Trim the machine list to match qty (frontend may send stale entries beyond qty)
       const qty = Math.max(1, Math.min(50, Number(body.qty || updated.qty) || 1));
-      const trimmedSerials = body.serialNumbers.slice(0, qty);
+      const trimmedRows = equipmentRows.slice(0, qty);
       try {
-        await syncEquipmentsForSalesRecord(id, trimmedSerials, {
+        await syncEquipmentRowsForSalesRecord(id, trimmedRows, {
           customerId,
           productId: body.productId || updated.productId || "",
           productName: body.productName || updated.productName || "",
@@ -66,10 +111,13 @@ export const PUT = withRoute(
           warrantyType: "",
           warrantyStartDate: body.warrantyStartDate || updated.warrantyStartDate || null,
           warrantyEndDate: body.warrantyEndDate || updated.warrantyEndDate || null,
+          // Only ever reaches a BRAND-NEW machine: the sync no longer writes
+          // status onto an existing row, so a re-save cannot resurrect a
+          // machine someone marked หมดอายุ.
           status: "Active",
         });
       } catch (err: any) {
-        console.error("syncEquipmentsForSalesRecord failed:", err);
+        console.error("syncEquipmentRowsForSalesRecord failed:", err);
         equipmentWarning = `บันทึกยอดขายสำเร็จ แต่ซิงค์อุปกรณ์ล้มเหลว: ${err.message}`;
       }
     } else if (body.saleType === "service") {

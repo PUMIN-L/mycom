@@ -123,7 +123,43 @@ export const emptyForm = () => ({
   warrantyStartDate: "",
   warrantyEndDate: "",
   serialNumbers: [] as string[],
+  /** The machines this sale ALREADY has, in the same order as `serialNumbers`
+   * — a read-only snapshot taken when the record was loaded for editing (empty
+   * when creating). Each entry's `id` is sent back on save so the server can
+   * re-bind that serial box to the machine it came from, instead of pairing by
+   * position; `productName`/`serialNumber` are what the box shows the admin so
+   * two blank-serial machines are no longer indistinguishable. */
+  loadedEquipments: [] as LoadedEquipment[],
   note: "",
 });
+
+/** One existing machine of the sale being edited (see `loadedEquipments`). */
+export type LoadedEquipment = {
+  id: string;
+  serialNumber: string;
+  /** The machine's own catalog product. Carried so the form can tell a
+   * SINGLE-model bill from a MIXED one: on a mixed bill the server refuses to
+   * stamp the sale's one product / one warranty pair over machines of another
+   * model, so those edits do nothing and the admin has to be told (see
+   * `isMixedModelBill`). */
+  productId: string;
+  productName: string;
+};
+
+/** Mirrors `productGroupKey` in app/lib/crmStore.ts: the UI-only "_custom"
+ * sentinel and "no product at all" are the same group, so they must not read as
+ * two different models here either. */
+const equipmentModelKey = (productId: string): string => {
+  const id = String(productId || "").trim();
+  return id === "_custom" ? "" : id;
+};
+
+/** True when the machines loaded for this sale are NOT all the same model. The
+ * sale form can only express ONE product and ONE warranty pair, so on such a
+ * bill `runEquipmentSync` deliberately leaves every machine's model and
+ * warranty dates alone — changing them here would be a silent no-op. */
+export function isMixedModelBill(loaded: LoadedEquipment[]): boolean {
+  return new Set(loaded.map((eq) => equipmentModelKey(eq.productId))).size > 1;
+}
 
 export type SalesFormData = ReturnType<typeof emptyForm>;

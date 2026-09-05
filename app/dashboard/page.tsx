@@ -35,6 +35,8 @@ import SalesTable from "./SalesTable";
 import {
   type DashboardData, type TopItem, type SalespersonStat,
   type CostItemLocal, type Product, type Customer, type Company, type Salesperson,
+  type LoadedEquipment,
+  isMixedModelBill,
   COST_TYPE_LABELS, COST_TYPE_OPTIONS,
   fmt, fmtDec, MONTHS_TH, PIE_COLORS,
   pctChange, stripHtml, safeImageUrl, emptyForm,
@@ -46,6 +48,16 @@ import {
  * so waiting on it forever would turn an optional check into the one thing that
  * can stop a save — the exact failure mode this phase forbids. */
 const SERIAL_CHECK_TIMEOUT_MS = 8000;
+
+/** The one green for revenue (ยอดขาย / รายรับ) in BOTH bar charts.
+ * emerald-500 — already this file's green: PIE_COLORS[2] uses the same hex and
+ * the "กำไร" overview card is emerald. Declared once on purpose: the two charts
+ * plot the SAME `revenue` series, so they must never be able to drift into two
+ * different colours again. The matching tooltip text is `text-emerald-600`
+ * (same -500 fill / -600 text pairing the amber and rose series already use).
+ * ต้นทุนสินค้า stays amber and รายจ่าย stays rose — they mean different things
+ * (see the permanent note under the charts). */
+const REVENUE_GREEN = "#10b981";
 
 // ── Main Component ───────────────────────────────────────────────────────────
 
@@ -538,10 +550,26 @@ export default function DashboardPage() {
           equipments: parts.equipments,
         };
       } else {
-        const legacy = { ...form } as Record<string, unknown> & { saleType: string; serialNumbers?: string[]; qty: number };
+        // `loadedEquipments` is form-local bookkeeping, never part of the sale
+        // payload — it leaves here as `equipments`, paired with the serials.
+        const { loadedEquipments, ...flat } = form;
+        const legacy = { ...flat } as Record<string, unknown> & { saleType: string; serialNumbers?: string[]; qty: number };
         // Trim serialNumbers to match qty (array may have stale entries beyond current qty)
         if (legacy.saleType === "equipment" && Array.isArray(legacy.serialNumbers)) {
-          legacy.serialNumbers = legacy.serialNumbers.slice(0, Math.max(1, legacy.qty || 1));
+          const cap = Math.max(1, legacy.qty || 1);
+          // ZIP FIRST, THEN SLICE — one list, one cut. Sending the ids and the
+          // serials as two separately-sliced arrays is exactly how box #2's
+          // serial would land on machine #1: the id pass would then bind that
+          // machine's service history to the wrong physical unit, confidently.
+          // A box with no machine behind it (qty raised since loading, or a
+          // record whose machines could not be read) sends no id and falls back
+          // to the serial/positional matching that has always run.
+          const paired = legacy.serialNumbers.map((sn, i) => {
+            const existingId = loadedEquipments[i]?.id;
+            return existingId ? { id: existingId, serialNumber: sn } : { serialNumber: sn };
+          });
+          legacy.equipments = paired.slice(0, cap);
+          legacy.serialNumbers = legacy.serialNumbers.slice(0, cap);
         }
         payload = legacy;
       }
@@ -697,7 +725,24 @@ export default function DashboardPage() {
         receiptRef: fullRec.receiptRef || "",
         warrantyStartDate: fullRec.warrantyStartDate ? String(fullRec.warrantyStartDate).substring(0, 10) : "",
         warrantyEndDate: fullRec.warrantyEndDate ? String(fullRec.warrantyEndDate).substring(0, 10) : "",
-        serialNumbers: Array.isArray(fullRec.serialNumbers) ? [...fullRec.serialNumbers] : [],
+        // The machines are loaded as (row id, serial, model) triples and the
+        // serial boxes are filled FROM THAT SAME LIST, so box #i and
+        // loadedEquipments[i] are always the same physical machine. That
+        // alignment is what the save zips back together; `serialNumbers` alone
+        // is the fallback for a record whose machines could not be read.
+        serialNumbers: Array.isArray(fullRec.equipments)
+          ? fullRec.equipments.map((eq: LoadedEquipment) => eq.serialNumber || "")
+          : Array.isArray(fullRec.serialNumbers)
+            ? [...fullRec.serialNumbers]
+            : [],
+        loadedEquipments: Array.isArray(fullRec.equipments)
+          ? fullRec.equipments.map((eq: any): LoadedEquipment => ({
+              id: String(eq?.id || ""),
+              serialNumber: String(eq?.serialNumber || ""),
+              productId: String(eq?.productId || ""),
+              productName: String(eq?.productName || ""),
+            }))
+          : [],
         note: fullRec.note || "",
       });
 
@@ -1111,7 +1156,7 @@ export default function DashboardPage() {
                           return (
                             <div className="bg-white rounded-[16px] border border-gray-100 p-4 shadow-[0_4px_20px_-4px_rgba(0,0,0,0.1)] text-sm">
                               <div className="font-semibold text-gray-900 mb-2">{label}</div>
-                              <div className="text-indigo-600 font-medium">ยอดขาย: ฿{fmtDec(d?.revenue || 0)}</div>
+                              <div className="text-emerald-600 font-medium">ยอดขาย: ฿{fmtDec(d?.revenue || 0)}</div>
                               <div className="text-amber-600 font-medium">ต้นทุนสินค้า: ฿{fmtDec(d?.cost || 0)}</div>
                             </div>
                           );
@@ -1121,7 +1166,7 @@ export default function DashboardPage() {
                       <ReferenceLine y={0} stroke="#cbd5e1" />
                       {/* amber, deliberately NOT the rose of Chart 2's รายจ่าย (task 17.2) */}
                       <Bar dataKey="cost" fill="#f59e0b" radius={[4, 4, 0, 0]} name="cost" maxBarSize={40} />
-                      <Bar dataKey="revenue" fill="#6366f1" radius={[4, 4, 0, 0]} name="revenue" maxBarSize={40} />
+                      <Bar dataKey="revenue" fill={REVENUE_GREEN} radius={[4, 4, 0, 0]} name="revenue" maxBarSize={40} />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
@@ -1141,7 +1186,7 @@ export default function DashboardPage() {
                           return (
                             <div className="bg-white rounded-[16px] border border-gray-100 p-4 shadow-[0_4px_20px_-4px_rgba(0,0,0,0.1)] text-sm">
                               <div className="font-semibold text-gray-900 mb-2">{label}</div>
-                              <div className="text-indigo-600 font-medium">รายรับ: ฿{fmtDec(d?.revenue || 0)}</div>
+                              <div className="text-emerald-600 font-medium">รายรับ: ฿{fmtDec(d?.revenue || 0)}</div>
                               <div className="text-rose-500 font-medium">รายจ่าย: ฿{fmtDec(d?.expense || 0)}</div>
                             </div>
                           );
@@ -1150,7 +1195,7 @@ export default function DashboardPage() {
                       <Legend formatter={(value: string) => value === "expense" ? "รายจ่าย" : "รายรับ"} wrapperStyle={{ paddingTop: "10px" }} />
                       <Bar dataKey="expense" fill="#f43f5e" radius={[4, 4, 0, 0]} name="expense" maxBarSize={40} />
                       <ReferenceLine y={0} stroke="#cbd5e1" />
-                      <Bar dataKey="revenue" name="revenue" maxBarSize={40} radius={[4, 4, 0, 0]} fill="#6366f1" />
+                      <Bar dataKey="revenue" name="revenue" maxBarSize={40} radius={[4, 4, 0, 0]} fill={REVENUE_GREEN} />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
@@ -1174,12 +1219,18 @@ export default function DashboardPage() {
             ) : data && data.revenueByCategory.length > 0 ? (
               <ResponsiveContainer width="100%" height={280}>
                 <PieChart>
-                  <Pie data={data.revenueByCategory} dataKey="revenue" nameKey="name" cx="50%" cy="50%" outerRadius={90} label={((entry: any) => `${entry.name} ${entry.percentage}%`) as any} labelLine={false} fontSize={10}>
+                  {/* Category / product names are RICH TEXT (the editor wraps them in
+                      <p>…</p>), so every place that prints one — slice label AND
+                      tooltip — must go through stripHtml, or the chart renders the
+                      literal tags: "<p>ชื่อสินค้า</p> : 250,000.00". */}
+                  <Pie data={data.revenueByCategory} dataKey="revenue" nameKey="name" cx="50%" cy="50%" outerRadius={90} label={((entry: any) => `${stripHtml(String(entry?.name ?? ""))} ${entry?.percentage}%`) as any} labelLine={false} fontSize={10}>
                     {data.revenueByCategory.map((_, i) => (
                       <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
                     ))}
                   </Pie>
-                  <Tooltip formatter={((value: number) => fmtDec(value) + " ฿") as any} />
+                  {/* Returning [value, name] replaces BOTH halves of the default
+                      "name : value" tooltip row — the name half is where the tags showed. */}
+                  <Tooltip formatter={((value: number, name: unknown) => [fmtDec(value) + " ฿", stripHtml(String(name ?? ""))]) as any} />
                 </PieChart>
               </ResponsiveContainer>
             ) : (
@@ -1678,29 +1729,79 @@ export default function DashboardPage() {
 
               {!linesActive && form.saleType === "equipment" && form.qty > 0 && (
                 <div className="p-5 bg-gray-50 border border-gray-100 rounded-2xl">
-                  <label className="block text-sm font-semibold text-gray-700 mb-3">
-                    หมายเลขซีเรียล  <span className="text-red-500">*</span>
+                  {/* Report 7 — the flat form's serials are OPTIONAL too. The
+                      red `*` outlived the rule it advertised: nothing in
+                      `runSave` and nothing in POST /api/admin/sales blocks a
+                      blank serial any more, so the marker was promising a
+                      refusal that never comes. Same wording as the line editor,
+                      including the consequence the admin is meant to weigh. */}
+                  <label className="block text-sm font-semibold text-gray-700 mb-1">
+                    หมายเลขซีเรียล{" "}
+                    <span className="font-normal text-gray-400">(ใส่ทีหลังได้)</span>
                   </label>
+                  <p className="text-xs text-gray-500 mb-3">
+                    ยังไม่มีเลขเครื่องในมือ เว้นว่างไว้ก่อนแล้วบันทึกได้เลย —
+                    เครื่องที่ยังไม่มี Serial Number จะไปรออยู่ในหน้า «แจ้งเตือน»
+                    หัวข้อ «ข้อมูลไม่ครบ» จนกว่าจะกลับมาใส่ให้
+                  </p>
+                  {editingId && form.loadedEquipments.length > 0 && (
+                    <p className="text-xs text-gray-500 mb-3">
+                      แต่ละช่องผูกกับ «เครื่องเดิม» ที่ระบุไว้ใต้ช่องนั้นแล้ว —
+                      ประวัติซ่อม/สอบเทียบของเครื่องจะไม่สลับกัน แม้จะยังไม่มี Serial
+                    </p>
+                  )}
+                  {/* The sale form holds ONE product and ONE warranty pair. On a
+                      bill whose machines are not all the same รุ่น the server
+                      deliberately leaves each machine's model and warranty dates
+                      alone rather than stamping the main line's over a different
+                      machine — so saying so here is the difference between a
+                      documented rule and an edit that silently does nothing. */}
+                  {editingId && isMixedModelBill(form.loadedEquipments) && (
+                    <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 mb-3">
+                      ใบขายนี้มีเครื่องหลายรุ่นในบิลเดียว — การแก้ «สินค้า» และ «วันที่รับประกัน»
+                      ด้านบนจะ<strong>ไม่</strong>ถูกเขียนทับลงเครื่องแต่ละเครื่อง
+                      (กันไม่ให้เครื่องคนละรุ่นได้รุ่น/วันประกันผิด) ช่อง Serial
+                      ด้านล่างยังบันทึกได้ตามปกติ ถ้าต้องแก้รุ่นหรือวันประกันของเครื่องใดเครื่องหนึ่ง
+                      ให้แก้รายเครื่องที่หน้า «ลูกค้า → อุปกรณ์»
+                    </p>
+                  )}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    {Array.from({ length: Math.min(form.qty, 50) }).map((_, i) => (
-                      <div key={i} className="flex items-center gap-3 bg-white p-2 rounded-xl border border-gray-200">
-                        <span className="text-xs text-gray-500 font-bold bg-gray-100 px-2 py-1 rounded-md shrink-0">#{i + 1}</span>
-                        <input
-                          type="text"
-                          value={(form.serialNumbers && form.serialNumbers[i]) || ""}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            setForm(prev => {
-                              const newSn = [...(prev.serialNumbers || [])];
-                              newSn[i] = val;
-                              return { ...prev, serialNumbers: newSn };
-                            });
-                          }}
-                          placeholder="Serial Number..."
-                          className="w-full px-2 py-1 text-sm focus:outline-none bg-transparent"
-                        />
+                    {Array.from({ length: Math.min(form.qty, 50) }).map((_, i) => {
+                      // Which physical machine this box is bound to. Without
+                      // this line two blank-serial machines print identically
+                      // and the admin has no way to tell which box is which.
+                      const loaded = form.loadedEquipments[i];
+                      return (
+                      <div key={i} className="bg-white p-2 rounded-xl border border-gray-200">
+                        <div className="flex items-center gap-3">
+                          <span className="text-xs text-gray-500 font-bold bg-gray-100 px-2 py-1 rounded-md shrink-0">#{i + 1}</span>
+                          <input
+                            type="text"
+                            value={(form.serialNumbers && form.serialNumbers[i]) || ""}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setForm(prev => {
+                                const newSn = [...(prev.serialNumbers || [])];
+                                newSn[i] = val;
+                                return { ...prev, serialNumbers: newSn };
+                              });
+                            }}
+                            placeholder="Serial Number..."
+                            className="w-full px-2 py-1 text-sm focus:outline-none bg-transparent"
+                          />
+                        </div>
+                        {editingId && (
+                          <p className="text-xs text-gray-400 pl-1 pt-1 leading-snug">
+                            {loaded
+                              ? `เครื่องเดิม: ${loaded.productName || "ไม่ระบุรุ่น"}${
+                                  loaded.serialNumber ? ` • S/N เดิม ${loaded.serialNumber}` : " • ยังไม่มี Serial"
+                                }`
+                              : "เครื่องใหม่ (เพิ่มจากการเพิ่มจำนวน)"}
+                          </p>
+                        )}
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               )}

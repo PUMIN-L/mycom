@@ -5,6 +5,9 @@ import SearchableDropdown from "../SearchableDropdown";
 import FormattedNumberInput from "../FormattedNumberInput";
 import type { SalesRecord } from "../../lib/types";
 import { toLocalDateString } from "../../lib/dateFormat";
+// Shared with the dashboard's own edit form so both read "is this bill mixed?"
+// by the SAME rule the server matches machines with (productGroupKey).
+import { type LoadedEquipment, isMixedModelBill } from "../../dashboard/types";
 
 function stripHtml(html?: string): string {
   if (!html) return "";
@@ -42,6 +45,13 @@ const emptyForm = () => ({
   warrantyStartDate: "",
   warrantyEndDate: "",
   serialNumbers: [] as string[],
+  /** The machines this sale already has, in the same order as `serialNumbers`.
+   * Read-only: their `id` goes back to the server on save so each serial box
+   * stays bound to the machine it was loaded from (id → serial → position in
+   * `runEquipmentSync`), instead of being paired by position — which silently
+   * moved one machine's service history onto another whenever the serials were
+   * typed in any order but the rows' invisible creation order. */
+  loadedEquipments: [] as LoadedEquipment[],
   note: "",
 });
 
@@ -124,7 +134,19 @@ export default function SalesRecordEditModal({
             receiptRef: fullRec.receiptRef || "",
             warrantyStartDate: fullRec.warrantyStartDate ? String(fullRec.warrantyStartDate).substring(0, 10) : "",
             warrantyEndDate: fullRec.warrantyEndDate ? String(fullRec.warrantyEndDate).substring(0, 10) : "",
-            serialNumbers: Array.isArray(fullRec.serialNumbers) ? [...fullRec.serialNumbers] : [],
+            // Boxes and machines come from the SAME list, so box #i and
+            // loadedEquipments[i] are always the same physical machine.
+            serialNumbers: Array.isArray(fullRec.equipments)
+              ? fullRec.equipments.map((eq: any) => String(eq?.serialNumber || ""))
+              : Array.isArray(fullRec.serialNumbers) ? [...fullRec.serialNumbers] : [],
+            loadedEquipments: Array.isArray(fullRec.equipments)
+              ? fullRec.equipments.map((eq: any): LoadedEquipment => ({
+                  id: String(eq?.id || ""),
+                  serialNumber: String(eq?.serialNumber || ""),
+                  productId: String(eq?.productId || ""),
+                  productName: String(eq?.productName || ""),
+                }))
+              : [],
             note: fullRec.note || "",
           });
 
@@ -210,12 +232,24 @@ export default function SalesRecordEditModal({
     try {
       const url = editingId ? `/api/admin/sales/${editingId}` : "/api/admin/sales";
       const method = editingId ? "PUT" : "POST";
-      const payload = { ...form };
-      
+      // `loadedEquipments` is form-local bookkeeping; it leaves as `equipments`.
+      const { loadedEquipments, ...flat } = form;
+      const payload = { ...flat } as typeof flat & {
+        equipments?: { id?: string; serialNumber: string }[];
+      };
+
       if (payload.saleType === "equipment" && Array.isArray(payload.serialNumbers)) {
-        payload.serialNumbers = payload.serialNumbers.slice(0, Math.max(1, payload.qty || 1));
+        const cap = Math.max(1, payload.qty || 1);
+        // ZIP FIRST, THEN SLICE — ids and serials cut as one list. Two arrays
+        // sliced separately is how box #2's serial would land on machine #1.
+        const paired = payload.serialNumbers.map((sn, i) => {
+          const existingId = loadedEquipments[i]?.id;
+          return existingId ? { id: existingId, serialNumber: sn } : { serialNumber: sn };
+        });
+        payload.equipments = paired.slice(0, cap);
+        payload.serialNumbers = payload.serialNumbers.slice(0, cap);
       }
-      
+
       const res = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       if (res.ok || res.status === 207) {
         const savedData = await res.json();
@@ -454,13 +488,46 @@ export default function SalesRecordEditModal({
             {form.saleType === "equipment" && form.qty > 0 && (
               <div className="p-5 bg-gray-50 border border-gray-100 rounded-2xl">
                 <label className="block text-sm font-semibold text-gray-700 mb-3">หมายเลขซีเรียล</label>
+                {form.loadedEquipments.length > 0 && (
+                  <p className="text-xs text-gray-500 mb-3">
+                    แต่ละช่องผูกกับ «เครื่องเดิม» ที่ระบุไว้ใต้ช่องนั้นแล้ว —
+                    ประวัติซ่อม/สอบเทียบของเครื่องจะไม่สลับกัน แม้จะยังไม่มี Serial
+                  </p>
+                )}
+                {/* One product + one warranty pair cannot describe a bill of
+                    several รุ่น, so the server leaves each machine's model and
+                    dates alone there. Without this line that refusal is a
+                    silent no-op the admin never sees. */}
+                {editingId && isMixedModelBill(form.loadedEquipments) && (
+                  <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 mb-3">
+                    ใบขายนี้มีเครื่องหลายรุ่นในบิลเดียว — การแก้ «สินค้า» และ «วันที่รับประกัน»
+                    ด้านบนจะ<strong>ไม่</strong>ถูกเขียนทับลงเครื่องแต่ละเครื่อง
+                    (กันไม่ให้เครื่องคนละรุ่นได้รุ่น/วันประกันผิด) ช่อง Serial
+                    ด้านล่างยังบันทึกได้ตามปกติ ถ้าต้องแก้รุ่นหรือวันประกันของเครื่องใดเครื่องหนึ่ง
+                    ให้แก้รายเครื่องที่หน้า «ลูกค้า → อุปกรณ์»
+                  </p>
+                )}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  {Array.from({ length: Math.min(form.qty, 50) }).map((_, i) => (
-                    <div key={i} className="flex items-center gap-3 bg-white p-2 rounded-xl border border-gray-200">
-                      <span className="text-xs text-gray-500 font-bold bg-gray-100 px-2 py-1 rounded-md shrink-0">#{i + 1}</span>
-                      <input type="text" value={(form.serialNumbers && form.serialNumbers[i]) || ""} onChange={(e) => { const val = e.target.value; setForm(prev => { const newSn = [...(prev.serialNumbers || [])]; newSn[i] = val; return { ...prev, serialNumbers: newSn }; }); }} placeholder="Serial Number..." className="w-full px-2 py-1 text-sm focus:outline-none bg-transparent" />
+                  {Array.from({ length: Math.min(form.qty, 50) }).map((_, i) => {
+                    // Which physical machine this box is bound to — without it
+                    // two blank-serial machines print identically.
+                    const loaded = form.loadedEquipments[i];
+                    return (
+                    <div key={i} className="bg-white p-2 rounded-xl border border-gray-200">
+                      <div className="flex items-center gap-3">
+                        <span className="text-xs text-gray-500 font-bold bg-gray-100 px-2 py-1 rounded-md shrink-0">#{i + 1}</span>
+                        <input type="text" value={(form.serialNumbers && form.serialNumbers[i]) || ""} onChange={(e) => { const val = e.target.value; setForm(prev => { const newSn = [...(prev.serialNumbers || [])]; newSn[i] = val; return { ...prev, serialNumbers: newSn }; }); }} placeholder="Serial Number..." className="w-full px-2 py-1 text-sm focus:outline-none bg-transparent" />
+                      </div>
+                      {editingId && (
+                        <p className="text-xs text-gray-400 pl-1 pt-1 leading-snug">
+                          {loaded
+                            ? `เครื่องเดิม: ${loaded.productName || "ไม่ระบุรุ่น"}${loaded.serialNumber ? ` • S/N เดิม ${loaded.serialNumber}` : " • ยังไม่มี Serial"}`
+                            : "เครื่องใหม่ (เพิ่มจากการเพิ่มจำนวน)"}
+                        </p>
+                      )}
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}

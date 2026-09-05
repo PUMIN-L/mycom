@@ -92,11 +92,25 @@ function validateItems(items: unknown): string | null {
 }
 
 /**
- * Task 7.2 — every submitted machine must carry a serial (the pre-existing
- * rule, kept). A serial that DUPLICATES an existing machine is deliberately
- * NOT rejected: duplicates are legal and are surfaced as a confirmable warning
- * in the form (D12), so blocking them here would make that confirmation
- * impossible to honour.
+ * Task 7.2, amended by report 7 — SHAPE ONLY.
+ *
+ * A serial is NO LONGER required. The owner hit the real case the old rule
+ * assumed away (the machine is sold and the bill has to be recorded before the
+ * serial is in hand), so a machine may be saved with `serialNumber: ""` and is
+ * chased afterwards by the «ข้อมูลไม่ครบ» alert category, which already fires
+ * on `serialNumber = '' OR serialNumber IS NULL OR warrantyStartDate IS NULL`
+ * (`getAlerts`). Re-adding the requirement here would silently re-block the
+ * form, which no longer blocks on its own.
+ *
+ * What is still refused: a row that is not an object at all, and a
+ * `serialNumber` that is present but not a string (an object/array would land
+ * in the column as "[object Object]" — that is a malformed request, not a
+ * machine whose serial is not known yet).
+ *
+ * A serial that DUPLICATES an existing machine is deliberately NOT rejected:
+ * duplicates are legal and are surfaced as a confirmable warning in the form
+ * (D12), so blocking them here would make that confirmation impossible to
+ * honour.
  */
 function validateEquipments(rows: unknown[]): string | null {
   for (let i = 0; i < rows.length; i++) {
@@ -104,8 +118,8 @@ function validateEquipments(rows: unknown[]): string | null {
     const at = `เครื่องที่ ${i + 1}`;
     if (!raw || typeof raw !== "object") return `${at}: ข้อมูลอุปกรณ์ไม่ถูกต้อง`;
     const serial = (raw as Record<string, unknown>).serialNumber;
-    if (typeof serial !== "string" || !serial.trim()) {
-      return `${at}: กรุณาระบุ Serial Number (serialNumber)`;
+    if (serial !== undefined && serial !== null && typeof serial !== "string") {
+      return `${at}: รูปแบบ Serial Number (serialNumber) ไม่ถูกต้อง`;
     }
   }
   return null;
@@ -129,16 +143,24 @@ function legacyLineItem(body: SaleBody): Partial<SaleLineItem> {
 /**
  * Legacy machines: bare serials that inherit the sale-level product, warranty
  * dates and quotation number. The old route created `min(qty, 50)` rows and
- * ignored serials beyond that — preserved exactly.
+ * ignored serials beyond that — the cap is preserved exactly.
+ *
+ * Report 7 changed ONE thing: the list is PADDED up to `limit` instead of
+ * stopping at whatever the caller typed. It used to be impossible to get here
+ * with a short (or blank) list — the route refused the request — but now that a
+ * serial may be left for later, "3 machines sold, no serial typed" has to
+ * become THREE rows with a blank serial, not zero. Each of them is one physical
+ * machine the «ข้อมูลไม่ครบ» alert can then chase; dropping them would lose the
+ * machines silently, which is exactly what the alert is meant to prevent.
  */
 function legacyEquipments(body: SaleBody): EquipmentRowInput[] {
   if (body.saleType !== "equipment") return [];
   const qty = Math.max(1, Number(body.qty) || 1);
   const limit = Math.min(qty, MAX_EQUIPMENT_ROWS);
   const serials = Array.isArray(body.serialNumbers) ? body.serialNumbers : [];
-  return serials
-    .slice(0, limit)
-    .map((sn) => ({ serialNumber: String(sn || "").trim() }));
+  return Array.from({ length: limit }, (_, i) => ({
+    serialNumber: String(serials[i] ?? "").trim(),
+  }));
 }
 
 async function listEquipmentsForSale(salesRecordId: string) {
@@ -213,17 +235,15 @@ export const POST = withRoute(
       if (!body.productName && !body.productId) {
         return badRequest("กรุณาระบุสินค้า");
       }
-      if (body.saleType === "equipment") {
-        const qty = Math.max(1, Number(body.qty) || 1);
-        const limit = Math.min(qty, MAX_EQUIPMENT_ROWS);
-        if (!Array.isArray(body.serialNumbers)) {
-          return badRequest("ข้อมูล Serial Number ไม่ถูกต้อง");
-        }
-        for (let i = 0; i < limit; i++) {
-          if (!body.serialNumbers[i] || !String(body.serialNumbers[i]).trim()) {
-            return badRequest(`กรุณาระบุ Serial Number ให้ครบ (ขาดชิ้นที่ ${i + 1})`);
-          }
-        }
+      // Report 7 — the per-machine "ขาดชิ้นที่ N" blocker is GONE from this
+      // branch too: the flat form is the plain "เพิ่มรายการขาย" form, so
+      // leaving the rule here would keep refusing exactly the bill the owner
+      // asked to be able to record. Only the SHAPE is still checked (an
+      // equipment sale must send a serial array, even one full of blanks);
+      // `legacyEquipments` pads it to one row per machine and the
+      // «ข้อมูลไม่ครบ» alert takes it from there.
+      if (body.saleType === "equipment" && !Array.isArray(body.serialNumbers)) {
+        return badRequest("ข้อมูล Serial Number ไม่ถูกต้อง");
       }
       items = [legacyLineItem(body)];
       equipments = legacyEquipments(body);

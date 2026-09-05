@@ -213,6 +213,16 @@ export interface SalesRecord {
   warrantyStartDate: string | null;
   warrantyEndDate: string | null;
   serialNumbers?: string[];
+  /** The sale's machines, in the same order as `serialNumbers`, each with the
+   * `customer_equipments.id` it lives in. The edit form sends these ids back so
+   * a re-save re-binds every machine to its OWN row (id → serial → position)
+   * instead of guessing from the position of a serial box. */
+  equipments?: {
+    id: string;
+    serialNumber: string;
+    productId: string;
+    productName: string;
+  }[];
   equipmentId: string | null;
   note: string;
   createdAt: string;

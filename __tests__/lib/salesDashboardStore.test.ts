@@ -1042,7 +1042,9 @@ function createFakeDb(seed: Partial<FakeTables> = {}) {
       return [{ affectedRows: row ? 1 : 0 }];
     }
     if (text.includes('UPDATE customer_equipments SET')) {
-      const row = tables.customer_equipments.find((r) => r.id === p[10]);
+      // The sync's UPDATE binds the row id LAST (status is no longer written by
+      // a sale save, so the id moved from p[10] to p[9]).
+      const row = tables.customer_equipments.find((r) => r.id === p.at(-1));
       if (row) Object.assign(row, { customerId: p[0], productId: p[1], productName: p[2], serialNumber: p[3] });
       return [{ affectedRows: row ? 1 : 0 }];
     }
@@ -1118,11 +1120,19 @@ function installFakeQuery(db: FakeDb) {
     if (text.includes('WHERE sr.id = ?')) {
       return [db.tables.sales_records.filter((r) => r.id === p[0])];
     }
-    if (text.includes('SELECT serialNumber FROM customer_equipments')) {
+    // getSalesRecord now reads the row ID and model of each machine too, so the
+    // edit form can send those ids back and keep every serial box bound to the
+    // machine it was loaded from.
+    if (text.includes('SELECT id, serialNumber, productId, productName FROM customer_equipments')) {
       return [
         db.tables.customer_equipments
           .filter((r) => r.salesRecordId === p[0])
-          .map((r) => ({ serialNumber: r.serialNumber })),
+          .map((r) => ({
+            id: r.id,
+            serialNumber: r.serialNumber,
+            productId: r.productId,
+            productName: (r as { productName?: string }).productName ?? '',
+          })),
       ];
     }
     if (text.includes('AS productCost')) {

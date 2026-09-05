@@ -10,8 +10,19 @@
  *
  * The rules encoded here are all "warn, don't block" (D12/D13) — including the
  * missing bill-level costs of report 5 — except the required fields collected
- * in `validateLineDrafts` (one ticked line, a whole positive qty, a serial on
- * every machine and, since report 6, a product cost on every ticked line).
+ * in `validateLineDrafts` (one ticked line, a whole positive qty and, since
+ * report 6, a product cost on every ticked line).
+ *
+ * SERIAL NUMBERS ARE NOT ONE OF THEM ANY MORE (report 7). The owner hit the
+ * real case the earlier decision assumed away: the machine is sold and the bill
+ * has to be recorded before anyone has the serial in hand. So a blank serial
+ * saves, and the machine is chased afterwards by the «ข้อมูลไม่ครบ» alert
+ * category, which already fires on
+ * `serialNumber = '' OR serialNumber IS NULL OR warrantyStartDate IS NULL`
+ * (`getAlerts` in `app/lib/crmStore.ts`) for every equipment row a sale
+ * creates. `findMissingSerials` therefore survives as ADVICE — the editor uses
+ * it to say which machines will show up in that feed — and must never be turned
+ * back into a blocker here.
  */
 
 // ---------------------------------------------------------------------------
@@ -829,7 +840,9 @@ export function findDuplicateSerialsInForm(
     asArray(line.machines).forEach((m, machineIndex) => {
       const serialNumber = String(m?.serialNumber ?? "").trim();
       const normalized = normalizeSerial(serialNumber);
-      if (!normalized) return; // blank serials are a separate, blocking rule
+      // Blank serials are their own (non-blocking) rule — `findMissingSerials`.
+      // Two blanks are not a "duplicate serial": there is no serial to collide.
+      if (!normalized) return;
       const where: SerialLocation = {
         lineIndex,
         machineIndex,
@@ -845,8 +858,17 @@ export function findDuplicateSerialsInForm(
   return Array.from(groups.values()).filter((g) => g.occurrences.length > 1);
 }
 
-/** Task 12.11 — machines still missing a serial, so the form can point at the
- * exact line and machine. This one IS a blocker (the pre-existing rule). */
+/**
+ * Task 12.11 — machines still missing a serial, so the form can point at the
+ * exact line and machine.
+ *
+ * ADVISORY, NOT A BLOCKER (report 7). It is deliberately absent from
+ * `validateLineDrafts`: the bill saves with blank serials, and each machine
+ * saved that way lands in the «ข้อมูลไม่ครบ» alert category until someone fills
+ * the serial in. The editor renders this list as that consequence ("these
+ * machines will show up under ข้อมูลไม่ครบ"), never as a red error, and the
+ * parent form must never treat a non-empty result as a reason to refuse a save.
+ */
 export function findMissingSerials(
   lines: readonly SaleLineDraft[] | null | undefined
 ): SerialLocation[] {
@@ -887,8 +909,8 @@ export interface MissingCostLocation extends LineLocation {
  * (`buildLineDrafts`), so 0, "" and NaN all mean "not filled in yet"; only a
  * real, positive, finite number counts as a cost.
  *
- * This one IS a blocker, exactly like `findMissingSerials`: it is a required
- * field, not one of the confirmable warnings. A negative amount is reported
+ * This one IS a blocker — the last per-line required field left, now that the
+ * serial rule has become advice (report 7). A negative amount is reported
  * here too — it is likewise not a usable cost — and keeps its own
  * "ต้องเป็นตัวเลขที่ไม่ติดลบ" message from `validateLineDrafts`.
  */
@@ -981,14 +1003,18 @@ export function findOverQuotedLines(
 
 /**
  * The only hard blockers in this flow — the required fields (at least one line,
- * a whole positive quantity, a serial on every machine and, since report 6, a
- * product cost on every ticked line) plus the API's own per-bill machine cap,
- * surfaced here in Thai instead of as a 400. Everything else (already sold,
- * over-quoted, duplicate serial, no bill-level cost) is a confirmable warning
- * and must NOT appear in this list.
+ * a whole positive quantity and, since report 6, a product cost on every ticked
+ * line) plus the API's own per-bill machine cap, surfaced here in Thai instead
+ * of as a 400. Everything else (already sold, over-quoted, duplicate serial, no
+ * bill-level cost) is a confirmable warning and must NOT appear in this list.
  *
- * The per-machine ประกัน is OPTIONAL and is deliberately absent from here: a
- * machine with no warranty type saves exactly like one that has it.
+ * TWO PER-MACHINE FIELDS ARE OPTIONAL and are deliberately absent from here:
+ *   • ประกัน (type + dates) — always was.
+ *   • Serial Number — since report 7. A blank serial saves; the machine is then
+ *     chased by the «ข้อมูลไม่ครบ» alert until someone fills it in. Whoever is
+ *     tempted to put `findMissingSerials` back into this list should read the
+ *     module header first: it was removed on purpose, by the owner, after he
+ *     hit a real bill he could not record.
  */
 export function validateLineDrafts(
   lines: readonly SaleLineDraft[] | null | undefined
@@ -1015,13 +1041,11 @@ export function validateLineDrafts(
       errors.push(`${label}: ต้นทุนสินค้าต้องเป็นตัวเลขที่ไม่ติดลบ`);
     }
   });
-  for (const miss of findMissingSerials(lines)) {
-    const at = `รายการที่ ${miss.lineIndex + 1}`;
-    const label = miss.productName ? `${at} (${miss.productName})` : at;
-    errors.push(`${label} เครื่องที่ ${miss.machineIndex + 1}: กรุณาระบุ Serial Number`);
-  }
-  // Report 6 — a required field, alongside the serial rule above (never a
-  // confirmable warning): the admin cannot save a line whose cost is still 0.
+  // (No serial rule here — report 7. `findMissingSerials` is advice the editor
+  // renders as "these machines will show up under ข้อมูลไม่ครบ", not an error.)
+  //
+  // Report 6 — a required field (never a confirmable warning): the admin cannot
+  // save a line whose cost is still 0.
   for (const miss of findMissingCosts(lines)) {
     const at = `รายการที่ ${miss.lineIndex + 1}`;
     const label = miss.productName ? `${at} (${miss.productName})` : at;

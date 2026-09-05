@@ -12,9 +12,15 @@
  * a tickable row with its own sold quantity, unit price, product link, cost —
  * and, expanded underneath it, ONE ROW PER MACHINE carrying that machine's own
  * serial number, warranty TYPE and warranty dates (a mixed bill is the normal
- * case, not the exception). The warranty type is the one field of that row that
- * is OPTIONAL: it is absent from `validateLineDrafts`, has no red state, and an
- * unset one saves exactly like a filled one.
+ * case, not the exception).
+ *
+ * NOTHING IN A MACHINE ROW IS REQUIRED (report 7). The warranty type and dates
+ * never were; the serial stopped being required when the owner hit a bill he
+ * could not record because the serials were not in hand yet. A blank serial has
+ * no red state and never blocks — instead the editor says, in Thai, that the
+ * machine will sit in the «ข้อมูลไม่ครบ» alert feed until someone fills it in.
+ * That is the CONSEQUENCE, and the admin is meant to understand it, not be
+ * stopped by it.
  *
  * It is a CONTROLLED component: it owns no line state at all. `lines` in,
  * `onLinesChange` out, and every transformation goes through the pure helpers
@@ -33,9 +39,9 @@
  * Everything in Phase 2 is warn-and-allow-with-confirmation, so this component
  * BLOCKS NOTHING. It reports upward through `onReport` and lets the parent
  * decide; the only hard rules it surfaces are the REQUIRED FIELDS collected by
- * `validateLineDrafts` (at least one line, whole positive qty, a serial on
- * every machine, a product cost on every ticked line, the per-bill machine
- * cap).
+ * `validateLineDrafts` (at least one line, whole positive qty, a product cost
+ * on every ticked line, the per-bill machine cap) — the serial is no longer
+ * one of them.
  *
  * ─────────────────────────────────────────────────────────────────────────────
  * PROPS
@@ -59,12 +65,13 @@
  *                          (task 12.9) — never saved onto the sale, never used
  *                          to compute an end date. Falsy → the box disappears.
  * quotationRef             docNo of the source quotation, for the header only.
- * submitAttempted          Flip to true when the admin presses save. Turns the
- *                          "serial ยังว่าง" hints from amber advice into red
- *                          errors on the exact inputs, and paints red the
- *                          ต้นทุนสินค้า box of every line `findMissingCosts`
- *                          flagged (report 6). Purely cosmetic — the block
- *                          itself is `report.errors`, which the parent owns.
+ * submitAttempted          Flip to true when the admin presses save. Paints red
+ *                          the ต้นทุนสินค้า box of every line
+ *                          `findMissingCosts` flagged (report 6). It no longer
+ *                          reddens anything about serials: a blank serial is
+ *                          not an error at any point of the flow (report 7).
+ *                          Purely cosmetic — the block itself is
+ *                          `report.errors`, which the parent owns.
  * disabled                 Disables every control (use while saving).
  * onRequestSelectSoldLine  Called INSTEAD of ticking when the admin ticks a
  *                          line that was already sold (task 13.3). The parent
@@ -134,7 +141,12 @@ export interface CatalogProductOption extends CatalogProduct {
 export interface LineEditorReport {
   /** Hard blockers only (`validateLineDrafts`) — Thai, ready to display. */
   errors: string[];
-  /** Machines with no serial yet, located to the exact line + machine. */
+  /**
+   * Machines with no serial yet, located to the exact line + machine.
+   * ADVISORY since report 7 — these machines save, and land in the
+   * «ข้อมูลไม่ครบ» alert feed until a serial is added. The parent may name them
+   * in a confirm dialog, but must NEVER refuse a save over them.
+   */
   missingSerials: SerialLocation[];
   /** Ticked lines whose ต้นทุนสินค้า is still 0/blank (report 6). A BLOCKER —
    * `validateLineDrafts` already spells each one out inside `errors`; this list
@@ -434,7 +446,8 @@ export default function QuotationLineItemsEditor({
             {quotationRef ? <span className="text-gray-400 font-medium"> · {quotationRef}</span> : null}
           </h4>
           <p className="text-xs text-gray-500 mt-0.5">
-            ติ๊กเฉพาะรายการที่ลูกค้าซื้อจริง แล้วกรอก serial ให้ครบทุกเครื่อง
+            ติ๊กเฉพาะรายการที่ลูกค้าซื้อจริง — ถ้ายังไม่มี Serial Number ในมือ
+            เว้นว่างไว้ก่อนแล้วบันทึกได้เลย
           </p>
         </div>
         <span className="text-xs font-semibold text-gray-500 bg-gray-100 px-2.5 py-1 rounded-full">
@@ -724,8 +737,14 @@ export default function QuotationLineItemsEditor({
                               <span className="text-[11px] font-bold text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded-md mr-1.5">
                                 #{machineIndex + 1}
                               </span>
-                              Serial Number <span className="text-red-500">*</span>
+                              Serial Number{" "}
+                              <span className="font-normal text-gray-400">(ใส่ทีหลังได้)</span>
                             </label>
+                            {/* Report 7 — a blank serial has NO red state and no
+                                `required`: it saves, and the machine is chased by
+                                the «ข้อมูลไม่ครบ» alert afterwards. The only tint
+                                left on this box is the amber duplicate warning,
+                                which was always confirmable. */}
                             <input
                               id={serialId}
                               type="text"
@@ -736,14 +755,10 @@ export default function QuotationLineItemsEditor({
                                   serialNumber: e.target.value,
                                 })
                               }
-                              placeholder="Serial Number *"
+                              placeholder="เว้นว่างได้ ถ้ายังไม่มีเลขเครื่อง"
                               aria-label={`Serial Number ${at}`}
                               className={`${machineInputBase} ${
-                                blank && submitAttempted
-                                  ? inputDanger
-                                  : duplicated
-                                    ? inputWarn
-                                    : machineInputNeutral
+                                duplicated ? inputWarn : machineInputNeutral
                               }`}
                             />
                           </div>
@@ -882,9 +897,11 @@ export default function QuotationLineItemsEditor({
                     })}
                   </div>
                   <p className="text-[11px] text-gray-400 mt-2">
-                    Serial Number บังคับกรอกทุกเครื่อง ส่วนประเภทประกันและวันประกันไม่บังคับ
-                    เว้นว่างไว้ก่อนได้ — แต่ละเครื่องกำหนดคนละแบบ คนละวันได้
+                    ทุกช่องในบล็อกนี้ไม่บังคับ — Serial Number, ประเภทประกัน และวันประกัน
+                    เว้นว่างไว้ก่อนแล้วบันทึกได้ แต่ละเครื่องกำหนดคนละแบบ คนละวันได้
                     และจะถูกบันทึกไปที่ «อุปกรณ์ที่ขาย» ของเครื่องนั้น
+                    เครื่องที่ยังไม่มี Serial Number จะขึ้นในหน้าแจ้งเตือนหัวข้อ «ข้อมูลไม่ครบ»
+                    จนกว่าจะกลับมาเติม
                   </p>
                 </div>
               </div>
@@ -893,18 +910,16 @@ export default function QuotationLineItemsEditor({
         );
       })}
 
-      {/* ── Task 12.11: exactly which line and which machine is still blank ── */}
+      {/* ── Task 12.11, re-cast by report 7: which machines are still blank ──
+          Same list, same coordinates — but it is now a CONSEQUENCE, not a
+          blocker. The colour never changes with `submitAttempted` (there is
+          nothing to go red about) and the wording names the alert category the
+          admin will find these machines in, so leaving a serial for later is an
+          informed choice rather than a thing the form quietly forgives. */}
       {missingCount > 0 && (
-        <div
-          className={`rounded-xl border px-4 py-3 ${
-            submitAttempted
-              ? "border-red-300 bg-red-50 text-red-800"
-              : "border-amber-200 bg-amber-50 text-amber-800"
-          }`}
-        >
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-800">
           <div className="text-xs font-bold">
-            ยังไม่ได้กรอก Serial Number {fmtInt(missingCount)} เครื่อง
-            {submitAttempted ? " — บันทึกไม่ได้จนกว่าจะกรอกครบ" : " (ต้องกรอกครบก่อนบันทึก)"}
+            ยังไม่ได้ใส่ Serial Number {fmtInt(missingCount)} เครื่อง — บันทึกได้ตามปกติ
           </div>
           <ul className="mt-1 space-y-0.5 text-xs list-disc list-inside">
             {report.missingSerials.slice(0, MAX_LISTED_LOCATIONS).map((where) => (
@@ -914,6 +929,10 @@ export default function QuotationLineItemsEditor({
               <li>และอีก {fmtInt(missingCount - MAX_LISTED_LOCATIONS)} เครื่อง</li>
             )}
           </ul>
+          <div className="text-[11px] mt-1">
+            เครื่องเหล่านี้จะไปรออยู่ในหน้า «แจ้งเตือน» หัวข้อ «ข้อมูลไม่ครบ»
+            จนกว่าจะกลับมาใส่ Serial Number ให้
+          </div>
         </div>
       )}
 

@@ -21,9 +21,13 @@ import {
 // The [id] route touches equipment sync/cleanup; stubbed so no DB work leaks
 // out of these route tests.
 vi.mock('@/app/lib/crmStore', () => ({
-  syncEquipmentsForSalesRecord: vi.fn(),
+  syncEquipmentRowsForSalesRecord: vi.fn(),
   cleanupEquipmentsForSalesRecord: vi.fn(),
 }));
+import {
+  syncEquipmentRowsForSalesRecord,
+  cleanupEquipmentsForSalesRecord,
+} from '@/app/lib/crmStore';
 
 // POST re-reads the machines it just wrote through `query` to build its
 // `createdEquipments` response field.
@@ -170,11 +174,43 @@ describe('Admin Sales API', () => {
       expect(res.status).toBe(201);
     });
 
-    it('rejects a machine with a blank serial, naming which machine', async () => {
-      const error = await expectRejected({
+    // Report 7 REVERSED the rule this used to pin ("ทุกเครื่องต้องมี serial
+    // ก่อนบันทึก"). The owner hit the real bill the old rule assumed away — the
+    // machine is sold and has to be recorded before the serial is in hand — so a
+    // blank serial now SAVES and the machine is chased afterwards by the
+    // «ข้อมูลไม่ครบ» alert category. The route must not resurrect the blocker.
+    it('saves a machine whose serial is not in hand yet (report 7)', async () => {
+      const res = await postSale({
         saleDate: '2026-08-22',
         items: [{ productName: 'Scale A', qty: 2, unitPrice: 100 }],
         equipments: [{ serialNumber: 'SN-1' }, { serialNumber: '   ' }],
+      });
+      expect(res.status).toBe(201);
+      // BOTH machines are written — the blank one is a physical unit the alert
+      // feed has to be able to chase, so dropping it would lose it silently.
+      expect(vi.mocked(createSaleWithLineItems).mock.calls[0][0].equipments).toEqual([
+        { serialNumber: 'SN-1' },
+        { serialNumber: '   ' },
+      ]);
+    });
+
+    it('saves a machine with the serialNumber key left out entirely', async () => {
+      const res = await postSale({
+        saleDate: '2026-08-22',
+        items: [{ productName: 'Scale A', qty: 1, unitPrice: 100 }],
+        equipments: [{ productId: 'p-1' }],
+      });
+      expect(res.status).toBe(201);
+    });
+
+    // Shape is still enforced: a non-string serial is a malformed request, not
+    // a machine whose serial is unknown — it would land in the column as
+    // "[object Object]".
+    it('still rejects a serialNumber that is not a string at all', async () => {
+      const error = await expectRejected({
+        saleDate: '2026-08-22',
+        items: [{ productName: 'Scale A', qty: 2, unitPrice: 100 }],
+        equipments: [{ serialNumber: 'SN-1' }, { serialNumber: { oops: true } }],
       });
       expect(error).toContain('เครื่องที่ 2');
       expect(error).toContain('Serial');
@@ -212,15 +248,41 @@ describe('Admin Sales API', () => {
       });
     });
 
-    it('rejects a legacy equipment sale missing one of its serials', async () => {
-      const error = await expectRejected({
+    // Report 7 — the legacy flat form is the plain "เพิ่มรายการขาย" form, and it
+    // lost the per-machine "ขาดชิ้นที่ N" blocker for the same reason as above.
+    // Only the SHAPE survives (see the serialNumbers-is-not-an-array test).
+    it('saves a legacy equipment sale with a serial left blank (report 7)', async () => {
+      const res = await postSale({
         saleDate: '2026-08-22',
         saleType: 'equipment',
         productName: 'Scale A',
         qty: 2,
         serialNumbers: ['SN-1', '  '],
       });
-      expect(error).toContain('ชิ้นที่ 2');
+      expect(res.status).toBe(201);
+      expect(vi.mocked(createSaleWithLineItems).mock.calls[0][0].equipments).toEqual([
+        { serialNumber: 'SN-1' },
+        { serialNumber: '' },
+      ]);
+    });
+
+    // The list is PADDED to one row per machine sold. "3 machines, no serial
+    // typed" has to become THREE rows, not zero — each is a unit the
+    // «ข้อมูลไม่ครบ» alert must be able to chase.
+    it('pads a short serial list to one machine row per qty', async () => {
+      const res = await postSale({
+        saleDate: '2026-08-22',
+        saleType: 'equipment',
+        productName: 'Scale A',
+        qty: 3,
+        serialNumbers: [],
+      });
+      expect(res.status).toBe(201);
+      expect(vi.mocked(createSaleWithLineItems).mock.calls[0][0].equipments).toEqual([
+        { serialNumber: '' },
+        { serialNumber: '' },
+        { serialNumber: '' },
+      ]);
     });
   });
 
@@ -463,6 +525,112 @@ describe('Admin Sales API', () => {
       );
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual(updated);
+    });
+
+    /**
+     * The edit form is the ONE place a sale that already owns machines is
+     * re-synced, so this is where the row ids have to survive the trip.
+     */
+    describe('equipment sync', () => {
+      const putSale = (body: unknown, id = '1') =>
+        updateSale(
+          new NextRequest(`http://localhost:3000/api/admin/sales/${id}`, {
+            method: 'PUT',
+            body: JSON.stringify(body),
+          }),
+          { params: Promise.resolve({ id }) }
+        );
+
+      beforeEach(() => {
+        vi.mocked(getSession).mockResolvedValue(admin);
+        vi.mocked(updateSalesRecord).mockResolvedValue({
+          id: '1',
+          qty: 2,
+          customerId: 'cus-1',
+          productId: 'p-1',
+        } as any);
+        vi.mocked(getSalesRecord).mockResolvedValue({ id: '1' } as any);
+      });
+
+      it('forwards each machine’s row id alongside its serial', async () => {
+        await putSale({
+          saleType: 'equipment',
+          qty: 2,
+          serialNumbers: ['SN-1', 'SN-2'],
+          equipments: [
+            { id: 'eq-1', serialNumber: 'SN-1' },
+            { id: 'eq-2', serialNumber: 'SN-2' },
+          ],
+        });
+
+        expect(vi.mocked(syncEquipmentRowsForSalesRecord).mock.calls[0][1]).toEqual([
+          { id: 'eq-1', serialNumber: 'SN-1' },
+          { id: 'eq-2', serialNumber: 'SN-2' },
+        ]);
+      });
+
+      it('cuts ids and serials as ONE list when qty shrinks (never two separate slices)', async () => {
+        await putSale({
+          saleType: 'equipment',
+          qty: 1,
+          serialNumbers: ['SN-1', 'SN-STALE'],
+          equipments: [
+            { id: 'eq-1', serialNumber: 'SN-1' },
+            { id: 'eq-2', serialNumber: 'SN-STALE' },
+          ],
+        });
+
+        // eq-1 keeps ITS serial. A pair split across two slices is exactly how
+        // machine #1 would inherit machine #2's serial and history.
+        expect(vi.mocked(syncEquipmentRowsForSalesRecord).mock.calls[0][1]).toEqual([
+          { id: 'eq-1', serialNumber: 'SN-1' },
+        ]);
+      });
+
+      it('still accepts a serial-only payload, with no id on any row', async () => {
+        await putSale({ saleType: 'equipment', qty: 2, serialNumbers: ['SN-1', ''] });
+
+        expect(vi.mocked(syncEquipmentRowsForSalesRecord).mock.calls[0][1]).toEqual([
+          { serialNumber: 'SN-1' },
+          { serialNumber: '' },
+        ]);
+      });
+
+      it('drops a non-string id instead of forwarding it', async () => {
+        await putSale({
+          saleType: 'equipment',
+          qty: 2,
+          equipments: [{ id: { $ne: null }, serialNumber: 'SN-1' }, 'nonsense'],
+        });
+
+        expect(vi.mocked(syncEquipmentRowsForSalesRecord).mock.calls[0][1]).toEqual([
+          { serialNumber: 'SN-1' },
+          { serialNumber: '' },
+        ]);
+      });
+
+      it('syncs nothing when the body carries neither machines nor serials', async () => {
+        await putSale({ saleType: 'equipment', qty: 2 });
+        expect(syncEquipmentRowsForSalesRecord).not.toHaveBeenCalled();
+        expect(cleanupEquipmentsForSalesRecord).not.toHaveBeenCalled();
+      });
+
+      it('an EMPTY equipments[] does not outrank the serials and unlink every machine', async () => {
+        // An equipment sale always has qty >= 1, so an empty machine list is
+        // never an instruction to detach the bill's machines — taking it at
+        // face value would unlink every row and orphan its service history.
+        await putSale({
+          saleType: 'equipment',
+          qty: 2,
+          equipments: [],
+          serialNumbers: ['SN-1', 'SN-2'],
+        });
+
+        expect(vi.mocked(syncEquipmentRowsForSalesRecord).mock.calls[0][1]).toEqual([
+          { serialNumber: 'SN-1' },
+          { serialNumber: 'SN-2' },
+        ]);
+      });
     });
   });
 

@@ -697,6 +697,447 @@ describe('syncEquipmentRowsForSalesRecord — per-machine warranty type', () => 
   });
 });
 
+/**
+ * PASS 0 — matching by ROW ID, ahead of serial and ahead of position.
+ *
+ * The sale edit form loads a bill's machines and sends their
+ * `customer_equipments.id` back on save, so a machine whose serial is still
+ * blank (legal since serials became optional) stays on ITS OWN row instead of
+ * being paired by the position of a text box the admin cannot tell apart.
+ *
+ * The id is a SELECTOR inside `WHERE salesRecordId = ?`, never an address:
+ * anything not among this sale's own rows is ignored.
+ */
+describe('syncEquipmentRowsForSalesRecord — pass 0: row id', () => {
+  const shared = { customerId: 'cust-1', productId: 'P1', productName: 'รุ่น P1' };
+
+  /** Bound values keyed by column, so a statement that OMITS a column (the
+   * mixed-model preserve rule below) can be read as easily as a full one. */
+  function boundByColumn(call: unknown[]) {
+    const sql = String(call[0]).replace(/\s+/g, ' ');
+    const setPart = sql.slice(sql.indexOf('SET ') + 4, sql.lastIndexOf(' WHERE '));
+    // Split on the commas that separate assignments only — never the ones
+    // inside COALESCE(NULLIF(?, ''), col).
+    const columns = setPart
+      .split(/,\s*(?=[A-Za-z_]+\s*=)/)
+      .map((fragment) => fragment.trim().split(/\s*=/)[0]);
+    const params = call[1] as unknown[];
+    const out: Record<string, unknown> = { __id: params[params.length - 1] };
+    columns.forEach((col, i) => {
+      out[col] = params[i];
+    });
+    return out;
+  }
+
+  const updatesByColumn = () => updateCalls().map((c) => boundByColumn(c));
+
+  it('binds a machine to the id it was loaded from, even when another row already owns that serial', async () => {
+    mockConnRowsFor([
+      { id: 'eq-A', serialNumber: 'SN-A', productId: 'P1' },
+      { id: 'eq-B', serialNumber: 'SN-B', productId: 'P1' },
+    ]);
+
+    // The admin corrected a mistyped serial: the machine in row eq-A is really
+    // the one carrying SN-B. Serial matching alone would hand SN-B to eq-B.
+    await syncEquipmentRowsForSalesRecord(
+      'sale-1',
+      [
+        { id: 'eq-A', serialNumber: 'SN-B' },
+        { id: 'eq-B', serialNumber: 'SN-A' },
+      ],
+      shared
+    );
+
+    const rows = updatesByColumn();
+    expect(rows).toHaveLength(2);
+    expect(rows.find((r) => r.__id === 'eq-A')!.serialNumber).toBe('SN-B');
+    expect(rows.find((r) => r.__id === 'eq-B')!.serialNumber).toBe('SN-A');
+    expect(callsMatching('INSERT INTO customer_equipments')).toHaveLength(0);
+    expect(callsMatching("UPDATE customer_equipments SET salesRecordId = ''")).toHaveLength(0);
+  });
+
+  it('keeps two BLANK-serial machines of the same model on their own rows when the boxes are reordered', async () => {
+    // The scenario this whole pass exists for: nothing distinguishes these two
+    // rows — same model, no serial, invisible createdAt order — so position
+    // used to decide, and a re-save that filled the serials in the other order
+    // moved one machine's service history onto the other machine.
+    mockConnRowsFor([
+      { id: 'eq-1', serialNumber: '', productId: 'P1' },
+      { id: 'eq-2', serialNumber: '', productId: 'P1' },
+    ]);
+
+    await syncEquipmentRowsForSalesRecord(
+      'sale-1',
+      [
+        { id: 'eq-2', serialNumber: 'SN-SECOND' },
+        { id: 'eq-1', serialNumber: 'SN-FIRST' },
+      ],
+      shared
+    );
+
+    const rows = updatesByColumn();
+    expect(rows).toHaveLength(2);
+    // Positional pairing would have written SN-SECOND onto eq-1.
+    expect(rows.find((r) => r.__id === 'eq-1')!.serialNumber).toBe('SN-FIRST');
+    expect(rows.find((r) => r.__id === 'eq-2')!.serialNumber).toBe('SN-SECOND');
+    expect(callsMatching('INSERT INTO customer_equipments')).toHaveLength(0);
+    expect(callsMatching("UPDATE customer_equipments SET salesRecordId = ''")).toHaveLength(0);
+  });
+
+  it('IGNORES an id that is not one of this sale’s machines, falling back to serial then position', async () => {
+    mockConnRowsFor([
+      { id: 'eq-A', serialNumber: 'SN-A', productId: 'P1' },
+      { id: 'eq-B', serialNumber: '', productId: 'P1' },
+    ]);
+
+    // 'eq-OTHER' belongs to a different sale (or to nothing at all): a stale
+    // tab, a hand-edited request. It must never reach that machine.
+    await syncEquipmentRowsForSalesRecord(
+      'sale-1',
+      [
+        { id: 'eq-OTHER', serialNumber: 'SN-A' }, // → falls back to the serial pass
+        { id: 'eq-GONE', serialNumber: '' }, // → falls back to the positional pass
+      ],
+      shared
+    );
+
+    const rows = updatesByColumn();
+    expect(rows.map((r) => r.__id).sort()).toEqual(['eq-A', 'eq-B']);
+    expect(rows.find((r) => r.__id === 'eq-A')!.serialNumber).toBe('SN-A');
+    expect(rows.find((r) => r.__id === 'eq-B')!.serialNumber).toBe('');
+    // Nothing was written to, inserted for, or unlinked because of the foreign ids.
+    expect(callsMatching('INSERT INTO customer_equipments')).toHaveLength(0);
+    expect(callsMatching("UPDATE customer_equipments SET salesRecordId = ''")).toHaveLength(0);
+    expect(
+      conn.query.mock.calls.some((c) => JSON.stringify(c[1] ?? []).includes('eq-OTHER'))
+    ).toBe(false);
+    expect(conn.query.mock.calls.filter((c) => /DELETE/i.test(String(c[0])))).toHaveLength(0);
+  });
+
+  it('pairs the same id only ONCE, and the duplicate claim never lands on another machine', async () => {
+    mockConnRowsFor([
+      { id: 'eq-A', serialNumber: '', productId: 'P1' },
+      { id: 'eq-B', serialNumber: '', productId: 'P1' },
+    ]);
+
+    await syncEquipmentRowsForSalesRecord(
+      'sale-1',
+      [
+        { id: 'eq-A', serialNumber: 'SN-1' },
+        { id: 'eq-A', serialNumber: 'SN-2' }, // duplicate claim
+      ],
+      shared
+    );
+
+    const rows = updatesByColumn();
+    // First claim wins the id. The second says it is the SAME physical machine,
+    // which cannot be true — so it is barred from the positional fallback: it
+    // must not be handed eq-B and stamp SN-2 onto a machine the payload never
+    // said anything about. It becomes a new row instead, and eq-B is UNLINKED,
+    // never deleted, so its warranty/service history stays under the customer.
+    expect(rows).toHaveLength(1);
+    expect(rows[0].__id).toBe('eq-A');
+    expect(rows[0].serialNumber).toBe('SN-1');
+    const inserted = callsMatching('INSERT INTO customer_equipments');
+    expect(inserted).toHaveLength(1);
+    expect(inserted[0][1][5]).toBe('SN-2');
+    expect(inserted[0][1][0]).not.toBe('eq-A');
+    expect(callsMatching("UPDATE customer_equipments SET salesRecordId = ''")).toEqual([
+      ["UPDATE customer_equipments SET salesRecordId = '' WHERE id = ?", ['eq-B']],
+    ]);
+    expect(conn.query.mock.calls.filter((c) => /DELETE/i.test(String(c[0])))).toHaveLength(0);
+  });
+
+  it('a duplicate id still gets the SERIAL pass — it lands on the machine that serial names', async () => {
+    mockConnRowsFor([
+      { id: 'eq-A', serialNumber: '', productId: 'P1' },
+      { id: 'eq-B', serialNumber: 'SN-B', productId: 'P1' },
+    ]);
+
+    await syncEquipmentRowsForSalesRecord(
+      'sale-1',
+      [
+        { id: 'eq-A', serialNumber: 'SN-1' },
+        { id: 'eq-A', serialNumber: 'SN-B' }, // bad id, but a serial that IS eq-B
+      ],
+      shared
+    );
+
+    const rows = updatesByColumn();
+    expect(rows.map((r) => r.__id).sort()).toEqual(['eq-A', 'eq-B']);
+    expect(rows.find((r) => r.__id === 'eq-B')!.serialNumber).toBe('SN-B');
+    expect(callsMatching('INSERT INTO customer_equipments')).toHaveLength(0);
+    expect(callsMatching("UPDATE customer_equipments SET salesRecordId = ''")).toHaveLength(0);
+  });
+
+  it('a FOREIGN id still degrades to position — only a self-contradicting one is barred', async () => {
+    mockConnRowsFor([
+      { id: 'eq-A', serialNumber: '', productId: 'P1' },
+      { id: 'eq-B', serialNumber: '', productId: 'P1' },
+    ]);
+
+    await syncEquipmentRowsForSalesRecord(
+      'sale-1',
+      [
+        { id: 'not-this-sale-1', serialNumber: 'SN-1' },
+        { id: 'not-this-sale-2', serialNumber: 'SN-2' },
+      ],
+      shared
+    );
+
+    const rows = updatesByColumn();
+    expect(rows.find((r) => r.__id === 'eq-A')!.serialNumber).toBe('SN-1');
+    expect(rows.find((r) => r.__id === 'eq-B')!.serialNumber).toBe('SN-2');
+    expect(callsMatching('INSERT INTO customer_equipments')).toHaveLength(0);
+    expect(callsMatching("UPDATE customer_equipments SET salesRecordId = ''")).toHaveLength(0);
+  });
+
+  it('matches an id even when the driver hands back a non-string id column', async () => {
+    // A number/Buffer id would fail `===` against the submitted string and drop
+    // the machine into the POSITIONAL pass — the exact rebind pass 0 prevents.
+    conn.query.mockImplementation((sql: string) => {
+      if (sql.includes('SELECT id, serialNumber FROM customer_equipments')) {
+        return Promise.resolve([[
+          { id: 1001, serialNumber: '' },
+          { id: 1002, serialNumber: '' },
+        ]]);
+      }
+      if (sql.includes('SELECT id, productId FROM customer_equipments')) {
+        return Promise.resolve([[
+          { id: 1001, productId: 'P1' },
+          { id: 1002, productId: 'P1' },
+        ]]);
+      }
+      return Promise.resolve([{ affectedRows: 1 }]);
+    });
+
+    await syncEquipmentRowsForSalesRecord(
+      'sale-1',
+      [
+        { id: '1002', serialNumber: 'SN-SECOND' },
+        { id: '1001', serialNumber: 'SN-FIRST' },
+      ],
+      shared
+    );
+
+    const rows = updatesByColumn();
+    expect(rows.find((r) => r.__id === '1001')!.serialNumber).toBe('SN-FIRST');
+    expect(rows.find((r) => r.__id === '1002')!.serialNumber).toBe('SN-SECOND');
+  });
+
+  it('an id nobody sent changes nothing: serial matching still decides, exactly as today', async () => {
+    mockConnRowsFor([
+      { id: 'eq-A', serialNumber: 'SN-A', productId: 'P1' },
+      { id: 'eq-B', serialNumber: 'SN-B', productId: 'P1' },
+    ]);
+
+    await syncEquipmentRowsForSalesRecord(
+      'sale-1',
+      [
+        { serialNumber: 'SN-B' }, // no id anywhere in the payload
+        { serialNumber: 'SN-A' },
+      ],
+      shared
+    );
+
+    const rows = updatesByColumn();
+    expect(rows.find((r) => r.__id === 'eq-A')!.serialNumber).toBe('SN-A');
+    expect(rows.find((r) => r.__id === 'eq-B')!.serialNumber).toBe('SN-B');
+  });
+
+  it('an id nobody sent changes nothing: blank serials still pair positionally', async () => {
+    mockConnRowsFor([
+      { id: 'eq-1', serialNumber: '', productId: 'P1' },
+      { id: 'eq-2', serialNumber: '', productId: 'P1' },
+    ]);
+
+    await syncEquipmentRowsForSalesRecord(
+      'sale-1',
+      [{ serialNumber: 'SN-FIRST' }, { serialNumber: 'SN-SECOND' }],
+      shared
+    );
+
+    const rows = updatesByColumn();
+    expect(rows.find((r) => r.__id === 'eq-1')!.serialNumber).toBe('SN-FIRST');
+    expect(rows.find((r) => r.__id === 'eq-2')!.serialNumber).toBe('SN-SECOND');
+    expect(callsMatching('INSERT INTO customer_equipments')).toHaveLength(0);
+    expect(callsMatching("UPDATE customer_equipments SET salesRecordId = ''")).toHaveLength(0);
+  });
+
+  it('an id never becomes a new row’s primary key', async () => {
+    mockConnRowsFor([]);
+
+    await syncEquipmentRowsForSalesRecord(
+      'sale-1',
+      [{ id: 'eq-CHOSEN', serialNumber: 'SN-NEW' }],
+      shared
+    );
+
+    const inserts = callsMatching('INSERT INTO customer_equipments');
+    expect(inserts).toHaveLength(1);
+    expect(inserts[0][1][0]).not.toBe('eq-CHOSEN');
+    expect(inserts[0][1][0]).toEqual(expect.any(String));
+  });
+
+  it('a machine paired by id still keeps the history columns the sync never writes', async () => {
+    mockConnRowsFor([{ id: 'eq-A', serialNumber: '', productId: 'P1' }]);
+
+    await syncEquipmentRowsForSalesRecord(
+      'sale-1',
+      [{ id: 'eq-A', serialNumber: 'SN-A' }],
+      shared
+    );
+
+    const sql = String(updateCalls()[0][0]);
+    for (const column of ['note', 'calibrationDate', 'ownershipSource', 'warrantyAlertEnabled', 'salesRecordId', 'createdAt']) {
+      expect(sql).not.toContain(`${column} =`);
+    }
+    expect(conn.query.mock.calls.filter((c) => /DELETE/i.test(String(c[0])))).toHaveLength(0);
+  });
+
+  /**
+   * The second half of the same wound: a bill whose machines are NOT all one
+   * model cannot be described by the sale form's ONE product + ONE warranty
+   * pair, so a re-save must not stamp them over every machine.
+   */
+  describe('mixed-model bills are not restamped by the one-product template', () => {
+    // What the legacy edit form actually sends: bare serials (plus, now, their
+    // row ids) inheriting one sale-level product and one warranty pair.
+    const legacyTemplate = {
+      customerId: 'cust-1',
+      productId: 'P1',
+      productName: 'เครื่องวัด A',
+      quotationNumber: 'QT-1',
+      warrantyCertNumber: '',
+      warrantyType: '',
+      warrantyStartDate: '2026-03-01',
+      warrantyEndDate: '2027-03-01',
+      status: 'Active' as const,
+    };
+
+    it('leaves the model and warranty dates of every machine alone', async () => {
+      // P1 x2 + P2 x1 — the ตู้อบ (eq-3) is a different model with a longer
+      // warranty and its own installation history.
+      mockConnRowsFor([
+        { id: 'eq-1', serialNumber: '', productId: 'P1' },
+        { id: 'eq-2', serialNumber: '', productId: 'P1' },
+        { id: 'eq-3', serialNumber: '', productId: 'P2' },
+      ]);
+
+      await syncEquipmentRowsForSalesRecord(
+        'sale-1',
+        [
+          { id: 'eq-1', serialNumber: 'SN-A-111' },
+          { id: 'eq-2', serialNumber: 'SN-A-222' },
+          { id: 'eq-3', serialNumber: 'SN-B-777' },
+        ],
+        legacyTemplate
+      );
+
+      const rows = updatesByColumn();
+      expect(rows).toHaveLength(3);
+      for (const row of rows) {
+        // The columns the template cannot honestly describe are not in the
+        // statement at all, so the stored values survive.
+        expect(row).not.toHaveProperty('productId');
+        expect(row).not.toHaveProperty('productName');
+        expect(row).not.toHaveProperty('warrantyStartDate');
+        expect(row).not.toHaveProperty('warrantyEndDate');
+      }
+      // ...while the serials the admin actually typed DO land, each on its own row.
+      expect(rows.find((r) => r.__id === 'eq-3')!.serialNumber).toBe('SN-B-777');
+      expect(rows.find((r) => r.__id === 'eq-1')!.serialNumber).toBe('SN-A-111');
+      expect(callsMatching('INSERT INTO customer_equipments')).toHaveLength(0);
+      expect(callsMatching("UPDATE customer_equipments SET salesRecordId = ''")).toHaveLength(0);
+    });
+
+    it('a row that names its OWN model still writes it, mixed bill or not', async () => {
+      mockConnRowsFor([
+        { id: 'eq-1', serialNumber: 'SN-1', productId: 'P1' },
+        { id: 'eq-3', serialNumber: 'SN-9', productId: 'P2' },
+      ]);
+
+      await syncEquipmentRowsForSalesRecord(
+        'sale-1',
+        [
+          { serialNumber: 'SN-1', productId: 'P1', productName: 'รุ่น P1', warrantyEndDate: '2027-01-31' },
+          { serialNumber: 'SN-9', productId: 'P2', productName: 'รุ่น P2', warrantyEndDate: '2028-03-01' },
+        ],
+        legacyTemplate
+      );
+
+      const rows = updatesByColumn();
+      expect(rows.find((r) => r.__id === 'eq-3')!.productId).toBe('P2');
+      expect(rows.find((r) => r.__id === 'eq-3')!.warrantyEndDate).toBe('2028-03-01');
+      expect(rows.find((r) => r.__id === 'eq-1')!.productId).toBe('P1');
+    });
+
+    it('a genuine ONE-MODEL sale still propagates a product change to every machine', async () => {
+      // The behaviour that must not regress: all three machines are P1, the
+      // admin changes the sale's product to P9, and the machines follow.
+      mockConnRowsFor([
+        { id: 'eq-1', serialNumber: 'SN-1', productId: 'P1' },
+        { id: 'eq-2', serialNumber: 'SN-2', productId: 'P1' },
+      ]);
+
+      await syncEquipmentRowsForSalesRecord(
+        'sale-1',
+        [
+          { id: 'eq-1', serialNumber: 'SN-1' },
+          { id: 'eq-2', serialNumber: 'SN-2' },
+        ],
+        { ...legacyTemplate, productId: 'P9', productName: 'เครื่องวัด รุ่นใหม่' }
+      );
+
+      const rows = updatesByColumn();
+      expect(rows).toHaveLength(2);
+      for (const row of rows) {
+        expect(row.productId).toBe('P9');
+        expect(row.productName).toBe('เครื่องวัด รุ่นใหม่');
+        expect(row.warrantyStartDate).toBe('2026-03-01');
+        expect(row.warrantyEndDate).toBe('2027-03-01');
+      }
+    });
+
+    it('never writes status on an existing row, so an Expired machine is not resurrected', async () => {
+      mockConnRowsFor([{ id: 'eq-A', serialNumber: 'SN-A', productId: 'P1' }]);
+
+      await syncEquipmentRowsForSalesRecord(
+        'sale-1',
+        [{ id: 'eq-A', serialNumber: 'SN-A' }],
+        legacyTemplate // status: 'Active'
+      );
+
+      const sql = String(updateCalls()[0][0]);
+      expect(sql).not.toContain('status =');
+      // A brand-new machine still starts Active, though.
+      conn.query.mockReset();
+      mockConnRowsFor([]);
+      await syncEquipmentRowsForSalesRecord('sale-1', [{ serialNumber: 'SN-NEW' }], legacyTemplate);
+      // INSERT bind order: ..., warrantyStartDate, warrantyEndDate, status, ...
+      expect(callsMatching('INSERT INTO customer_equipments')[0][1][11]).toBe('Active');
+    });
+
+    it('does not erase a hand-typed warranty certificate number', async () => {
+      // The sale form has no ใบรับประกัน field and both sale routes send "" —
+      // which must mean "no opinion", exactly like warrantyType.
+      mockConnRowsFor([{ id: 'eq-A', serialNumber: 'SN-A', productId: 'P1' }]);
+
+      await syncEquipmentRowsForSalesRecord(
+        'sale-1',
+        [{ id: 'eq-A', serialNumber: 'SN-A' }],
+        legacyTemplate
+      );
+
+      const update = updateCalls()[0];
+      expect(boundByColumn(update).warrantyCertNumber).toBe('');
+      expect(String(update[0]).replace(/\s+/g, ' ')).toContain(
+        "warrantyCertNumber = COALESCE(NULLIF(?, ''), warrantyCertNumber)"
+      );
+    });
+  });
+});
+
 describe('findEquipmentsBySerial', () => {
   it('normalizes each serial with trim + lowercase, exactly like the sync matching (9.11)', async () => {
     topQuery.mockResolvedValue([[]]);
