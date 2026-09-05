@@ -187,6 +187,31 @@ export async function listRecentDocNos(): Promise<UsedDocNo[]> {
   return rows.map((r) => ({ docNo: r.docNo, quotationId: String(r.quotationId) }));
 }
 
+/**
+ * Every reserved number that begins with `base` — e.g. "QT260719-23" finds
+ * "QT260719-23", "QT260719-23v1", "QT260719-23v2".
+ *
+ * Deliberately NOT windowed by date, unlike listRecentDocNos(). Quotations are
+ * kept for two years and this business's sales cycle runs for months, so the
+ * document an admin clones is very often older than that 7-day window — and
+ * `used_docnos` is never purged (see the cleanup cron), so its PRIMARY KEY still
+ * owns every version number ever issued. Working out the next version from the
+ * recent window alone would hand back a "v1" the ledger already owns, and the
+ * save would then be rejected with a docNo conflict the admin cannot resolve.
+ */
+export async function listDocNosByBase(base: string): Promise<UsedDocNo[]> {
+  const trimmed = String(base ?? "").trim();
+  if (!trimmed) return [];
+  // Escape LIKE's wildcards so a docNo containing "%" or "_" can't widen the
+  // scan into other documents' numbers.
+  const pattern = `${trimmed.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+  const [rows] = await query<RowDataPacket[]>(
+    "SELECT docNo, quotationId FROM used_docnos WHERE docNo LIKE ? ESCAPE '\\\\'",
+    [pattern]
+  );
+  return rows.map((r) => ({ docNo: r.docNo, quotationId: String(r.quotationId) }));
+}
+
 /** Purge reserved numbers older than `days` days. Returns how many were removed. */
 export async function purgeOldDocNos(days: number): Promise<number> {
   const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();

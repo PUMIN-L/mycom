@@ -18,6 +18,7 @@ vi.mock('@/app/lib/quotationStore', () => ({
     }
   },
   listRecentDocNos: vi.fn(),
+  listDocNosByBase: vi.fn(),
   purgeExpiredQuotations: vi.fn(),
   purgeOldDocNos: vi.fn(),
 }));
@@ -26,6 +27,7 @@ import {
   saveQuotationAtomic,
   DocNoConflictError,
   listRecentDocNos,
+  listDocNosByBase,
   purgeExpiredQuotations,
   purgeOldDocNos,
 } from '@/app/lib/quotationStore';
@@ -161,6 +163,44 @@ describe('Quotations API', () => {
       const res = await docnosGET();
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual(ledger);
+    });
+
+    // ?base= — what the version picker uses. The recent window is useless to
+    // it: quotations are kept two years, so the document being cloned is
+    // usually far older than 7 days and its v1 would be invisible.
+    it('returns every number under ?base= instead of the recent window', async () => {
+      vi.mocked(getSession).mockResolvedValue(adminSession);
+      const versions = [
+        { docNo: 'QT260719-23', quotationId: 'q1' },
+        { docNo: 'QT260719-23v1', quotationId: 'q2' },
+      ];
+      vi.mocked(listDocNosByBase).mockResolvedValue(versions as any);
+      const res = await docnosGET(
+        new NextRequest('http://localhost/api/quotations/docnos?base=QT260719-23')
+      );
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual(versions);
+      expect(listDocNosByBase).toHaveBeenCalledWith('QT260719-23');
+      expect(listRecentDocNos).not.toHaveBeenCalled();
+    });
+
+    it('falls back to the recent window for a blank ?base=', async () => {
+      vi.mocked(getSession).mockResolvedValue(adminSession);
+      vi.mocked(listRecentDocNos).mockResolvedValue([] as any);
+      const res = await docnosGET(
+        new NextRequest('http://localhost/api/quotations/docnos?base=%20%20')
+      );
+      expect(res.status).toBe(200);
+      expect(listRecentDocNos).toHaveBeenCalled();
+      expect(listDocNosByBase).not.toHaveBeenCalled();
+    });
+
+    it('still rejects anonymous callers when a base is supplied', async () => {
+      const res = await docnosGET(
+        new NextRequest('http://localhost/api/quotations/docnos?base=QT260719-23')
+      );
+      expect(res.status).toBe(401);
+      expect(listDocNosByBase).not.toHaveBeenCalled();
     });
   });
 

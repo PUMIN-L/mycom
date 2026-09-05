@@ -35,6 +35,14 @@ interface QuoteItem {
   qty: number;
   unit: string;
   unitPrice: number;
+  // ── ส่วนลดรายรายการ ──────────────────────────────────────────────────────
+  // Copied from the linked quotation, and OPTIONAL for the same reason it is
+  // optional there: a billing document is one JSON blob, so every invoice /
+  // ใบวางบิล / receipt saved before per-line discounts existed simply has no
+  // such key on its lines. Missing ⇒ no discount (computeLineTotal), which is
+  // exactly how those documents have always computed and printed.
+  discount?: number;
+  discountType?: "amount" | "percent";
 }
 
 interface BillingState {
@@ -328,15 +336,29 @@ export default function BillingPage() {
         customerPhone: data.customerPhone || prev.customerPhone,
         customerEmail: data.customerEmail || prev.customerEmail,
         items: Array.isArray(data.items)
-          ? data.items.map((it: any) => ({
-              id: crypto.randomUUID(),
-              name: it.name || "",
-              description: it.description || "",
-              imageUrl: it.imageUrl || "",
-              qty: it.qty || 1,
-              unit: it.unit || "เครื่อง",
-              unitPrice: it.unitPrice || 0,
-            }))
+          ? data.items.map((it: any) => {
+              const line: QuoteItem = {
+                id: crypto.randomUUID(),
+                name: it.name || "",
+                description: it.description || "",
+                imageUrl: it.imageUrl || "",
+                qty: it.qty || 1,
+                unit: it.unit || "เครื่อง",
+                unitPrice: it.unitPrice || 0,
+              };
+              // Carry the quotation's PER-LINE discount across. Without this the
+              // invoice bills the gross price of every discounted line — i.e.
+              // more than the customer was quoted. The keys are written only
+              // when the quoted line really carries a discount, so importing a
+              // quotation saved before the feature produces the same keyless
+              // lines (and the same printed sheet) it always did.
+              const lineDiscount = Math.max(Number(it.discount) || 0, 0);
+              if (lineDiscount > 0) {
+                line.discount = lineDiscount;
+                if (it.discountType === "percent") line.discountType = "percent";
+              }
+              return line;
+            })
           : prev.items,
         discount: data.discount ?? prev.discount,
         discountType: data.discountType || prev.discountType,
@@ -351,9 +373,25 @@ export default function BillingPage() {
     }
   }
 
-  // Totals
-  const { subtotal, discountValue, afterDiscount, vat, grandTotal } =
-    computeQuoteTotals(b);
+  // Totals. `lines` is per-item, in the same order as b.items. Order of
+  // operations (quotationTotals.ts): each line is discounted first, then the
+  // document-level discount comes off the sum of the discounted lines, then VAT.
+  const {
+    subtotal,
+    lines,
+    lineDiscountTotal,
+    afterLineDiscounts,
+    discountValue,
+    afterDiscount,
+    vat,
+    grandTotal,
+  } = computeQuoteTotals(b);
+
+  // Does any imported line actually carry a discount? Gates the whole printed
+  // layout: false — every billing document saved before per-line discounts
+  // existed, and every one imported from a quotation without them — prints the
+  // identical six-column table and single "รวมเป็นเงิน" row it always did.
+  const hasLineDiscounts = lineDiscountTotal > 0;
 
   // Duplicate docNo check
   const trimmedDocNo = b.docNo.trim();
@@ -813,13 +851,19 @@ export default function BillingPage() {
                   <th className="border border-gray-800 px-2 py-1.5 w-[14mm] border-r-white/20">จำนวน</th>
                   <th className="border border-gray-800 px-2 py-1.5 w-[14mm] border-r-white/20">หน่วย</th>
                   <th className="border border-gray-800 px-2 py-1.5 w-[24mm] border-r-white/20">ราคา/หน่วย</th>
+                  {/* The discount column exists ONLY when a line actually
+                      carries one, so a document with no per-line discounts
+                      prints the identical six-column table it always did. */}
+                  {hasLineDiscounts && (
+                    <th className="border border-gray-800 px-2 py-1.5 w-[22mm] border-r-white/20">ส่วนลด</th>
+                  )}
                   <th className="border border-gray-800 px-2 py-1.5 w-[26mm]">จำนวนเงิน</th>
                 </tr>
               </thead>
               <tbody id="billing-tbody">
                 {b.items.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="border border-gray-300 px-3 py-8 text-center text-gray-400">
+                    <td colSpan={hasLineDiscounts ? 7 : 6} className="border border-gray-300 px-3 py-8 text-center text-gray-400">
                       — ยังไม่มีรายการ — เชื่อมกับใบเสนอราคาเพื่อนำเข้า
                     </td>
                   </tr>
@@ -836,7 +880,26 @@ export default function BillingPage() {
                       <td className="border border-gray-300 px-2 py-1.5 text-center">{item.qty}</td>
                       <td className="border border-gray-300 px-2 py-1.5 text-center">{item.unit}</td>
                       <td className="border border-gray-300 px-2 py-1.5 text-right">{fmt(item.unitPrice)}</td>
-                      <td className="border border-gray-300 px-2 py-1.5 text-right">{fmt(item.qty * item.unitPrice)}</td>
+                      {hasLineDiscounts && (
+                        <td className="border border-gray-300 px-2 py-1.5 text-right">
+                          {(lines[idx]?.discountValue ?? 0) > 0 ? (
+                            <>
+                              -{fmt(lines[idx].discountValue)}
+                              {item.discountType === "percent" && (
+                                <div className="text-[11px] text-gray-500">({item.discount}%)</div>
+                              )}
+                            </>
+                          ) : (
+                            "-"
+                          )}
+                        </td>
+                      )}
+                      {/* With no line discounts this is the exact expression the
+                          sheet has always printed; with them it prints the net,
+                          which is what the totals below add up to. */}
+                      <td className="border border-gray-300 px-2 py-1.5 text-right">
+                        {fmt(hasLineDiscounts ? lines[idx].netAmount : item.qty * item.unitPrice)}
+                      </td>
                     </tr>
                   ))
                 )}
@@ -864,15 +927,38 @@ export default function BillingPage() {
 
               <table className="shrink-0 self-start w-[70mm] text-[12.5px]">
                 <tbody>
-                  <tr>
-                    <td className="py-1 pr-2">รวมเป็นเงิน</td>
-                    <td className="py-1 text-right">{fmt(subtotal)}</td>
-                  </tr>
+                  {/* Without line discounts: the single "รวมเป็นเงิน" row the
+                      sheet has always had. With them: the gross first, the line
+                      discounts taken off, and "รวมเป็นเงิน" left equal to the
+                      SUM OF THE PRINTED LINE AMOUNTS — so the customer can still
+                      add the column up and land on it. */}
+                  {hasLineDiscounts ? (
+                    <>
+                      <tr>
+                        <td className="py-1 pr-2">รวมราคาก่อนหักส่วนลด</td>
+                        <td className="py-1 text-right">{fmt(subtotal)}</td>
+                      </tr>
+                      <tr>
+                        <td className="py-1 pr-2">ส่วนลดรายรายการ</td>
+                        <td className="py-1 text-right">-{fmt(lineDiscountTotal)}</td>
+                      </tr>
+                      <tr>
+                        <td className="py-1 pr-2">รวมเป็นเงิน</td>
+                        <td className="py-1 text-right">{fmt(afterLineDiscounts)}</td>
+                      </tr>
+                    </>
+                  ) : (
+                    <tr>
+                      <td className="py-1 pr-2">รวมเป็นเงิน</td>
+                      <td className="py-1 text-right">{fmt(subtotal)}</td>
+                    </tr>
+                  )}
                   {discountValue > 0 && (
                     <>
                       <tr>
                         <td className="py-1 pr-2">
-                          ส่วนลด{b.discountType === "percent" ? ` ${b.discount}%` : ""}
+                          {hasLineDiscounts ? "ส่วนลดท้ายใบ" : "ส่วนลด"}
+                          {b.discountType === "percent" ? ` ${b.discount}%` : ""}
                         </td>
                         <td className="py-1 text-right">-{fmt(discountValue)}</td>
                       </tr>

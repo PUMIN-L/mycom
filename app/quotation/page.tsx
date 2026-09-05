@@ -1,15 +1,25 @@
 "use client";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 import { useAuth } from "../context/AuthContext";
 import Toast from "../components/Toast";
-import { DOCNO_START, pad2, nextDocNo } from "../lib/quotationNumber";
+import {
+  DOCNO_START,
+  pad2,
+  nextDocNo,
+  quotationDocNoPrefix,
+  quotationDocNoPrefixes,
+} from "../lib/quotationNumber";
 import { toLocalDateString } from "../lib/dateFormat";
-import { computeQuoteTotals } from "../lib/quotationTotals";
+import {
+  computeQuoteTotals,
+  setLineDiscountAmount,
+  setLineDiscountType,
+} from "../lib/quotationTotals";
 import { stripHtml } from "../lib/stripHtml";
 import { selectPartyFromSystem, applyTypedPartyName } from "../lib/quotationToSale";
 import SearchableDropdown from "../components/SearchableDropdown";
+import FormattedNumberInput from "../components/FormattedNumberInput";
 import ConfirmDialog from "../components/ConfirmDialog";
 import ImageDeleteConfirmDialog, { type OrphanedImage } from "../components/ImageDeleteConfirmDialog";
 
@@ -38,6 +48,16 @@ interface QuoteItem {
   qty: number;
   unit: string; // เครื่อง / ชุด / ตัว
   unitPrice: number;
+  // ── ส่วนลดรายรายการ (task 7) ────────────────────────────────────────────
+  // OPTIONAL on purpose. A quotation is one JSON blob, so every quote saved
+  // before per-line discounts existed simply has NO such key — that is
+  // `undefined`, which `computeLineTotal` reads as "no discount" and passes the
+  // line amount through untouched. The keys are therefore never written unless
+  // the user actually types a discount, so reopening an old quote leaves its
+  // blob (and its unsaved-changes fingerprint) byte-for-byte unchanged.
+  discount?: number;
+  /** How to read `discount` — mirrors the document-level field. */
+  discountType?: "amount" | "percent";
 }
 
 interface QuoteState {
@@ -98,6 +118,21 @@ function newItem(): QuoteItem {
     unitPrice: 0,
   };
 }
+
+// crypto.randomUUID isn't available on every browser/context this admin tool is
+// opened from (old iOS Safari, plain-http LAN access), so fall back rather than
+// throw halfway through building a document.
+function randomId(): string {
+  return typeof crypto !== "undefined" && crypto.randomUUID
+    ? crypto.randomUUID()
+    : Math.random().toString(36).substring(2, 15) +
+        Math.random().toString(36).substring(2, 15);
+}
+
+// Strip a trailing version marker: "QT050926-23v2" / "…-V2" → "QT050926-23".
+// Format-agnostic on purpose — it must keep working for the legacy YYMMDD
+// numbers that are already out with customers (see quotationNumber.ts).
+const baseOfDocNo = (docNo: string) => docNo.replace(/(?:-V|v)\d+$/i, "");
 
 const emptyState = (): QuoteState => ({
   id: "",
@@ -230,6 +265,13 @@ export default function QuotationPage() {
   const [showResetConfirm, setShowResetConfirm] = useState(false); // reset form modal
   const [isViewOnly, setIsViewOnly] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
+  // Set while the open document is an UNSAVED new version of a saved quotation
+  // (clone mode). Carries the source so the toolbar can name it — a clone is a
+  // draft of a document that does not exist in the DB yet, and the admin must
+  // never be left guessing which quotation he is looking at (task 6).
+  const [cloneSource, setCloneSource] = useState<{ id: string; docNo: string } | null>(null);
+  const [startingNewVersion, setStartingNewVersion] = useState(false);
+  const [showEditOriginalConfirm, setShowEditOriginalConfirm] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false); // unsaved-changes modal
   const [pendingNav, setPendingNav] = useState<string | null>(null); // URL to navigate after confirm
@@ -248,77 +290,109 @@ export default function QuotationPage() {
     if (!isLoading && !isLoggedIn) router.replace("/login");
   }, [isLoggedIn, isLoading, router]);
 
+  // Adopt a state as "the document currently open": it becomes the state AND
+  // the clean snapshot, so isDirty only fires on edits made from here on.
+  function adoptState(next: QuoteState) {
+    setQ(next);
+    const { id: _id, ...rest } = next;
+    savedSnapshotRef.current = JSON.stringify(rest);
+  }
+
+  const seedFresh = useCallback(() => {
+    const iso = toLocalDateString(new Date());
+    isFreshRef.current = true;
+    setCloneSource(null);
+    // A brand-new number is minted in the CURRENT shape (QT + DDMMYY + -NN).
+    // The auto-advance effect below then walks it past the day's used numbers,
+    // in BOTH shapes — see quotationDocNoPrefixes().
+    const newDocNo = `${quotationDocNoPrefix(iso)}${pad2(DOCNO_START)}`;
+    lastAutoDocNoRef.current = newDocNo;
+    setQ({
+      ...emptyState(),
+      id: randomId(),
+      docDate: iso,
+      docNo: newDocNo,
+      items: [newItem()],
+    });
+  }, []);
+
+  /**
+   * The docNo the NEXT version of `docNo` should carry — "QT050926-23" →
+   * "QT050926-23v1", then v2, … Reads the ledger directly rather than the
+   * `existingDocs` state so it can't race the fetch that fills it.
+   * Never parses the date out of the number, so legacy YYMMDD numbers version
+   * exactly like current DDMMYY ones.
+   *
+   * Asks for THIS BASE's numbers (`?base=`), not the recent-numbers window that
+   * `existingDocs` holds: quotations live for two years, so the document being
+   * versioned is normally months old and its v1 is long outside that window.
+   * Reading the window instead would keep handing back "v1" for every new
+   * version, and the save would bounce off the ledger's PRIMARY KEY with a
+   * duplicate-number error the admin has no way to clear.
+   */
+  async function nextVersionDocNo(docNo: string): Promise<string> {
+    const base = baseOfDocNo(docNo);
+    let maxV = 0;
+    try {
+      const res = await fetch(
+        `/api/quotations/docnos?base=${encodeURIComponent(base)}`
+      );
+      const list = await res.json();
+      const docs: { docNo?: string }[] = Array.isArray(list) ? list : [];
+      for (const d of docs) {
+        if (!d?.docNo || !d.docNo.startsWith(base)) continue;
+        const match = d.docNo.match(/(?:-V|v)(\d+)$/i);
+        if (match) {
+          const v = parseInt(match[1], 10);
+          if (!Number.isNaN(v) && v > maxV) maxV = v;
+        }
+      }
+    } catch {
+      // Ledger unreachable — fall back to bumping this document's own version.
+      const vMatch = docNo.match(/(?:-V|v)(\d+)$/i);
+      if (vMatch) maxV = parseInt(vMatch[1], 10) || 0;
+    }
+    return `${base}v${maxV + 1}`;
+  }
+
   // Hydrate: reopen a saved quotation (?id=…), else restore the draft, else seed
   // a fresh one. In an effect (not render) — Date.now()/localStorage during
   // render violate purity rules.
+  //
+  // ⚠️ This runs ONCE, on mount. Next.js keeps this component mounted when only
+  // the query string changes, so a link from /quotation?id=X&view=1 to
+  // /quotation?id=X&action=clone re-renders without ever re-running it — which
+  // is exactly why the "แก้ไข (New Ver.)" button used to do nothing (task 6).
+  // Mode changes made from inside the page therefore happen IN PLACE
+  // (startNewVersion / loadOriginalForEdit) and only sync the URL afterwards.
   useEffect(() => {
-    const now = new Date();
-    const iso = toLocalDateString(now);
-
-    const seedFresh = () => {
-      isFreshRef.current = true;
-      const newDocNo = `QT${iso.substring(2).replace(/-/g, "")}-${pad2(DOCNO_START)}`;
-      lastAutoDocNoRef.current = newDocNo;
-      setQ({
-        ...emptyState(),
-        id: crypto.randomUUID(),
-        docDate: iso,
-        docNo: newDocNo,
-        items: [newItem()],
-      });
-    };
-
-    const reopenId = new URLSearchParams(window.location.search).get("id");
-    const isView = new URLSearchParams(window.location.search).get("view") === "1";
+    const params = new URLSearchParams(window.location.search);
+    const reopenId = params.get("id");
+    const isView = params.get("view") === "1";
     if (isView) setIsViewOnly(true);
-    
+
     if (reopenId) {
       setIsEditing(true);
       fetch(`/api/quotations/${encodeURIComponent(reopenId)}`)
         .then((r) => (r.ok ? r.json() : null))
         .then(async (rec) => {
           if (rec?.data && Array.isArray(rec.data.items)) {
-            const isClone = new URLSearchParams(window.location.search).get("action") === "clone";
-            let migrated = migrateQuoteState({ ...emptyState(), ...rec.data, id: rec.id || reopenId });
-            
+            const isClone = params.get("action") === "clone";
+            const migrated = migrateQuoteState({
+              ...emptyState(),
+              ...rec.data,
+              id: rec.id || reopenId,
+            });
+
             if (isClone) {
-              const baseDocNo = migrated.docNo.replace(/(?:-V|v)\d+$/i, "");
-              
-              // Fetch docs directly to avoid race condition with existingDocs state
-              let maxV = 0;
-              try {
-                const res = await fetch("/api/quotations/docnos");
-                const list = await res.json();
-                const docs = Array.isArray(list) ? list : [];
-                docs.forEach(d => {
-                  if (d.docNo && d.docNo.startsWith(baseDocNo)) {
-                    const match = d.docNo.match(/(?:-V|v)(\d+)$/i);
-                    if (match) {
-                      const v = parseInt(match[1], 10);
-                      if (v > maxV) maxV = v;
-                    } else if (d.docNo === baseDocNo) {
-                      if (maxV === 0) maxV = 0;
-                    }
-                  }
-                });
-              } catch (e) {
-                // If fetch fails, fallback to simple increment
-                const vMatch = migrated.docNo.match(/(?:-V|v)(\d+)$/i);
-                if (vMatch) maxV = parseInt(vMatch[1], 10);
-              }
-              
-              migrated.docNo = `${baseDocNo}v${maxV + 1}`;
-              
-              // safe fallback for crypto.randomUUID
-              migrated.id = typeof crypto !== 'undefined' && crypto.randomUUID 
-                ? crypto.randomUUID() 
-                : Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+              // Remember WHICH document this draft is a new version of, so the
+              // toolbar can say so and offer editing that one instead (task 6).
+              setCloneSource({ id: rec.id || reopenId, docNo: migrated.docNo });
+              migrated.docNo = await nextVersionDocNo(migrated.docNo);
+              migrated.id = randomId();
             }
-            
-            setQ(migrated);
-            // Snapshot the state so isDirty can detect subsequent edits.
-            const { id: _id, ...rest } = migrated;
-            savedSnapshotRef.current = JSON.stringify(rest);
+
+            adoptState(migrated);
           } else {
             showToast("ไม่พบใบเสนอราคานี้ — เริ่มใบใหม่แทน", "error");
             seedFresh();
@@ -333,6 +407,7 @@ export default function QuotationPage() {
 
     seedFresh();
     hydratedRef.current = true;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Set the snapshot once the fresh state is seeded.
@@ -397,8 +472,12 @@ export default function QuotationPage() {
   // to the next free trailing number.
   useEffect(() => {
     if (!isFreshRef.current || !q.docDate) return;
-    const prefix = `QT${q.docDate.substring(2).replace(/-/g, "")}-`;
-    const next = nextDocNo(prefix, existingDocs.map((u) => u.docNo));
+    // BOTH shapes of the day's numbers are scanned, so the running number keeps
+    // climbing across the DDMMYY switchover instead of restarting at 22 next to
+    // a legacy QT<YYMMDD>-NN that is already out with a customer (task 5a).
+    const prefixes = quotationDocNoPrefixes(q.docDate);
+    const prefix = prefixes[0];
+    const next = nextDocNo(prefixes, existingDocs.map((u) => u.docNo));
     setQ((prev) => {
       if (
         prev.docNo === `${prefix}${pad2(DOCNO_START)}` ||
@@ -476,6 +555,29 @@ export default function QuotationPage() {
       items: prev.items.map((it) => (it.id === id ? { ...it, ...updates } : it)),
     }));
 
+  // ── The per-line discount setters ────────────────────────────────────────
+  // NOT plain setItem() calls. `FormattedNumberInput` fires onChange on every
+  // blur, so a plain setter would write `discount: 0` onto a line of a REOPENED
+  // OLD QUOTATION the moment the admin clicked into the box and tabbed out —
+  // adding a key the blob never had, flipping isDirty, and rewriting a saved
+  // document nobody edited. The helpers drop a key that carries no information
+  // instead of storing it (see quotationTotals.ts).
+  const setLineDiscount = (id: string, amount: number) =>
+    setQ((prev) => ({
+      ...prev,
+      items: prev.items.map((it) =>
+        it.id === id ? setLineDiscountAmount(it, amount) : it
+      ),
+    }));
+
+  const setLineType = (id: string, type: string) =>
+    setQ((prev) => ({
+      ...prev,
+      items: prev.items.map((it) =>
+        it.id === id ? setLineDiscountType(it, type) : it
+      ),
+    }));
+
   const addItem = () => setQ((prev) => ({ ...prev, items: [...prev.items, newItem()] }));
   const removeItem = (id: string) =>
     setQ((prev) => ({ ...prev, items: prev.items.filter((it) => it.id !== id) }));
@@ -529,8 +631,26 @@ export default function QuotationPage() {
   }
 
   // ── Totals ──────────────────────────────────────────────────────────────
-  const { subtotal, discountValue, afterDiscount, vat, grandTotal } =
-    computeQuoteTotals(q);
+  // `lines` is per-item and in the same order as q.items, so lines[idx] is the
+  // money for q.items[idx]. Order of operations (quotationTotals.ts): each line
+  // is discounted first, then the document-level discount comes off the sum of
+  // the discounted lines, then VAT.
+  const {
+    subtotal,
+    lines,
+    lineDiscountTotal,
+    afterLineDiscounts,
+    discountValue,
+    afterDiscount,
+    vat,
+    grandTotal,
+  } = computeQuoteTotals(q);
+
+  // Does ANY line actually carry a discount? Drives the whole printed layout:
+  // false (every quotation saved before this feature, and every new one where
+  // the field is left alone) renders the sheet EXACTLY as it rendered before
+  // per-line discounts existed — same six columns, same totals rows.
+  const hasLineDiscounts = lineDiscountTotal > 0;
 
   // Duplicate doc-number guard: is this docNo already used by a DIFFERENT saved
   // quotation? (Same id = editing the same one, allowed.)
@@ -748,6 +868,61 @@ export default function QuotationPage() {
     }
   }
 
+  // ── "แก้ไข (New Ver.)" — task 6 ────────────────────────────────────────────
+  // What the button means: *start an editable new version of the quotation on
+  // screen*. It used to be a <Link> to ?id=…&action=clone, which never worked
+  // from here: Next.js keeps this client component mounted across a query-string
+  // change, so the mount effect that reads `action=clone` never re-ran — the URL
+  // changed and nothing else did. Doing the clone in place fixes that, and the
+  // URL is then re-pointed with router.replace so a refresh reproduces the state.
+  async function startNewVersion() {
+    if (startingNewVersion) return;
+    const source = { id: q.id, docNo: q.docNo };
+    setStartingNewVersion(true);
+    try {
+      const docNo = await nextVersionDocNo(source.docNo);
+      adoptState({ ...q, id: randomId(), docNo });
+      setCloneSource(source);
+      setIsViewOnly(false);
+      setIsEditing(true);
+      // NOT a fresh quote: its number was derived from the source, and the
+      // auto-running-number effect must never renumber it.
+      isFreshRef.current = false;
+      lastAutoDocNoRef.current = null;
+      router.replace(`/quotation?id=${encodeURIComponent(source.id)}&action=clone`);
+      showToast(`สร้างเวอร์ชันใหม่ ${docNo} — ยังไม่ได้บันทึก`, "success");
+    } finally {
+      setStartingNewVersion(false);
+    }
+  }
+
+  /** Leave the unsaved new version and open the ORIGINAL quotation for editing. */
+  async function loadOriginalForEdit() {
+    const source = cloneSource;
+    if (!source) return;
+    setShowEditOriginalConfirm(false);
+    try {
+      const res = await fetch(`/api/quotations/${encodeURIComponent(source.id)}`);
+      const rec = res.ok ? await res.json() : null;
+      if (!rec?.data || !Array.isArray(rec.data.items)) {
+        showToast("ไม่พบใบเสนอราคาต้นฉบับ (อาจถูกลบไปแล้ว)", "error");
+        return;
+      }
+      adoptState(
+        migrateQuoteState({ ...emptyState(), ...rec.data, id: rec.id || source.id })
+      );
+      setCloneSource(null);
+      setIsViewOnly(false);
+      setIsEditing(true);
+      isFreshRef.current = false;
+      lastAutoDocNoRef.current = null;
+      router.replace(`/quotation?id=${encodeURIComponent(source.id)}`);
+      showToast(`กำลังแก้ไขใบเดิม ${rec.data.docNo || source.docNo}`, "success");
+    } catch {
+      showToast("โหลดใบเสนอราคาต้นฉบับไม่สำเร็จ", "error");
+    }
+  }
+
   // ── Save only (no PDF) — blocked while the docNo is a duplicate ────────────
   async function handleSave() {
     if (savingQuote) return;
@@ -845,11 +1020,39 @@ export default function QuotationPage() {
             setShowResetConfirm(false);
             localStorage.removeItem(DRAFT_KEY);
             const iso = toLocalDateString(new Date());
-            const prefix = `QT${iso.substring(2).replace(/-/g, "")}-`;
             isFreshRef.current = true;
-            setQ({ ...emptyState(), id: crypto.randomUUID(), docDate: iso, docNo: nextDocNo(prefix, existingDocs.map((u) => u.docNo)), items: [newItem()] });
+            setCloneSource(null);
+            const resetDocNo = nextDocNo(
+              quotationDocNoPrefixes(iso),
+              existingDocs.map((u) => u.docNo)
+            );
+            // Record it as the number WE issued, exactly as seedFresh() does.
+            // Without this the auto-running-number effect reads the reset number
+            // as one the admin typed by hand and stops maintaining it — so
+            // changing วันที่ afterwards would leave yesterday's date baked into
+            // the quotation number while the sheet prints today's.
+            lastAutoDocNoRef.current = resetDocNo;
+            setQ({
+              ...emptyState(),
+              id: randomId(),
+              docDate: iso,
+              docNo: resetDocNo,
+              items: [newItem()],
+            });
           }}
           onCancel={() => setShowResetConfirm(false)}
+        />
+      )}
+
+      {/* Leaving an unsaved new version to edit the original instead (task 6) */}
+      {showEditOriginalConfirm && cloneSource && (
+        <ConfirmDialog
+          title="แก้ไขใบเดิมแทน?"
+          message={`เวอร์ชันใหม่ ${q.docNo || "-"} ยังไม่ได้บันทึก และจะถูกทิ้งไป ระบบจะเปิดใบเดิม ${cloneSource.docNo || "-"} ขึ้นมาแก้ไขแทน — การแก้ไขจะทับใบเดิมที่ส่งให้ลูกค้าไปแล้ว`}
+          confirmText={`แก้ไขใบเดิม ${cloneSource.docNo || ""}`}
+          cancelText="ยกเลิก"
+          onConfirm={loadOriginalForEdit}
+          onCancel={() => setShowEditOriginalConfirm(false)}
         />
       )}
 
@@ -931,13 +1134,40 @@ export default function QuotationPage() {
                 {savingQuote ? "กำลังเซฟ..." : "💾 เซฟ"}
               </button>
             )}
+            {/* ── "แก้ไข (New Ver.)" (task 6) ──────────────────────────────
+                Shown ONLY while viewing a saved quotation, where it has one
+                unambiguous meaning: turn this document into an editable new
+                version. In clone mode the page already IS that new version, so
+                the button is deliberately NOT shown — pressing "make a new
+                version" on an unsaved new version has no sensible meaning, and
+                silently re-pointing it at the original would edit a different
+                document than its label says. Clone mode gets the banner below
+                instead, which names both documents and offers the original
+                explicitly. */}
             {isViewOnly && (
-              <Link
-                href={`/quotation?id=${encodeURIComponent(q.id)}&action=clone`}
-                className="px-5 py-2 rounded-lg border border-blue-500 text-blue-600 text-sm font-bold hover:bg-blue-50 transition"
+              <button
+                onClick={startNewVersion}
+                disabled={startingNewVersion}
+                className="px-5 py-2 rounded-lg border border-blue-500 text-blue-600 text-sm font-bold hover:bg-blue-50 transition disabled:opacity-60 disabled:cursor-not-allowed"
               >
-                ✏️ แก้ไข (New Ver.)
-              </Link>
+                {startingNewVersion ? "กำลังสร้างเวอร์ชันใหม่..." : "✏️ แก้ไข (New Ver.)"}
+              </button>
+            )}
+            {!isViewOnly && cloneSource && (
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="px-3 py-2 rounded-lg bg-blue-50 border border-blue-200 text-blue-700 text-xs font-bold">
+                  🆕 เวอร์ชันใหม่ {q.docNo || "-"} (ยังไม่ได้บันทึก) — จากใบเดิม {cloneSource.docNo || "-"}
+                </span>
+                <button
+                  onClick={() =>
+                    isDirty ? setShowEditOriginalConfirm(true) : loadOriginalForEdit()
+                  }
+                  title={`เปิดใบเดิม ${cloneSource.docNo} ขึ้นมาแก้ไขแทน (ทิ้งเวอร์ชันใหม่นี้)`}
+                  className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition"
+                >
+                  ↩️ แก้ไขใบเดิม ({cloneSource.docNo || "-"}) แทน
+                </button>
+              </div>
             )}
             {isViewOnly && (
               <button
@@ -1245,16 +1475,80 @@ export default function QuotationPage() {
                       onChange={(v) => setItem(it.id, { unitPrice: v })} />
                   </div>
                 </div>
+                {/* ── ส่วนลดรายรายการ (task 7) ────────────────────────────
+                    Mirrors the document-level control below: FormattedNumberInput
+                    for the money, SearchableDropdown for ฿/% (never a native
+                    <select> — AGENTS.md). The right-hand cell prints the money
+                    this line actually comes to, so the figure on the sheet is
+                    never a mystery. */}
+                <div className="grid grid-cols-3 gap-2">
+                  <div>
+                    <label className={labelCls}>ส่วนลดรายการนี้</label>
+                    <FormattedNumberInput
+                      className={inputCls}
+                      placeholder="0"
+                      value={it.discount ?? 0}
+                      onChange={(v) => setLineDiscount(it.id, v)}
+                    />
+                  </div>
+                  <div>
+                    <label className={labelCls}>ประเภทส่วนลด</label>
+                    <SearchableDropdown
+                      searchable={false}
+                      className="w-full"
+                      buttonClassName={`${inputCls} h-[38px]`}
+                      value={it.discountType ?? "amount"}
+                      options={[
+                        { value: "amount", label: "บาท (฿)" },
+                        { value: "percent", label: "เปอร์เซ็นต์ (%)" },
+                      ]}
+                      onChange={(val) => setLineType(it.id, val)}
+                    />
+                  </div>
+                  <div>
+                    <label className={labelCls}>เป็นเงิน (หลังหักส่วนลด)</label>
+                    <div className="px-3 py-2 rounded-lg border border-gray-200 bg-white/70 text-sm text-right">
+                      {(lines[idx]?.discountValue ?? 0) > 0 ? (
+                        <>
+                          <span className="text-gray-400 line-through text-xs mr-1">
+                            {fmt(lines[idx].amount)}
+                          </span>
+                          <span className="font-bold text-gray-800">
+                            {fmt(lines[idx].netAmount)}
+                          </span>
+                        </>
+                      ) : (
+                        <span className="font-bold text-gray-800">
+                          {fmt(lines[idx]?.netAmount ?? 0)}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
               </div>
             ))}
+            <p className="text-xs text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
+              ℹ️ ส่วนลดรายรายการจะถูกหักก่อน จากนั้นจึงนำ
+              <span className="font-semibold"> ส่วนลดท้ายใบ </span>
+              (ในหัวข้อ “ส่วนลด / VAT / เงื่อนไข” ด้านล่าง) มาหักจากยอดที่เหลืออีกครั้ง แล้วจึงคิด VAT
+            </p>
           </section>
 
           {/* สรุปยอด + เงื่อนไข */}
           <section className="bg-white rounded-xl shadow-sm border border-gray-200 p-5 space-y-3">
             <h2 className="font-bold text-gray-800">ส่วนลด / VAT / เงื่อนไข</h2>
+            {/* Says out loud what quotationTotals.ts does: this discount is
+                taken off the sum of the ALREADY line-discounted amounts. */}
+            <p className="text-xs text-gray-500 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+              ⬇️ ส่วนลดด้านล่างนี้เป็น<span className="font-semibold">ส่วนลดท้ายใบ</span> —
+              หักจากยอดรวม<span className="font-semibold">หลัง</span>หักส่วนลดรายรายการแล้ว
+              {hasLineDiscounts && (
+                <> (ตอนนี้คือ <span className="font-semibold">{fmt(afterLineDiscounts)}</span> บาท)</>
+              )}
+            </p>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className={labelCls}>ส่วนลด</label>
+                <label className={labelCls}>ส่วนลดท้ายใบ</label>
                 <NumberInput className={inputCls} placeholder="0"
                   value={q.discount}
                   onChange={(v) => set("discount", v)} />
@@ -1462,13 +1756,19 @@ export default function QuotationPage() {
                   <th className="border border-gray-800 px-2 py-1.5 w-[14mm]">จำนวน</th>
                   <th className="border border-gray-800 px-2 py-1.5 w-[14mm]">หน่วย</th>
                   <th className="border border-gray-800 px-2 py-1.5 w-[24mm]">ราคา/หน่วย</th>
+                  {/* The discount column exists ONLY when a line actually
+                      carries one, so an old quotation prints the identical
+                      six-column table it always did (task 7). */}
+                  {hasLineDiscounts && (
+                    <th className="border border-gray-800 px-2 py-1.5 w-[22mm]">ส่วนลด</th>
+                  )}
                   <th className="border border-gray-800 px-2 py-1.5 w-[26mm]">จำนวนเงิน (บาท)</th>
                 </tr>
               </thead>
               <tbody id="quote-tbody">
                 {q.items.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="border border-gray-300 px-2 py-6 text-center text-gray-400">
+                    <td colSpan={hasLineDiscounts ? 7 : 6} className="border border-gray-300 px-2 py-6 text-center text-gray-400">
                       — ยังไม่มีรายการสินค้า —
                     </td>
                   </tr>
@@ -1490,7 +1790,27 @@ export default function QuotationPage() {
                     <td className="border border-gray-300 px-2 py-1.5 text-center">{it.qty}</td>
                     <td className="border border-gray-300 px-2 py-1.5 text-center">{it.unit}</td>
                     <td className="border border-gray-300 px-2 py-1.5 text-right">{fmt(it.unitPrice)}</td>
-                    <td className="border border-gray-300 px-2 py-1.5 text-right">{fmt(it.qty * it.unitPrice)}</td>
+                    {hasLineDiscounts && (
+                      <td className="border border-gray-300 px-2 py-1.5 text-right">
+                        {(lines[idx]?.discountValue ?? 0) > 0 ? (
+                          <>
+                            -{fmt(lines[idx].discountValue)}
+                            {it.discountType === "percent" && (
+                              <div className="text-[11px] text-gray-500">({it.discount}%)</div>
+                            )}
+                          </>
+                        ) : (
+                          "-"
+                        )}
+                      </td>
+                    )}
+                    {/* With no line discounts this is the exact expression the
+                        sheet has always printed; with them it prints the net,
+                        which is what the discount column and the totals below
+                        add up to. */}
+                    <td className="border border-gray-300 px-2 py-1.5 text-right">
+                      {fmt(hasLineDiscounts ? lines[idx].netAmount : it.qty * it.unitPrice)}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -1518,15 +1838,40 @@ export default function QuotationPage() {
               </div>
               <table className="shrink-0 self-start w-[70mm] text-[12.5px]">
                 <tbody>
-                  <tr>
-                    <td className="py-1 pr-2">รวมเป็นเงิน</td>
-                    <td className="py-1 text-right">{fmt(subtotal)}</td>
-                  </tr>
+                  {/* Without line discounts: the single "รวมเป็นเงิน" row the
+                      sheet has always had. With them: the gross first, the
+                      line discounts taken off, and "รวมเป็นเงิน" left equal to
+                      the SUM OF THE PRINTED LINE AMOUNTS — so the customer can
+                      still add the column up and land on it. */}
+                  {hasLineDiscounts ? (
+                    <>
+                      <tr>
+                        <td className="py-1 pr-2">รวมราคาก่อนหักส่วนลด</td>
+                        <td className="py-1 text-right">{fmt(subtotal)}</td>
+                      </tr>
+                      <tr>
+                        <td className="py-1 pr-2">ส่วนลดรายรายการ</td>
+                        <td className="py-1 text-right">-{fmt(lineDiscountTotal)}</td>
+                      </tr>
+                      <tr>
+                        <td className="py-1 pr-2">รวมเป็นเงิน</td>
+                        <td className="py-1 text-right">{fmt(afterLineDiscounts)}</td>
+                      </tr>
+                    </>
+                  ) : (
+                    <tr>
+                      <td className="py-1 pr-2">รวมเป็นเงิน</td>
+                      <td className="py-1 text-right">{fmt(subtotal)}</td>
+                    </tr>
+                  )}
                   {discountValue > 0 && (
                     <>
                       <tr>
                         <td className="py-1 pr-2">
-                          ส่วนลด{q.discountType === "percent" ? ` ${q.discount}%` : ""}
+                          {/* "ท้ายใบ" only when there are line discounts to
+                              tell it apart from — otherwise the old wording. */}
+                          {hasLineDiscounts ? "ส่วนลดท้ายใบ" : "ส่วนลด"}
+                          {q.discountType === "percent" ? ` ${q.discount}%` : ""}
                         </td>
                         <td className="py-1 text-right">-{fmt(discountValue)}</td>
                       </tr>

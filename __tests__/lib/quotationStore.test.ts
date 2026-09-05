@@ -16,6 +16,7 @@ import {
   getDocNoOwner,
   reserveDocNo,
   listRecentDocNos,
+  listDocNosByBase,
   purgeOldDocNos,
   getQuotation,
   listQuotations,
@@ -132,6 +133,40 @@ describe('listRecentDocNos', () => {
   it('returns an empty array when the ledger is empty', async () => {
     vi.mocked(query).mockResolvedValue([[]] as any);
     expect(await listRecentDocNos()).toEqual([]);
+  });
+});
+
+describe('listDocNosByBase', () => {
+  it('matches every number under the base, with NO date cutoff', async () => {
+    // The whole point: a quotation being versioned is normally months old, so
+    // its v1 is far outside listRecentDocNos()' 7-day window. Nothing in this
+    // query may filter on createdAt.
+    vi.mocked(query).mockResolvedValue([
+      [
+        { docNo: 'QT260719-23', quotationId: 7 },
+        { docNo: 'QT260719-23v1', quotationId: 'q2' },
+      ],
+    ] as any);
+    expect(await listDocNosByBase('QT260719-23')).toEqual([
+      { docNo: 'QT260719-23', quotationId: '7' },
+      { docNo: 'QT260719-23v1', quotationId: 'q2' },
+    ]);
+    const [sql, params] = callAt(0);
+    expect(sql).toContain('FROM used_docnos');
+    expect(sql).toContain('LIKE');
+    expect(sql).not.toContain('createdAt');
+    expect(params).toEqual(['QT260719-23%']);
+  });
+
+  it('escapes LIKE wildcards so a stray % or _ cannot widen the scan', async () => {
+    vi.mocked(query).mockResolvedValue([[]] as any);
+    await listDocNosByBase('QT_50%-1');
+    expect(callAt(0)[1]).toEqual(['QT\\_50\\%-1%']);
+  });
+
+  it('never queries at all for an empty base', async () => {
+    expect(await listDocNosByBase('   ')).toEqual([]);
+    expect(query).not.toHaveBeenCalled();
   });
 });
 
