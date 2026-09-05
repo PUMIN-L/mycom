@@ -54,7 +54,7 @@ export default function ViewRecordModal({ record, onClose, onEdit }: ViewRecordM
             </div>
             <div>
               <div className="text-gray-500 mb-1">ต้นทุนรวม</div>
-              <div className="font-bold text-rose-600 text-lg">฿{Number(record.costAmount).toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+              <div className="font-bold text-amber-600 text-lg">฿{Number(record.costAmount).toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
             </div>
           </div>
 

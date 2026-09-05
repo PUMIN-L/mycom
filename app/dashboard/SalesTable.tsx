@@ -190,7 +190,7 @@ function SaleDetailPanel({
                   <td className="py-2 pr-3 text-sm text-right text-gray-600">{Number(it.qty || 0)}</td>
                   <td className="py-2 pr-3 text-sm text-right text-gray-600">฿{fmtDec(it.unitPrice)}</td>
                   <td className="py-2 pr-3 text-sm text-right font-semibold text-gray-800">฿{fmtDec(it.totalAmount)}</td>
-                  <td className="py-2 text-sm text-right text-rose-600">฿{fmtDec(it.costAmount)}</td>
+                  <td className="py-2 text-sm text-right text-amber-600">฿{fmtDec(it.costAmount)}</td>
                 </tr>
               ))}
             </tbody>
