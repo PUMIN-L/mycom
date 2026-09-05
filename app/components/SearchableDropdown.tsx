@@ -32,6 +32,21 @@ interface SearchableDropdownProps {
   className?: string;
   buttonClassName?: string;
   searchable?: boolean;
+  /**
+   * Optional: called with the in-panel search text whenever it changes,
+   * including the reset to "" that opening the panel already performs. Lets a
+   * caller answer the same box with a server-side query instead of adding a
+   * second search field of its own. Omitting it leaves behaviour unchanged.
+   */
+  onSearchChange?: (search: string) => void;
+  /**
+   * Optional: set to `false` when the caller already narrowed `options` for the
+   * current search text (see `onSearchChange`) — the panel then renders them as
+   * given instead of filtering again locally, which would otherwise hide
+   * server-matched rows and blank the list while the next page is in flight.
+   * Defaults to `true`, i.e. the historic local filtering.
+   */
+  filterOptions?: boolean;
 }
 
 export default function SearchableDropdown({
@@ -42,6 +57,8 @@ export default function SearchableDropdown({
   className = "",
   buttonClassName = "",
   searchable = true,
+  onSearchChange,
+  filterOptions = true,
 }: SearchableDropdownProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -57,6 +74,16 @@ export default function SearchableDropdown({
   const panelRef = useRef<HTMLDivElement>(null);
 
   const selectedOption = options.find((opt) => opt.value === value);
+
+  // Single writer for the search text, so a caller listening in (optional) sees
+  // every change the panel makes to it — the typing and the reset on open.
+  const updateSearch = useCallback(
+    (next: string) => {
+      setSearch(next);
+      onSearchChange?.(next);
+    },
+    [onSearchChange]
+  );
 
   // Measures space around the trigger (in viewport coordinates, since the
   // panel is portaled and fixed-positioned — see render below) and picks a
@@ -115,11 +142,13 @@ export default function SearchableDropdown({
     };
   }, [isOpen, recalcPanelPosition]);
 
-  const filteredOptions = options.filter(
-    (opt) =>
-      opt.label.toLowerCase().includes(search.toLowerCase()) ||
-      opt.subLabel?.toLowerCase().includes(search.toLowerCase())
-  );
+  const filteredOptions = filterOptions
+    ? options.filter(
+        (opt) =>
+          opt.label.toLowerCase().includes(search.toLowerCase()) ||
+          opt.subLabel?.toLowerCase().includes(search.toLowerCase())
+      )
+    : options;
 
   return (
     <div className={`relative ${className}`} ref={dropdownRef}>
@@ -132,7 +161,7 @@ export default function SearchableDropdown({
           // the wrong direction/height on open.
           if (!isOpen) recalcPanelPosition();
           setIsOpen(!isOpen);
-          setSearch("");
+          updateSearch("");
         }}
       >
         <span className="truncate font-medium">
@@ -177,7 +206,7 @@ export default function SearchableDropdown({
                   className="w-full bg-white border border-gray-200 rounded-lg pl-9 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500 transition-shadow"
                   placeholder="ค้นหา..."
                   value={search}
-                  onChange={(e) => setSearch(e.target.value)}
+                  onChange={(e) => updateSearch(e.target.value)}
                   autoFocus
                 />
               </div>

@@ -42,7 +42,7 @@ process.env.DB_NAME = 'testdb';
 
 // A version SELECT result that MATCHES SCHEMA_VERSION (33) → bootstrap fast-path,
 // skipping DDL. Value is a string because settings stores VARCHAR values.
-const SCHEMA_VERSION = '33';
+const SCHEMA_VERSION = '34';
 const SCHEMA_MATCH: [Array<{ value: string }>, unknown[]] = [[{ value: SCHEMA_VERSION }], []];
 // An empty result → no schema_version row / no admin row → full bootstrap.
 const EMPTY: [unknown[], unknown[]] = [[], []];

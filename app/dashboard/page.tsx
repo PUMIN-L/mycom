@@ -23,12 +23,13 @@ import {
   buildSalePayload,
   collectSerials,
   findDuplicateSerialsInForm,
+  findMissingCosts,
   findOverQuotedLines,
   normalizeSerial,
-  summarizeBill,
+  summarizeBillLevelCosts,
   validateLineDrafts,
 } from "../lib/quotationToSale";
-import type { SaleLineDraft } from "../lib/quotationToSale";
+import type { MissingCostLocation, SaleLineDraft } from "../lib/quotationToSale";
 import ViewRecordModal from "./ViewRecordModal";
 import SalesTable from "./SalesTable";
 import {
@@ -277,13 +278,19 @@ export default function DashboardPage() {
   };
 
   /**
-   * Tasks 12.2/13.4/13.5 — every confirmable warning for the current lines, as
-   * ready-to-show Thai lines. NONE of these is a blocker: they are gathered so
-   * the admin can be asked once, say yes, and have the save proceed. Advisory
-   * throughout — a failed lookup degrades to "nothing found" so it can never
-   * stall a save.
+   * Tasks 12.2/13.4/13.5 and report 5 — every confirmable warning for the
+   * current bill, as ready-to-show Thai lines. NONE of these is a blocker: they
+   * are gathered so the admin can be asked ONCE (one dialog, never a chain of
+   * four popups), say yes, and have the save proceed. Advisory throughout — a
+   * failed lookup degrades to "nothing found" so it can never stall a save.
+   *
+   * `costRows` is the "ตัวช่วยคำนวณต้นทุน" sheet, needed for report 5: the
+   * bill-level costs live there, not on the lines.
    */
-  const collectSaveWarnings = async (drafts: SaleLineDraft[]): Promise<string[]> => {
+  const collectSaveWarnings = async (
+    drafts: SaleLineDraft[],
+    costRows: readonly CostItemLocal[]
+  ): Promise<string[]> => {
     const at = (lineIndex: number, machineIndex: number, productName: string) => {
       const base = productName ? `รายการที่ ${lineIndex + 1} (${productName})` : `รายการที่ ${lineIndex + 1}`;
       return `${base} เครื่องที่ ${machineIndex + 1}`;
@@ -303,6 +310,13 @@ export default function DashboardPage() {
           .map((o) => at(o.lineIndex, o.machineIndex, o.productName))
           .join(" และ ")})`
     ));
+
+    // Report 5 — the bill carries no bill-level cost at all (ค่ารถ / ค่าขนส่ง /
+    // ค่าคอมมิชชั่น ฯลฯ), only the per-line ต้นทุนสินค้า. WARN ONLY: plenty of
+    // real sales genuinely have none, so this joins the dialog above instead of
+    // becoming a second popup — and, on its own, still opens it once.
+    const billLevelCosts = summarizeBillLevelCosts(costRows);
+    if (billLevelCosts.message) warnings.push(`• ${billLevelCosts.message}`);
 
     const serials = collectSerials(drafts);
     if (serials.length > 0) {
@@ -382,21 +396,31 @@ export default function DashboardPage() {
     }
 
     const billCostTotal = costItems.reduce((acc, curr) => acc + curr.amount, 0);
+    // Report 6 — ticked lines whose ต้นทุนสินค้า is still empty/0. A required
+    // field exactly like the serial rule, never a confirmable warning, so it is
+    // resolved HERE (before the confirm dialog below) and the admin is never
+    // asked to approve a bill that cannot be saved anyway. `submitAttempted`,
+    // set at the top of this function, is what makes the editor paint those
+    // ต้นทุนสินค้า inputs red; this list only names them in the Thai summary.
+    let missingCosts: MissingCostLocation[] = [];
     if (useLines) {
       // Product cost is per line here, so the cost calculator is optional and
       // must NOT carry a bill-level ต้นทุนสินค้า: `syncCostItems` cannot split
       // one number across several lines and would answer 400. Caught in the
       // form instead, in Thai, before anything is posted.
-      const lineCostTotal = (lineReport ? lineReport.summary : summarizeBill(lines)).costAmount;
       if (costItems.some(ci => ci.costType === "product_cost")) {
         setCostSubmitError(true);
         setShowCostCalc(true);
         errors.productCostOnBill = true;
       }
-      if (lineCostTotal + billCostTotal <= 0) {
-        setCostSubmitError(true);
+      missingCosts = lineReport ? lineReport.missingCosts : findMissingCosts(lines);
+      if (missingCosts.length > 0) {
+        // NOT `setCostSubmitError`: the offending inputs are in the line editor,
+        // not in the cost calculator, and reddening the calculator would point
+        // the admin at the wrong box.
         errors.lineCost = true;
-      } else if (showCostCalc && costItems.some(ci => !ci.amount || ci.amount <= 0)) {
+      }
+      if (showCostCalc && costItems.some(ci => !ci.amount || ci.amount <= 0)) {
         setCostSubmitError(true);
         errors.costItems = true;
       }
@@ -427,10 +451,23 @@ export default function DashboardPage() {
       if (errors.warrantyStartDate) missing.push("วันเริ่มรับประกัน");
       if (errors.warrantyEndDate) missing.push("วันสิ้นสุดรับประกัน");
       if (errors.invoiceRef) missing.push("อ้างอิง Invoice");
-      if (errors.lineCost) missing.push("ต้นทุนสินค้า (กรอกที่ช่อง «ต้นทุนสินค้า» ของแต่ละรายการ)");
+      if (errors.lineCost) {
+        // Report 6 — name the exact lines, the way the serial blocker names the
+        // exact machine, so the admin knows which red box to go and fill in.
+        const where = missingCosts
+          .map((m) => `รายการที่ ${m.lineIndex + 1}${m.productName ? ` (${m.productName})` : ""}`)
+          .join(", ");
+        missing.push(`ต้นทุนสินค้าของ${where} (กรอกที่ช่อง «ต้นทุนสินค้า» ของแต่ละรายการ)`);
+      }
       if (errors.productCostOnBill) missing.push("ย้ายรายการ «ต้นทุนสินค้า» ในตัวช่วยคำนวณต้นทุนไปกรอกที่แต่ละรายการสินค้า");
       if (errors.costItems) missing.push("ต้นทุน (กรุณาเปิดเครื่องคิดต้นทุน แล้วกรอกยอดต้นทุน)");
-      if (errors.lines) missing.push(lineErrors[0] || "รายการสินค้า");
+      if (errors.lines) {
+        // `validateLineDrafts` lists the missing costs too; skip those here so
+        // the toast does not say the same thing twice.
+        const firstOther = lineErrors.find((e) => !e.endsWith("กรุณาระบุต้นทุนสินค้า"));
+        if (firstOther) missing.push(firstOther);
+        else if (!errors.lineCost) missing.push("รายการสินค้า");
+      }
       showToast(`กรุณากรอก: ${missing.join(", ")}`, "error");
       setTimeout(() => {
         const firstErrorElement = document.querySelector('.error-border');
@@ -443,16 +480,19 @@ export default function DashboardPage() {
 
     setFormErrors({});
 
-    // Tasks 12.2/13.4-13.6 — warn about over-quoted quantities and duplicate
-    // serials, then WAIT for a decision. Nothing has been sent at this point,
-    // and cancelling leaves the form as it is. Every one of these warnings is
-    // confirmable: answering "yes" always proceeds to the save. Only the
-    // line-driven flow does this — the legacy path is untouched.
+    // Tasks 12.2/13.4-13.6 and report 5 — warn about over-quoted quantities,
+    // duplicate serials and a bill with no bill-level cost, then WAIT for a
+    // decision. Nothing has been sent at this point, and cancelling leaves the
+    // form as it is. Every one of these warnings is confirmable: answering
+    // "yes" always proceeds to the save, and they share ONE dialog so a save
+    // never chains several popups. Reached only once the blockers above (report
+    // 6 among them) are clear. Only the line-driven flow does this — the legacy
+    // path is untouched.
     if (useLines && !serialsConfirmed) {
       setCheckingSerials(true);
       let warnings: string[] = [];
       try {
-        warnings = await collectSaveWarnings(lines);
+        warnings = await collectSaveWarnings(lines, costItems);
       } finally {
         setCheckingSerials(false);
       }
@@ -843,9 +883,11 @@ export default function DashboardPage() {
           onCancel={() => setSoldLineConfirm(null)}
         />
       )}
-      {/* Tasks 12.2/13.4-13.6 — over-quoted quantities and duplicate serials.
-          The save request has NOT been sent yet; cancelling returns to the form
-          with everything intact, confirming always proceeds to the save. */}
+      {/* Tasks 12.2/13.4-13.6 and report 5 — over-quoted quantities, duplicate
+          serials, an already-sold line and "no bill-level cost was entered",
+          all in ONE dialog. The save request has NOT been sent yet; cancelling
+          returns to the form with everything intact, confirming always proceeds
+          to the save. */}
       {serialConfirm && (
         <ConfirmDialog
           title="ตรวจสอบก่อนบันทึก"

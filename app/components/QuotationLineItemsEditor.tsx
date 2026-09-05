@@ -30,9 +30,10 @@
  *
  * Everything in Phase 2 is warn-and-allow-with-confirmation, so this component
  * BLOCKS NOTHING. It reports upward through `onReport` and lets the parent
- * decide; the only hard rules it surfaces are the pre-existing ones collected
- * by `validateLineDrafts` (at least one line, whole positive qty, a serial on
- * every machine, the per-bill machine cap).
+ * decide; the only hard rules it surfaces are the REQUIRED FIELDS collected by
+ * `validateLineDrafts` (at least one line, whole positive qty, a serial on
+ * every machine, a product cost on every ticked line, the per-bill machine
+ * cap).
  *
  * ─────────────────────────────────────────────────────────────────────────────
  * PROPS
@@ -58,7 +59,10 @@
  * quotationRef             docNo of the source quotation, for the header only.
  * submitAttempted          Flip to true when the admin presses save. Turns the
  *                          "serial ยังว่าง" hints from amber advice into red
- *                          errors on the exact inputs. Purely cosmetic.
+ *                          errors on the exact inputs, and paints red the
+ *                          ต้นทุนสินค้า box of every line `findMissingCosts`
+ *                          flagged (report 6). Purely cosmetic — the block
+ *                          itself is `report.errors`, which the parent owns.
  * disabled                 Disables every control (use while saving).
  * onRequestSelectSoldLine  Called INSTEAD of ticking when the admin ticks a
  *                          line that was already sold (task 13.3). The parent
@@ -77,13 +81,17 @@
 import React, { useCallback, useEffect, useId, useMemo, useRef } from "react";
 import SearchableDropdown from "./SearchableDropdown";
 import type { SearchableDropdownOption } from "./SearchableDropdown";
+import DatePicker from "./DatePicker";
+import FormattedNumberInput from "./FormattedNumberInput";
 import { stripHtml } from "../lib/stripHtml";
+import { toLocalDateString } from "../lib/dateFormat";
 import {
   CUSTOM_PRODUCT_SENTINEL,
   applyProductSelection,
   collectSerials,
   copyWarrantyToAllMachines,
   findDuplicateSerialsInForm,
+  findMissingCosts,
   findMissingSerials,
   findOverQuotedLines,
   findResoldLines,
@@ -97,6 +105,7 @@ import type {
   CatalogProduct,
   DuplicateSerialGroup,
   MachineDraft,
+  MissingCostLocation,
   SaleLineDraft,
   SerialLocation,
 } from "../lib/quotationToSale";
@@ -119,6 +128,10 @@ export interface LineEditorReport {
   errors: string[];
   /** Machines with no serial yet, located to the exact line + machine. */
   missingSerials: SerialLocation[];
+  /** Ticked lines whose ต้นทุนสินค้า is still 0/blank (report 6). A BLOCKER —
+   * `validateLineDrafts` already spells each one out inside `errors`; this list
+   * is the located form of the same rule, so the parent can name the line. */
+  missingCosts: MissingCostLocation[];
   /** Serials colliding WITHIN this form (task 13.5). A warning, not a block. */
   duplicateSerials: DuplicateSerialGroup[];
   /** Ticked lines selling more than the quotation offered (task 12.2). */
@@ -171,6 +184,30 @@ const inputDanger =
 const inputWarn = "border-amber-400 bg-amber-50 focus:ring-amber-200 focus:border-amber-400";
 const labelCls = "block text-xs font-semibold text-gray-600 mb-1";
 
+/** The serial box sits shoulder-to-shoulder with two `DatePicker`s, which style
+ * their own input; these mirror that default (px-4 py-2.5, rounded-xl, gray-50)
+ * so the three controls of a machine row line up instead of stair-stepping.
+ * Colour and background live in the variants only — same discipline as
+ * `inputBase` — so `inputDanger`/`inputWarn` never fight a base utility. */
+const machineInputBase =
+  "w-full px-4 py-2.5 border rounded-xl text-sm outline-none transition-all focus:ring-2 disabled:bg-gray-100 disabled:text-gray-400";
+const machineInputNeutral =
+  "bg-gray-50 border-gray-200 focus:ring-indigo-500/20 focus:border-indigo-500";
+
+/**
+ * `"YYYY-MM-DD"` → the `Date | null` `DatePicker` wants (report 4). Parsed at
+ * LOCAL midnight (`T00:00:00`, the shape `isValidDateString` checks), which is
+ * exactly what `toLocalDateString` turns back into the same string — so a date
+ * that is merely displayed and re-saved can never drift a day. An empty or
+ * malformed value becomes `null`, i.e. the picker's own "ไม่ระบุ" state.
+ */
+function parseDateValue(value: string | null | undefined): Date | null {
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+  const parsed = new Date(`${raw}T00:00:00`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
 /** `รายการที่ 3 (ชื่อสินค้า) เครื่องที่ 2` — the one phrasing every warning in
  * this component uses, so the admin reads the same coordinates everywhere. */
 function describeLocation(where: SerialLocation): string {
@@ -212,6 +249,7 @@ export default function QuotationLineItemsEditor({
     return {
       errors,
       missingSerials: findMissingSerials(rows),
+      missingCosts: findMissingCosts(rows),
       duplicateSerials: findDuplicateSerialsInForm(rows),
       overQuotedLines: findOverQuotedLines(rows),
       resoldLines: findResoldLines(rows),
@@ -235,6 +273,14 @@ export default function QuotationLineItemsEditor({
   const duplicateKeys = useMemo(
     () => new Set(report.duplicateSerials.map((g) => g.normalized)),
     [report.duplicateSerials]
+  );
+
+  /** Report 6 — the indexes of the ticked lines `findMissingCosts` flagged, so
+   * the ต้นทุนสินค้า input of exactly those lines can be painted red. The rule
+   * itself lives in `quotationToSale.ts`; this only consumes its answer. */
+  const missingCostLines = useMemo(
+    () => new Set(report.missingCosts.map((m) => m.lineIndex)),
+    [report.missingCosts]
   );
 
   // ── Edit plumbing ────────────────────────────────────────────────────────
@@ -287,13 +333,14 @@ export default function QuotationLineItemsEditor({
     [updateLine]
   );
 
+  /** `FormattedNumberInput` (report 2) does the thousands separators and the
+   * parsing, and hands back a plain number — so this only has to guard against
+   * a non-finite value ever reaching a draft. */
   const handleMoneyChange = useCallback(
-    (index: number, field: "unitPrice" | "costAmount", raw: string) => {
-      const cleaned = raw.replace(/,/g, "").trim();
-      const parsed = cleaned === "" ? 0 : Number(cleaned);
+    (index: number, field: "unitPrice" | "costAmount", value: number) => {
       updateLine(index, (line) => ({
         ...line,
-        [field]: Number.isFinite(parsed) ? parsed : line[field],
+        [field]: Number.isFinite(value) ? value : line[field],
       }));
     },
     [updateLine]
@@ -376,6 +423,9 @@ export default function QuotationLineItemsEditor({
         const overQuoted = line.selected && line.qty > line.quotedQty;
         const lineTotal = Math.max(0, line.qty) * (Number(line.unitPrice) || 0);
         const linkedToCatalog = !!line.productId && line.productId !== CUSTOM_PRODUCT_SENTINEL;
+        // Report 6, the visible half. Same timing as the blank-serial hint just
+        // below: advice until save is pressed, red on the input afterwards.
+        const missingCostFlagged = submitAttempted && missingCostLines.has(index);
 
         return (
           <div
@@ -460,49 +510,54 @@ export default function QuotationLineItemsEditor({
                     ) : null}
                   </div>
 
-                  <div>
-                    <label className={labelCls} htmlFor={`${uid}-price-${line.key}`}>
-                      ราคาต่อหน่วย (฿) <span className="text-red-500">*</span>
+                  {/* Report 2 — money fields use FormattedNumberInput so 20000
+                      reads as 20,000 while it is being typed. It takes neither
+                      an `id` nor a `disabled` prop, so the label WRAPS it (the
+                      implicit association) and a `fieldset` carries the
+                      disabled state down to it while saving. */}
+                  <fieldset className="min-w-0" disabled={disabled}>
+                    <label className="block">
+                      <span className={labelCls}>
+                        ราคาต่อหน่วย (฿) <span className="text-red-500">*</span>
+                      </span>
+                      <FormattedNumberInput
+                        value={Number.isFinite(line.unitPrice) ? line.unitPrice : 0}
+                        onChange={(value) => handleMoneyChange(index, "unitPrice", value)}
+                        placeholder="0"
+                        className={`${inputBase} text-right font-medium ${
+                          line.unitPrice < 0 ? inputDanger : inputNeutral
+                        }`}
+                      />
                     </label>
-                    <input
-                      id={`${uid}-price-${line.key}`}
-                      type="number"
-                      min={0}
-                      step="0.01"
-                      inputMode="decimal"
-                      disabled={disabled}
-                      value={Number.isFinite(line.unitPrice) ? String(line.unitPrice) : ""}
-                      onChange={(e) => handleMoneyChange(index, "unitPrice", e.target.value)}
-                      onWheel={(e) => e.currentTarget.blur()}
-                      placeholder="0"
-                      className={`${inputBase} text-right font-medium ${
-                        line.unitPrice < 0 ? inputDanger : inputNeutral
-                      }`}
-                    />
                     <p className="text-[11px] text-gray-400 mt-1">คัดลอกจากใบเสนอราคา แก้ได้</p>
-                  </div>
+                  </fieldset>
 
-                  <div>
-                    <label className={labelCls} htmlFor={`${uid}-cost-${line.key}`}>
-                      ต้นทุนสินค้า (฿)
+                  <fieldset className="min-w-0" disabled={disabled}>
+                    <label className="block">
+                      <span className={labelCls}>
+                        ต้นทุนสินค้า (฿) <span className="text-red-500">*</span>
+                      </span>
+                      <FormattedNumberInput
+                        value={Number.isFinite(line.costAmount) ? line.costAmount : 0}
+                        onChange={(value) => handleMoneyChange(index, "costAmount", value)}
+                        placeholder="0"
+                        className={`${inputBase} text-right font-medium ${
+                          // Report 6 — red on the exact input the validator
+                          // flagged, once the admin has actually pressed save
+                          // (the field is born at 0, so painting it before then
+                          // would greet every fresh form in red).
+                          missingCostFlagged || line.costAmount < 0 ? inputDanger : inputNeutral
+                        }`}
+                      />
                     </label>
-                    <input
-                      id={`${uid}-cost-${line.key}`}
-                      type="number"
-                      min={0}
-                      step="0.01"
-                      inputMode="decimal"
-                      disabled={disabled}
-                      value={Number.isFinite(line.costAmount) ? String(line.costAmount) : ""}
-                      onChange={(e) => handleMoneyChange(index, "costAmount", e.target.value)}
-                      onWheel={(e) => e.currentTarget.blur()}
-                      placeholder="0"
-                      className={`${inputBase} text-right font-medium ${
-                        line.costAmount < 0 ? inputDanger : inputNeutral
-                      }`}
-                    />
-                    <p className="text-[11px] text-gray-400 mt-1">ต้นทุนรวมของทั้งบรรทัด</p>
-                  </div>
+                    {missingCostFlagged ? (
+                      <p className="text-[11px] text-red-600 mt-1 font-semibold">
+                        กรุณาระบุต้นทุนสินค้า — บันทึกไม่ได้จนกว่าจะกรอก
+                      </p>
+                    ) : (
+                      <p className="text-[11px] text-gray-400 mt-1">ต้นทุนรวมของทั้งบรรทัด (บังคับ)</p>
+                    )}
+                  </fieldset>
 
                   <div>
                     <span className={labelCls}>ยอดรวมบรรทัด (฿)</span>
@@ -589,21 +644,35 @@ export default function QuotationLineItemsEditor({
                     </div>
                   )}
 
-                  <div className="space-y-2">
+                  {/* Report 3 + 4 — every field of the row now carries its own
+                      visible label, and the two warranty fields are the shared
+                      `DatePicker` (month + year dropdowns, clearable) rather
+                      than the browser's dd/mm/yyyy widget. The row stacks to one
+                      column below `sm`, so the labels are what keeps it readable
+                      on a phone; above `sm` it is three equal 4-wide columns
+                      (`min-w-0` on each, or a long serial would push the date
+                      columns into each other). */}
+                  <div className="space-y-3">
                     {line.machines.map((machine, machineIndex) => {
                       const blank = !machine.serialNumber.trim();
                       const duplicated =
                         !blank && duplicateKeys.has(normalizeSerial(machine.serialNumber));
+                      const serialId = `${uid}-serial-${line.key}-${machineIndex}`;
+                      const at = `รายการที่ ${index + 1} เครื่องที่ ${machineIndex + 1}`;
                       return (
                         <div
                           key={machineIndex}
-                          className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-center"
+                          className="grid grid-cols-1 sm:grid-cols-12 gap-x-3 gap-y-2 items-start border-t border-gray-100 pt-3 first:border-t-0 first:pt-0"
                         >
-                          <div className="sm:col-span-5 flex items-center gap-2">
-                            <span className="text-[11px] font-bold text-gray-500 bg-gray-100 px-2 py-1 rounded-md shrink-0">
-                              #{machineIndex + 1}
-                            </span>
+                          <div className="sm:col-span-4 min-w-0">
+                            <label className={labelCls} htmlFor={serialId}>
+                              <span className="text-[11px] font-bold text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded-md mr-1.5">
+                                #{machineIndex + 1}
+                              </span>
+                              Serial Number <span className="text-red-500">*</span>
+                            </label>
                             <input
+                              id={serialId}
                               type="text"
                               disabled={disabled}
                               value={machine.serialNumber}
@@ -613,56 +682,71 @@ export default function QuotationLineItemsEditor({
                                 })
                               }
                               placeholder="Serial Number *"
-                              aria-label={`Serial Number รายการที่ ${index + 1} เครื่องที่ ${machineIndex + 1}`}
-                              className={`${inputBase} ${
+                              aria-label={`Serial Number ${at}`}
+                              className={`${machineInputBase} ${
                                 blank && submitAttempted
                                   ? inputDanger
                                   : duplicated
                                     ? inputWarn
-                                    : inputNeutral
+                                    : machineInputNeutral
                               }`}
                             />
                           </div>
-                          {/* Native date inputs: the warranty pair repeats per
-                              machine, and a popup calendar × N rows inside a
-                              scrollable modal is exactly the clipping problem
-                              SearchableDropdown had to portal around. These
-                              also hand back the yyyy-mm-dd the payload wants. */}
-                          <div className="sm:col-span-3">
-                            <input
-                              type="date"
-                              disabled={disabled}
-                              value={machine.warrantyStartDate}
-                              onChange={(e) =>
-                                updateMachine(index, machineIndex, {
-                                  warrantyStartDate: e.target.value,
-                                })
-                              }
-                              aria-label={`วันเริ่มประกัน เครื่องที่ ${machineIndex + 1}`}
-                              className={`${inputBase} ${inputNeutral}`}
-                            />
-                          </div>
-                          <div className="sm:col-span-4">
-                            <input
-                              type="date"
-                              disabled={disabled}
-                              value={machine.warrantyEndDate}
-                              onChange={(e) =>
-                                updateMachine(index, machineIndex, {
-                                  warrantyEndDate: e.target.value,
-                                })
-                              }
-                              aria-label={`วันหมดประกัน เครื่องที่ ${machineIndex + 1}`}
-                              className={`${inputBase} ${inputNeutral}`}
-                            />
-                          </div>
+                          {/* `DatePicker` takes neither `id`, `aria-label` nor
+                              `disabled`: the label WRAPS it (implicit
+                              association, with the machine coordinates hidden
+                              inside for screen readers) and a `fieldset`
+                              carries the disabled state down while saving.
+                              `relative z-50` is the equipment modal's own guard
+                              (its calendar is portalled to #root-portal, so it
+                              is never clipped by a scrolling modal). */}
+                          <fieldset
+                            className="sm:col-span-4 min-w-0 relative z-50"
+                            disabled={disabled}
+                          >
+                            <label className="block">
+                              <span className={labelCls}>
+                                วันเริ่มประกัน<span className="sr-only"> {at}</span>
+                              </span>
+                              <DatePicker
+                                selected={parseDateValue(machine.warrantyStartDate)}
+                                onChange={(date) =>
+                                  updateMachine(index, machineIndex, {
+                                    warrantyStartDate: date ? toLocalDateString(date) : "",
+                                  })
+                                }
+                                placeholderText="ไม่ระบุ"
+                                isClearable
+                              />
+                            </label>
+                          </fieldset>
+                          <fieldset
+                            className="sm:col-span-4 min-w-0 relative z-50"
+                            disabled={disabled}
+                          >
+                            <label className="block">
+                              <span className={labelCls}>
+                                วันหมดประกัน<span className="sr-only"> {at}</span>
+                              </span>
+                              <DatePicker
+                                selected={parseDateValue(machine.warrantyEndDate)}
+                                onChange={(date) =>
+                                  updateMachine(index, machineIndex, {
+                                    warrantyEndDate: date ? toLocalDateString(date) : "",
+                                  })
+                                }
+                                placeholderText="ไม่ระบุ"
+                                isClearable
+                              />
+                            </label>
+                          </fieldset>
                         </div>
                       );
                     })}
                   </div>
                   <p className="text-[11px] text-gray-400 mt-2">
-                    ช่องซ้ายคือ Serial Number (บังคับ) ตามด้วยวันเริ่มประกันและวันหมดประกันของเครื่องนั้น —
-                    แต่ละเครื่องกำหนดคนละวันได้
+                    Serial Number บังคับกรอกทุกเครื่อง ส่วนวันประกันเว้นว่างไว้ก่อนได้ —
+                    แต่ละเครื่องกำหนดวันคนละวันได้
                   </p>
                 </div>
               </div>

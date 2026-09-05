@@ -8,8 +8,10 @@
  * here is data in → new data out: no argument is ever mutated, so React state
  * updates built on top of it stay safely immutable.
  *
- * The rules encoded here are all "warn, don't block" (D12/D13) except the three
- * pre-existing hard requirements collected in `validateLineDrafts`.
+ * The rules encoded here are all "warn, don't block" (D12/D13) — including the
+ * missing bill-level costs of report 5 — except the required fields collected
+ * in `validateLineDrafts` (one ticked line, a whole positive qty, a serial on
+ * every machine and, since report 6, a product cost on every ticked line).
  */
 
 // ---------------------------------------------------------------------------
@@ -606,12 +608,21 @@ export function normalizeSerial(value: unknown): string {
     .toLowerCase();
 }
 
-/** Where one serial sits in the form — enough to point the admin at it. */
-export interface SerialLocation {
+/**
+ * Where one LINE sits in the form — enough to point the admin at it and to let
+ * the editor paint that row's input red. `lineIndex` is the position in the
+ * FULL draft list (what the admin reads as "รายการที่ N" on screen), never the
+ * position among the ticked ones.
+ */
+export interface LineLocation {
   lineIndex: number;
-  machineIndex: number;
   quotationItemId: string;
   productName: string;
+}
+
+/** Where one serial sits in the form — enough to point the admin at it. */
+export interface SerialLocation extends LineLocation {
+  machineIndex: number;
   /** The serial as typed (untrimmed values are reported trimmed). */
   serialNumber: string;
 }
@@ -693,6 +704,49 @@ export function findMissingSerials(
 }
 
 // ---------------------------------------------------------------------------
+// 5b. Product cost is required on every ticked line (report 6)
+// ---------------------------------------------------------------------------
+
+/**
+ * A ticked line whose ต้นทุนสินค้า was never filled in. Same family as
+ * `SerialLocation` (both extend `LineLocation`) because it is consumed the same
+ * way: the editor paints the located input red, `validateLineDrafts` turns the
+ * same list into Thai blockers, and the sale form names the offending line.
+ */
+export interface MissingCostLocation extends LineLocation {
+  /** The value that failed the rule, normalized (0 for empty/NaN). */
+  costAmount: number;
+}
+
+/**
+ * Report 6 — ticked lines with no product cost. The field is born at 0
+ * (`buildLineDrafts`), so 0, "" and NaN all mean "not filled in yet"; only a
+ * real, positive, finite number counts as a cost.
+ *
+ * This one IS a blocker, exactly like `findMissingSerials`: it is a required
+ * field, not one of the confirmable warnings. A negative amount is reported
+ * here too — it is likewise not a usable cost — and keeps its own
+ * "ต้องเป็นตัวเลขที่ไม่ติดลบ" message from `validateLineDrafts`.
+ */
+export function findMissingCosts(
+  lines: readonly SaleLineDraft[] | null | undefined
+): MissingCostLocation[] {
+  const out: MissingCostLocation[] = [];
+  asArray(lines).forEach((line, lineIndex) => {
+    if (!line || !line.selected) return;
+    const cost = Number(line.costAmount);
+    if (Number.isFinite(cost) && cost > 0) return;
+    out.push({
+      lineIndex,
+      quotationItemId: String(line.quotationItemId ?? ""),
+      productName: String(line.productName ?? ""),
+      costAmount: Number.isFinite(cost) ? cost : 0,
+    });
+  });
+  return out;
+}
+
+// ---------------------------------------------------------------------------
 // 6. Bill summary + warnings (tasks 12.10, 12.2, 13.1, 13.3)
 // ---------------------------------------------------------------------------
 
@@ -762,11 +816,12 @@ export function findOverQuotedLines(
 }
 
 /**
- * The only hard blockers in this flow — all three pre-date it (at least one
- * line, a whole positive quantity, a serial on every machine) plus the API's
- * own per-bill machine cap, surfaced here in Thai instead of as a 400.
- * Everything else (already sold, over-quoted, duplicate serial) is a
- * confirmable warning and must NOT appear in this list.
+ * The only hard blockers in this flow — the required fields (at least one line,
+ * a whole positive quantity, a serial on every machine and, since report 6, a
+ * product cost on every ticked line) plus the API's own per-bill machine cap,
+ * surfaced here in Thai instead of as a 400. Everything else (already sold,
+ * over-quoted, duplicate serial, no bill-level cost) is a confirmable warning
+ * and must NOT appear in this list.
  */
 export function validateLineDrafts(
   lines: readonly SaleLineDraft[] | null | undefined
@@ -798,6 +853,13 @@ export function validateLineDrafts(
     const label = miss.productName ? `${at} (${miss.productName})` : at;
     errors.push(`${label} เครื่องที่ ${miss.machineIndex + 1}: กรุณาระบุ Serial Number`);
   }
+  // Report 6 — a required field, alongside the serial rule above (never a
+  // confirmable warning): the admin cannot save a line whose cost is still 0.
+  for (const miss of findMissingCosts(lines)) {
+    const at = `รายการที่ ${miss.lineIndex + 1}`;
+    const label = miss.productName ? `${at} (${miss.productName})` : at;
+    errors.push(`${label}: กรุณาระบุต้นทุนสินค้า`);
+  }
   const machineCount = summarizeBill(lines).machineCount;
   if (machineCount > MAX_EQUIPMENT_ROWS_PER_SALE) {
     errors.push(
@@ -805,6 +867,87 @@ export function validateLineDrafts(
     );
   }
   return errors;
+}
+
+// ---------------------------------------------------------------------------
+// 6b. Bill-level costs — the "you filled in nothing but the product cost"
+//     warning (report 5). WARN ONLY: plenty of real sales have none.
+// ---------------------------------------------------------------------------
+
+/** The cost type that is NOT a bill-level cost: it is the per-line ต้นทุนสินค้า,
+ * which the line editor owns. Same literal as `COST_TYPE_LABELS` in
+ * `app/dashboard/types.ts` and as `sale_cost_items.costType` server-side. */
+export const PRODUCT_COST_TYPE = "product_cost";
+
+/** One row of the "ตัวช่วยคำนวณต้นทุน" table. Structurally satisfied by
+ * `CostItemLocal` in `app/dashboard/types.ts`; everything is optional because
+ * a half-typed row is a perfectly normal thing to be asked about. */
+export interface BillCostRow {
+  costType?: string | null;
+  label?: string | null;
+  amount?: unknown;
+  note?: string | null;
+}
+
+export interface BillLevelCostSummary {
+  /** The answer to "does this bill have any bill-level cost at all?" */
+  hasBillLevelCost: boolean;
+  /** How many rows carried one (ignores blank and zero rows). */
+  rowCount: number;
+  /** Their sum, for the confirm dialog. 0 when there are none. */
+  total: number;
+  /** Thai warning text, or null when there IS a bill-level cost (nothing to
+   * warn about). Never an error message: the save proceeds once confirmed. */
+  message: string | null;
+}
+
+/**
+ * Report 5 — "ถ้าไม่ใส่ค่าอะไรเลยในคำนวนต้นทุน ให้เตือนตอนเซฟ".
+ *
+ * A row counts as a bill-level cost when it is not the per-line ต้นทุนสินค้า
+ * and carries a positive, finite amount. A half-typed row (no amount yet) does
+ * not count; a row whose type has not been picked yet DOES, because money was
+ * genuinely entered and warning about it would be wrong.
+ *
+ * Pure and total: any shape of input — null, undefined, a malformed row, a
+ * string amount — answers false rather than throwing. The caller must treat a
+ * false as a confirmable warning, never as a blocker (D12/D13).
+ */
+export function hasBillLevelCost(
+  rows: readonly BillCostRow[] | null | undefined
+): boolean {
+  return asArray(rows).some((row) => {
+    if (!row) return false;
+    if (String(row.costType ?? "").trim() === PRODUCT_COST_TYPE) return false;
+    const amount = Number(row.amount);
+    return Number.isFinite(amount) && amount > 0;
+  });
+}
+
+/** The same answer plus the numbers and the Thai sentence the confirm dialog
+ * shows. `message` is null exactly when `hasBillLevelCost` is true. */
+export function summarizeBillLevelCosts(
+  rows: readonly BillCostRow[] | null | undefined
+): BillLevelCostSummary {
+  let rowCount = 0;
+  let total = 0;
+  for (const row of asArray(rows)) {
+    if (!row) continue;
+    if (String(row.costType ?? "").trim() === PRODUCT_COST_TYPE) continue;
+    const amount = Number(row.amount);
+    if (!Number.isFinite(amount) || amount <= 0) continue;
+    rowCount += 1;
+    total = round2(total + amount);
+  }
+  const has = rowCount > 0;
+  return {
+    hasBillLevelCost: has,
+    rowCount,
+    total,
+    message: has
+      ? null
+      : "ยังไม่ได้กรอกต้นทุนอื่นๆ นอกจากต้นทุนสินค้า (ค่ารถ / ค่าขนส่ง / ค่าคอมมิชชั่น ฯลฯ)",
+  };
 }
 
 // ---------------------------------------------------------------------------

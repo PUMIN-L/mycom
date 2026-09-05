@@ -4,7 +4,15 @@ import type { QueryResult, FieldPacket, RowDataPacket } from "mysql2";
 
 // Bump whenever the schema below changes — a mismatch re-runs the (idempotent)
 // bump; a match lets returning cold instances skip it in one SELECT.
-const SCHEMA_VERSION = 33;
+//
+// ONLY EVER INCREASE THIS, and never reuse a number that has already shipped.
+// The skip check below is `stored >= SCHEMA_VERSION`, so a number the live
+// database has already recorded can never trigger a migration again. v33 was
+// burned by a feature that was later reverted: lowering the constant back to 32
+// did not lower the 33 already written to `settings`, so the next change to
+// reuse 33 was skipped entirely and its tables were never created in
+// production. Reverting a migration means moving FORWARD to a new number.
+const SCHEMA_VERSION = 34;
 
 type DbPool = ReturnType<typeof mysql.createPool>;
 

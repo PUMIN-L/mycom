@@ -16,12 +16,15 @@ import {
   copyWarrantyToAllMachines,
   describeNameMatch,
   findDuplicateSerialsInForm,
+  findMissingCosts,
   findMissingSerials,
   findOverQuotedLines,
   findResoldLines,
+  hasBillLevelCost,
   matchByName,
   normalizeName,
   normalizeSerial,
+  PRODUCT_COST_TYPE,
   resizeMachines,
   resolveAutoFill,
   resolveProductIdForApi,
@@ -29,8 +32,10 @@ import {
   selectedLines,
   setLineQty,
   summarizeBill,
+  summarizeBillLevelCosts,
   summarizeSoldLines,
   validateLineDrafts,
+  type BillCostRow,
   type CatalogProduct,
   type QuotationLine,
   type SaleLineDraft,
@@ -73,6 +78,20 @@ function withSerials(lines: SaleLineDraft[], prefix = 'SN'): SaleLineDraft[] {
     ...l,
     machines: l.machines.map((m) => ({ ...m, serialNumber: `${prefix}-${++n}` })),
   }));
+}
+
+/**
+ * Give every line a real product cost. `buildLineDrafts` starts every line at
+ * costAmount 0 and report 6 made that a blocker, so "a fully filled form" in
+ * the validator tests below means serials AND costs.
+ */
+function withCosts(lines: SaleLineDraft[], amount = 90000): SaleLineDraft[] {
+  return lines.map((l) => ({ ...l, costAmount: amount }));
+}
+
+/** Ticked + serialled + costed: the shortest way to say "nothing is missing". */
+function filled(lines: SaleLineDraft[]): SaleLineDraft[] {
+  return withCosts(withSerials(lines));
 }
 
 // --- 15.2 name matching -----------------------------------------------------
@@ -774,9 +793,66 @@ describe('findMissingSerials (task 12.11)', () => {
   });
 });
 
+// --- report 6: product cost is a required field ------------------------------
+
+describe('findMissingCosts (report 6)', () => {
+  it('flags a ticked line still at the default cost of 0, and passes a real cost', () => {
+    const zero = drafts(); // buildLineDrafts starts every line at costAmount 0
+    expect(findMissingCosts(zero).map((m) => m.lineIndex)).toEqual([0, 1, 2]);
+    expect(findMissingCosts(withCosts(zero))).toEqual([]);
+  });
+
+  it('treats empty, NaN and a negative amount as "not filled in"', () => {
+    for (const costAmount of [0, NaN, -1, undefined as unknown as number]) {
+      const lines = [{ ...drafts()[0], costAmount } as SaleLineDraft];
+      expect(findMissingCosts(lines)).toHaveLength(1);
+    }
+    // …while any positive, finite amount is a cost, however small.
+    expect(findMissingCosts([{ ...drafts()[0], costAmount: 0.01 }])).toEqual([]);
+  });
+
+  it('ignores lines that are not ticked', () => {
+    const lines = drafts().map((l) => ({ ...l, selected: false }));
+    expect(findMissingCosts(lines)).toEqual([]);
+  });
+
+  it('locates the line exactly the way the serial rule does', () => {
+    const lines = withCosts(drafts());
+    lines[2] = { ...lines[2], costAmount: 0 };
+    expect(findMissingCosts(lines)).toEqual([
+      {
+        lineIndex: 2,
+        quotationItemId: 'qi3',
+        productName: 'เครื่องวัด C',
+        costAmount: 0,
+      },
+    ]);
+  });
+
+  it('reports the position in the FULL list, not among the ticked lines', () => {
+    // Line 0 unticked: line 2 is the SECOND ticked line but still "รายการที่ 3".
+    const lines = withCosts(drafts());
+    lines[0] = { ...lines[0], selected: false };
+    lines[2] = { ...lines[2], costAmount: 0 };
+    expect(findMissingCosts(lines).map((m) => m.lineIndex)).toEqual([2]);
+  });
+
+  it('tolerates a missing list', () => {
+    expect(() => findMissingCosts(null)).not.toThrow();
+    expect(findMissingCosts(undefined)).toEqual([]);
+  });
+
+  it('does not mutate the drafts it was given', () => {
+    const lines = drafts();
+    const before = JSON.parse(JSON.stringify(lines));
+    findMissingCosts(lines);
+    expect(lines).toEqual(before);
+  });
+});
+
 describe('validateLineDrafts (the only hard blockers)', () => {
   it('passes a fully filled form', () => {
-    expect(validateLineDrafts(withSerials(drafts()))).toEqual([]);
+    expect(validateLineDrafts(filled(drafts()))).toEqual([]);
   });
 
   it('blocks when no line is ticked', () => {
@@ -786,14 +862,14 @@ describe('validateLineDrafts (the only hard blockers)', () => {
 
   it('blocks a zero / negative / fractional quantity', () => {
     for (const qty of [0, -1, 1.5, NaN]) {
-      const lines = withSerials([{ ...drafts()[2], qty } as SaleLineDraft]);
+      const lines = filled([{ ...drafts()[2], qty } as SaleLineDraft]);
       expect(validateLineDrafts(lines).some((e) => e.includes('จำนวนที่ขายจริง'))).toBe(true);
     }
   });
 
   it('blocks a missing serial and names the line and the machine', () => {
     const lines = drafts().map((l) => ({ ...l, selected: false }));
-    lines[2] = { ...lines[2], selected: true };
+    lines[2] = { ...lines[2], selected: true, costAmount: 40000 };
     const errors = validateLineDrafts(lines);
     expect(errors).toHaveLength(2);
     expect(errors[0]).toContain('เครื่องที่ 1');
@@ -801,10 +877,10 @@ describe('validateLineDrafts (the only hard blockers)', () => {
   });
 
   it('blocks a bill over the API machine cap', () => {
-    const big = withSerials([setLineQty(drafts()[0], MAX_EQUIPMENT_ROWS_PER_SALE)]);
+    const big = filled([setLineQty(drafts()[0], MAX_EQUIPMENT_ROWS_PER_SALE)]);
     expect(validateLineDrafts(big)).toEqual([]);
 
-    const over = withSerials([setLineQty(drafts()[0], MAX_EQUIPMENT_ROWS_PER_SALE + 1)]);
+    const over = filled([setLineQty(drafts()[0], MAX_EQUIPMENT_ROWS_PER_SALE + 1)]);
     expect(validateLineDrafts(over).some((e) => e.includes('สูงสุด'))).toBe(true);
     // …and the payload still carries one machine per unit rather than silently
     // dropping the 51st, so the count the admin is warned about is the real one.
@@ -813,22 +889,153 @@ describe('validateLineDrafts (the only hard blockers)', () => {
     expect(payload.equipments).toHaveLength(payload.qty);
   });
 
+  it('blocks a ticked line with no product cost (report 6)', () => {
+    const zeroCost = withSerials(drafts()); // every line still at costAmount 0
+    const errors = validateLineDrafts(zeroCost);
+    expect(errors).toHaveLength(3);
+    expect(errors.every((e) => e.includes('กรุณาระบุต้นทุนสินค้า'))).toBe(true);
+    // …and the very same form passes once a real cost is typed.
+    expect(validateLineDrafts(withCosts(zeroCost))).toEqual([]);
+  });
+
+  it('names the exact line that is missing its cost', () => {
+    const lines = filled(drafts());
+    lines[2] = { ...lines[2], costAmount: 0 };
+    expect(validateLineDrafts(lines)).toEqual([
+      'รายการที่ 3 (เครื่องวัด C): กรุณาระบุต้นทุนสินค้า',
+    ]);
+  });
+
+  it('numbers the missing-cost line by its position in the full list', () => {
+    const lines = filled(drafts());
+    lines[0] = { ...lines[0], selected: false }; // line 2 is now the 2nd ticked line
+    lines[2] = { ...lines[2], costAmount: 0 };
+    expect(validateLineDrafts(lines)[0]).toContain('รายการที่ 3');
+  });
+
+  it('does NOT block a line left at cost 0 that is not ticked', () => {
+    const lines = filled(drafts());
+    lines[1] = { ...lines[1], selected: false, costAmount: 0 };
+    expect(validateLineDrafts(lines)).toEqual([]);
+  });
+
   it('does NOT block an already-sold or over-quoted line (warn only)', () => {
     let lines = drafts([{ quotationItemId: 'qi1', soldQty: 3 }]);
     lines[0] = setLineQty({ ...lines[0], selected: true }, 5); // sold before AND over-quoted
-    lines = withSerials(lines);
+    lines = filled(lines);
     expect(validateLineDrafts(lines)).toEqual([]);
     expect(findResoldLines(lines)).toHaveLength(1);
     expect(findOverQuotedLines(lines)).toHaveLength(1);
   });
 
   it('does NOT block duplicate serials (warn only)', () => {
-    const lines = drafts().map((l) => ({
+    const lines = withCosts(drafts()).map((l) => ({
       ...l,
       machines: l.machines.map(() => ({ ...blankMachine(), serialNumber: 'SAME' })),
     }));
     expect(validateLineDrafts(lines)).toEqual([]);
     expect(findDuplicateSerialsInForm(lines)).toHaveLength(1);
+  });
+});
+
+// --- report 5: bill-level costs (warn only, never a blocker) ----------------
+
+describe('hasBillLevelCost / summarizeBillLevelCosts (report 5)', () => {
+  const PRODUCT_ONLY: BillCostRow[] = [
+    { costType: PRODUCT_COST_TYPE, label: '', amount: 50000, note: '' },
+  ];
+  const WITH_TRANSPORT: BillCostRow[] = [
+    { costType: PRODUCT_COST_TYPE, label: '', amount: 50000, note: '' },
+    { costType: 'transport', label: 'ค่ารถไปส่ง', amount: 800, note: '' },
+  ];
+
+  it('uses the same costType literal as the cost table', () => {
+    expect(PRODUCT_COST_TYPE).toBe('product_cost');
+  });
+
+  it('is true when the bill carries a ค่ารถ / ค่าขนส่ง / ค่าคอมมิชชั่น row', () => {
+    expect(hasBillLevelCost(WITH_TRANSPORT)).toBe(true);
+    expect(hasBillLevelCost([{ costType: 'commission', amount: 2500 }])).toBe(true);
+    expect(hasBillLevelCost([{ costType: 'shipping', amount: 0.5 }])).toBe(true);
+  });
+
+  it('is false when the only cost on the bill is the product cost', () => {
+    expect(hasBillLevelCost(PRODUCT_ONLY)).toBe(false);
+  });
+
+  it('is false for an empty list — and for no list at all', () => {
+    expect(hasBillLevelCost([])).toBe(false);
+    expect(hasBillLevelCost(null)).toBe(false);
+    expect(hasBillLevelCost(undefined)).toBe(false);
+  });
+
+  it('does not count a bill-level row that has no amount typed yet', () => {
+    expect(hasBillLevelCost([{ costType: 'transport', label: 'ค่ารถ', amount: 0 }])).toBe(false);
+    expect(hasBillLevelCost([{ costType: 'transport', amount: '' }])).toBe(false);
+    expect(hasBillLevelCost([{ costType: 'transport' }])).toBe(false);
+  });
+
+  it('never throws, whatever the form hands it', () => {
+    // A warning must survive garbage: answering false only asks for a confirm.
+    expect(() => hasBillLevelCost([null as unknown as BillCostRow])).not.toThrow();
+    expect(hasBillLevelCost([{ amount: NaN }, { costType: 'other', amount: 'abc' }])).toBe(false);
+    expect(hasBillLevelCost('nonsense' as unknown as BillCostRow[])).toBe(false);
+  });
+
+  it('summarizes the rows and their total for the confirm dialog', () => {
+    expect(summarizeBillLevelCosts(WITH_TRANSPORT)).toEqual({
+      hasBillLevelCost: true,
+      rowCount: 1, // the product-cost row is not a bill-level cost
+      total: 800,
+      message: null, // nothing to warn about
+    });
+  });
+
+  it('adds up several bill-level rows', () => {
+    const s = summarizeBillLevelCosts([
+      { costType: 'transport', amount: 800 },
+      { costType: 'commission', amount: 2500.5 },
+      { costType: 'shipping', amount: 0 }, // not typed in yet
+      { costType: PRODUCT_COST_TYPE, amount: 90000 },
+    ]);
+    expect(s.rowCount).toBe(2);
+    expect(s.total).toBe(3300.5);
+    expect(s.hasBillLevelCost).toBe(true);
+  });
+
+  it('carries the Thai warning text exactly when there is no bill-level cost', () => {
+    const none = summarizeBillLevelCosts(PRODUCT_ONLY);
+    expect(none.hasBillLevelCost).toBe(false);
+    expect(none.rowCount).toBe(0);
+    expect(none.total).toBe(0);
+    expect(none.message).toBe(
+      'ยังไม่ได้กรอกต้นทุนอื่นๆ นอกจากต้นทุนสินค้า (ค่ารถ / ค่าขนส่ง / ค่าคอมมิชชั่น ฯลฯ)'
+    );
+    expect(summarizeBillLevelCosts([]).message).toBe(none.message);
+  });
+
+  it('agrees with the boolean helper on every input', () => {
+    const cases: Array<readonly BillCostRow[] | null | undefined> = [
+      [], null, undefined, PRODUCT_ONLY, WITH_TRANSPORT,
+      [{ costType: 'other', amount: 1 }],
+      [{ costType: 'transport', amount: 0 }],
+    ];
+    for (const rows of cases) {
+      expect(summarizeBillLevelCosts(rows).hasBillLevelCost).toBe(hasBillLevelCost(rows));
+    }
+  });
+
+  it('never appears among the hard blockers — it is a confirmable warning', () => {
+    // A perfectly valid bill with no bill-level cost at all still saves.
+    expect(validateLineDrafts(filled(drafts()))).toEqual([]);
+    expect(hasBillLevelCost([])).toBe(false);
+  });
+
+  it('does not mutate the rows it was given', () => {
+    const rows = JSON.parse(JSON.stringify(WITH_TRANSPORT));
+    hasBillLevelCost(rows);
+    summarizeBillLevelCosts(rows);
+    expect(rows).toEqual(WITH_TRANSPORT);
   });
 });
 

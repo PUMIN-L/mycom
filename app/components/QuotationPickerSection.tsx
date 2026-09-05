@@ -151,6 +151,11 @@ export interface QuotationPickerSectionProps {
 const LIST_LIMIT = 100;
 const SEARCH_DEBOUNCE_MS = 300;
 
+/** Value of the non-selectable row the dropdown shows for fetch state. The
+ * panel no longer filters locally (it would blank mid-typing), so anything it
+ * has to say about the list has to travel as a disabled option. */
+const STATUS_OPTION_VALUE = "__quotation-list-status__";
+
 const fmtMoney = (n: unknown) =>
   Number(n || 0).toLocaleString("th-TH", { maximumFractionDigits: 0 });
 
@@ -312,6 +317,20 @@ export default function QuotationPickerSection({
     pickedSummary ??
     (quotationId ? summaries.find((q) => q.id === quotationId) ?? null : null);
 
+  /** The state line shown inside the panel, right under its search box. Empty
+   * when the list on screen is simply the answer to what was typed. */
+  const listStatusLabel = useMemo(() => {
+    if (listStatus === "loading") return "กำลังค้นหา...";
+    if (listStatus === "error") return "โหลดรายการไม่สำเร็จ — พิมพ์เลขที่เองด้านล่างได้";
+    if (summaries.length === 0) {
+      return searchTerm ? `ไม่พบใบเสนอราคาที่ตรงกับ «${searchTerm}»` : "ยังไม่มีใบเสนอราคาในระบบ";
+    }
+    if (summaries.length >= LIST_LIMIT) {
+      return `แสดง ${LIST_LIMIT} ใบแรก — พิมพ์ค้นหาเพื่อหาใบที่ต้องการ`;
+    }
+    return "";
+  }, [listStatus, searchTerm, summaries.length]);
+
   const options = useMemo<SearchableDropdownOption[]>(() => {
     const rows = summaries.slice();
     // A search narrows the list; the quotation already linked must stay
@@ -321,6 +340,12 @@ export default function QuotationPickerSection({
     }
     return [
       { value: "", label: "— ไม่อ้างอิงใบเสนอราคา (พิมพ์เลขที่เอง) —" },
+      // Kept at the top so it is readable without scrolling a full page of
+      // still-visible results: while a new search is in flight the rows below
+      // are the previous answer, and this line says so.
+      ...(listStatusLabel
+        ? [{ value: STATUS_OPTION_VALUE, label: listStatusLabel, disabled: true }]
+        : []),
       ...rows.map((q) => {
         const total = typeof q.total === "number" ? ` (${fmtMoney(q.total)} บาท)` : "";
         const created = fmtDate(q.createdAt);
@@ -331,7 +356,7 @@ export default function QuotationPickerSection({
         };
       }),
     ];
-  }, [summaries, selectedSummary]);
+  }, [summaries, selectedSummary, listStatusLabel]);
 
   // ── Auto-fill (tasks 11.1-11.5) ───────────────────────────────────────────
 
@@ -487,6 +512,7 @@ export default function QuotationPickerSection({
   /** Task 10.6 — swapping quotations throws away the line edits the admin has
    * already made, so ask first. Nothing is fetched until they confirm. */
   const requestSelect = (nextId: string) => {
+    if (nextId === STATUS_OPTION_VALUE) return; // the disabled state row
     if (nextId === currentId) return;
     if (linesDirty) {
       setConfirmId(nextId);
@@ -634,38 +660,26 @@ export default function QuotationPickerSection({
         )}
       </div>
 
-      {/* Search box. The dropdown's own filter would only sift the page we
-          already fetched; with 2 years of retention the list can outgrow one
-          page, so the typed text goes to the server's ?search= instead and the
-          dropdown itself is rendered non-searchable (one search box, one
-          meaning). */}
+      {/* One search box, and it is the dropdown's own (report 1). Typing in it
+          drives the server's ?search= rather than sifting the page already
+          fetched — with 2 years of retention the list outgrows one page, so a
+          local-only filter would hide older quotations entirely. The panel's
+          local filter is therefore switched off (`filterOptions={false}`): the
+          rows it is handed are already the answer, and re-filtering them by the
+          text typed so far would blank the list between keystrokes. */}
       <div>
-        <label className={labelClass} htmlFor="quotation-search">
-          ค้นหาใบเสนอราคา
-        </label>
-        <input
-          id="quotation-search"
-          type="text"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          disabled={disabled}
-          placeholder="พิมพ์เลขที่เอกสาร หรือชื่อลูกค้า/บริษัท"
-          className={inputClass}
-        />
-        <p className="text-xs text-gray-500 mt-1">
-          ค้นจากใบเสนอราคาทั้งหมดในระบบ (เก็บย้อนหลัง 2 ปี)
-        </p>
-      </div>
-
-      <div>
+        <label className={labelClass}>ใบเสนอราคา</label>
         <SearchableDropdown
           options={options}
           value={currentId}
           onChange={requestSelect}
-          searchable={false}
+          onSearchChange={setSearch}
+          filterOptions={false}
           placeholder="เลือกใบเสนอราคา..."
           buttonClassName={`py-2.5 rounded-xl border-gray-200 ${disabled ? "pointer-events-none opacity-60" : ""}`}
         />
+        {/* Repeated below the closed dropdown, where the panel's own status row
+            is not visible. The retry lives here for the same reason. */}
         {listStatus === "loading" && (
           <p className="text-xs text-gray-500 mt-1 animate-pulse">กำลังโหลดรายการใบเสนอราคา...</p>
         )}
@@ -681,14 +695,13 @@ export default function QuotationPickerSection({
             </button>
           </p>
         )}
-        {listStatus === "ready" && summaries.length >= LIST_LIMIT && (
-          <p className="text-xs text-gray-500 mt-1">
-            แสดง {LIST_LIMIT} ใบล่าสุด — พิมพ์ค้นหาเพื่อหาใบที่ต้องการ
-          </p>
-        )}
         {listStatus === "ready" && summaries.length === 0 && searchTerm && (
           <p className="text-xs text-gray-500 mt-1">ไม่พบใบเสนอราคาที่ตรงกับ «{searchTerm}»</p>
         )}
+        <p className="text-xs text-gray-500 mt-1">
+          กดเลือกแล้วพิมพ์ในช่องค้นหาของรายการ — ค้นเลขที่เอกสาร หรือชื่อลูกค้า/บริษัท
+          จากใบเสนอราคาทั้งหมดในระบบ (เก็บย้อนหลัง 2 ปี)
+        </p>
       </div>
 
       {/* Task 13.1 — advisory banner only. */}
