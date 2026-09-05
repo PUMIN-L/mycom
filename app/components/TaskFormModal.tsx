@@ -42,8 +42,15 @@
  *                 sits under a topic that is hidden or gone, that topic is
  *                 appended as an extra option so the field is never blank and
  *                 the task can be saved without being forced to move.
- *   defaultTopicId  pre-selected topic for a new task (e.g. the topic filter
- *                 the board currently has open). Ignored in edit mode.
+ *   defaultTopicId  pre-selected topic for a NEW task. When it is not given,
+ *                 the topic the board's filter currently has open is used
+ *                 instead (`getBoardCreateTopicId()` — the board publishes it
+ *                 so a host that opens this modal from a zero-argument
+ *                 callback still gets the obvious behaviour, item 9a). Either
+ *                 way the id is only honoured when it is actually one of the
+ *                 `topics` offered below, and BOTH are ignored in edit mode:
+ *                 the task's own topic always wins, so opening a task to fix a
+ *                 typo can never silently re-file it.
  *   onClose       close without saving. Also fired by Escape and by the
  *                 backdrop — both are ignored while a save is in flight.
  *   onSaved(task) the API answered. THE PARENT closes the modal (and shows the
@@ -62,6 +69,7 @@ import DatePicker from "./DatePicker";
 import SearchableDropdown from "./SearchableDropdown";
 import type { SearchableDropdownOption } from "./SearchableDropdown";
 import Spinner from "./Spinner";
+import { getBoardCreateTopicId } from "./TaskBoardSection";
 import TaskLinkChips, {
   TASK_LINK_KIND_META,
   reloadTaskLinkTargets,
@@ -87,6 +95,62 @@ interface TaskLinkPayload {
 
 const MAX_TITLE = 255;
 const MAX_DETAIL = 5000;
+
+interface InitialTopic {
+  /** The dropdown's starting value ("" = nothing chosen yet). */
+  value: string;
+  /** True only when the value came from the board's open topic FILTER, so the
+   * form can say why the field is already filled in. */
+  fromFilter: boolean;
+}
+
+/**
+ * Which topic a freshly opened form starts on (item 9a).
+ *
+ * Order, and every step of it is deliberate:
+ *   1. EDIT (decided by `task.id`, not by the task's topic) — the task's own
+ *      topic, always, and nothing else. A filter must never re-file a task the
+ *      admin opened for something else.
+ *   2. CREATE — an explicit `defaultTopicId` from the host.
+ *   3. CREATE — the topic the board's filter has open.
+ *   4. CREATE — the only topic there is, when there is exactly one.
+ *      Otherwise nothing, and the field stays required.
+ *
+ * A preferred id is honoured ONLY when it matches one of the topics actually
+ * offered: a value with no option behind it would leave the dropdown looking
+ * empty while the form treats itself as filled in.
+ *
+ * Pure, and called from a `useState` initializer — StrictMode runs that twice,
+ * so it must return the same answer both times (it reads the published topic,
+ * it never consumes it).
+ */
+function resolveInitialTopic(
+  task: CrmTask | null | undefined,
+  topics: TaskTopic[],
+  defaultTopicId: number | null | undefined
+): InitialTopic {
+  // EDIT is decided by the task's IDENTITY, not by whether its topic happens to
+  // be set: a row that somehow arrives with a falsy `topicId` is still an
+  // existing task, and it must fall through to "nothing chosen" — never to the
+  // board's filter, which would silently re-file a task the admin only opened
+  // to fix a typo. The dropdown is required, so he is asked to pick.
+  if (task?.id) {
+    return { value: task.topicId ? String(task.topicId) : "", fromFilter: false };
+  }
+
+  const boardTopicId = getBoardCreateTopicId();
+  const fromFilter = defaultTopicId === null || defaultTopicId === undefined;
+  const preferred = fromFilter ? boardTopicId : defaultTopicId;
+  if (preferred !== null && preferred !== undefined) {
+    const match = topics.find((topic) => Number(topic.id) === Number(preferred));
+    if (match) return { value: String(match.id), fromFilter };
+  }
+
+  return {
+    value: topics.length === 1 ? String(topics[0].id) : "",
+    fromFilter: false,
+  };
+}
 
 /** "YYYY-MM-DD" → a LOCAL Date, so the picker cannot shift the day by a
  * timezone offset the way `new Date("2026-01-01")` (UTC midnight) does. */
@@ -118,11 +182,12 @@ export default function TaskFormModal({
 }: TaskFormModalProps) {
   const isEdit = Boolean(task?.id);
 
-  const [topicId, setTopicId] = useState<string>(() => {
-    if (task?.topicId) return String(task.topicId);
-    if (defaultTopicId) return String(defaultTopicId);
-    return topics.length === 1 ? String(topics[0].id) : "";
-  });
+  // Resolved once, on open: re-running it later would fight the admin for the
+  // dropdown every time the board's filter moved underneath the modal.
+  const [initialTopic] = useState<InitialTopic>(() =>
+    resolveInitialTopic(task, topics, defaultTopicId)
+  );
+  const [topicId, setTopicId] = useState<string>(initialTopic.value);
   const [title, setTitle] = useState<string>(task?.title ?? "");
   const [detail, setDetail] = useState<string>(task?.detail ?? "");
   const [dueDate, setDueDate] = useState<string>(task?.dueDate ?? "");
@@ -190,6 +255,15 @@ export default function TaskFormModal({
     // `task` whole, not its three fields: the React Compiler infers the object
     // itself and refuses to keep a narrower manual dependency list.
   }, [topics, task]);
+
+  /** The "หัวข้อถูกเลือกไว้ให้แล้ว" hint, shown only while the pre-filled topic
+   * is still the chosen one — the moment the admin picks another it stops being
+   * true, and the board's own "saved over there" notice takes over from here. */
+  const prefilledTopicName = useMemo(() => {
+    if (isEdit || !initialTopic.fromFilter || topicId !== initialTopic.value) return "";
+    const topic = topics.find((item) => String(item.id) === topicId);
+    return topic ? topic.name : "";
+  }, [isEdit, initialTopic, topicId, topics]);
 
   // ── Link picker ───────────────────────────────────────────────────────────
 
@@ -388,6 +462,11 @@ export default function TaskFormModal({
             )}
             {submitAttempted && missingTopic && (
               <p className="text-red-500 text-xs mt-1">กรุณาเลือกหัวข้อของงาน</p>
+            )}
+            {prefilledTopicName && (
+              <p className="text-xs text-amber-700 mt-1.5">
+                เลือกหัวข้อ “{prefilledTopicName}” ไว้ให้แล้วตามที่กำลังกรองอยู่ — เปลี่ยนได้
+              </p>
             )}
           </div>
 

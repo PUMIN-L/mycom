@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "../../context/AuthContext";
@@ -35,6 +35,7 @@ import SalesRecordEditModal from "../../components/modals/SalesRecordEditModal";
 // NOT an alert: it lives in its own block below the alert grid, never in the
 // tab strip, and its cards never carry a snooze button.
 import TaskBoardSection from "../../components/TaskBoardSection";
+import TaskBoardJumpButton from "../../components/TaskBoardJumpButton";
 import TaskFormModal from "../../components/TaskFormModal";
 import TaskTopicManagerModal from "../../components/TaskTopicManagerModal";
 
@@ -143,6 +144,10 @@ export default function AlertsPage() {
   const [taskModal, setTaskModal] = useState<{ task: CrmTask | null } | null>(null);
   const [revealTask, setRevealTask] = useState<CrmTask | null>(null);
   const [showTopicManager, setShowTopicManager] = useState(false);
+  /** The board's wrapper. The floating jump button both scrolls to it and
+   *  watches it with an IntersectionObserver, so it can hide itself once the
+   *  board is actually on screen. */
+  const taskBoardRef = useRef<HTMLDivElement>(null);
 
   // "ลูกค้าไม่ต่อประกัน" confirmation
   const [declineRenewalTarget, setDeclineRenewalTarget] = useState<CustomerEquipment | null>(null);
@@ -491,6 +496,39 @@ export default function AlertsPage() {
   const incompleteTotal = alerts?.incompleteEquipmentsTotal ?? alerts?.incompleteEquipments?.length ?? 0;
   const incompleteHiddenCount = Math.max(0, incompleteTotal - (alerts?.incompleteEquipments?.length || 0));
 
+  /**
+   * "เครื่องที่ i/n ของใบขายเดียวกัน" for every incomplete-data row that shares
+   * a sales record with another one.
+   *
+   * Since a sale may now be saved with blank serials (report 7), one bill can
+   * put SEVERAL machines in this feed at once — same customer, same product, no
+   * serial on any of them. Without this the cards are literally identical and
+   * the admin cannot tell which one he has already dealt with. Position in the
+   * feed is the only stable handle there is: the query returns these rows
+   * `ORDER BY e.createdAt DESC`, i.e. the order the machines were written, so
+   * the numbering is stable across reloads as long as the sale is not re-saved.
+   *
+   * DISPLAY ONLY — computed from the list the API already returned; no query is
+   * touched and nothing is fetched for it.
+   */
+  const incompleteSeq = new Map<string, { index: number; total: number }>();
+  {
+    const rows = alerts?.incompleteEquipments || [];
+    const totals = new Map<string, number>();
+    for (const row of rows) {
+      const saleId = String(row?.salesRecordId || "");
+      if (saleId) totals.set(saleId, (totals.get(saleId) || 0) + 1);
+    }
+    const seen = new Map<string, number>();
+    for (const row of rows) {
+      const saleId = String(row?.salesRecordId || "");
+      if (!saleId) continue;
+      const index = (seen.get(saleId) || 0) + 1;
+      seen.set(saleId, index);
+      incompleteSeq.set(String(row.id), { index, total: totals.get(saleId) || 1 });
+    }
+  }
+
   // The TRUE number of follow-up calls, not the length of the capped array —
   // exactly how `incompleteTotal` above works. `?? length` keeps the tab honest
   // if an older API build answers without the total.
@@ -532,6 +570,15 @@ export default function AlertsPage() {
 
   // ── Task board wiring ─────────────────────────────────────────────────────
   const activeTopics = topics.filter((topic) => topic.isActive !== false);
+
+  /** The number on the floating jump button. Deliberately the count the page
+   *  ALREADY has from /api/admin/alerts (`dueTaskCount` — pending tasks whose
+   *  due date has arrived, the same number the global bell shows): the board
+   *  owns the task list and must not be asked for it a second time just to
+   *  draw a badge. `null` while the payload is loading or failed — on this
+   *  page a 0 reads as "ไม่มีรายการ", which is a different fact from
+   *  "โหลดไม่ได้" (same rule as the tab counts above). */
+  const dueTaskCount = alertsError ? null : (alerts?.dueTaskCount ?? null);
 
   return (
     <div className="min-h-screen bg-gray-50/50">
@@ -858,27 +905,62 @@ export default function AlertsPage() {
               }
 
               if (alert.type === "incomplete") {
+                // Report 7 — a sale can now be saved with the serial left
+                // blank, so this card has to answer "WHICH machine, from WHICH
+                // bill?" on its own: customer + company, the model, where the
+                // row came from (ใบเสนอราคา / a recorded sale), when it was
+                // written, and — when one bill dropped several identical
+                // machines in here — its position among them.
+                const missingSerial = !alert.data.serialNumber;
+                const fromSale = !!alert.data.salesRecordId;
+                const seq = incompleteSeq.get(String(alert.data.id));
                 return (
                   <div key={idx} onClick={() => setSelectedAlert(alert)} className="bg-white rounded-2xl p-5 border border-gray-100 hover:border-rose-200 hover:shadow-lg transition-all cursor-pointer group relative overflow-hidden flex flex-col">
                     <div className="absolute top-0 left-0 w-1 h-full bg-rose-500"></div>
-                    <div className="flex justify-between items-start mb-4">
+                    <div className="flex justify-between items-start mb-4 gap-2">
                       <div className="px-2.5 py-1 rounded-md text-xs font-bold bg-rose-50 text-rose-700">
                         ⚠️ ข้อมูลไม่ครบ
                       </div>
+                      {seq && seq.total > 1 && (
+                        <span className="text-[11px] font-bold text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full shrink-0" title={`ใบขายใบเดียวกันนี้มี ${seq.total} เครื่องที่ข้อมูลยังไม่ครบ — นี่คือเครื่องที่ ${seq.index} เรียงตามลำดับที่บันทึก`}>
+                          {seq.index}/{seq.total} ในใบขายเดียวกัน
+                        </span>
+                      )}
                     </div>
-                    
-                    <h4 className="font-bold text-gray-900 mb-1 line-clamp-1">{alert.data.customerName || "ลูกค้าทั่วไป"}</h4>
-                    <p className="text-sm text-gray-500 mb-3 line-clamp-1" dangerouslySetInnerHTML={{ __html: alert.data.productName || "ไม่ระบุสินค้า" }} />
-                    
-                    <div className="flex flex-wrap gap-1 mb-4">
-                      {!alert.data.serialNumber && <span className="text-[10px] font-bold bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded uppercase">No S/N</span>}
-                      {!alert.data.warrantyStartDate && <span className="text-[10px] font-bold bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded uppercase">No Warranty Start</span>}
+
+                    <h4 className="font-bold text-gray-900 mb-0.5 line-clamp-1">{alert.data.customerName || "ลูกค้าทั่วไป"}</h4>
+                    {alert.data.companyName && (
+                      <p className="text-xs text-gray-400 mb-1 line-clamp-1">{alert.data.companyName}</p>
+                    )}
+                    <p className="text-sm text-gray-500 mb-1 line-clamp-1" dangerouslySetInnerHTML={{ __html: alert.data.productName || "ไม่ระบุสินค้า" }} />
+                    <p className="text-xs text-gray-400 font-mono mb-2 line-clamp-1">
+                      S/N: {alert.data.serialNumber || "— ยังไม่ได้ใส่"}
+                    </p>
+
+                    <div className="flex flex-wrap gap-1 mb-2">
+                      {missingSerial && <span className="text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-100 px-1.5 py-0.5 rounded">ยังไม่ได้ใส่ Serial Number</span>}
+                      {!alert.data.warrantyStartDate && <span className="text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-100 px-1.5 py-0.5 rounded">ยังไม่ได้ใส่วันเริ่มประกัน</span>}
                     </div>
-                    
+
+                    {/* Where this machine came from — the only way to find the
+                        right physical unit when it has no serial to look up. */}
+                    <div className="text-[11px] text-gray-400 mb-4 space-y-0.5">
+                      <div className="line-clamp-1">
+                        {alert.data.quotationNumber
+                          ? `จากใบเสนอราคา ${alert.data.quotationNumber}`
+                          : fromSale
+                            ? "จากการบันทึกรายการขาย"
+                            : "เพิ่มไว้ในระบบเอง (ไม่ได้มาจากใบขาย)"}
+                      </div>
+                      {alert.data.createdAt && (
+                        <div>บันทึกเมื่อ {formatDisplayDate(alert.data.createdAt)}</div>
+                      )}
+                    </div>
+
                     <div className="mt-auto flex gap-2 w-full">
                       <button className="flex-1 px-3 py-2 bg-rose-50 text-rose-700 text-sm font-semibold rounded-xl hover:bg-rose-100 transition-colors flex items-center justify-center gap-1.5">
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
-                        เพิ่มข้อมูล
+                        {missingSerial ? "ใส่ Serial Number" : "เพิ่มข้อมูล"}
                       </button>
                       <button 
                         onClick={(e) => { e.stopPropagation(); setSnoozeAlertTarget({ type: "incomplete", id: alert.data.id }); }}
@@ -959,7 +1041,19 @@ export default function AlertsPage() {
             it stays in the same place no matter which alert tab is selected —
             including while the alert feed is loading or has failed entirely
             (tasks 11.1-11.3, 11.16). */}
-        <div className="mt-10 pt-8 border-t border-gray-200">
+        {/* ref/id/tabIndex/scroll-mt are the jump button's landing pad:
+            `tabIndex={-1}` lets it MOVE FOCUS here (so a keyboard user carries
+            on inside the board instead of at the top of the page again), and
+            the `scroll-mt-*` pair keeps the STICKY header off the board's
+            heading after the scroll — the header is a tall stacked block on a
+            phone and a single row from `sm` up, hence the two values. Nothing
+            inside the board changes. */}
+        <div
+          id="task-board"
+          ref={taskBoardRef}
+          tabIndex={-1}
+          className="mt-10 pt-8 border-t border-gray-200 scroll-mt-64 sm:scroll-mt-44 focus:outline-none"
+        >
           <TaskBoardSection
             topics={topics}
             topicsLoading={topicsLoading}
@@ -975,6 +1069,14 @@ export default function AlertsPage() {
           />
         </div>
       </div>
+
+      {/* ── ปุ่มลอยไปยังกระดาน "สิ่งที่ต้องทำ" ──────────────────────────────
+          With a long alert feed the board ends up screens below the fold. This
+          is fixed to the BOTTOM-LEFT corner, which is free on this page:
+          GlobalAdminBell owns that corner elsewhere but renders null on
+          /crm/alerts, so the two can never overlap at any width. It hides
+          itself once the board is on screen. */}
+      <TaskBoardJumpButton targetRef={taskBoardRef} count={dueTaskCount} />
 
       {/* ── Complete Schedule Modal ─────────────────────────────────────── */}
       {completingId && (
@@ -1251,11 +1353,45 @@ export default function AlertsPage() {
 
                 {selectedAlert.type === "incomplete" && (
                   <>
+                    {/* Report 7 — the machine may have been saved without a
+                        serial on purpose, so the details have to identify the
+                        unit some OTHER way: its bill, its quotation number and
+                        when it was written. */}
+                    <div>
+                      <div className="text-gray-500 mb-1">Serial Number</div>
+                      <div className="font-mono text-gray-800">
+                        {selectedAlert.data.serialNumber || "ยังไม่ได้ใส่"}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-gray-500 mb-1">เลขที่ใบเสนอราคา</div>
+                      <div className="font-semibold text-gray-800">
+                        {selectedAlert.data.quotationNumber || "—"}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-gray-500 mb-1">ที่มา</div>
+                      <div className="font-semibold text-gray-800">
+                        {selectedAlert.data.salesRecordId
+                          ? "บันทึกจากรายการขาย"
+                          : "เพิ่มไว้ในระบบเอง"}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-gray-500 mb-1">บันทึกเมื่อ</div>
+                      <div className="font-semibold text-gray-800">
+                        {formatDisplayDate(selectedAlert.data.createdAt) || "—"}
+                      </div>
+                    </div>
                     <div className="col-span-2">
                       <div className="text-gray-500 mb-1">สิ่งที่ขาด</div>
                       <div className="flex flex-col gap-1.5 mt-1">
-                        {!selectedAlert.data.serialNumber && <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-white border border-rose-100 text-rose-700 w-fit">❌ ขาด Serial Number</span>}
-                        {!selectedAlert.data.warrantyStartDate && <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-white border border-rose-100 text-rose-700 w-fit">❌ ขาดวันเริ่มประกัน</span>}
+                        {!selectedAlert.data.serialNumber && <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-white border border-rose-100 text-rose-700 w-fit">❌ ยังไม่ได้ใส่ Serial Number ของเครื่องนี้</span>}
+                        {!selectedAlert.data.warrantyStartDate && <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-white border border-rose-100 text-rose-700 w-fit">❌ ยังไม่ได้ใส่วันเริ่มประกัน</span>}
+                      </div>
+                      <div className="text-xs text-gray-500 mt-2">
+                        กด «ไปแก้ไขข้อมูล» เพื่อเติมข้อมูลเครื่องนี้ — เมื่อใส่ครบแล้ว
+                        รายการนี้จะหายไปจากหัวข้อ «ข้อมูลไม่ครบ» เอง
                       </div>
                     </div>
                   </>

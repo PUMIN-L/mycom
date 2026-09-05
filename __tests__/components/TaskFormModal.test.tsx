@@ -17,6 +17,10 @@ import TaskLinkChips, {
   type TaskLinkTargetKindState,
   type TaskLinkTargetsSnapshot,
 } from "@/app/components/TaskLinkChips";
+// The board publishes its open topic filter through this module-level value and
+// the form reads it (item 9a) — so every test in this file has to start from a
+// known one, or a stray leftover would silently pre-fill an unrelated form.
+import { setBoardCreateTopicId } from "@/app/components/TaskBoardSection";
 import type { CrmTask, TaskLink, TaskTopic } from "@/app/lib/types";
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
@@ -81,6 +85,7 @@ function readBody(call: unknown[]): Record<string, unknown> {
 
 beforeEach(() => {
   __resetTaskLinkTargets();
+  setBoardCreateTopicId(null);
 });
 
 afterEach(() => {
@@ -285,6 +290,153 @@ describe("TaskFormModal", () => {
     ).toHaveLength(1);
 
     release(jsonOk({ id: "t9" }, 201));
+  });
+});
+
+// ── The board's open topic filter → the form (item 9a) ───────────────────────
+//
+// The board publishes the topic its filter has open and the form reads it as
+// the DEFAULT for a NEW task. The rule that actually needs guarding is the
+// negative one: EDIT must never take it, or opening a task to fix a typo would
+// silently re-file it under whatever the admin happened to be filtering by.
+
+describe("TaskFormModal — หัวข้อที่กรองอยู่", () => {
+  /** A saved task filed under topic 1 ("โทรลูกค้า"). */
+  const EXISTING_TASK: CrmTask = {
+    id: "t1",
+    topicId: 1,
+    title: "โทรหาคุณสมชาย",
+    detail: null,
+    dueDate: null,
+    status: "pending",
+    completedAt: null,
+    createdAt: "2026-02-01T00:00:00.000Z",
+    topicName: "โทรลูกค้า",
+    topicIcon: "📞",
+  };
+
+  const PREFILL_HINT = /ไว้ให้แล้วตามที่กำลังกรองอยู่/;
+
+  it("a NEW task starts on the topic the board's filter has open, and says so", async () => {
+    const fetchMock = mockFetch((url, init) =>
+      url === "/api/admin/tasks" && init?.method === "POST" ? jsonOk({ id: "t9" }, 201) : null
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    setBoardCreateTopicId(2); // the board is filtered to "ทำใบเสนอราคา"
+
+    render(<TaskFormModal topics={TOPICS} onClose={vi.fn()} onSaved={vi.fn()} />);
+
+    expect(screen.getByText("🧾 ทำใบเสนอราคา")).toBeInTheDocument();
+    expect(screen.getByText(PREFILL_HINT)).toBeInTheDocument();
+
+    fireEvent.change(screen.getByPlaceholderText(/เช่น โทรหาคุณสมชาย/), {
+      target: { value: "ทำใบเสนอราคาให้บริษัท ข" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "สร้างงาน" }));
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.some((c) => c[0] === "/api/admin/tasks")).toBe(true)
+    );
+    expect(
+      readBody(fetchMock.mock.calls.find((c) => c[0] === "/api/admin/tasks") as unknown[]).topicId
+    ).toBe(2);
+  });
+
+  it("the pre-filled hint goes away the moment the admin picks another topic", async () => {
+    vi.stubGlobal("fetch", mockFetch(() => null));
+    setBoardCreateTopicId(2);
+
+    render(<TaskFormModal topics={TOPICS} onClose={vi.fn()} onSaved={vi.fn()} />);
+    expect(screen.getByText(PREFILL_HINT)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("🧾 ทำใบเสนอราคา"));
+    fireEvent.click(await screen.findByText("📞 โทรลูกค้า"));
+
+    await waitFor(() => expect(screen.queryByText(PREFILL_HINT)).not.toBeInTheDocument());
+  });
+
+  it("EDIT keeps the task's OWN topic — the open filter never re-files it", async () => {
+    const fetchMock = mockFetch((url, init) =>
+      url === "/api/admin/tasks/t1" && init?.method === "PATCH"
+        ? jsonOk({ ...EXISTING_TASK })
+        : null
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    setBoardCreateTopicId(2); // filtered to a DIFFERENT topic than the task's
+
+    render(
+      <TaskFormModal task={EXISTING_TASK} topics={TOPICS} onClose={vi.fn()} onSaved={vi.fn()} />
+    );
+
+    expect(screen.getByText("📞 โทรลูกค้า")).toBeInTheDocument();
+    expect(screen.queryByText("🧾 ทำใบเสนอราคา")).not.toBeInTheDocument();
+    expect(screen.queryByText(PREFILL_HINT)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "บันทึกการแก้ไข" }));
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.some((c) => c[0] === "/api/admin/tasks/t1")).toBe(true)
+    );
+    expect(
+      readBody(fetchMock.mock.calls.find((c) => c[0] === "/api/admin/tasks/t1") as unknown[]).topicId
+    ).toBe(1);
+  });
+
+  it("EDIT is decided by the task's id, so even a task with no usable topic refuses the filter", () => {
+    vi.stubGlobal("fetch", mockFetch(() => null));
+    setBoardCreateTopicId(2);
+
+    // A row whose topic FK no longer points anywhere. It is still an EXISTING
+    // task: the honest answer is "pick one", never "have the one you happen to
+    // be filtering by" — that would re-file a task behind the admin's back.
+    render(
+      <TaskFormModal
+        task={{ ...EXISTING_TASK, topicId: 0, topicName: undefined, topicIcon: undefined }}
+        topics={TOPICS}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText("เลือกหัวข้อของงาน...")).toBeInTheDocument();
+    expect(screen.queryByText("🧾 ทำใบเสนอราคา")).not.toBeInTheDocument();
+    expect(screen.queryByText(PREFILL_HINT)).not.toBeInTheDocument();
+  });
+
+  it("an explicit defaultTopicId from the host beats the board's filter", () => {
+    vi.stubGlobal("fetch", mockFetch(() => null));
+    setBoardCreateTopicId(2);
+
+    render(
+      <TaskFormModal topics={TOPICS} defaultTopicId={1} onClose={vi.fn()} onSaved={vi.fn()} />
+    );
+
+    expect(screen.getByText("📞 โทรลูกค้า")).toBeInTheDocument();
+    // The host chose it, not the filter — so the "กำลังกรองอยู่" wording, which
+    // would be a lie here, must not appear.
+    expect(screen.queryByText(PREFILL_HINT)).not.toBeInTheDocument();
+  });
+
+  it("a filtered topic the form is not offering (hidden, deleted) is ignored", () => {
+    vi.stubGlobal("fetch", mockFetch(() => null));
+    setBoardCreateTopicId(99); // not in TOPICS
+
+    render(<TaskFormModal topics={TOPICS} onClose={vi.fn()} onSaved={vi.fn()} />);
+
+    // A value with no option behind it would leave the field looking blank
+    // while the form thought itself filled in — the placeholder is the honest
+    // state, and the topic stays required.
+    expect(screen.getByText("เลือกหัวข้อของงาน...")).toBeInTheDocument();
+    expect(screen.queryByText(PREFILL_HINT)).not.toBeInTheDocument();
+  });
+
+  it("no board mounted (or the filter on ทั้งหมด) pre-selects nothing", () => {
+    vi.stubGlobal("fetch", mockFetch(() => null));
+    setBoardCreateTopicId(null);
+
+    render(<TaskFormModal topics={TOPICS} onClose={vi.fn()} onSaved={vi.fn()} />);
+
+    expect(screen.getByText("เลือกหัวข้อของงาน...")).toBeInTheDocument();
   });
 });
 

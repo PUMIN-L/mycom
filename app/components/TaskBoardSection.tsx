@@ -33,6 +33,10 @@
  *     `revealTask`. The board reloads, switches to the view/filter that
  *     actually shows it, and says which topic it landed under — saving must
  *     never look like nothing happened (task 11.14).
+ *   - While a real topic chip is selected, the board PUBLISHES that topic id
+ *     (see `getBoardCreateTopicId` below) and every create button here says
+ *     which topic it will file into. `TaskFormModal` reads it as the default
+ *     topic for a NEW task only. Item 9.
  *   - Bump `refreshKey` to force a reload after anything else changes tasks
  *     or topics.
  *   - `onTasksChanged` fires after every complete / reopen / delete so the
@@ -154,6 +158,41 @@ const TOPIC_TONES: Record<
 };
 
 const toneOf = (color: string | null | undefined) => TOPIC_TONES[color ?? ""] ?? TOPIC_TONES.slate;
+
+// ── "create into the topic I am looking at" bridge (item 9a) ─────────────────
+// The board owns the topic filter, but the create MODAL is owned by the page,
+// which opens it through `onCreateTask()` — a callback that takes no arguments.
+// Rather than make every host re-wire a prop to get the obvious behaviour, the
+// board publishes the topic its filter currently has open and `TaskFormModal`
+// reads it as the DEFAULT topic for a NEW task.
+//
+// Deliberate limits, so this cannot surprise anyone:
+//   • only a REAL, active topic chip is published — "ทั้งหมด", "ไม่ระบุหัวข้อ"
+//     and a hidden topic all publish null (a hidden topic is not in the form's
+//     dropdown, so pre-selecting it would leave the field looking blank but
+//     filled);
+//   • the value tracks the live filter and is cleared when the board unmounts,
+//     so it can never go stale;
+//   • an explicit `defaultTopicId` prop on the form still wins, and EDIT mode
+//     ignores it entirely — a task keeps its own topic.
+let boardCreateTopicId: number | null = null;
+
+/** The topic a new task should default to: the topic the board's filter has
+ * open, or null when it is on "ทั้งหมด" (or no board is mounted). */
+export function getBoardCreateTopicId(): number | null {
+  return boardCreateTopicId;
+}
+
+/** Publish (or, with null, clear) that topic. Exported for the board's own
+ * effect and for tests that need a clean slate. */
+export function setBoardCreateTopicId(topicId: number | null): void {
+  // `Number(null)` is 0, which would publish a topic id nothing can match — so
+  // null/undefined is checked before the numeric coercion, never after.
+  boardCreateTopicId =
+    topicId === null || topicId === undefined || !Number.isFinite(Number(topicId))
+      ? null
+      : Number(topicId);
+}
 
 export default function TaskBoardSection({
   topics,
@@ -320,6 +359,40 @@ export default function TaskBoardSection({
     [tasks, view, today]
   );
 
+  // Named so an empty result can say WHICH topic is being filtered — "nothing
+  // here" and "nothing on the whole board" must not look identical.
+  const activeChip = chips.find((chip) => chip.key === activeChipKey) ?? null;
+  const isFiltered = activeChipKey !== ALL_CHIP_KEY && activeChip !== null;
+
+  // ── "create into this topic" (item 9) ──────────────────────────────────────
+  // Named so every create button can say WHICH topic it will file into, and so
+  // the form can pre-select it. Only an active topic chip qualifies: "ทั้งหมด"
+  // has no topic, "ไม่ระบุหัวข้อ" is the absence of one, and a hidden topic is
+  // not offered by the form's dropdown.
+  const createTopic = useMemo(
+    () =>
+      activeChip && activeChip.kind === "topic" && activeChip.topicId !== null
+        ? { id: activeChip.topicId, name: activeChip.label }
+        : null,
+    [activeChip]
+  );
+
+  // Keep the published value in step with what is actually on screen, and clear
+  // it on unmount so a create opened from anywhere else cannot inherit a filter
+  // that is no longer there.
+  useEffect(() => {
+    setBoardCreateTopicId(createTopic?.id ?? null);
+    return () => setBoardCreateTopicId(null);
+  }, [createTopic]);
+
+  /** Every create entry point goes through here: publish the topic first (the
+   * click may beat the effect on the very first render), then hand over to the
+   * page, which owns the modal. */
+  const startCreate = useCallback(() => {
+    setBoardCreateTopicId(createTopic?.id ?? null);
+    onCreateTask();
+  }, [createTopic, onCreateTask]);
+
   // ── Actions ────────────────────────────────────────────────────────────────
   const setStatus = async (task: CrmTask, status: TaskStatus) => {
     if (busyTaskId) return;
@@ -368,10 +441,6 @@ export default function TaskBoardSection({
 
   // ── Render ─────────────────────────────────────────────────────────────────
   const headerCount = tasks && !loadError ? visibleTasks.length : null;
-  // Named so an empty result can say WHICH topic is being filtered — "nothing
-  // here" and "nothing on the whole board" must not look identical.
-  const activeChip = chips.find((chip) => chip.key === activeChipKey) ?? null;
-  const isFiltered = activeChipKey !== ALL_CHIP_KEY && activeChip !== null;
 
   return (
     <section
@@ -414,11 +483,25 @@ export default function TaskBoardSection({
               🏷️ จัดการหัวข้อ
             </button>
           )}
+          {/* Says the topic it will file into whenever one is filtered — the
+              form pre-selects it, so a generic label would hide a real choice
+              the admin is about to make (item 9). */}
           <button
-            onClick={onCreateTask}
-            className="px-4 py-2 bg-amber-500 text-white font-semibold rounded-xl hover:bg-amber-600 transition-all text-sm shadow-sm whitespace-nowrap"
+            onClick={startCreate}
+            title={
+              createTopic ? `สร้างงานใหม่ในหัวข้อ “${createTopic.name}”` : "สร้างงานใหม่"
+            }
+            className="inline-flex items-center gap-1.5 max-w-full px-4 py-2 bg-amber-500 text-white font-semibold rounded-xl hover:bg-amber-600 transition-all text-sm shadow-sm"
           >
-            ✏️ สร้างงานใหม่
+            <span aria-hidden>✏️</span>
+            {createTopic ? (
+              <>
+                <span className="whitespace-nowrap">สร้างงานใน</span>
+                <span className="truncate min-w-0 max-w-40">“{createTopic.name}”</span>
+              </>
+            ) : (
+              <span className="whitespace-nowrap">สร้างงานใหม่</span>
+            )}
           </button>
         </div>
       </div>
@@ -502,6 +585,24 @@ export default function TaskBoardSection({
         )
       )}
 
+      {/* Create INTO the topic being viewed, while that topic already has work
+          on it (item 9b). The empty state has a button of its own, so this one
+          stays out of the way when there is nothing here — between them, every
+          filtered topic is one click from another task. */}
+      {createTopic && view === "pending" && !loadError && visibleTasks.length > 0 && (
+        <div className="mb-4">
+          <button
+            onClick={startCreate}
+            title={`สร้างงานใหม่ในหัวข้อ “${createTopic.name}”`}
+            className="inline-flex items-center gap-1.5 max-w-full px-4 py-2 bg-white border border-dashed border-amber-400 text-amber-800 font-semibold rounded-xl hover:bg-amber-100 transition-all text-sm shadow-sm"
+          >
+            <span aria-hidden>➕</span>
+            <span className="whitespace-nowrap">สร้างงานในหัวข้อ</span>
+            <span className="truncate min-w-0 max-w-56">“{createTopic.name}”</span>
+          </button>
+        </div>
+      )}
+
       {/* "your new task went over there" notice (task 11.14) */}
       {savedNotice && (
         <div className="flex items-start justify-between gap-3 mb-4 bg-white border border-amber-200 rounded-xl px-4 py-3 text-sm">
@@ -567,10 +668,23 @@ export default function TaskBoardSection({
             )}
             {view === "pending" && (
               <button
-                onClick={onCreateTask}
-                className="px-5 py-2.5 bg-amber-500 text-white font-semibold rounded-xl hover:bg-amber-600 transition-all text-sm shadow-sm"
+                onClick={startCreate}
+                title={
+                  createTopic ? `สร้างงานใหม่ในหัวข้อ “${createTopic.name}”` : "สร้างงานใหม่"
+                }
+                className="inline-flex items-center gap-1.5 max-w-full px-5 py-2.5 bg-amber-500 text-white font-semibold rounded-xl hover:bg-amber-600 transition-all text-sm shadow-sm"
               >
-                ✏️ {isFiltered ? "สร้างงานใหม่" : "สร้างงานแรก"}
+                <span aria-hidden>✏️</span>
+                {createTopic ? (
+                  <>
+                    <span className="whitespace-nowrap">สร้างงานใน</span>
+                    <span className="truncate min-w-0 max-w-56">“{createTopic.name}”</span>
+                  </>
+                ) : (
+                  <span className="whitespace-nowrap">
+                    {isFiltered ? "สร้างงานใหม่" : "สร้างงานแรก"}
+                  </span>
+                )}
               </button>
             )}
           </div>
