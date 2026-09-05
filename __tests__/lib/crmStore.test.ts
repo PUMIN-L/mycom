@@ -221,11 +221,19 @@ function updateCalls(target = conn) {
   );
 }
 
-// UPDATE bind order: customerId, productId, productName, serialNumber, ..., id
+// UPDATE bind order: customerId, productId, productName, serialNumber,
+// quotationNumber, warrantyCertNumber, warrantyType, warrantyStartDate,
+// warrantyEndDate, status, id
 const P_PRODUCT_ID = 1;
 const P_PRODUCT_NAME = 2;
 const P_SERIAL = 3;
+const P_WARRANTY_TYPE = 6;
 const P_WARRANTY_END = 8;
+
+// INSERT bind order: id, salesRecordId, customerId, productId, productName,
+// serialNumber, quotationNumber, warrantyCertNumber, warrantyType, ...
+const I_SERIAL = 5;
+const I_WARRANTY_TYPE = 8;
 
 describe('syncEquipmentRowsForSalesRecord — mixed-model bills', () => {
   const shared = { customerId: 'cust-1', productId: 'P1', productName: 'รุ่น P1' };
@@ -430,6 +438,262 @@ describe('syncEquipmentRowsForSalesRecord — mixed-model bills', () => {
     await syncEquipmentRowsForSalesRecord('', [{ serialNumber: 'SN-A' }], {}, txConn);
     expect(txConn.query).not.toHaveBeenCalled();
     expect(vi.mocked(withTransaction)).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Per-machine warranty TYPE (the sale form's dropdown: ประกันหลังขายเครื่อง /
+ * ประกันจากซื้อ service contact / อื่นๆ → free text). It is stored as the Thai
+ * label itself, because customer_equipments.warrantyType is free text that
+ * EquipmentEditModal edits by hand.
+ *
+ * Precedence: the row's own non-blank value → the sale-level `shared` value →
+ * blank. A blank NEVER erases what an existing row already stores — the UPDATE
+ * writes `COALESCE(NULLIF(?, ''), warrantyType)`, so an omitted field keeps the
+ * column as-is instead of wiping a warranty someone typed by hand.
+ */
+describe('syncEquipmentRowsForSalesRecord — per-machine warranty type', () => {
+  const shared = { customerId: 'cust-1', productId: 'P1', productName: 'รุ่น P1' };
+  const AFTER_SALE = 'ประกันหลังขายเครื่อง';
+  const SERVICE_CONTRACT = 'ประกันจากซื้อ service contact';
+
+  it('gives two machines on ONE bill two DIFFERENT warranty types', async () => {
+    mockConnRowsFor([
+      { id: 'eq-A', serialNumber: 'SN-A', productId: 'P1' },
+      { id: 'eq-B', serialNumber: 'SN-B', productId: 'P1' },
+    ]);
+
+    await syncEquipmentRowsForSalesRecord(
+      'sale-1',
+      [
+        { serialNumber: 'SN-A', productId: 'P1', productName: 'รุ่น P1', warrantyType: AFTER_SALE },
+        {
+          serialNumber: 'SN-B',
+          productId: 'P1',
+          productName: 'รุ่น P1',
+          warrantyType: SERVICE_CONTRACT,
+        },
+      ],
+      shared
+    );
+
+    const updates = updateCalls();
+    expect(updates).toHaveLength(2);
+    const byId = (id: string) => updates.find((c) => c[1].at(-1) === id)![1];
+    expect(byId('eq-A')[P_WARRANTY_TYPE]).toBe(AFTER_SALE);
+    expect(byId('eq-B')[P_WARRANTY_TYPE]).toBe(SERVICE_CONTRACT);
+    // Neither machine picked up the other's arrangement.
+    expect(byId('eq-A')[P_WARRANTY_TYPE]).not.toBe(byId('eq-B')[P_WARRANTY_TYPE]);
+  });
+
+  it('keeps each machine on its OWN warranty type when the list is resubmitted out of order', async () => {
+    // Identity matching (serial first) must carry the warranty type with the
+    // physical unit, exactly like it carries the service history.
+    mockConnRowsFor([
+      { id: 'eq-A', serialNumber: 'SN-A', productId: 'P1' },
+      { id: 'eq-B', serialNumber: 'SN-B', productId: 'P1' },
+    ]);
+
+    await syncEquipmentRowsForSalesRecord(
+      'sale-1',
+      [
+        {
+          serialNumber: 'SN-B',
+          productId: 'P1',
+          productName: 'รุ่น P1',
+          warrantyType: SERVICE_CONTRACT,
+        },
+        { serialNumber: 'SN-A', productId: 'P1', productName: 'รุ่น P1', warrantyType: AFTER_SALE },
+      ],
+      shared
+    );
+
+    const updates = updateCalls();
+    const byId = (id: string) => updates.find((c) => c[1].at(-1) === id)![1];
+    expect(byId('eq-A')[P_SERIAL]).toBe('SN-A');
+    expect(byId('eq-A')[P_WARRANTY_TYPE]).toBe(AFTER_SALE);
+    expect(byId('eq-B')[P_SERIAL]).toBe('SN-B');
+    expect(byId('eq-B')[P_WARRANTY_TYPE]).toBe(SERVICE_CONTRACT);
+  });
+
+  it('carries a free-text "อื่นๆ" value through verbatim, and mixes it with a dropdown value on the same bill', async () => {
+    mockConnRowsFor([]);
+    const CUSTOM = 'ประกันเครื่อง 2 ปี on-site';
+
+    await syncEquipmentRowsForSalesRecord(
+      'sale-1',
+      [
+        { serialNumber: 'SN-1', productId: 'P1', productName: 'รุ่น P1', warrantyType: CUSTOM },
+        { serialNumber: 'SN-2', productId: 'P1', productName: 'รุ่น P1', warrantyType: AFTER_SALE },
+      ],
+      shared
+    );
+
+    const inserts = callsMatching('INSERT INTO customer_equipments');
+    expect(inserts).toHaveLength(2);
+    const bySerial = (sn: string) => inserts.find((c) => c[1][I_SERIAL] === sn)![1];
+    expect(bySerial('SN-1')[I_WARRANTY_TYPE]).toBe(CUSTOM);
+    expect(bySerial('SN-2')[I_WARRANTY_TYPE]).toBe(AFTER_SALE);
+  });
+
+  it('falls back to the sale-level template when a row names no warranty type of its own', async () => {
+    mockConnRowsFor([{ id: 'eq-A', serialNumber: 'SN-A', productId: 'P1' }]);
+
+    await syncEquipmentRowsForSalesRecord(
+      'sale-1',
+      [
+        { serialNumber: 'SN-A', productId: 'P1', productName: 'รุ่น P1' }, // omitted entirely
+        { serialNumber: 'SN-B', productId: 'P1', productName: 'รุ่น P1', warrantyType: '   ' }, // blank
+      ],
+      { ...shared, warrantyType: AFTER_SALE }
+    );
+
+    expect(updateCalls()[0][1][P_WARRANTY_TYPE]).toBe(AFTER_SALE);
+    expect(callsMatching('INSERT INTO customer_equipments')[0][1][I_WARRANTY_TYPE]).toBe(AFTER_SALE);
+  });
+
+  it('a row that owns its warranty type beats the sale-level template', async () => {
+    mockConnRowsFor([]);
+
+    await syncEquipmentRowsForSalesRecord(
+      'sale-1',
+      [
+        { serialNumber: 'SN-1', warrantyType: SERVICE_CONTRACT },
+        { serialNumber: 'SN-2' },
+      ],
+      { ...shared, warrantyType: AFTER_SALE }
+    );
+
+    const inserts = callsMatching('INSERT INTO customer_equipments');
+    const bySerial = (sn: string) => inserts.find((c) => c[1][I_SERIAL] === sn)![1];
+    expect(bySerial('SN-1')[I_WARRANTY_TYPE]).toBe(SERVICE_CONTRACT);
+    expect(bySerial('SN-2')[I_WARRANTY_TYPE]).toBe(AFTER_SALE);
+  });
+
+  it('does NOT blank an existing warranty type when the payload omits it (no silent data loss)', async () => {
+    // eq-A already carries a hand-typed value from EquipmentEditModal. Editing
+    // an unrelated field on the sale must leave it alone.
+    mockConnRowsFor([{ id: 'eq-A', serialNumber: 'SN-A', productId: 'P1' }]);
+
+    await syncEquipmentRowsForSalesRecord(
+      'sale-1',
+      [{ serialNumber: 'SN-A', productId: 'P1', productName: 'รุ่น P1' }],
+      shared // no warrantyType anywhere in the payload
+    );
+
+    const update = updateCalls()[0];
+    // The bound value is blank...
+    expect(update[1][P_WARRANTY_TYPE]).toBe('');
+    // ...and the statement therefore keeps the column's current value rather
+    // than overwriting it with ''. Erasing a hand-typed warranty here would be
+    // the data-loss bug this guards.
+    expect(String(update[0]).replace(/\s+/g, ' ')).toContain(
+      "warrantyType = COALESCE(NULLIF(?, ''), warrantyType)"
+    );
+    // Every other field still updates normally (the preserve rule is scoped to
+    // warrantyType alone).
+    expect(update[1][P_SERIAL]).toBe('SN-A');
+    expect(update[1][P_PRODUCT_ID]).toBe('P1');
+  });
+
+  it('a supplied warranty type still overwrites whatever the row held before', async () => {
+    mockConnRowsFor([{ id: 'eq-A', serialNumber: 'SN-A', productId: 'P1' }]);
+
+    await syncEquipmentRowsForSalesRecord(
+      'sale-1',
+      [{ serialNumber: 'SN-A', productId: 'P1', productName: 'รุ่น P1', warrantyType: AFTER_SALE }],
+      shared
+    );
+
+    // Non-blank param → NULLIF passes it through → the column is overwritten.
+    expect(updateCalls()[0][1][P_WARRANTY_TYPE]).toBe(AFTER_SALE);
+  });
+
+  it('leaves the warranty type blank on a brand-new machine nobody typed one for', async () => {
+    mockConnRowsFor([]);
+
+    await syncEquipmentRowsForSalesRecord('sale-1', [{ serialNumber: 'SN-NEW' }], shared);
+
+    const inserts = callsMatching('INSERT INTO customer_equipments');
+    expect(inserts).toHaveLength(1);
+    expect(inserts[0][1][I_WARRANTY_TYPE]).toBe('');
+  });
+
+  it('sanitizes the warranty type like every other free-text field', async () => {
+    mockConnRowsFor([]);
+
+    await syncEquipmentRowsForSalesRecord(
+      'sale-1',
+      [{ serialNumber: 'SN-1', warrantyType: '<script>alert(1)</script>ประกัน 1 ปี' }],
+      shared
+    );
+
+    const written = String(
+      callsMatching('INSERT INTO customer_equipments')[0][1][I_WARRANTY_TYPE]
+    );
+    expect(written).not.toContain('<script>');
+    expect(written).toContain('ประกัน 1 ปี');
+  });
+
+  it('never turns a warranty type into an insert, an unlink or a delete', async () => {
+    // The invariants the whole writer rests on are unaffected by the new field.
+    mockConnRowsFor([
+      { id: 'eq-A', serialNumber: 'SN-A', productId: 'P1' },
+      { id: 'eq-B', serialNumber: 'SN-B', productId: 'P1' },
+    ]);
+
+    await syncEquipmentRowsForSalesRecord(
+      'sale-1',
+      [
+        { serialNumber: 'SN-A', productId: 'P1', productName: 'รุ่น P1', warrantyType: AFTER_SALE },
+        { serialNumber: 'SN-B', productId: 'P1', productName: 'รุ่น P1' },
+      ],
+      shared
+    );
+
+    expect(callsMatching('INSERT INTO customer_equipments')).toHaveLength(0);
+    expect(callsMatching("UPDATE customer_equipments SET salesRecordId = ''")).toHaveLength(0);
+    expect(conn.query.mock.calls.filter((c) => /DELETE/i.test(String(c[0])))).toHaveLength(0);
+  });
+
+  it('is idempotent: re-running the same payload rewrites the same rows in place', async () => {
+    // withTransaction retries the callback, so a second identical run must not
+    // duplicate rows or shuffle warranty types.
+    const run = async () => {
+      conn.query.mockReset();
+      mockConnRowsFor([
+        { id: 'eq-A', serialNumber: 'SN-A', productId: 'P1' },
+        { id: 'eq-B', serialNumber: 'SN-B', productId: 'P1' },
+      ]);
+      await syncEquipmentRowsForSalesRecord(
+        'sale-1',
+        [
+          {
+            serialNumber: 'SN-A',
+            productId: 'P1',
+            productName: 'รุ่น P1',
+            warrantyType: AFTER_SALE,
+          },
+          {
+            serialNumber: 'SN-B',
+            productId: 'P1',
+            productName: 'รุ่น P1',
+            warrantyType: SERVICE_CONTRACT,
+          },
+        ],
+        shared
+      );
+      return updateCalls().map((c) => [c[1].at(-1), c[1][P_WARRANTY_TYPE]]);
+    };
+
+    const first = await run();
+    const second = await run();
+    expect(second).toEqual(first);
+    expect(first).toEqual([
+      ['eq-A', AFTER_SALE],
+      ['eq-B', SERVICE_CONTRACT],
+    ]);
+    expect(callsMatching('INSERT INTO customer_equipments')).toHaveLength(0);
   });
 });
 

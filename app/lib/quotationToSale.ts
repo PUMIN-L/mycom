@@ -27,6 +27,50 @@ export const AUTOFILL_MARKER = "เติมจากใบเสนอราค
  * `buildSalePayload` does the same before the request is ever sent. */
 export const CUSTOM_PRODUCT_SENTINEL = "_custom";
 
+/**
+ * UI-only value the warranty-type dropdown uses for "อื่นๆ — I will type it
+ * myself". It is a *mode*, not a warranty: `resolveWarrantyTypeForApi`
+ * collapses it to "" so the literal word "อื่นๆ" can never be written to
+ * `customer_equipments.warrantyType`, where it would tell the reader nothing.
+ *
+ * Underscore-prefixed ASCII, exactly like `CUSTOM_PRODUCT_SENTINEL`, so it
+ * cannot collide with a Thai warranty an admin actually types.
+ */
+export const WARRANTY_TYPE_OTHER = "_other";
+
+/** One entry of the per-machine ประกัน dropdown. */
+export interface WarrantyTypeOption {
+  /** What the draft holds — and, for the two presets, the exact string stored
+   * in `customer_equipments.warrantyType`. */
+  value: string;
+  /** What the dropdown shows. Identical to `value` for the presets: the column
+   * is free text (`EquipmentEditModal` edits it as a plain input), so storing
+   * the Thai label itself keeps the equipment list readable. */
+  label: string;
+  /** Only the อื่นๆ escape: picking it reveals the free-text box. */
+  custom?: boolean;
+}
+
+/**
+ * The ONLY definition of the three choices (owner's spec). Exported as one
+ * constant so the dropdown in `QuotationLineItemsEditor` and the logic here can
+ * never drift apart — a fourth option, or a re-worded label, is a one-line
+ * change in this file.
+ */
+export const WARRANTY_TYPE_OPTIONS: readonly WarrantyTypeOption[] = [
+  { value: "ประกันหลังขายเครื่อง", label: "ประกันหลังขายเครื่อง" },
+  {
+    value: "ประกันจากซื้อ service contact",
+    label: "ประกันจากซื้อ service contact",
+  },
+  { value: WARRANTY_TYPE_OTHER, label: "อื่นๆ (ระบุเอง)", custom: true },
+];
+
+/** The preset values — everything except the อื่นๆ escape. */
+const WARRANTY_TYPE_PRESETS: readonly string[] = WARRANTY_TYPE_OPTIONS.filter(
+  (o) => !o.custom
+).map((o) => o.value);
+
 /** `POST /api/admin/sales` refuses a bill with more machines than this
  * (mirrors `MAX_EQUIPMENT_ROWS` in the route and in `crmStore`). Checked here
  * so the admin sees a Thai message in the form instead of a 400 from the API. */
@@ -240,6 +284,72 @@ export interface MachineDraft {
   serialNumber: string;
   warrantyStartDate: string;
   warrantyEndDate: string;
+  /**
+   * The ประกัน of THIS machine, as it will be stored — a preset label from
+   * `WARRANTY_TYPE_OPTIONS`, or whatever the admin typed under อื่นๆ. Three
+   * states, all in one string so every helper that copies a machine row
+   * (`padMachines`, `resizeMachines`, `copyWarrantyToAllMachines`) carries the
+   * choice along for free:
+   *   • ""                     → nothing picked yet (the default)
+   *   • `WARRANTY_TYPE_OTHER`  → อื่นๆ picked, nothing typed yet → stored as ""
+   *   • any other text         → stored verbatim
+   * Optional everywhere: it is deliberately absent from `validateLineDrafts`.
+   */
+  warrantyType: string;
+}
+
+/**
+ * Which dropdown option is showing for a stored value. Any string that is not
+ * one of the presets — the อื่นๆ sentinel, text the admin typed, or a legacy
+ * hand-written value such as "ประกันเครื่อง 1 ปีตอนขาย" — lands on อื่นๆ with
+ * the free-text box revealed, so no existing value is ever silently dropped.
+ */
+export function warrantyTypeSelectValue(value: unknown): string {
+  const v = String(value ?? "").trim();
+  if (!v) return "";
+  return WARRANTY_TYPE_PRESETS.includes(v) ? v : WARRANTY_TYPE_OTHER;
+}
+
+/** What belongs in the อื่นๆ free-text box. Untrimmed (it is a controlled
+ * input the admin is still typing into); "" for the presets and for the
+ * "อื่นๆ picked but nothing typed yet" sentinel. */
+export function warrantyTypeCustomText(value: unknown): string {
+  const raw = String(value ?? "");
+  const v = raw.trim();
+  if (!v || v === WARRANTY_TYPE_OTHER || WARRANTY_TYPE_PRESETS.includes(v)) {
+    return "";
+  }
+  return raw;
+}
+
+/**
+ * The admin picked an option from the dropdown. Re-picking อื่นๆ keeps text
+ * that is already there rather than wiping it; picking a preset (or clearing
+ * the dropdown) replaces it, because the machine's warranty is now that preset.
+ */
+export function setMachineWarrantyType(
+  machine: MachineDraft,
+  optionValue: unknown
+): MachineDraft {
+  const picked = String(optionValue ?? "").trim();
+  if (picked !== WARRANTY_TYPE_OTHER) {
+    return { ...machine, warrantyType: picked };
+  }
+  const existing = warrantyTypeCustomText(machine?.warrantyType);
+  return { ...machine, warrantyType: existing || WARRANTY_TYPE_OTHER };
+}
+
+/**
+ * The admin typed in the อื่นๆ box. Emptying it falls back to the sentinel —
+ * NOT to "" — so the box stays open under a still-selected อื่นๆ, and the
+ * machine still saves with an empty ประกัน.
+ */
+export function setMachineWarrantyTypeText(
+  machine: MachineDraft,
+  text: unknown
+): MachineDraft {
+  const raw = String(text ?? "");
+  return { ...machine, warrantyType: raw.trim() ? raw : WARRANTY_TYPE_OTHER };
 }
 
 /** One editable product line in the sale form. */
@@ -287,7 +397,12 @@ export interface BuildLineDraftsInput {
 }
 
 export function blankMachine(): MachineDraft {
-  return { serialNumber: "", warrantyStartDate: "", warrantyEndDate: "" };
+  return {
+    serialNumber: "",
+    warrantyStartDate: "",
+    warrantyEndDate: "",
+    warrantyType: "", // unset — never the word "อื่นๆ"
+  };
 }
 
 /** Map `quotationItemId → soldQty`, tolerating a malformed/empty `/sold` body
@@ -371,9 +486,10 @@ export function buildLineDrafts(input: BuildLineDraftsInput): SaleLineDraft[] {
 
 /**
  * Grow/shrink to exactly `target` rows: append blanks, or drop the TRAILING
- * ones. Rows already typed keep their position and their contents either way —
- * regenerating the list would wipe serials the admin has just entered (spec:
- * "แก้จำนวนขึ้นหลังกรอก serial ไปแล้ว").
+ * ones. Rows already typed keep their position and their WHOLE contents either
+ * way — serial, warranty dates and the chosen ประกัน alike; regenerating the
+ * list would wipe what the admin has just entered (spec: "แก้จำนวนขึ้นหลังกรอก
+ * serial ไปแล้ว").
  */
 function padMachines(
   current: readonly MachineDraft[],
@@ -416,8 +532,14 @@ export function setLineQty(line: SaleLineDraft, qty: unknown): SaleLineDraft {
 }
 
 /**
- * Task 12.8 — copy the FIRST machine's warranty dates onto every other machine
- * of the line. Serials are per-machine and are never touched.
+ * Task 12.8 — copy the FIRST machine's whole warranty onto every other machine
+ * of the line: its TYPE as well as its dates. One helper, one button: "the
+ * warranty of these N machines is the same" is a single intent, and an admin
+ * who sets ประกันหลังขายเครื่อง + the same dates on three machines expects one
+ * click to do it. Splitting type and dates into two buttons would only add a
+ * second control that is pressed at the same moment as the first.
+ *
+ * Serials stay per-machine and are never touched.
  */
 export function copyWarrantyToAllMachines(
   machines: readonly MachineDraft[] | null | undefined
@@ -429,6 +551,9 @@ export function copyWarrantyToAllMachines(
     ...m,
     warrantyStartDate: first.warrantyStartDate,
     warrantyEndDate: first.warrantyEndDate,
+    // The sentinel copies too: "อื่นๆ, still blank" is a real state and every
+    // row of the line lands on the same one.
+    warrantyType: first.warrantyType,
   }));
 }
 
@@ -486,6 +611,12 @@ export interface SalePayloadEquipment {
   productName: string;
   warrantyStartDate: string | null;
   warrantyEndDate: string | null;
+  /**
+   * Field name matches `EquipmentRowInput.warrantyType` exactly. A VARCHAR, not
+   * a DATE: "" (not null) is the right "not set", and `crmStore.cleanEquipment`
+   * already normalizes it that way. Never the sentinel, never "อื่นๆ".
+   */
+  warrantyType: string;
   quotationNumber?: string;
 }
 
@@ -511,6 +642,37 @@ export function resolveProductIdForApi(productId: unknown): string {
   return id === CUSTOM_PRODUCT_SENTINEL ? "" : id;
 }
 
+/**
+ * A value that announces "other" and names nothing: the UI sentinel, or the
+ * bare word อื่นๆ itself — which an admin can reach the long way round by
+ * picking อื่นๆ and then typing it into the free-text box too. Both spellings
+ * count (อื่นๆ and the spaced อื่น ๆ), since the space is orthography, not
+ * meaning.
+ *
+ * Only the word ON ITS OWN. "อื่นๆ ตามสัญญา" is a real warranty an admin
+ * described in their own words and is stored verbatim like any other.
+ */
+function isBareOther(trimmed: string): boolean {
+  return (
+    trimmed === WARRANTY_TYPE_OTHER || trimmed.replace(/\s+/g, "") === "อื่นๆ"
+  );
+}
+
+/**
+ * Draft ประกัน → what the API stores. Anything that only means "other" leaves
+ * as "": the sentinel is "the admin opened the box and typed nothing", and the
+ * literal "อื่นๆ" is the same statement typed out by hand. Neither is a
+ * warranty type, and `customer_equipments.warrantyType` is exactly what the
+ * ประกัน column of อุปกรณ์ที่ขาย prints — "อื่นๆ" sitting there would tell
+ * whoever reads that machine's row strictly nothing, which is worse than the
+ * "—" an empty value already renders as. So the word itself never reaches the
+ * database as a warranty type; everything else is stored verbatim.
+ */
+export function resolveWarrantyTypeForApi(value: unknown): string {
+  const v = String(value ?? "").trim();
+  return isBareOther(v) ? "" : v;
+}
+
 /** Empty date inputs must land as NULL, not as "" (the columns are DATE). */
 function toDateOrNull(value: unknown): string | null {
   const v = String(value ?? "").trim();
@@ -530,7 +692,8 @@ export function selectedLines(
  *
  * The equipment list is flattened from each line's machines, so its length is
  * the sum of the selected quantities by construction: the machine rows are the
- * only source of serials and warranty dates, and every machine carries its own
+ * only source of serials, warranty dates and warranty type, and every machine
+ * carries its own
  * line's product identity (a mixed-model bill must not stamp one model's name
  * on another's machine).
  */
@@ -583,6 +746,7 @@ export function buildSalePayload(
         productName,
         warrantyStartDate: toDateOrNull(m?.warrantyStartDate),
         warrantyEndDate: toDateOrNull(m?.warrantyEndDate),
+        warrantyType: resolveWarrantyTypeForApi(m?.warrantyType),
         ...(quotationNumber ? { quotationNumber } : {}),
       });
     }
@@ -822,6 +986,9 @@ export function findOverQuotedLines(
  * surfaced here in Thai instead of as a 400. Everything else (already sold,
  * over-quoted, duplicate serial, no bill-level cost) is a confirmable warning
  * and must NOT appear in this list.
+ *
+ * The per-machine ประกัน is OPTIONAL and is deliberately absent from here: a
+ * machine with no warranty type saves exactly like one that has it.
  */
 export function validateLineDrafts(
   lines: readonly SaleLineDraft[] | null | undefined

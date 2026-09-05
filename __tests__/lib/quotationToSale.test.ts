@@ -28,6 +28,13 @@ import {
   resizeMachines,
   resolveAutoFill,
   resolveProductIdForApi,
+  resolveWarrantyTypeForApi,
+  setMachineWarrantyType,
+  setMachineWarrantyTypeText,
+  warrantyTypeCustomText,
+  warrantyTypeSelectValue,
+  WARRANTY_TYPE_OPTIONS,
+  WARRANTY_TYPE_OTHER,
   selectPartyFromSystem,
   selectedLines,
   setLineQty,
@@ -400,9 +407,9 @@ describe('findResoldLines / findOverQuotedLines (warn, never block)', () => {
 // --- machine rows (task 12.7 / 12.8) ---------------------------------------
 
 describe('resizeMachines (task 12.7)', () => {
-  const typed = [
-    { serialNumber: 'A1', warrantyStartDate: '2026-01-01', warrantyEndDate: '2027-01-01' },
-    { serialNumber: 'A2', warrantyStartDate: '2026-02-01', warrantyEndDate: '2027-02-01' },
+  const typed: SaleLineDraft['machines'] = [
+    { serialNumber: 'A1', warrantyStartDate: '2026-01-01', warrantyEndDate: '2027-01-01', warrantyType: 'ประกันหลังขายเครื่อง' },
+    { serialNumber: 'A2', warrantyStartDate: '2026-02-01', warrantyEndDate: '2027-02-01', warrantyType: '' },
   ];
 
   it('appends blank rows when the qty grows, keeping typed rows in place', () => {
@@ -432,6 +439,30 @@ describe('resizeMachines (task 12.7)', () => {
     expect(out.slice(0, 2).map((m) => m.serialNumber)).toEqual(['A1', 'A2']);
   });
 
+  it('preserves an already-chosen warranty type on the rows that survive', () => {
+    // Same rule as the serials above: growing or shrinking the qty must never
+    // wipe a ประกัน the admin has already picked.
+    const grown = resizeMachines(typed, 4);
+    expect(grown.map((m) => m.warrantyType)).toEqual([
+      'ประกันหลังขายเครื่อง',
+      '',
+      '',
+      '',
+    ]);
+
+    const custom = [
+      { ...typed[0], warrantyType: 'ประกันเครื่อง 1 ปีตอนขาย' },
+      { ...typed[1], warrantyType: WARRANTY_TYPE_OTHER },
+      blankMachine(),
+    ];
+    expect(resizeMachines(custom, 2).map((m) => m.warrantyType)).toEqual([
+      'ประกันเครื่อง 1 ปีตอนขาย',
+      WARRANTY_TYPE_OTHER,
+    ]);
+    // …and the whole row survives, not just the type.
+    expect(resizeMachines(custom, 2)[0]).toEqual(custom[0]);
+  });
+
   it('clamps at the per-bill machine cap and at zero', () => {
     expect(resizeMachines([], 999)).toHaveLength(MAX_EQUIPMENT_ROWS_PER_SALE);
     expect(resizeMachines(typed, -3)).toEqual([]);
@@ -459,18 +490,175 @@ describe('setLineQty', () => {
 describe('copyWarrantyToAllMachines (task 12.8)', () => {
   it('copies the first machine dates onto the rest, leaving serials alone', () => {
     const out = copyWarrantyToAllMachines([
-      { serialNumber: 'A', warrantyStartDate: '2026-03-01', warrantyEndDate: '2027-03-01' },
-      { serialNumber: 'B', warrantyStartDate: '', warrantyEndDate: '' },
-      { serialNumber: 'C', warrantyStartDate: '2020-01-01', warrantyEndDate: '2021-01-01' },
+      { serialNumber: 'A', warrantyStartDate: '2026-03-01', warrantyEndDate: '2027-03-01', warrantyType: '' },
+      { serialNumber: 'B', warrantyStartDate: '', warrantyEndDate: '', warrantyType: '' },
+      { serialNumber: 'C', warrantyStartDate: '2020-01-01', warrantyEndDate: '2021-01-01', warrantyType: '' },
     ]);
     expect(out.map((m) => m.serialNumber)).toEqual(['A', 'B', 'C']);
     expect(out.every((m) => m.warrantyStartDate === '2026-03-01')).toBe(true);
     expect(out.every((m) => m.warrantyEndDate === '2027-03-01')).toBe(true);
   });
 
+  it('copies the warranty TYPE and the dates together, in one click', () => {
+    const out = copyWarrantyToAllMachines([
+      {
+        serialNumber: 'A',
+        warrantyStartDate: '2026-03-01',
+        warrantyEndDate: '2027-03-01',
+        warrantyType: 'ประกันจากซื้อ service contact',
+      },
+      { serialNumber: 'B', warrantyStartDate: '', warrantyEndDate: '', warrantyType: '' },
+      {
+        serialNumber: 'C',
+        warrantyStartDate: '2020-01-01',
+        warrantyEndDate: '2021-01-01',
+        warrantyType: 'ประกันหลังขายเครื่อง',
+      },
+    ]);
+    expect(out.map((m) => m.warrantyType)).toEqual([
+      'ประกันจากซื้อ service contact',
+      'ประกันจากซื้อ service contact',
+      'ประกันจากซื้อ service contact',
+    ]);
+    expect(out.map((m) => m.warrantyStartDate)).toEqual([
+      '2026-03-01',
+      '2026-03-01',
+      '2026-03-01',
+    ]);
+    expect(out.map((m) => m.serialNumber)).toEqual(['A', 'B', 'C']); // still per-machine
+  });
+
+  it('copies hand-typed อื่นๆ text, and copies "unset" as unset', () => {
+    const typedOther = copyWarrantyToAllMachines([
+      { ...blankMachine(), warrantyType: 'ประกันศูนย์ 2 ปี' },
+      { ...blankMachine(), warrantyType: 'ประกันหลังขายเครื่อง' },
+    ]);
+    expect(typedOther.map((m) => m.warrantyType)).toEqual([
+      'ประกันศูนย์ 2 ปี',
+      'ประกันศูนย์ 2 ปี',
+    ]);
+
+    // Copying from a machine with nothing picked clears the others — the whole
+    // line then saves with an empty ประกัน, which is legal.
+    const cleared = copyWarrantyToAllMachines([
+      blankMachine(),
+      { ...blankMachine(), warrantyType: 'ประกันหลังขายเครื่อง' },
+    ]);
+    expect(cleared.map((m) => m.warrantyType)).toEqual(['', '']);
+  });
+
+  it('does not mutate the machines it was given', () => {
+    const machines = [
+      { ...blankMachine(), warrantyType: 'ประกันหลังขายเครื่อง', warrantyStartDate: '2026-03-01' },
+      { ...blankMachine(), serialNumber: 'B' },
+    ];
+    const before = JSON.parse(JSON.stringify(machines));
+    copyWarrantyToAllMachines(machines);
+    expect(machines).toEqual(before);
+  });
+
   it('handles an empty machine list', () => {
     expect(copyWarrantyToAllMachines([])).toEqual([]);
     expect(copyWarrantyToAllMachines(undefined)).toEqual([]);
+  });
+});
+
+// --- per-machine warranty type (owner request: ประกันแต่ละเครื่อง) ----------
+
+describe('WARRANTY_TYPE_OPTIONS — the one definition the dropdown shares', () => {
+  it('offers exactly the three choices the owner asked for', () => {
+    expect(WARRANTY_TYPE_OPTIONS.map((o) => o.label)).toEqual([
+      'ประกันหลังขายเครื่อง',
+      'ประกันจากซื้อ service contact',
+      'อื่นๆ (ระบุเอง)',
+    ]);
+  });
+
+  it('stores the Thai label itself for the two presets (the column is free text)', () => {
+    const presets = WARRANTY_TYPE_OPTIONS.filter((o) => !o.custom);
+    expect(presets).toHaveLength(2);
+    expect(presets.every((o) => o.value === o.label)).toBe(true);
+  });
+
+  it('marks อื่นๆ as a mode, not a storable value', () => {
+    const other = WARRANTY_TYPE_OPTIONS.find((o) => o.custom);
+    expect(other?.value).toBe(WARRANTY_TYPE_OTHER);
+    expect(resolveWarrantyTypeForApi(other?.value)).toBe('');
+    // No option's stored value is ever the bare word.
+    expect(WARRANTY_TYPE_OPTIONS.some((o) => o.value === 'อื่นๆ')).toBe(false);
+  });
+
+  it('a blank machine starts with no warranty type at all', () => {
+    expect(blankMachine().warrantyType).toBe('');
+    expect(drafts()[0].machines.every((m) => m.warrantyType === '')).toBe(true);
+  });
+});
+
+describe('warranty-type dropdown state (so the UI cannot drift)', () => {
+  it('shows the preset that is stored', () => {
+    expect(warrantyTypeSelectValue('ประกันหลังขายเครื่อง')).toBe('ประกันหลังขายเครื่อง');
+    expect(warrantyTypeCustomText('ประกันหลังขายเครื่อง')).toBe('');
+  });
+
+  it('shows nothing picked for an empty value', () => {
+    expect(warrantyTypeSelectValue('')).toBe('');
+    expect(warrantyTypeSelectValue(null)).toBe('');
+    expect(warrantyTypeCustomText(undefined)).toBe('');
+  });
+
+  it('shows อื่นๆ with the box revealed for the sentinel and for typed text', () => {
+    expect(warrantyTypeSelectValue(WARRANTY_TYPE_OTHER)).toBe(WARRANTY_TYPE_OTHER);
+    expect(warrantyTypeCustomText(WARRANTY_TYPE_OTHER)).toBe('');
+
+    expect(warrantyTypeSelectValue('ประกันศูนย์ 2 ปี')).toBe(WARRANTY_TYPE_OTHER);
+    expect(warrantyTypeCustomText('ประกันศูนย์ 2 ปี')).toBe('ประกันศูนย์ 2 ปี');
+  });
+
+  it('shows a legacy hand-written value under อื่นๆ rather than dropping it', () => {
+    // Live data really contains strings like this (EquipmentEditModal is free text).
+    const legacy = 'ประกันเครื่อง 1 ปีตอนขาย';
+    expect(warrantyTypeSelectValue(legacy)).toBe(WARRANTY_TYPE_OTHER);
+    expect(warrantyTypeCustomText(legacy)).toBe(legacy);
+    expect(resolveWarrantyTypeForApi(legacy)).toBe(legacy);
+  });
+
+  it('picks a preset, and clears back to nothing', () => {
+    const picked = setMachineWarrantyType(blankMachine(), 'ประกันจากซื้อ service contact');
+    expect(picked.warrantyType).toBe('ประกันจากซื้อ service contact');
+    expect(setMachineWarrantyType(picked, '').warrantyType).toBe('');
+  });
+
+  it('picking อื่นๆ parks on the sentinel until something is typed', () => {
+    const opened = setMachineWarrantyType(blankMachine(), WARRANTY_TYPE_OTHER);
+    expect(opened.warrantyType).toBe(WARRANTY_TYPE_OTHER);
+    expect(resolveWarrantyTypeForApi(opened.warrantyType)).toBe('');
+
+    const typed = setMachineWarrantyTypeText(opened, 'ประกัน 18 เดือน');
+    expect(typed.warrantyType).toBe('ประกัน 18 เดือน');
+    expect(resolveWarrantyTypeForApi(typed.warrantyType)).toBe('ประกัน 18 เดือน');
+  });
+
+  it('emptying the อื่นๆ box keeps the box open instead of collapsing it', () => {
+    const typed = setMachineWarrantyTypeText(blankMachine(), 'ประกัน 18 เดือน');
+    const emptied = setMachineWarrantyTypeText(typed, '   ');
+    expect(emptied.warrantyType).toBe(WARRANTY_TYPE_OTHER);
+    expect(warrantyTypeSelectValue(emptied.warrantyType)).toBe(WARRANTY_TYPE_OTHER);
+    expect(resolveWarrantyTypeForApi(emptied.warrantyType)).toBe('');
+  });
+
+  it('re-picking อื่นๆ keeps text that is already there', () => {
+    const typed = setMachineWarrantyTypeText(blankMachine(), 'ประกันศูนย์ 2 ปี');
+    expect(setMachineWarrantyType(typed, WARRANTY_TYPE_OTHER).warrantyType).toBe('ประกันศูนย์ 2 ปี');
+    // …but switching to a preset replaces it — that IS now the warranty.
+    const preset = setMachineWarrantyType(typed, 'ประกันหลังขายเครื่อง');
+    expect(preset.warrantyType).toBe('ประกันหลังขายเครื่อง');
+  });
+
+  it('touches nothing else on the machine, and does not mutate it', () => {
+    const machine = { ...blankMachine(), serialNumber: 'SN-1', warrantyStartDate: '2026-01-01' };
+    const out = setMachineWarrantyType(machine, 'ประกันหลังขายเครื่อง');
+    expect(out).toMatchObject({ serialNumber: 'SN-1', warrantyStartDate: '2026-01-01' });
+    expect(machine.warrantyType).toBe('');
   });
 });
 
@@ -625,15 +813,83 @@ describe('buildSalePayload (task 15.3)', () => {
   it('keeps per-machine warranty dates distinct within one bill', () => {
     const lines = withSerials([drafts()[2]]);
     lines[0].machines = [
-      { serialNumber: 'S1', warrantyStartDate: '2026-01-01', warrantyEndDate: '2027-01-01' },
-      { serialNumber: 'S2', warrantyStartDate: '2026-06-01', warrantyEndDate: '2027-06-01' },
+      { serialNumber: 'S1', warrantyStartDate: '2026-01-01', warrantyEndDate: '2027-01-01', warrantyType: '' },
+      { serialNumber: 'S2', warrantyStartDate: '2026-06-01', warrantyEndDate: '2027-06-01', warrantyType: '' },
     ];
     const payload = buildSalePayload(lines);
     expect(payload.equipments.map((e) => e.warrantyStartDate)).toEqual(['2026-01-01', '2026-06-01']);
   });
 
+  it('carries a per-machine warranty TYPE, distinct within one bill', () => {
+    const lines = withSerials([setLineQty(drafts()[0], 3)]);
+    lines[0].machines = lines[0].machines.map((m, i) => [
+      setMachineWarrantyType(m, 'ประกันหลังขายเครื่อง'),
+      setMachineWarrantyType(m, 'ประกันจากซื้อ service contact'),
+      setMachineWarrantyTypeText(setMachineWarrantyType(m, WARRANTY_TYPE_OTHER), 'ประกันศูนย์ 2 ปี'),
+    ][i]);
+
+    const payload = buildSalePayload(lines, { quotationRef: 'QT-2568-020' });
+    // Field name is `warrantyType`, exactly as EquipmentRowInput spells it.
+    expect(payload.equipments.map((e) => e.warrantyType)).toEqual([
+      'ประกันหลังขายเครื่อง',
+      'ประกันจากซื้อ service contact',
+      'ประกันศูนย์ 2 ปี', // the admin's own text, NOT "อื่นๆ"
+    ]);
+    // …and it rides alongside the rest of that machine's identity.
+    expect(payload.equipments[2]).toMatchObject({
+      serialNumber: 'SN-3',
+      productId: 'p1',
+      quotationNumber: 'QT-2568-020',
+    });
+  });
+
+  it('sends an EMPTY warranty type for a machine left unset — never "อื่นๆ"', () => {
+    const untouched = withSerials([drafts()[2]]);
+    expect(buildSalePayload(untouched).equipments.map((e) => e.warrantyType)).toEqual(['', '']);
+
+    // อื่นๆ picked but nothing typed in yet: still empty, still not the word.
+    const opened = withSerials([drafts()[2]]);
+    opened[0].machines = opened[0].machines.map((m) =>
+      setMachineWarrantyType(m, WARRANTY_TYPE_OTHER)
+    );
+    expect(opened[0].machines[0].warrantyType).toBe(WARRANTY_TYPE_OTHER);
+    const payload = buildSalePayload(opened);
+    expect(payload.equipments.map((e) => e.warrantyType)).toEqual(['', '']);
+    expect(payload.equipments.some((e) => e.warrantyType.includes('อื่นๆ'))).toBe(false);
+    expect(payload.equipments.some((e) => e.warrantyType === WARRANTY_TYPE_OTHER)).toBe(false);
+  });
+
+  it('trims a hand-typed warranty type and never sends the sentinel', () => {
+    const lines = withSerials([drafts()[1]]);
+    lines[0].machines = [{ ...lines[0].machines[0], warrantyType: '  ประกัน 6 เดือน  ' }];
+    expect(buildSalePayload(lines).equipments[0].warrantyType).toBe('ประกัน 6 เดือน');
+  });
+
+  // The sentinel is not the only way to reach the word: an admin can pick
+  // อื่นๆ and then type "อื่นๆ" into the box as well. The ประกัน column of
+  // อุปกรณ์ที่ขาย prints this column verbatim, and "อื่นๆ" there names no
+  // warranty at all — worse than the "—" an empty value renders as.
+  it('never stores the bare word อื่นๆ, however the admin manages to type it', () => {
+    for (const typed of ['อื่นๆ', '  อื่นๆ  ', 'อื่น ๆ']) {
+      const lines = withSerials([drafts()[1]]);
+      lines[0].machines = [{ ...lines[0].machines[0], warrantyType: typed }];
+      expect(buildSalePayload(lines).equipments[0].warrantyType).toBe('');
+    }
+  });
+
+  it('still stores a real warranty that merely STARTS with อื่นๆ', () => {
+    const lines = withSerials([drafts()[1]]);
+    lines[0].machines = [{ ...lines[0].machines[0], warrantyType: 'อื่นๆ ตามสัญญาบริการ' }];
+    expect(buildSalePayload(lines).equipments[0].warrantyType).toBe('อื่นๆ ตามสัญญาบริการ');
+  });
+
+  it('gives a machine row re-derived from a drifted draft an empty warranty type', () => {
+    const line: SaleLineDraft = { ...drafts()[0], qty: 2, machines: [] };
+    expect(buildSalePayload([line]).equipments.map((e) => e.warrantyType)).toEqual(['', '']);
+  });
+
   it('trims serials before they reach the API', () => {
-    const lines = [{ ...drafts()[1], machines: [{ serialNumber: '  SN-9  ', warrantyStartDate: '', warrantyEndDate: '' }] }];
+    const lines = [{ ...drafts()[1], machines: [{ ...blankMachine(), serialNumber: '  SN-9  ' }] }];
     expect(buildSalePayload(lines).equipments[0].serialNumber).toBe('SN-9');
   });
 
@@ -926,6 +1182,21 @@ describe('validateLineDrafts (the only hard blockers)', () => {
     expect(validateLineDrafts(lines)).toEqual([]);
     expect(findResoldLines(lines)).toHaveLength(1);
     expect(findOverQuotedLines(lines)).toHaveLength(1);
+  });
+
+  it('does NOT block a machine with no warranty type — it is optional', () => {
+    const none = filled(drafts()); // every machine still at warrantyType ''
+    expect(none.every((l) => l.machines.every((m) => m.warrantyType === ''))).toBe(true);
+    expect(validateLineDrafts(none)).toEqual([]);
+
+    // …nor one parked on อื่นๆ with nothing typed in.
+    const opened = none.map((l) => ({
+      ...l,
+      machines: l.machines.map((m) => setMachineWarrantyType(m, WARRANTY_TYPE_OTHER)),
+    }));
+    expect(validateLineDrafts(opened)).toEqual([]);
+    // No message anywhere mentions ประกัน.
+    expect(validateLineDrafts(opened).some((e) => e.includes('ประกัน'))).toBe(false);
   });
 
   it('does NOT block duplicate serials (warn only)', () => {

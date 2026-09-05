@@ -11,8 +11,10 @@
  * today and come back for the rest next month. So every quotation line becomes
  * a tickable row with its own sold quantity, unit price, product link, cost —
  * and, expanded underneath it, ONE ROW PER MACHINE carrying that machine's own
- * serial number and warranty dates (a mixed bill is the normal case, not the
- * exception).
+ * serial number, warranty TYPE and warranty dates (a mixed bill is the normal
+ * case, not the exception). The warranty type is the one field of that row that
+ * is OPTIONAL: it is absent from `validateLineDrafts`, has no red state, and an
+ * unset one saves exactly like a filled one.
  *
  * It is a CONTROLLED component: it owns no line state at all. `lines` in,
  * `onLinesChange` out, and every transformation goes through the pure helpers
@@ -87,6 +89,8 @@ import { stripHtml } from "../lib/stripHtml";
 import { toLocalDateString } from "../lib/dateFormat";
 import {
   CUSTOM_PRODUCT_SENTINEL,
+  WARRANTY_TYPE_OPTIONS,
+  WARRANTY_TYPE_OTHER,
   applyProductSelection,
   collectSerials,
   copyWarrantyToAllMachines,
@@ -97,8 +101,12 @@ import {
   findResoldLines,
   normalizeSerial,
   setLineQty,
+  setMachineWarrantyType,
+  setMachineWarrantyTypeText,
   summarizeBill,
   validateLineDrafts,
+  warrantyTypeCustomText,
+  warrantyTypeSelectValue,
 } from "../lib/quotationToSale";
 import type {
   BillSummary,
@@ -293,14 +301,31 @@ export default function QuotationLineItemsEditor({
     [rows, onLinesChange]
   );
 
-  const updateMachine = useCallback(
-    (index: number, machineIndex: number, patch: Partial<MachineDraft>) => {
+  /** Run ONE machine of ONE line through a pure transform. The ประกัน helpers
+   * (`setMachineWarrantyType`, `setMachineWarrantyTypeText`) are whole-draft
+   * functions — their whole point is that the three warranty-type states live
+   * in a single string — so they plug straight in here instead of being
+   * unpicked into a field patch. */
+  const transformMachine = useCallback(
+    (
+      index: number,
+      machineIndex: number,
+      transform: (machine: MachineDraft) => MachineDraft
+    ) => {
       updateLine(index, (line) => ({
         ...line,
-        machines: line.machines.map((m, i) => (i === machineIndex ? { ...m, ...patch } : m)),
+        machines: line.machines.map((m, i) => (i === machineIndex ? transform(m) : m)),
       }));
     },
     [updateLine]
+  );
+
+  /** The field-patch shorthand, for the serial and the two dates. */
+  const updateMachine = useCallback(
+    (index: number, machineIndex: number, patch: Partial<MachineDraft>) => {
+      transformMachine(index, machineIndex, (m) => ({ ...m, ...patch }));
+    },
+    [transformMachine]
   );
 
   const toggleLine = useCallback(
@@ -624,7 +649,11 @@ export default function QuotationLineItemsEditor({
                         }
                         className="text-xs font-semibold text-indigo-600 hover:text-indigo-800 disabled:text-gray-400"
                       >
-                        คัดลอกวันประกันไปทุกเครื่อง
+                        {/* The helper copies the TYPE along with the two dates
+                            (one intent: "these machines share a warranty"), so
+                            the label has to say so — an admin who reads only
+                            "วันประกัน" would not expect ประเภทประกัน to move. */}
+                        คัดลอกประกัน (ประเภท + วันที่) ไปทุกเครื่อง
                       </button>
                     )}
                   </div>
@@ -644,27 +673,51 @@ export default function QuotationLineItemsEditor({
                     </div>
                   )}
 
-                  {/* Report 3 + 4 — every field of the row now carries its own
+                  {/* Report 3 + 4 — every field of the row carries its own
                       visible label, and the two warranty fields are the shared
                       `DatePicker` (month + year dropdowns, clearable) rather
-                      than the browser's dd/mm/yyyy widget. The row stacks to one
-                      column below `sm`, so the labels are what keeps it readable
-                      on a phone; above `sm` it is three equal 4-wide columns
-                      (`min-w-0` on each, or a long serial would push the date
-                      columns into each other). */}
+                      than the browser's dd/mm/yyyy widget.
+
+                      LAYOUT (owner's ประกันแต่ละเครื่อง request): the row used
+                      to be three 4-wide columns of a 12-column grid. A FOURTH
+                      control could not join that line — this editor lives in a
+                      `max-w-2xl` modal (`app/dashboard/page.tsx` ~1345), so the
+                      machine row is only ~560px wide no matter how big the
+                      screen is, and 4-across would mean ~130px per control:
+                      narrower than the word «ประกันจากซื้อ service contact» and
+                      narrower than a date picker.
+
+                      So the grid is now 2×2 instead of 1×4 — serial + ประเภท
+                      on the first line, the two dates on the second — which
+                      gives every control ~270px, MORE than the ~185px the three
+                      old columns had. Below `sm` it still stacks to a single
+                      column exactly as before, and `gap-y` goes 2→3 because
+                      there are now two visual rows to separate. The อื่นๆ
+                      free-text box renders INSIDE the ประเภท cell rather than as
+                      a fifth grid item, so it stays visually owned by the
+                      dropdown it belongs to and never reflows the dates
+                      (`items-start` keeps the sibling cells from stretching). */}
                   <div className="space-y-3">
                     {line.machines.map((machine, machineIndex) => {
                       const blank = !machine.serialNumber.trim();
                       const duplicated =
                         !blank && duplicateKeys.has(normalizeSerial(machine.serialNumber));
                       const serialId = `${uid}-serial-${line.key}-${machineIndex}`;
+                      const warrantyTypeId = `${uid}-wtype-${line.key}-${machineIndex}`;
+                      const warrantyTextId = `${uid}-wtext-${line.key}-${machineIndex}`;
                       const at = `รายการที่ ${index + 1} เครื่องที่ ${machineIndex + 1}`;
+                      // Which of the three options is showing, and what belongs
+                      // in the free-text box. Both come from the logic layer:
+                      // a legacy/hand-typed value (or text typed under อื่นๆ)
+                      // lands on อื่นๆ with the box open and its text intact.
+                      const warrantySelect = warrantyTypeSelectValue(machine.warrantyType);
+                      const warrantyCustom = warrantySelect === WARRANTY_TYPE_OTHER;
                       return (
                         <div
                           key={machineIndex}
-                          className="grid grid-cols-1 sm:grid-cols-12 gap-x-3 gap-y-2 items-start border-t border-gray-100 pt-3 first:border-t-0 first:pt-0"
+                          className="grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-3 items-start border-t border-gray-100 pt-3 first:border-t-0 first:pt-0"
                         >
-                          <div className="sm:col-span-4 min-w-0">
+                          <div className="min-w-0">
                             <label className={labelCls} htmlFor={serialId}>
                               <span className="text-[11px] font-bold text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded-md mr-1.5">
                                 #{machineIndex + 1}
@@ -692,6 +745,111 @@ export default function QuotationLineItemsEditor({
                               }`}
                             />
                           </div>
+
+                          {/* ── ประเภทประกัน (owner's request) ──────────────
+                              OPTIONAL, always: no `required`, no red variant,
+                              and `validateLineDrafts` deliberately ignores it,
+                              so an unset ประกัน can never block a save.
+
+                              WHY A NATIVE <select> AND NOT `SearchableDropdown`:
+                              the repo's dropdown portals its panel to
+                              <body> precisely so a scrolling modal cannot clip
+                              it, and a native <select> earns the same immunity
+                              for free — the browser paints its popup outside the
+                              document entirely. With that tie broken, the native
+                              control wins the rest outright for THREE SHORT,
+                              FIXED options: no search box to hide
+                              (`SearchableDropdown` renders one by default, dead
+                              weight over three items), a real `disabled`
+                              attribute — which `SearchableDropdown` has no prop
+                              for — so it greys out with its neighbours while
+                              saving, real `htmlFor`/`id` labelling, keyboard
+                              type-ahead, and the OS wheel picker on the phone
+                              this row has to stay readable on. */}
+                          <div className="min-w-0">
+                            <label className={labelCls} htmlFor={warrantyTypeId}>
+                              ประเภทประกัน{" "}
+                              <span className="font-normal text-gray-400">(ไม่บังคับ)</span>
+                              <span className="sr-only"> {at}</span>
+                            </label>
+                            <div className="relative">
+                              <select
+                                id={warrantyTypeId}
+                                disabled={disabled}
+                                value={warrantySelect}
+                                onChange={(e) =>
+                                  // The whole three-state string is the helper's
+                                  // business — including "อื่นๆ picked, nothing
+                                  // typed yet", which is NOT the same as unset.
+                                  transformMachine(index, machineIndex, (m) =>
+                                    setMachineWarrantyType(m, e.target.value)
+                                  )
+                                }
+                                className={`${machineInputBase} ${machineInputNeutral} appearance-none pr-9 ${
+                                  warrantySelect ? "text-gray-800" : "text-gray-400"
+                                }`}
+                              >
+                                {/* "ไม่ระบุ" mirrors the two DatePickers' own
+                                    placeholder — the same "left blank on
+                                    purpose" state, worded the same way. */}
+                                <option value="">ไม่ระบุ</option>
+                                {/* The three options come from the single
+                                    exported constant, never re-typed here. */}
+                                {WARRANTY_TYPE_OPTIONS.map((option) => (
+                                  <option
+                                    key={option.value}
+                                    value={option.value}
+                                    className="text-gray-800"
+                                  >
+                                    {option.label}
+                                  </option>
+                                ))}
+                              </select>
+                              <svg
+                                aria-hidden="true"
+                                className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                              >
+                                <path
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  strokeWidth="2"
+                                  d="M19 9l-7 7-7-7"
+                                />
+                              </svg>
+                            </div>
+
+                            {/* อื่นๆ → the admin writes their own ประกัน, and
+                                THAT text is what reaches
+                                `customer_equipments.warrantyType` verbatim. The
+                                word "อื่นๆ" itself never does:
+                                `resolveWarrantyTypeForApi` collapses the
+                                still-empty box back to "". */}
+                            {warrantyCustom && (
+                              <div className="mt-2">
+                                <label className={labelCls} htmlFor={warrantyTextId}>
+                                  ระบุประกันเอง
+                                  <span className="sr-only"> {at}</span>
+                                </label>
+                                <input
+                                  id={warrantyTextId}
+                                  type="text"
+                                  disabled={disabled}
+                                  value={warrantyTypeCustomText(machine.warrantyType)}
+                                  onChange={(e) =>
+                                    transformMachine(index, machineIndex, (m) =>
+                                      setMachineWarrantyTypeText(m, e.target.value)
+                                    )
+                                  }
+                                  placeholder="เช่น ประกันเครื่อง 1 ปีตอนขาย"
+                                  className={`${machineInputBase} ${machineInputNeutral}`}
+                                />
+                              </div>
+                            )}
+                          </div>
+
                           {/* `DatePicker` takes neither `id`, `aria-label` nor
                               `disabled`: the label WRAPS it (implicit
                               association, with the machine coordinates hidden
@@ -700,10 +858,7 @@ export default function QuotationLineItemsEditor({
                               `relative z-50` is the equipment modal's own guard
                               (its calendar is portalled to #root-portal, so it
                               is never clipped by a scrolling modal). */}
-                          <fieldset
-                            className="sm:col-span-4 min-w-0 relative z-50"
-                            disabled={disabled}
-                          >
+                          <fieldset className="min-w-0 relative z-50" disabled={disabled}>
                             <label className="block">
                               <span className={labelCls}>
                                 วันเริ่มประกัน<span className="sr-only"> {at}</span>
@@ -720,10 +875,7 @@ export default function QuotationLineItemsEditor({
                               />
                             </label>
                           </fieldset>
-                          <fieldset
-                            className="sm:col-span-4 min-w-0 relative z-50"
-                            disabled={disabled}
-                          >
+                          <fieldset className="min-w-0 relative z-50" disabled={disabled}>
                             <label className="block">
                               <span className={labelCls}>
                                 วันหมดประกัน<span className="sr-only"> {at}</span>
@@ -745,8 +897,9 @@ export default function QuotationLineItemsEditor({
                     })}
                   </div>
                   <p className="text-[11px] text-gray-400 mt-2">
-                    Serial Number บังคับกรอกทุกเครื่อง ส่วนวันประกันเว้นว่างไว้ก่อนได้ —
-                    แต่ละเครื่องกำหนดวันคนละวันได้
+                    Serial Number บังคับกรอกทุกเครื่อง ส่วนประเภทประกันและวันประกันไม่บังคับ
+                    เว้นว่างไว้ก่อนได้ — แต่ละเครื่องกำหนดคนละแบบ คนละวันได้
+                    และจะถูกบันทึกไปที่ «อุปกรณ์ที่ขาย» ของเครื่องนั้น
                   </p>
                 </div>
               </div>

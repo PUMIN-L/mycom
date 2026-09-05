@@ -155,6 +155,11 @@ export interface EquipmentRowInput {
   serialNumber: string;
   productId?: string;
   productName?: string;
+  /** Free-text warranty arrangement for THIS machine (the sale form's dropdown
+   * stores its Thai label verbatim, so EquipmentEditModal keeps showing a
+   * meaningful string and hand-typed legacy values stay valid). Optional, and
+   * per-machine: two units on one bill can carry different arrangements. */
+  warrantyType?: string;
   warrantyStartDate?: string | null;
   warrantyEndDate?: string | null;
   quotationNumber?: string;
@@ -197,6 +202,13 @@ function resolveEquipmentRow(
       productName: ownsProduct ? row.productName || "" : shared.productName || "",
       serialNumber: String(row.serialNumber || "").trim(),
       quotationNumber: row.quotationNumber ?? shared.quotationNumber ?? "",
+      // Warranty type is per-machine and OPTIONAL, so unlike the dates it falls
+      // back on EMPTINESS, not on `undefined`: the sale form submits "" for a
+      // machine whose dropdown was left alone, and "" must not mean "erase".
+      // Row's own value → sale-level template → blank; a blank that lands on an
+      // existing row leaves that row's stored value alone (see the UPDATE).
+      warrantyType:
+        String(row.warrantyType ?? "").trim() || String(shared.warrantyType ?? "").trim() || "",
       warrantyStartDate:
         row.warrantyStartDate !== undefined
           ? row.warrantyStartDate
@@ -299,13 +311,17 @@ async function runEquipmentSync(
   }
 
   // Update every matched row with ITS OWN machine data — never another row's.
+  // warrantyType is the one field an update may not blank: it is optional here
+  // but free-text-editable in EquipmentEditModal, so a submission that omits it
+  // (COALESCE/NULLIF → the column keeps its current value) must never erase a
+  // warranty someone typed by hand. Same param count/order as before.
   for (const { existingId, row } of pairs) {
     const v = cleanEquipment(row.data);
     await conn.query(
       `UPDATE customer_equipments SET
          customerId = ?, productId = ?, productName = ?, serialNumber = ?, quotationNumber = ?,
-         warrantyCertNumber = ?, warrantyType = ?, warrantyStartDate = ?,
-         warrantyEndDate = ?, status = ?
+         warrantyCertNumber = ?, warrantyType = COALESCE(NULLIF(?, ''), warrantyType),
+         warrantyStartDate = ?, warrantyEndDate = ?, status = ?
        WHERE id = ?`,
       [
         v.customerId,
@@ -370,9 +386,16 @@ async function runEquipmentSync(
 
 /**
  * Sync the equipment rows linked to a sales record with a PER-MACHINE list:
- * each row carries its own product, serial, warranty dates and quotation
- * number, so one bill can hold several different models. `shared` supplies the
- * sale-level defaults for whatever a row leaves out.
+ * each row carries its own product, serial, warranty dates, warranty type and
+ * quotation number, so one bill can hold several different models — and two
+ * machines on one bill can hold two different warranty arrangements. `shared`
+ * supplies the sale-level defaults for whatever a row leaves out.
+ *
+ * `warrantyType` is optional and never blanks an existing value: a row that
+ * submits nothing (and a sale template with nothing) leaves whatever the
+ * equipment row already stores untouched, because that field is also
+ * hand-edited as free text in the equipment modal. Clearing it is that modal's
+ * job, not the sale form's.
  *
  * NEVER deletes a row: matching is by SERIAL IDENTITY first (so
  * reordering/editing the list can't silently mix up which physical unit owns
