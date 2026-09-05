@@ -8,7 +8,6 @@ import { downloadExcel } from "../lib/xlsxExport";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine,
   PieChart, Pie, Cell, Legend,
-  LineChart, Line,
 } from "recharts";
 import SearchableDropdown from "../components/SearchableDropdown";
 import type { SearchableDropdownOption } from "../components/SearchableDropdown";
@@ -1050,7 +1049,13 @@ export default function DashboardPage() {
               <div className="h-64 bg-gray-100 rounded-xl animate-pulse" />
             ) : (
               <div className="flex flex-col gap-8">
-                {/* Chart 1: Revenue vs Profit */}
+                {/* Chart 1: Revenue vs Cost of goods sold (task 17.1).
+                    "ต้นทุนสินค้า" is RevenueByPeriod.cost = SUM(sales_records.costAmount),
+                    i.e. every cost typed into the sale itself (per-line product cost plus
+                    ค่ารถ/ค่าขนส่ง/ค่าคอมมิชชั่น), and it excludes company expenses — those
+                    only show up in Chart 2 below. The profit series used to live here; it is
+                    still computed in the store (revenue − cost − rawExpense) and still drives
+                    the overview cards, it is simply no longer plotted (task 17.5). */}
                 <div className="h-[280px] pb-4">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={chartData} margin={{ bottom: 20 }}>
@@ -1065,18 +1070,15 @@ export default function DashboardPage() {
                             <div className="bg-white rounded-[16px] border border-gray-100 p-4 shadow-[0_4px_20px_-4px_rgba(0,0,0,0.1)] text-sm">
                               <div className="font-semibold text-gray-900 mb-2">{label}</div>
                               <div className="text-indigo-600 font-medium">ยอดขาย: ฿{fmtDec(d?.revenue || 0)}</div>
-                              <div className="text-emerald-600 font-medium">กำไร: ฿{fmtDec(d?.profit || 0)}</div>
+                              <div className="text-amber-600 font-medium">ต้นทุนสินค้า: ฿{fmtDec(d?.cost || 0)}</div>
                             </div>
                           );
                         }}
                       />
-                      <Legend formatter={(value: string) => value === "revenue" ? "ยอดขาย" : "กำไร"} wrapperStyle={{ paddingTop: "10px" }} />
+                      <Legend formatter={(value: string) => value === "revenue" ? "ยอดขาย" : "ต้นทุนสินค้า"} wrapperStyle={{ paddingTop: "10px" }} />
                       <ReferenceLine y={0} stroke="#cbd5e1" />
-                      <Bar dataKey="profit" name="profit" maxBarSize={40} radius={4} fill="#10b981">
-                        {chartData.map((entry, index) => (
-                          <Cell key={`cell-${index}`} fill={entry.profit < 0 ? "#ef4444" : "#10b981"} />
-                        ))}
-                      </Bar>
+                      {/* amber, deliberately NOT the rose of Chart 2's รายจ่าย (task 17.2) */}
+                      <Bar dataKey="cost" fill="#f59e0b" radius={[4, 4, 0, 0]} name="cost" maxBarSize={40} />
                       <Bar dataKey="revenue" fill="#6366f1" radius={[4, 4, 0, 0]} name="revenue" maxBarSize={40} />
                     </BarChart>
                   </ResponsiveContainer>
@@ -1112,6 +1114,14 @@ export default function DashboardPage() {
                 </div>
               </div>
             )}
+
+            {/* Task 17.4 — permanent note on the two different meanings of "ต้นทุน".
+                Lives outside the loading branch so it is always on screen: no tooltip,
+                no popover, no accordion, no `hidden`/`sm:block`, no truncate. */}
+            <p className="mt-6 pt-4 border-t border-gray-100 text-xs leading-relaxed text-gray-500">
+              <span className="font-semibold text-gray-600">หมายเหตุ:</span>{" "}
+              {"“ต้นทุนสินค้า” ในกราฟบน คือต้นทุนทั้งหมดที่กรอกไว้ตอนบันทึกยอดขาย (ราคาทุนสินค้า ค่ารถ ค่าขนส่ง ค่าคอมมิชชั่น ฯลฯ) ส่วน “รายจ่าย” ในกราฟล่าง รวมรายจ่ายบริษัท (ค่าเช่า เงินเดือน ค่าน้ำ-ค่าไฟ) เข้าไปด้วย ตัวเลขสองกราฟจึงไม่เท่ากันเป็นปกติ"}
+            </p>
           </div>
 
           {/* Category Pie Chart */}

@@ -178,6 +178,7 @@ manual auth checks — that's the duplication this replaced.
 | `GET /api/auth/me`, `POST /api/auth/login`/`logout` | `POST /api/upload`, `DELETE /api/upload/delete` | |
 | `POST /api/contact` (sends email)               | all `/api/quotations/**` (GET/POST/[id]/docnos) | `cleanup` = **cron** (`CRON_SECRET`) |
 | `GET /api/health`                               | `GET`/`PUT /api/settings/contact-email` | |
+| —                                               | all `/api/admin/**`, incl. `POST`/`GET /api/admin/sales` + `[id]/items` and `GET /api/admin/equipments/serial-check` (§8a) | |
 
 > History note: content + upload mutations were originally **unauthenticated**
 > (only the client UI was gated). They now call `requireAuth()` server-side. Keep
@@ -256,7 +257,119 @@ deleted/auto-purged. Save + reserve run in **one transaction**
 a *different* quote aborts with 409, and the quote can never be persisted without
 its reservation — so the "one live number" invariant holds under failure and
 concurrency. A Vercel Cron (`/api/quotations/cleanup`, gated by `CRON_SECRET`) purges
-quotations older than 30 days and ledger entries older than 2 days.
+quotations past `RETENTION_DAYS`.
+
+**Retention is 2 years (`RETENTION_DAYS = 730`), not 30 days.** This business's
+sales cycle runs for months to years, so the old 30-day window purged the
+quotation right about when the customer decided to buy — leaving the sale form's
+quotation picker (§8a) empty exactly when it mattered. The ledger's own window is
+separate and much shorter by design (a docNo is date-prefixed, so it only has to
+outlive its own day) and must never be widened along with it; in practice the
+cron no longer calls `purgeOldDocNos` at all — `used_docnos` is kept for
+conversion-rate analytics, and the function remains for manual use.
+
+> Consequence: `listQuotations()` gained **server-side search**. Its
+> `LIST_SAFETY_LIMIT = 2000` cap used to be justified by the 30-day purge; with
+> 2 years of quotations the cap can genuinely be hit, and older-but-still-live
+> quotations would fall off the bottom of the list unseen. `GET /api/quotations`
+> therefore accepts `?search=` (matched in SQL against `docNo` and the customer
+> company/contact inside the `data` JSON, with `!` as the LIKE escape char) and
+> `?limit=`. Both are optional — omitting them behaves exactly as before. Filter
+> the picker through these params; do not raise the cap.
+
+### 8a. Sales records → line items (schema v33)
+A sale is **two** tables: `sales_records` (one row per bill) and
+`sales_record_items` (one row per product line — `productId`, `productName`,
+`categoryId`, `qty`, `unitPrice`, `totalAmount`, `costAmount`, `sortOrder`, and a
+nullable `quotationItemId` naming the QuoteItem it came from). FK
+`fk_sri_sales → sales_records(id) ON DELETE CASCADE`.
+
+**Why the child table exists:** before v33 a bill *was* the single
+`sales_records` row, with one `productId` and one `categoryId`. A bill of several
+different machines therefore attributed **all** of its revenue to one product and
+one category, so "สินค้าขายดี" and "รายได้ตามหมวดหมู่" were wrong for every
+multi-machine sale. `getTopProducts` / `getRevenueByCategory` now group by the
+line items (`LEFT JOIN` + `COALESCE` so lines with no product/category still land
+in the existing `"ไม่ระบุสินค้า"` / `"ไม่ระบุหมวด"` buckets rather than
+disappearing; `deals = COUNT(DISTINCT salesRecordId)`, one bill = one deal).
+
+- The scalar columns on `sales_records` are still filled, because the overview
+  cards and exports read them: `qty`/`totalAmount`/`costAmount` = the **sums**
+  over the lines, and `productId`/`productName`/`categoryId`/`unitPrice` = the
+  **main** line (highest `totalAmount`, ties broken by lowest `sortOrder`).
+  Revenue attribution must never be read from them again.
+- Bootstrap backfills one line item per pre-existing sale, reusing the **sale's
+  own id** as the line item's id — deterministic, so two instances booting at
+  once collide on the PK instead of inserting a second line (which would double
+  that sale's historical revenue). Purely additive and idempotent: it never
+  UPDATEs or DELETEs, so no historical figure moves.
+- `sales_records.quotationId` (v33, `idx_sr_quotation`) links a sale back to the
+  quotation it was converted from. It is a **soft link with no FK** on purpose:
+  the retention cron hard-deletes quotations, and an FK would either block that
+  purge or cascade revenue rows away with it. A sale whose quotation is gone
+  reads and edits normally — `quotationRef` (the docNo as text) is always stored
+  alongside, and the UI degrades to a disabled "ใบเสนอราคาถูกลบแล้ว" button, not
+  an error page.
+
+**`POST /api/admin/sales` is atomic — there is no HTTP 207 any more.**
+`createSaleWithLineItems` writes the sales record, every line item and every
+`customer_equipments` row inside ONE `withTransaction`; the old flow (commit the
+sale, then loop `addEquipment`) could leave a committed sale with only some of
+its machines, and the 207 "partial success" response it needed is gone. Either
+201 with the whole bill, or nothing is written. `withTransaction` retries its
+callback up to 3×, so every UUID is minted **inside** the callback. The legacy
+flat single-product payload is still accepted and normalized into exactly one
+line item — a sale with no line item would silently vanish from the reports.
+
+Three read-only lookups, all behind `requireAuth()` and all **advisory** (task
+5.4 / D12–D13): they feed warnings the user can confirm past, so they must never
+fail a save.
+
+| Route | Answers |
+| ----- | ------- |
+| `GET /api/admin/sales/[id]/items` | the line items **and** machines of one bill, plus its `quotationId`/`quotationRef` — loaded lazily when a sales-table row is expanded, not for every row on page load |
+| `GET /api/quotations/[id]/sold` | which lines of a quotation are already sold, summed **across every sale** that references it (a customer taking the remaining machines a month later creates a second sale against the same quote). Never 404s: an unconverted — or purged — quotation is an empty list |
+| `GET /api/admin/equipments/serial-check?serials=a,b` | serials already present in `customer_equipments` (trim + case-insensitive, same identity rule the equipment writer uses). Duplicates are **legal** (resale, re-registration), so this only opens a confirm dialog |
+
+### 8b. The two cost definitions — never read them interchangeably ⚠️
+The dashboard plots two reddish series that mean **different** things, and they
+are *supposed* to differ:
+
+```
+sales_records.costAmount   ( = RevenueByPeriod.cost — Chart 1 "ต้นทุนสินค้า" )
+  =   SUM(sales_record_items.costAmount)                            per-line product cost
+  +   SUM(sale_cost_items.amount WHERE costType <> 'product_cost')  ค่ารถ / ค่าขนส่ง / ค่าคอม
+  EXCLUDES the `expenses` table (ค่าเช่า / เงินเดือน / ค่าน้ำ-ค่าไฟ)
+
+RevenueByPeriod.expense    ( Chart 2 "รายจ่าย" )
+  =   cost  +  SUM(expenses.amount)      i.e. ต้นทุนสินค้า + รายจ่ายบริษัท
+```
+
+Chart 1 is "every cost typed into the sale itself"; Chart 2 adds company
+overhead. The dashboard states this in a permanent Thai note under the charts, so
+a reader comparing the two bars isn't left guessing. `profit` is always computed
+from the **raw** values — `revenue - cost - rawExpense` — never from `expense`,
+which already contains `cost` (that would double-count it).
+
+Product cost lives on the **line item**, and only there:
+
+- New write paths never create a `product_cost` row in `sale_cost_items`;
+  `addCostItem` refuses one (`ProductCostIsPerLineError`), and the UI aliases
+  (`product` → `product_cost`, `labor` → `service_visit`) exist so such a value
+  can't fall through to the bill-level `other` bucket and be counted twice.
+- Legacy `product_cost` rows are **kept as history** (cost data is never
+  auto-deleted) but are **never summed**: the v33 backfill already moved that
+  money onto the line item, so counting both would double the product cost —
+  and silently restate every profit/margin figure that reads `costAmount`.
+- `getCostItems` therefore hides those legacy rows and reports
+  `SUM(sales_record_items.costAmount)` as **one synthetic `product_cost` entry**
+  under the derived id `product-cost:<saleId>`. The cost form thus reads back
+  exactly the number that is counted (GET → save → GET is a fixed point);
+  showing a legacy row instead would re-submit a number nobody counts and revert
+  the last correction on the very next save.
+- Cost writes are **absolute**, never `costAmount + delta` (a delta can't survive
+  a `withTransaction` retry), and `recalcCostAmount` / `recalcSaleTotals`
+  re-derive the cached totals under `SELECT … FOR UPDATE` on the sale row.
 
 ### 9. Email (contact form) + lead persistence
 [`app/lib/mailer.ts`](./app/lib/mailer.ts) sends via SMTP (`nodemailer`, Gmail by
@@ -332,8 +445,14 @@ components.
   skipped when `VERCEL_ENV === "preview"`, because previews share the production
   database — a branch bumping `SCHEMA_VERSION` must not alter prod before merge.
   Set `ALLOW_DB_BOOTSTRAP=1` for an environment with its own throwaway DB.
-- Tables: `users`, `product_categories`, `products`, `contents`, `documents`,
-  `settings`, `quotations`, `used_docnos`, `contact_messages`, `revisions`.
+- Tables (`db.ts` is the authoritative list): `users`, `product_categories`,
+  `products`, `product_specs`, `contents`, `documents`, `settings`, `quotations`,
+  `used_docnos`, `contact_messages`, `revisions`, plus the CRM/sales family —
+  `customers`, `companies`, `salespeople`, `suppliers`, `product_suppliers`,
+  `billing_documents`, `customer_equipments`, `service_schedules`,
+  `service_logs`, `sales_records`, **`sales_record_items`** (v33 — one row per
+  product line under a sale, see §8a), `sale_cost_items`, `expenses`,
+  `recurring_expenses`, `alert_snoozes`.
 
 > ⚠️ The seed inserts an `admin` user (id `admin-001`) from `ADMIN_USERNAME` /
 > `ADMIN_PASSWORD` (env, **not** source) — but only if the row doesn't already
