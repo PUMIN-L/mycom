@@ -371,7 +371,7 @@ Product cost lives on the **line item**, and only there:
   a `withTransaction` retry), and `recalcCostAmount` / `recalcSaleTotals`
   re-derive the cached totals under `SELECT … FOR UPDATE` on the sale row.
 
-### 8c. The manual task board (schema v35) — not an alert
+### 8c. The manual task board (schema v35, charset fixes v36) — not an alert
 The alert feed shows only what the *system* computed. The board that shares the
 `/crm/alerts` page is the opposite: post-it notes the owner writes for himself
 ("โทรหาเจ้านี้", "ทำใบเสนอราคาให้เจ้านั้น"). Nothing on it is ever created,
@@ -394,7 +394,22 @@ Three tables, **no foreign key on any of them**:
   attribute. Retiring a topic is `isActive = 0`; `DELETE` is refused (400,
   `TopicInUseError`) while any task — pending *or* done — still references it.
   The five default topics are seeded only while the table is **entirely empty**,
-  so a deploy never resurrects a deleted topic or re-asserts a renamed one.
+  so a deploy never resurrects a deleted topic or re-asserts a renamed one. The
+  emptiness check is a **separate `SELECT`** followed by a plain multi-row
+  `VALUES` insert — never one `INSERT … SELECT … WHERE NOT EXISTS (SELECT … FROM
+  task_topics)`, which reads the table it writes (a restricted shape in MySQL,
+  and one whose result depends on the optimizer). If that insert fails with a
+  "someone else got there first" error, the table is **re-checked**: standing
+  down is only correct when the rows are actually there, or the board silently
+  ends up with no topics at all and the version is stamped anyway.
+- **`task_topics.icon`, `task_topics.name`, `crm_tasks.title/detail` and
+  `task_links.label` pin `utf8mb4` explicitly** (v36). Every other column in
+  `db.ts` inherits the database default, which has never mattered because Thai
+  is 3 bytes — an emoji is 4. On a `utf8mb3` default an unpinned column rejects
+  the whole INSERT under the strict `sql_mode` TiDB ships with (ERROR 1366
+  `Incorrect string value: '\xF0\x9F…' for column 'icon'`) and silently stores
+  `?` without it. Any new column meant to hold what a person types should pin it
+  too.
 - `crm_tasks.dueDate` is **nullable on purpose**: "call this customer back
   sometime" is a complete task. Listing order is overdue → due today → due later
   → undated (newest first).

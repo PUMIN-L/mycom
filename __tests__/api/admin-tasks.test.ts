@@ -415,7 +415,7 @@ describe('GET/POST /api/admin/task-topics', () => {
   });
 
   it('creates a topic with 201', async () => {
-    vi.mocked(addTopic).mockResolvedValue({ ...TOPIC, id: 6, name: 'ทวงหนี้' } as any);
+    vi.mocked(addTopic).mockResolvedValue({ ...TOPIC, id: 6, name: 'ทวงหนี้', icon: '💸' } as any);
 
     const res = await topicsPOST(
       mutReq('http://localhost:3000/api/admin/task-topics', 'POST', { name: 'ทวงหนี้', icon: '💸', color: 'teal' })
@@ -423,6 +423,10 @@ describe('GET/POST /api/admin/task-topics', () => {
 
     expect(res.status).toBe(201);
     expect(addTopic).toHaveBeenCalledWith({ name: 'ทวงหนี้', icon: '💸', color: 'teal' });
+    // The BODY is the topic itself, not { topic } or { success } — the modal
+    // appends exactly what comes back, so a wrapper here would put a blank row
+    // on the board ("I added a topic and nothing appeared").
+    expect(await res.json()).toMatchObject({ id: 6, name: 'ทวงหนี้', icon: '💸' });
   });
 
   it('400s with the store\'s Thai message on an empty name or a raw CSS colour', async () => {

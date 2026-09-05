@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from "react";
 import DatePicker from "../DatePicker";
 import type { ServiceSchedule } from "../../lib/types";
-import { toLocalDateString } from "../../lib/dateFormat";
+import { toLocalDateString, formatDisplayDate } from "../../lib/dateFormat";
 
 interface CustomerCallScheduleSectionProps {
   customerId: string;
@@ -239,7 +239,7 @@ export default function CustomerCallScheduleSection({
               <div key={s.id} className="border border-gray-100 rounded-xl p-4 hover:bg-gray-50/50 transition-colors">
                 <div className="flex justify-between items-start">
                   <div>
-                    <div className="font-semibold text-gray-800 text-sm">{s.scheduledDate}</div>
+                    <div className="font-semibold text-gray-800 text-sm">{formatDisplayDate(s.scheduledDate)}</div>
                     {s.notes && <div className="text-xs text-gray-400 mt-0.5 line-clamp-1">{s.notes}</div>}
                   </div>
                   <div className="flex items-center gap-2">
@@ -444,7 +444,7 @@ export default function CustomerCallScheduleSection({
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 text-center" onClick={(e) => e.stopPropagation()}>
             <div className="text-5xl mb-4">🗑️</div>
             <h3 className="text-lg font-bold text-gray-800 mb-2">ลบนัดหมายนี้?</h3>
-            <p className="text-gray-500 text-sm mb-6">{deleteScheduleConfirm.scheduledDate}</p>
+            <p className="text-gray-500 text-sm mb-6">{formatDisplayDate(deleteScheduleConfirm.scheduledDate)}</p>
             <div className="flex gap-3 justify-center">
               <button onClick={() => setDeleteScheduleConfirm(null)} className="px-5 py-2.5 border border-gray-200 text-gray-600 font-semibold rounded-xl hover:bg-gray-50 transition-all">ยกเลิก</button>
               <button onClick={executeDeleteSchedule} className="px-5 py-2.5 bg-red-600 text-white font-semibold rounded-xl hover:bg-red-700 transition-all">ลบ</button>
@@ -474,7 +474,7 @@ export default function CustomerCallScheduleSection({
             </div>
             <h3 className="text-xl font-bold text-gray-900 mb-2">ยืนยันการลบนัดหมายที่เสร็จแล้ว</h3>
             <p className="text-gray-600 text-sm mb-4">
-              นัดหมายวันที่ <span className="font-semibold text-gray-800">{deleteCompletedSchedule.scheduledDate}</span> ดำเนินการเสร็จแล้ว
+              นัดหมายวันที่ <span className="font-semibold text-gray-800">{formatDisplayDate(deleteCompletedSchedule.scheduledDate)}</span> ดำเนินการเสร็จแล้ว
               <br />
               <span className="text-red-600 text-xs font-medium mt-1 block">
                 ⚠️ การลบจำเป็นต้องยืนยันรหัส OTP 6 หลักที่ส่งไปยังอีเมลผู้ดูแลระบบ

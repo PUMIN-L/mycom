@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from "react";
 import DatePicker from "../DatePicker";
 import type { CustomerEquipment, ServiceSchedule } from "../../lib/types";
-import { toLocalDateString } from "../../lib/dateFormat";
+import { toLocalDateString, formatDisplayDate } from "../../lib/dateFormat";
 
 // Note: Local stripHtml function
 function stripHtml(html?: string): string {
@@ -305,7 +305,7 @@ export default function EquipmentDetailsModal({
                       <div className="flex items-center gap-3">
                         {scheduleTypeBadge(s.scheduleType)}
                         <div>
-                          <div className="font-semibold text-gray-800 text-sm">{s.scheduledDate}</div>
+                          <div className="font-semibold text-gray-800 text-sm">{formatDisplayDate(s.scheduledDate)}</div>
                           {s.notes && <div className="text-xs text-gray-400 mt-0.5 line-clamp-1">{s.notes}</div>}
                         </div>
                       </div>
@@ -540,7 +540,7 @@ export default function EquipmentDetailsModal({
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 text-center" onClick={(e) => e.stopPropagation()}>
             <div className="text-5xl mb-4">🗑️</div>
             <h3 className="text-lg font-bold text-gray-800 mb-2">ลบนัดหมายนี้?</h3>
-            <p className="text-gray-500 text-sm mb-6">{deleteScheduleConfirm.scheduledDate}</p>
+            <p className="text-gray-500 text-sm mb-6">{formatDisplayDate(deleteScheduleConfirm.scheduledDate)}</p>
             <div className="flex gap-3 justify-center">
               <button onClick={() => setDeleteScheduleConfirm(null)} className="px-5 py-2.5 border border-gray-200 text-gray-600 font-semibold rounded-xl hover:bg-gray-50 transition-all">ยกเลิก</button>
               <button onClick={executeDeleteSchedule} className="px-5 py-2.5 bg-red-600 text-white font-semibold rounded-xl hover:bg-red-700 transition-all">ลบ</button>
@@ -564,7 +564,7 @@ export default function EquipmentDetailsModal({
             <div className="p-6 space-y-5">
               <div>
                 <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">วันที่นัดหมาย</label>
-                <div className="text-gray-900 font-medium">{viewingSchedule.scheduledDate}</div>
+                <div className="text-gray-900 font-medium">{formatDisplayDate(viewingSchedule.scheduledDate)}</div>
               </div>
               <div>
                 <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">สถานะ</label>
@@ -609,7 +609,7 @@ export default function EquipmentDetailsModal({
             </div>
             <h3 className="text-xl font-bold text-gray-900 mb-2">ยืนยันการลบนัดหมายที่เสร็จแล้ว</h3>
             <p className="text-gray-600 text-sm mb-4">
-              นัดหมายวันที่ <span className="font-semibold text-gray-800">{deleteCompletedSchedule.scheduledDate}</span> ({deleteCompletedSchedule.scheduleType === "service" ? "Service" : "โทรติดตาม"}) ดำเนินการเสร็จแล้ว
+              นัดหมายวันที่ <span className="font-semibold text-gray-800">{formatDisplayDate(deleteCompletedSchedule.scheduledDate)}</span> ({deleteCompletedSchedule.scheduleType === "service" ? "Service" : "โทรติดตาม"}) ดำเนินการเสร็จแล้ว
               <br />
               <span className="text-red-600 text-xs font-medium mt-1 block">
                 ⚠️ การลบจำเป็นต้องยืนยันรหัส OTP 6 หลักที่ส่งไปยังอีเมลผู้ดูแลระบบ

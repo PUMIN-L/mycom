@@ -40,12 +40,16 @@ process.env.DB_USER = 'tester';
 process.env.DB_PASSWORD = 'pw';
 process.env.DB_NAME = 'testdb';
 
-// A version SELECT result that MATCHES SCHEMA_VERSION (35) → bootstrap fast-path,
+// A version SELECT result that MATCHES SCHEMA_VERSION (36) → bootstrap fast-path,
 // skipping DDL. Value is a string because settings stores VARCHAR values.
-const SCHEMA_VERSION = '35';
+const SCHEMA_VERSION = '36';
 const SCHEMA_MATCH: [Array<{ value: string }>, unknown[]] = [[{ value: SCHEMA_VERSION }], []];
 // An empty result → no schema_version row / no admin row → full bootstrap.
 const EMPTY: [unknown[], unknown[]] = [[], []];
+
+// The colour tokens the UI can render. The seed writes into the same column
+// `cleanColor` validates against, so it has to stay inside this list.
+import { TASK_TOPIC_COLORS } from '@/app/lib/types';
 
 type DbModule = typeof import('@/app/lib/db');
 
@@ -776,11 +780,69 @@ describe('db.ts', () => {
       expect(crmTasksDdl).toMatch(/dueDate VARCHAR\(20\) DEFAULT NULL/);
       expect(sql.some((s) => /ADD CONSTRAINT \w+ FOREIGN KEY[\s\S]*(task_links|crm_tasks|task_topics)/.test(s))).toBe(false);
 
-      // Stamping anything but 35 either re-runs the DDL forever or (if a burned
+      // Stamping anything but 36 either re-runs the DDL forever or (if a burned
       // number were reused) skips the whole migration, as v33 already did once.
       expect(mockConnection.query).toHaveBeenCalledWith(
         expect.stringContaining('INSERT INTO settings'),
-        ['35'],
+        ['36'],
+      );
+    });
+
+    // ── v36: the emoji columns ───────────────────────────────────────────────
+    // A topic's whole point is an emoji, and an emoji is FOUR bytes. Every other
+    // column in db.ts inherits the database default, which has never mattered
+    // because Thai is three. On a utf8mb3 default an unpinned column rejects the
+    // INSERT outright under the strict sql_mode TiDB ships with (ERROR 1366
+    // "Incorrect string value: '\xF0\x9F...' for column 'icon'") and stores '?'
+    // without it — a save that fails, or an emoji that comes back as something
+    // else. Both the CREATE and the repair for an already-created table are
+    // asserted, because CREATE TABLE IF NOT EXISTS never revisits a table that
+    // already exists — which is every database this feature has already reached.
+    it('pins utf8mb4 on every task-board column that holds what a person typed', async () => {
+      const db = await freshImport();
+      mockConnection.query.mockResolvedValue(EMPTY);
+
+      await db.getDbConnection();
+      const sql = bootstrapSql();
+      const hasSql = (re: RegExp) => sql.some((s) => re.test(s));
+      const utf8mb4 = String.raw`CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`;
+
+      const topicsDdl = sql.find((s) => /CREATE TABLE IF NOT EXISTS task_topics/.test(s))!;
+      expect(topicsDdl).toMatch(new RegExp(String.raw`icon VARCHAR\(16\) ${utf8mb4}`));
+      expect(topicsDdl).toMatch(new RegExp(String.raw`name VARCHAR\(255\) ${utf8mb4}`));
+      const tasksDdl = sql.find((s) => /CREATE TABLE IF NOT EXISTS crm_tasks/.test(s))!;
+      expect(tasksDdl).toMatch(new RegExp(String.raw`title VARCHAR\(255\) ${utf8mb4}`));
+      expect(tasksDdl).toMatch(new RegExp(String.raw`detail TEXT ${utf8mb4}`));
+      const linksDdl = sql.find((s) => /CREATE TABLE IF NOT EXISTS task_links/.test(s))!;
+      expect(linksDdl).toMatch(new RegExp(String.raw`label VARCHAR\(255\) ${utf8mb4}`));
+
+      // The tables the v35 deploy already created are converted in place.
+      expect(hasSql(new RegExp(String.raw`ALTER TABLE task_topics MODIFY icon VARCHAR\(16\) ${utf8mb4}`))).toBe(true);
+      expect(hasSql(new RegExp(String.raw`ALTER TABLE task_topics MODIFY name VARCHAR\(255\) ${utf8mb4}`))).toBe(true);
+      expect(hasSql(new RegExp(String.raw`ALTER TABLE crm_tasks MODIFY title VARCHAR\(255\) ${utf8mb4}`))).toBe(true);
+      expect(hasSql(new RegExp(String.raw`ALTER TABLE crm_tasks MODIFY detail TEXT ${utf8mb4}`))).toBe(true);
+      expect(hasSql(new RegExp(String.raw`ALTER TABLE task_links MODIFY label VARCHAR\(255\) ${utf8mb4}`))).toBe(true);
+    });
+
+    it('logs, but does not take the whole app down, when a column cannot be widened', async () => {
+      // An unconverted column is exactly the state the app already runs in, so
+      // failing the bootstrap over it (= every route 500s) would be a far worse
+      // outcome than the emoji bug it fixes.
+      const db = await freshImport();
+      const unsupported = { code: 'ER_UNSUPPORTED_DDL', message: 'unsupported modify charset' };
+      mockConnection.query.mockImplementation((sql: string) =>
+        /ALTER TABLE task_topics MODIFY icon/.test(sql) ? Promise.reject(unsupported) : Promise.resolve(EMPTY),
+      );
+
+      await db.getDbConnection();
+
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('utf8mb4'),
+        unsupported,
+      );
+      expect(mockConnection.query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO settings'),
+        [SCHEMA_VERSION],
       );
     });
 
@@ -868,36 +930,33 @@ describe('db.ts', () => {
     };
 
     const TOPIC_SEED = /INSERT\s+(?:IGNORE\s+)?INTO\s+task_topics/i;
+    /** The emptiness probe the seed now runs INSTEAD of a self-referencing
+     * `WHERE NOT EXISTS (SELECT 1 FROM task_topics)` inside the INSERT. */
+    const TOPIC_PROBE = /SELECT 1 FROM task_topics LIMIT 1/i;
+    const COLOR_REPAIR = /UPDATE task_topics SET color = \? WHERE color = \?/i;
 
-    /** The literal rows spelled out in the seed's derived table. */
-    function parseSeedRows(sql: string) {
-      const block = /FROM\s*\(([\s\S]*?)\)\s*AS\s+seed/i.exec(sql)?.[1] ?? '';
-      return block
-        .split(/UNION ALL/i)
-        .map((chunk) => chunk.trim())
-        .filter(Boolean)
-        .map((chunk) => {
-          const numbers = chunk.match(/\d+/g) ?? [];
-          const strings = [...chunk.matchAll(/'([^']*)'/g)].map((m) => m[1]);
-          return {
-            id: Number(numbers[0]),
-            name: strings[0],
-            icon: strings[1],
-            color: strings[2],
-            sortOrder: Number(numbers[1]),
-          };
-        });
+    /** The rows the seed actually binds, read out of its parameter list. */
+    function parseSeedRows(sql: string, params: unknown[]) {
+      const tuples = String(sql).match(/\(\?(?:\s*,\s*(?:\?|\d+))*\)/g) ?? [];
+      const width = tuples.length > 0 ? params.length / tuples.length : 0;
+      if (!Number.isInteger(width) || width === 0) return [];
+      return tuples.map((_, i) => {
+        const [id, name, icon, color, sortOrder, createdAt] = params.slice(i * width, (i + 1) * width);
+        return {
+          id: Number(id),
+          name: String(name),
+          icon: String(icon),
+          color: String(color),
+          sortOrder: Number(sortOrder),
+          createdAt: String(createdAt),
+        };
+      });
     }
 
-    function applyTopicSeed(sql: string, topics: FakeTopic[], createdAt: string): void {
-      const guardedOnWholeTable = /WHERE NOT EXISTS\s*\(\s*SELECT 1 FROM task_topics\s*\)/i.test(sql);
-      // The guard is what makes the seed describe "a brand-new installation"
-      // rather than "rows that must always exist".
-      if (guardedOnWholeTable && topics.length > 0) return;
-
+    function applyTopicSeed(sql: string, params: unknown[], topics: FakeTopic[]): void {
       const ignores = /INSERT\s+IGNORE/i.test(sql);
       const upserts = /ON DUPLICATE KEY UPDATE/i.test(sql);
-      for (const row of parseSeedRows(sql)) {
+      for (const { createdAt, ...row } of parseSeedRows(sql, params)) {
         const existing = topics.find((t) => t.id === row.id);
         if (existing) {
           if (upserts) {
@@ -913,10 +972,23 @@ describe('db.ts', () => {
       }
     }
 
+    /** The whole bootstrap, with task_topics backed by `topics`: the emptiness
+     * probe answers from the rows, so "seeds only into an empty table" is
+     * exercised as BEHAVIOUR — a seed that stopped guarding would visibly
+     * duplicate-key here rather than pass a string match. */
     function mockBootstrapSeeding(topics: FakeTopic[]): void {
       mockConnection.query.mockImplementation((sql: string, params?: unknown[]) => {
+        const bound = (params as unknown[]) ?? [];
+        if (TOPIC_PROBE.test(sql)) {
+          return Promise.resolve([topics.length > 0 ? [{ 1: 1 }] : [], []]);
+        }
         if (TOPIC_SEED.test(sql)) {
-          applyTopicSeed(String(sql), topics, String((params as unknown[])?.[0] ?? ''));
+          applyTopicSeed(String(sql), bound, topics);
+          return Promise.resolve([{ affectedRows: topics.length }, []]);
+        }
+        if (COLOR_REPAIR.test(sql)) {
+          const [to, from] = bound as string[];
+          for (const topic of topics) if (topic.color === from) topic.color = to;
           return Promise.resolve([{ affectedRows: 0 }, []]);
         }
         return Promise.resolve(EMPTY);
@@ -961,7 +1033,7 @@ describe('db.ts', () => {
       const topics: FakeTopic[] = [
         { id: 1, name: 'โทรหาเจ้าประจำ', icon: '☎️', color: 'rose', sortOrder: 1, isActive: 1, createdAt: 'seeded' },
         { id: 3, name: 'รอทำใบเสนอราคา', icon: '📄', color: 'amber', sortOrder: 3, isActive: 1, createdAt: 'seeded' },
-        { id: 4, name: 'นัดเข้า Service', icon: '🔧', color: 'violet', sortOrder: 4, isActive: 0, createdAt: 'seeded' },
+        { id: 4, name: 'นัดเข้า Service', icon: '🔧', color: 'purple', sortOrder: 4, isActive: 0, createdAt: 'seeded' },
         { id: 9, name: 'ทวงหนี้', icon: '💸', color: 'teal', sortOrder: 9, isActive: 1, createdAt: 'own' },
       ];
       const snapshot = topics.map((t) => ({ ...t }));
@@ -976,7 +1048,13 @@ describe('db.ts', () => {
     it('stands down when a concurrent bootstrap wins the seed race, but still stamps the version', async () => {
       const db = await freshImport();
       const dupEntry = { code: 'ER_DUP_ENTRY', message: "Duplicate entry '1' for key 'PRIMARY'" };
+      // Empty when we look, populated by the winner by the time we re-check.
+      let probes = 0;
       mockConnection.query.mockImplementation((sql: string) => {
+        if (TOPIC_PROBE.test(sql)) {
+          probes += 1;
+          return Promise.resolve([probes === 1 ? [] : [{ 1: 1 }], []]);
+        }
         if (TOPIC_SEED.test(sql)) return Promise.reject(dupEntry);
         return Promise.resolve(EMPTY);
       });
@@ -993,6 +1071,82 @@ describe('db.ts', () => {
         expect.stringContaining('INSERT INTO settings'),
         [SCHEMA_VERSION],
       );
+    });
+
+    // The failure that has no symptom: swallow one of these and the board has
+    // NO topics for good — the version is stamped, so the seed is never tried
+    // again, and nothing anywhere says a word. TiDB answers DML that follows
+    // DDL closely (exactly this statement's position) with "Information schema
+    // is changed ... try again later", whose text matches the concurrent-write
+    // hints, so "another instance owns it" has to be VERIFIED, not assumed.
+    it('refuses to stand down for a "concurrent write" that left the table empty', async () => {
+      const db = await freshImport();
+      const schemaChanged = {
+        code: 'ER_UNKNOWN_ERROR',
+        message:
+          'Information schema is changed during the execution of the statement. [try again later]',
+      };
+      mockConnection.query.mockImplementation((sql: string) => {
+        if (TOPIC_PROBE.test(sql)) return Promise.resolve([[], []]); // still empty
+        if (TOPIC_SEED.test(sql)) return Promise.reject(schemaChanged);
+        return Promise.resolve(EMPTY);
+      });
+
+      await expect(db.getDbConnection()).rejects.toBe(schemaChanged);
+      const settingsCalls = mockConnection.query.mock.calls.filter((c) =>
+        sqlOfCall(c).includes('INSERT INTO settings'),
+      );
+      expect(settingsCalls).toHaveLength(0);
+    });
+
+    it('never reads task_topics from inside the statement that writes it', async () => {
+      const db = await freshImport();
+      mockConnection.query.mockResolvedValue(EMPTY);
+
+      await db.getDbConnection();
+
+      const seed = bootstrapSql().find((s) => TOPIC_SEED.test(s))!;
+      // "You cannot modify a table and select from the same table in a
+      // subquery" is a documented MySQL restriction, and whether a given engine
+      // (or optimizer plan) runs it anyway is not something a mocked DB can
+      // establish. The emptiness check is a separate SELECT instead.
+      expect(seed).not.toMatch(/FROM\s+task_topics/i);
+      expect(seed).not.toMatch(/NOT EXISTS/i);
+      expect(seed).toMatch(/VALUES\s*\(\?/i);
+      expect(indexOfSql(TOPIC_PROBE)).toBeGreaterThanOrEqual(0);
+    });
+
+    it('seeds only colour TOKENS the UI can actually render', async () => {
+      // v35 shipped 'emerald' and 'violet', which are in no token list: those
+      // two topics rendered neutral grey, and `cleanColor` would have rejected
+      // them on any later save.
+      const topics: FakeTopic[] = [];
+      const db = await freshImport();
+      mockBootstrapSeeding(topics);
+
+      await db.getDbConnection();
+
+      for (const topic of topics) {
+        expect(TASK_TOPIC_COLORS as readonly string[]).toContain(topic.color);
+      }
+    });
+
+    it('repairs the two colour tokens v35 shipped that the app cannot render', async () => {
+      const topics: FakeTopic[] = [
+        { id: 2, name: 'นัดเข้าไปหาลูกค้า', icon: '🚗', color: 'emerald', sortOrder: 2, isActive: 1, createdAt: 'seeded' },
+        { id: 4, name: 'นัดเข้า Service', icon: '🔧', color: 'violet', sortOrder: 4, isActive: 0, createdAt: 'seeded' },
+        { id: 9, name: 'ทวงหนี้', icon: '💸', color: 'teal', sortOrder: 9, isActive: 1, createdAt: 'own' },
+      ];
+      const db = await freshImport();
+      mockBootstrapSeeding(topics);
+
+      await db.getDbConnection();
+
+      expect(topics.map((t) => t.color)).toEqual(['green', 'purple', 'teal']);
+      // The repair is the ONLY thing that touched them: names, emoji and the
+      // hidden flag the admin set are all still exactly as they were.
+      expect(topics.map((t) => t.name)).toEqual(['นัดเข้าไปหาลูกค้า', 'นัดเข้า Service', 'ทวงหนี้']);
+      expect(topics.map((t) => t.isActive)).toEqual([1, 0, 1]);
     });
 
     it('propagates a real seed failure and never stamps the version over it', async () => {

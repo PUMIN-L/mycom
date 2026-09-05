@@ -12,7 +12,7 @@ import type { QueryResult, FieldPacket, RowDataPacket } from "mysql2";
 // did not lower the 33 already written to `settings`, so the next change to
 // reuse 33 was skipped entirely and its tables were never created in
 // production. Reverting a migration means moving FORWARD to a new number.
-const SCHEMA_VERSION = 35;
+const SCHEMA_VERSION = 36;
 
 type DbPool = ReturnType<typeof mysql.createPool>;
 
@@ -927,11 +927,22 @@ async function bootstrapSchemaOnce(): Promise<void> {
     // a raw CSS value from a user must never reach a style/class attribute.
     // Retiring a topic is `isActive = 0`, never a DELETE, so the tasks filed
     // under it keep their label.
+    //
+    // `icon` and `name` PIN utf8mb4 EXPLICITLY (v36). Every other column in
+    // this file inherits the database's default charset, which has always been
+    // fine because Thai is 3 bytes and fits utf8mb3 — but an emoji is FOUR, and
+    // this is the first column in the app that is required to hold one. On a
+    // database whose default is utf8mb3 an unpinned column either rejects the
+    // whole INSERT (strict mode, which TiDB sets by default: ERROR 1366
+    // "Incorrect string value: '\xF0\x9F...' for column 'icon'") or silently
+    // stores '?' — i.e. exactly "I saved a topic and it failed" / "the emoji
+    // came out as something else". Pinning costs nothing when the default is
+    // already utf8mb4, and removes the failure mode when it is not.
     await connection.query(`
         CREATE TABLE IF NOT EXISTS task_topics (
           id INT PRIMARY KEY,
-          name VARCHAR(255) NOT NULL,
-          icon VARCHAR(16) NOT NULL DEFAULT '',
+          name VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+          icon VARCHAR(16) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '',
           color VARCHAR(32) NOT NULL DEFAULT '',
           sortOrder INT DEFAULT 0,
           isActive TINYINT(1) NOT NULL DEFAULT 1,
@@ -959,8 +970,8 @@ async function bootstrapSchemaOnce(): Promise<void> {
         CREATE TABLE IF NOT EXISTS crm_tasks (
           id VARCHAR(36) PRIMARY KEY,
           topicId INT NOT NULL,
-          title VARCHAR(255) NOT NULL,
-          detail TEXT NULL,
+          title VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+          detail TEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL,
           dueDate VARCHAR(20) DEFAULT NULL,
           status VARCHAR(20) NOT NULL DEFAULT 'pending',
           completedAt VARCHAR(255) DEFAULT NULL,
@@ -1008,7 +1019,7 @@ async function bootstrapSchemaOnce(): Promise<void> {
           taskId VARCHAR(36) NOT NULL,
           targetType VARCHAR(20) NOT NULL,
           targetId VARCHAR(255) NOT NULL,
-          label VARCHAR(255) NOT NULL DEFAULT '',
+          label VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '',
           createdAt VARCHAR(255) NOT NULL,
           PRIMARY KEY (taskId, targetType, targetId),
           INDEX idx_tl_target (targetType, targetId)
@@ -1022,45 +1033,128 @@ async function bootstrapSchemaOnce(): Promise<void> {
       if (!isBenignSchemaError(error)) throw error;
     }
 
+    // ── v36: pin utf8mb4 on the columns that hold what a PERSON typed ────────
+    //
+    // Repairs a table this bootstrap already created on an existing database:
+    // CREATE TABLE IF NOT EXISTS never revisits a table that is already there,
+    // so the explicit charsets added above only reach a brand-new install.
+    // Widening utf8mb3 → utf8mb4 keeps every byte already stored (utf8mb3 is a
+    // strict subset) and is a no-op where the column is utf8mb4 already.
+    //
+    // Deliberately NOT fatal. An unconverted column is precisely today's state,
+    // which the whole app tolerates; taking the entire CMS down (bootstrap
+    // failing = every route 500s) because one emoji column could not be
+    // widened would be far worse than the bug being fixed. It is logged loudly
+    // instead, and none of these columns is part of an index, so no key-length
+    // limit can be hit.
+    for (const alter of [
+      `ALTER TABLE task_topics MODIFY name VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL`,
+      `ALTER TABLE task_topics MODIFY icon VARCHAR(16) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT ''`,
+      `ALTER TABLE crm_tasks MODIFY title VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL`,
+      `ALTER TABLE crm_tasks MODIFY detail TEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL`,
+      `ALTER TABLE task_links MODIFY label VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT ''`,
+    ]) {
+      try {
+        await connection.query(alter);
+      } catch (error) {
+        if (isBenignSchemaError(error)) continue;
+        console.error(
+          `Could not widen a task-board column to utf8mb4 — emoji may not survive a save. Statement: ${alter}`,
+          error
+        );
+      }
+    }
+
     // ── Seed the five default topics — ONLY while the table is fully empty ────
     //
-    // The guard is `WHERE NOT EXISTS (SELECT 1 FROM task_topics)` on the WHOLE
-    // set, NOT a per-id `INSERT IGNORE`. Seeding row-by-row would resurrect a
-    // topic the admin deleted, and re-assert a name/colour/emoji he changed, on
-    // the next deploy — the seed only ever describes the state of a brand-new
-    // installation. Rows that already exist (renamed, recoloured, hidden with
-    // isActive = 0, or deleted outright) are therefore left exactly as they are.
+    // The guard covers the WHOLE table, and is NOT a per-id `INSERT IGNORE`.
+    // Seeding row-by-row would resurrect a topic the admin deleted, and
+    // re-assert a name/colour/emoji he changed, on the next deploy — the seed
+    // only ever describes the state of a brand-new installation. Rows that
+    // already exist (renamed, recoloured, hidden with isActive = 0, or deleted
+    // outright) are therefore left exactly as they are.
     //
-    // A single statement is atomic on its own; withTransaction() cannot be used
-    // here because it awaits the very init promise this bootstrap is fulfilling.
-    try {
-      await connection.query(
-        `
-        INSERT INTO task_topics (id, name, icon, color, sortOrder, isActive, createdAt)
-        SELECT seed.id, seed.name, seed.icon, seed.color, seed.sortOrder, 1, ?
-        FROM (
-                     SELECT 1 AS id, 'โทรหาลูกค้า'      AS name, '📞' AS icon, 'blue'    AS color, 1 AS sortOrder
-          UNION ALL SELECT 2,       'นัดเข้าไปหาลูกค้า',         '🚗',        'emerald',          2
-          UNION ALL SELECT 3,       'รอทำใบเสนอราคา',            '📄',        'amber',            3
-          UNION ALL SELECT 4,       'นัดเข้า Service',           '🔧',        'violet',           4
-          UNION ALL SELECT 5,       'อื่นๆ',                     '📌',        'slate',            5
-        ) AS seed
-        WHERE NOT EXISTS (SELECT 1 FROM task_topics)
-      `,
-        [new Date().toISOString()]
-      );
-    } catch (error) {
-      // Two instances booting at once legitimately race here: both see an empty
-      // table and both try to insert ids 1-5. The loser hits a duplicate primary
-      // key / lock timeout / TiDB write conflict — in every one of those cases
-      // the winner wrote exactly these same rows, so standing down is correct
-      // and must NOT fail the whole bootstrap. Anything else propagates, so
-      // schema_version is never stamped over a skipped seed.
-      if (!isConcurrentWriteError(error)) throw error;
-      console.warn(
-        "task_topics seed lost a race with a concurrent bootstrap; the other instance owns it:",
-        (error as { code?: string }).code
-      );
+    // v36: the guard is now a SEPARATE read followed by a plain multi-row
+    // VALUES insert. It used to be one `INSERT ... SELECT ... FROM (SELECT ...
+    // UNION ALL ...) AS seed WHERE NOT EXISTS (SELECT 1 FROM task_topics)` —
+    // a statement whose guard subquery reads the very table the statement
+    // writes. MySQL does run that correctly (verified against 9.7: five rows on
+    // an empty table, zero on a re-run), but it is the shape MySQL documents
+    // under "you cannot modify a table and select from the same table in a
+    // subquery", its outcome depends on whether the optimizer materializes the
+    // derived table, and neither property is something a mocked-DB test in this
+    // repo can pin down — nor something TiDB has to share. Two plain statements
+    // depend on none of it. withTransaction() cannot be used here because it
+    // awaits the very init promise this bootstrap is fulfilling.
+    const [seededRows] = await connection.query<RowDataPacket[]>(
+      "SELECT 1 FROM task_topics LIMIT 1"
+    );
+    if (seededRows.length === 0) {
+      // Colour must be a token the UI can actually render (TASK_TOPIC_COLORS in
+      // app/lib/types.ts). v35 shipped 'emerald' and 'violet', which are not in
+      // that list, so those two topics drew neutral grey everywhere.
+      const defaultTopics: Array<[number, string, string, string, number]> = [
+        [1, "โทรหาลูกค้า", "📞", "blue", 1],
+        [2, "นัดเข้าไปหาลูกค้า", "🚗", "green", 2],
+        [3, "รอทำใบเสนอราคา", "📄", "amber", 3],
+        [4, "นัดเข้า Service", "🔧", "purple", 4],
+        [5, "อื่นๆ", "📌", "slate", 5],
+      ];
+      const seededAt = new Date().toISOString();
+      try {
+        await connection.query(
+          `INSERT INTO task_topics (id, name, icon, color, sortOrder, isActive, createdAt)
+           VALUES ${defaultTopics.map(() => "(?, ?, ?, ?, ?, 1, ?)").join(", ")}`,
+          defaultTopics.flatMap(([id, name, icon, color, sortOrder]) => [
+            id,
+            name,
+            icon,
+            color,
+            sortOrder,
+            seededAt,
+          ])
+        );
+      } catch (error) {
+        // Two instances booting at once legitimately race here: both see an
+        // empty table and both try to insert ids 1-5. The loser hits a
+        // duplicate primary key / lock timeout / TiDB write conflict — in every
+        // one of those cases the winner wrote exactly these same rows, so
+        // standing down is correct and must NOT fail the whole bootstrap.
+        if (!isConcurrentWriteError(error)) throw error;
+        // ...but "the winner owns it" is a CLAIM, and it is only true if the
+        // rows are actually there now. Verify before standing down: TiDB
+        // reports "Information schema is changed ... try again later" for DML
+        // that follows DDL closely — exactly this statement's position in the
+        // bootstrap — and that message matches the concurrent-write hints. Left
+        // unchecked, one such error would leave the board with NO topics AT ALL
+        // and nothing would ever say so: schema_version gets stamped and the
+        // seed is never attempted again.
+        const [afterRows] = await connection.query<RowDataPacket[]>(
+          "SELECT 1 FROM task_topics LIMIT 1"
+        );
+        if (afterRows.length === 0) throw error;
+        console.warn(
+          "task_topics seed lost a race with a concurrent bootstrap; the other instance owns it:",
+          (error as { code?: string }).code
+        );
+      }
+    }
+
+    // v36 repair: v35 seeded topics 2 and 4 with the colour tokens 'emerald'
+    // and 'violet', neither of which the app has ever had — they render neutral
+    // grey, and `cleanColor` REJECTS them, so the admin cannot even save an
+    // edit to such a row without the modal quietly switching its colour. No UI
+    // can produce either value, so a row still holding one came from that seed
+    // and nothing else: mapping them onto the nearest real tokens repairs what
+    // was shipped without touching a colour anybody chose.
+    for (const [shipped, replacement] of [
+      ["emerald", "green"],
+      ["violet", "purple"],
+    ]) {
+      await connection.query("UPDATE task_topics SET color = ? WHERE color = ?", [
+        replacement,
+        shipped,
+      ]);
     }
 
     // ── Recurring expense templates (v29) ────────────────────────────────────

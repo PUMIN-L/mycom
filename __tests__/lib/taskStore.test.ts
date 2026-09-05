@@ -303,6 +303,49 @@ describe('addTopic', () => {
     expect((await addTopic({ name: 'a' })).color).toBe('blue');
   });
 
+  it('sends the picked emoji to the INSERT byte-for-byte', async () => {
+    // Every emoji the picker offers, through the whole clean → bind path. A
+    // 4-byte emoji arriving intact HERE is as far as this process can see: what
+    // the column then keeps is the database's charset, not this code's (see
+    // db.test.ts "pins utf8mb4 on every task-board column").
+    const picker = ['📞', '🚗', '📄', '🔧', '📌', '✅', '⏰', '📝', '🛠️', '♻️', '🗂️', '🚩'];
+    for (const icon of picker) {
+      mockMaxIdThenInsert([0], ['ok']);
+      const topic = await addTopic({ name: 'หัวข้อ', icon });
+      const [, params] = topCalls(/INSERT INTO task_topics/).at(-1)!;
+      expect((params as unknown[])[2]).toBe(icon);
+      expect(topic.icon).toBe(icon);
+    }
+  });
+
+  it('binds the 2nd and 3rd topic to the ids AFTER the ones already there', async () => {
+    // The report was "only one topic could ever be created". Adding three in a
+    // row must produce three DIFFERENT ids, each with its own name and emoji,
+    // and each landing at the END of the board.
+    let maxId = 5; // the five seeded defaults
+    topQuery.mockImplementation((sql: string, params?: unknown[]) => {
+      if (/SELECT MAX\(id\) AS maxId FROM task_topics/.test(sql)) {
+        return Promise.resolve([[{ maxId }]]);
+      }
+      maxId = Number((params as unknown[])[0]);
+      return Promise.resolve([{ affectedRows: 1 }]);
+    });
+
+    const first = await addTopic({ name: 'หนึ่ง', icon: '📞', color: 'blue' });
+    const second = await addTopic({ name: 'สอง', icon: '🚗', color: 'green' });
+    const third = await addTopic({ name: 'สาม', icon: '🔧', color: 'rose' });
+
+    expect([first.id, second.id, third.id]).toEqual([6, 7, 8]);
+    // sortOrder tracks the id, so each new topic sorts after every existing one
+    // — never into the middle of the list, never off the end of it.
+    expect([first.sortOrder, second.sortOrder, third.sortOrder]).toEqual([6, 7, 8]);
+    expect(topCalls(/INSERT INTO task_topics/).map((c) => (c[1] as unknown[]).slice(0, 5))).toEqual([
+      [6, 'หนึ่ง', '📞', 'blue', 6],
+      [7, 'สอง', '🚗', 'green', 7],
+      [8, 'สาม', '🔧', 'rose', 8],
+    ]);
+  });
+
   it('trims the emoji by CODE POINT so a surrogate pair is never cut in half', async () => {
     mockMaxIdThenInsert([0], ['ok']);
 

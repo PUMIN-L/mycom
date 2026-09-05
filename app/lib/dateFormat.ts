@@ -14,6 +14,29 @@ export function toLocalDateString(date: Date): string {
   return `${y}-${m}-${d}`;
 }
 
+const DISPLAY_MONTHS = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
+/**
+ * "2026-06-12" -> "12 Jun 2026", for dates the user READS (appointments,
+ * warranty dates). Stored values stay "YYYY-MM-DD" — that shape is what the
+ * VARCHAR date columns sort lexically on, so this is display-only.
+ *
+ * Anything unparseable is returned unchanged rather than becoming
+ * "Invalid Date": a stray value should look odd, not erase the row's date.
+ */
+export function formatDisplayDate(value?: string | null): string {
+  if (!value) return "";
+  const raw = String(value).trim();
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(raw);
+  if (!m) return raw;
+  const monthIndex = Number(m[2]) - 1;
+  if (monthIndex < 0 || monthIndex > 11) return raw;
+  return `${Number(m[3])} ${DISPLAY_MONTHS[monthIndex]} ${m[1]}`;
+}
+
 /**
  * True for a syntactically valid "YYYY-MM-DD" calendar date. Several date
  * columns (warranty/schedule dates) are plain VARCHAR compared and sorted

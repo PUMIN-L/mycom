@@ -21,6 +21,7 @@ import {
   bangkokDateAtHour,
   bangkokDateAtHourFromNow,
   addMonthsToDateString,
+  formatDisplayDate,
 } from "../../lib/dateFormat";
 import { dueMarkerOf } from "../../lib/taskBoard";
 import { resolveAlertEditRoute } from "../../lib/alertEditRoute";
@@ -692,7 +693,7 @@ export default function AlertsPage() {
                         {alert.data.scheduleType === "service" ? "🔧 Service" : "📞 โทรติดตาม"}
                       </div>
                       <span className={`text-xs font-bold ${isOverdue ? "text-red-600 bg-red-50 px-2 py-0.5 rounded-full" : "text-gray-500"}`}>
-                        {alert.data.scheduledDate} {isOverdue && "(เลยกำหนด)"}
+                        {formatDisplayDate(alert.data.scheduledDate)} {isOverdue && "(เลยกำหนด)"}
                       </span>
                     </div>
                     
@@ -750,7 +751,7 @@ export default function AlertsPage() {
                       <p className="text-sm text-gray-500 mb-1 line-clamp-1">{alert.data.companyName}</p>
                     )}
                     <p className="text-xs font-semibold text-gray-600 mb-2">
-                      วันที่นัด: {alert.data.scheduledDate || "—"}
+                      วันที่นัด: {formatDisplayDate(alert.data.scheduledDate) || "—"}
                     </p>
                     <p className="text-sm text-gray-500 mb-4 line-clamp-2">
                       {alert.data.notes || "ไม่มีโน้ต"}
@@ -1195,7 +1196,7 @@ export default function AlertsPage() {
                     </div>
                     <div>
                       <div className="text-gray-500 mb-1">กำหนดการ</div>
-                      <div className="font-semibold text-gray-800">{selectedAlert.data.scheduledDate}</div>
+                      <div className="font-semibold text-gray-800">{formatDisplayDate(selectedAlert.data.scheduledDate)}</div>
                     </div>
                     <div>
                       <div className="text-gray-500 mb-1">สถานะ</div>

@@ -6,6 +6,7 @@ import {
   bangkokCurrentMonth,
   isValidDateString,
   addMonthsToDateString,
+  formatDisplayDate,
 } from '@/app/lib/dateFormat';
 
 describe('toLocalDateString', () => {
@@ -123,5 +124,36 @@ describe('addMonthsToDateString', () => {
 
   it('handles a leap-year February correctly', () => {
     expect(addMonthsToDateString('2027-04-29', 10)).toBe('2028-02-29'); // 2028 is a leap year
+  });
+});
+
+describe('formatDisplayDate', () => {
+  it('renders a stored date as day / short month / year', () => {
+    expect(formatDisplayDate('2026-06-12')).toBe('12 Jun 2026');
+  });
+
+  it('drops the leading zero on single-digit days', () => {
+    expect(formatDisplayDate('2026-01-05')).toBe('5 Jan 2026');
+  });
+
+  it('handles both ends of the year', () => {
+    expect(formatDisplayDate('2026-01-31')).toBe('31 Jan 2026');
+    expect(formatDisplayDate('2026-12-01')).toBe('1 Dec 2026');
+  });
+
+  it('accepts a full timestamp and reads only the calendar day', () => {
+    expect(formatDisplayDate('2026-06-12T00:00:00.000Z')).toBe('12 Jun 2026');
+  });
+
+  it('returns an empty string for a missing value rather than "Invalid Date"', () => {
+    expect(formatDisplayDate('')).toBe('');
+    expect(formatDisplayDate(null)).toBe('');
+    expect(formatDisplayDate(undefined)).toBe('');
+  });
+
+  it('passes an unparseable value straight through instead of mangling it', () => {
+    // A stray value should look odd on screen, not erase the row's date.
+    expect(formatDisplayDate('ไม่ระบุ')).toBe('ไม่ระบุ');
+    expect(formatDisplayDate('2026-13-01')).toBe('2026-13-01');
   });
 });
