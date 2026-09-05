@@ -6,6 +6,7 @@ import Toast from "../components/Toast";
 import Link from "next/link";
 import EquipmentTab from "./EquipmentTab";
 import CustomerCallScheduleSection from "../components/modals/CustomerCallScheduleSection";
+import SearchableDropdown from "../components/SearchableDropdown";
 import { downloadExcel } from "../lib/xlsxExport";
 
 interface Company {
@@ -219,6 +220,13 @@ function CustomersInner() {
   const handleSaveCustomer = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingCustomer?.name || editingCustomer.name.trim() === "" || !editingCustomer?.companyId) {
+      // สังกัดบริษัท is a `SearchableDropdown`, not a native <select required>,
+      // so the browser no longer blocks this submit or fires `onInvalid` when no
+      // company is picked — this guard is the only thing standing between an
+      // empty companyId and the API. Flipping `customerSubmitAttempted` here is
+      // what `onInvalid` used to do: it is the flag both required fields read to
+      // paint themselves red after a failed attempt.
+      setCustomerSubmitAttempted(true);
       showToast("กรุณากรอกข้อมูลให้ครบถ้วน", "error");
       return;
     }
@@ -1044,10 +1052,30 @@ function CustomersInner() {
                 </div>
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1.5">สังกัดบริษัท <span className="text-red-500">*</span></label>
-                  <select required className={`w-full bg-gray-50 border rounded-xl px-4 py-2.5 outline-none transition-all appearance-none focus:bg-white focus:ring-2 ${customerSubmitAttempted ? 'invalid:border-red-500 invalid:ring-red-500 invalid:bg-red-50 border-gray-200 focus:border-transparent focus:ring-orange-500 focus:invalid:border-red-500 focus:invalid:ring-red-500' : 'border-gray-200 focus:border-transparent focus:ring-orange-500'}`} style={{ backgroundImage: 'url("data:image/svg+xml,%3csvg xmlns=%27http://www.w3.org/2000/svg%27 fill=%27none%27 viewBox=%270 0 20 20%27%3e%3cpath stroke=%27%236b7280%27 stroke-linecap=%27round%27 stroke-linejoin=%27round%27 stroke-width=%271.5%27 d=%27M6 8l4 4 4-4%27/%3e%3c/svg%3e")', backgroundPosition: 'right 0.5rem center', backgroundRepeat: 'no-repeat', backgroundSize: '1.5em 1.5em', paddingRight: '2.5rem' }} value={editingCustomer?.companyId || ""} onChange={e => setEditingCustomer({...editingCustomer, companyId: e.target.value})}>
-                    <option value="" disabled>-- เลือกบริษัท --</option>
-                    {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                  </select>
+                  {/* Every dropdown in this project is `SearchableDropdown`,
+                      never a native <select> — the OS paints a native one, so on
+                      a dark-mode machine it opens as a dark grey popup in the
+                      middle of this white form. Two things the native control
+                      used to hand us for free are replaced by hand here:
+                      • `required` + `invalid:` styling. SearchableDropdown joins
+                        neither native form validation nor `:invalid`, so the red
+                        state is now an explicit check on the SAME state the form
+                        already tracks (`customerSubmitAttempted`, set by the
+                        form's `onInvalid` and now also by `handleSaveCustomer`
+                        when it rejects a submit), and the block on submitting
+                        without a company is `handleSaveCustomer`'s own guard.
+                      • The chevron: the inline background-image data-URI is gone
+                        because the component draws its own.
+                      The list of companies can be long, so the search box stays.
+                      Portaling the panel to <body> also means this modal can no
+                      longer clip it. */}
+                  <SearchableDropdown
+                    value={editingCustomer?.companyId || ""}
+                    onChange={value => setEditingCustomer({...editingCustomer, companyId: value})}
+                    placeholder="-- เลือกบริษัท --"
+                    options={companies.map(c => ({ value: c.id, label: c.name }))}
+                    buttonClassName={`h-[46px] rounded-xl px-4 py-2.5 !text-base transition-all outline-none focus:ring-2 ${customerSubmitAttempted && !editingCustomer?.companyId ? '!border-red-500 !bg-red-50 focus:border-transparent focus:ring-red-500' : '!border-gray-200 !bg-gray-50 focus:border-transparent focus:ring-orange-500'}`}
+                  />
                 </div>
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1.5">แผนก</label>

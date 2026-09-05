@@ -1261,11 +1261,37 @@ export default function QuotationPage() {
               </div>
               <div>
                 <label className={labelCls}>ประเภทส่วนลด</label>
-                <select className={inputCls} value={q.discountType}
-                  onChange={(e) => set("discountType", e.target.value as "amount" | "percent")}>
-                  <option value="amount">บาท (฿)</option>
-                  <option value="percent">เปอร์เซ็นต์ (%)</option>
-                </select>
+                {/* ── ประเภทส่วนลด ────────────────────────────────────────
+                    PROJECT RULE — every dropdown is `SearchableDropdown`,
+                    never a native <select>. A native one is painted by the
+                    OPERATING SYSTEM, so on a dark-mode machine it opens as a
+                    dark grey popup in the middle of this white form.
+                    `searchable={false}` hides the search box that would be
+                    dead weight over two fixed options.
+
+                    The two values are the ones `computeQuoteTotals` branches
+                    on ("percent" vs everything else) and the ones persisted in
+                    `QuoteState.discountType` — unchanged, in the same order,
+                    with "amount" still the default from `emptyState()`. The
+                    old <select> carried no `required` and no `invalid:`
+                    variant (it can never be empty), so there is no browser
+                    validation to replace here.
+
+                    `inputCls` keeps the button on the same 1-of-2 grid cell as
+                    the ส่วนลด input beside it; the explicit height pins it to
+                    the 38px that `px-3 py-2` + border gives that input,
+                    instead of inheriting the component's shorter `py-1.5`. */}
+                <SearchableDropdown
+                  searchable={false}
+                  className="w-full"
+                  buttonClassName={`${inputCls} h-[38px]`}
+                  value={q.discountType}
+                  options={[
+                    { value: "amount", label: "บาท (฿)" },
+                    { value: "percent", label: "เปอร์เซ็นต์ (%)" },
+                  ]}
+                  onChange={(val) => set("discountType", val as "amount" | "percent")}
+                />
               </div>
             </div>
             <label className="flex items-center gap-2 text-sm text-gray-700 font-medium">

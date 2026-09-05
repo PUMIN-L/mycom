@@ -7,6 +7,7 @@ import Toast from "../../components/Toast";
 import ErrorModal from "../../components/ErrorModal";
 import MultiSelectDropdown from "../../components/MultiSelectDropdown";
 import SearchableDropdown from "../../components/SearchableDropdown";
+import type { SearchableDropdownOption } from "../../components/SearchableDropdown";
 import ImageDeleteConfirmDialog, { type OrphanedImage } from "../../components/ImageDeleteConfirmDialog";
 import { stripHtml } from "../../lib/stripHtml";
 import { useLeaveGuard } from "../../components/LeaveGuard";
@@ -278,6 +279,38 @@ export default function EditProduct({ params }: { params: Promise<{ id: string }
     );
   }
 
+  // ── Category dropdown options ─────────────────────────────────────────────
+  // Same list, same order as the <select> this replaced: every category, then
+  // "+ เพิ่มหมวดหมู่ใหม่..." last. `stripHtml` because the names are authored in
+  // RichTextEditor, exactly as the old <option> bodies did it.
+  const categoryOptions: SearchableDropdownOption[] = [
+    ...categories.map((cat) => ({
+      value: String(cat.id),
+      label: `${stripHtml(cat.name_th)} / ${stripHtml(cat.name_en)}`,
+    })),
+    { value: "new", label: "+ เพิ่มหมวดหมู่ใหม่..." },
+  ];
+  /**
+   * This product may point at a category that is no longer in the list (the
+   * category was deleted, or the categories fetch failed). SearchableDropdown
+   * shows its placeholder for a value it has no option for, which would read as
+   * "nothing chosen" and hide the link the product still carries — and the save
+   * below sends that same id straight back. Prepending a synthetic option keeps
+   * it visible and labelled — same trick as `app/customers/EquipmentTab.tsx`
+   * (~line 279). Kept identical to `create-product/page.tsx`.
+   */
+  if (
+    typeof selectedCategoryId === "number" &&
+    selectedCategoryId > 0 &&
+    !categories.some((cat) => cat.id === selectedCategoryId)
+  ) {
+    categoryOptions.unshift({
+      value: String(selectedCategoryId),
+      label: `หมวดหมู่เดิม (#${selectedCategoryId})`,
+      subLabel: "ไม่พบในรายการหมวดหมู่ปัจจุบัน",
+    });
+  }
+
   return (
     <div className="min-h-screen bg-gray-50 py-12">
       {toast && <Toast message={toast.message} type={toast.type} />}
@@ -296,23 +329,27 @@ export default function EditProduct({ params }: { params: Promise<{ id: string }
             <div className="text-gray-400 text-sm">กำลังโหลดหมวดหมู่...</div>
           ) : (
             <div className="space-y-4">
-              <select
-                value={selectedCategoryId}
-                onChange={(e) => {
-                  const val = e.target.value;
+              {/* Every dropdown in this project is `SearchableDropdown`, never a
+                  native <select> (AGENTS.md, ARCHITECTURE.md §11): the OPERATING
+                  SYSTEM paints a native one, so on a dark-mode machine it opens
+                  as a dark grey popup in the middle of this white form. The
+                  search box stays (`searchable` defaults true) — the category
+                  list is admin-editable from this very control and grows.
+                  buttonClassName restates the old <select>'s px-4 py-2, base
+                  text size and orange focus ring so the box, height and spacing
+                  are unchanged. No validation is lost in the swap: the <select>
+                  carried no `required` and no `:invalid` styling, and the only
+                  save-time check this control feeds — the newCatTh/newCatEn
+                  guard for the "new" branch in `handleSubmit` — is untouched. */}
+              <SearchableDropdown
+                options={categoryOptions}
+                value={String(selectedCategoryId)}
+                onChange={(val) => {
                   setSelectedCategoryId(val === "new" ? "new" : Number(val));
                 }}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 bg-white"
-              >
-                {categories.map((cat) => (
-                  <option key={cat.id} value={cat.id}>
-                    {stripHtml(cat.name_th)} / {stripHtml(cat.name_en)}
-                  </option>
-                ))}
-                <option value="new" className="font-bold text-orange-600">
-                  + เพิ่มหมวดหมู่ใหม่...
-                </option>
-              </select>
+                placeholder="เลือกหมวดหมู่..."
+                buttonClassName="px-4 py-2 text-base focus:outline-none focus:ring-2 focus:ring-orange-500"
+              />
 
               {/* New Category Inputs */}
               {selectedCategoryId === "new" && (

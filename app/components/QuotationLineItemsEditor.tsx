@@ -703,7 +703,9 @@ export default function QuotationLineItemsEditor({
                       const duplicated =
                         !blank && duplicateKeys.has(normalizeSerial(machine.serialNumber));
                       const serialId = `${uid}-serial-${line.key}-${machineIndex}`;
-                      const warrantyTypeId = `${uid}-wtype-${line.key}-${machineIndex}`;
+                      // (no `-wtype-` id any more: the ประเภทประกัน control is a
+                      // `SearchableDropdown`, which renders a <button> and takes
+                      // no `id`, so its label wraps it instead — see below.)
                       const warrantyTextId = `${uid}-wtext-${line.key}-${machineIndex}`;
                       const at = `รายการที่ ${index + 1} เครื่องที่ ${machineIndex + 1}`;
                       // Which of the three options is showing, and what belongs
@@ -751,75 +753,58 @@ export default function QuotationLineItemsEditor({
                               and `validateLineDrafts` deliberately ignores it,
                               so an unset ประกัน can never block a save.
 
-                              WHY A NATIVE <select> AND NOT `SearchableDropdown`:
-                              the repo's dropdown portals its panel to
-                              <body> precisely so a scrolling modal cannot clip
-                              it, and a native <select> earns the same immunity
-                              for free — the browser paints its popup outside the
-                              document entirely. With that tie broken, the native
-                              control wins the rest outright for THREE SHORT,
-                              FIXED options: no search box to hide
-                              (`SearchableDropdown` renders one by default, dead
-                              weight over three items), a real `disabled`
-                              attribute — which `SearchableDropdown` has no prop
-                              for — so it greys out with its neighbours while
-                              saving, real `htmlFor`/`id` labelling, keyboard
-                              type-ahead, and the OS wheel picker on the phone
-                              this row has to stay readable on. */}
-                          <div className="min-w-0">
-                            <label className={labelCls} htmlFor={warrantyTypeId}>
-                              ประเภทประกัน{" "}
-                              <span className="font-normal text-gray-400">(ไม่บังคับ)</span>
-                              <span className="sr-only"> {at}</span>
-                            </label>
-                            <div className="relative">
-                              <select
-                                id={warrantyTypeId}
-                                disabled={disabled}
+                              PROJECT RULE — every dropdown is
+                              `SearchableDropdown`, never a native <select>. A
+                              native one is painted by the OPERATING SYSTEM, so
+                              on a dark-mode machine it opens as a dark grey
+                              popup in the middle of this white form. Consistency
+                              of look beats the few things the native control
+                              gives away for free. `searchable={false}` hides the
+                              search box that would be dead weight over three
+                              options, and the disabled state comes from the
+                              wrapping <fieldset> (the component has no
+                              `disabled` prop) — same trick as the money inputs
+                              above. */}
+                          <fieldset disabled={disabled} className="min-w-0">
+                            {/* `SearchableDropdown` takes no `id` (it renders a
+                                <button>, which a `htmlFor` cannot address), so
+                                the label WRAPS it for implicit association —
+                                the same shape the two DatePickers below use for
+                                the same reason, with the machine coordinates
+                                hidden inside for screen readers. */}
+                            <label className="block">
+                              <span className={labelCls}>
+                                ประเภทประกัน{" "}
+                                <span className="font-normal text-gray-400">(ไม่บังคับ)</span>
+                                <span className="sr-only"> {at}</span>
+                              </span>
+                              <SearchableDropdown
+                                searchable={false}
                                 value={warrantySelect}
-                                onChange={(e) =>
+                                placeholder="ไม่ระบุ"
+                                buttonClassName="h-[42px] rounded-xl border-gray-200"
+                                options={[
+                                  // "ไม่ระบุ" mirrors the two DatePickers' own
+                                  // placeholder — the same "left blank on
+                                  // purpose" state, worded the same way.
+                                  { value: "", label: "ไม่ระบุ" },
+                                  // The three options come from the single
+                                  // exported constant, never re-typed here.
+                                  ...WARRANTY_TYPE_OPTIONS.map((option) => ({
+                                    value: option.value,
+                                    label: option.label,
+                                  })),
+                                ]}
+                                onChange={(next) =>
                                   // The whole three-state string is the helper's
                                   // business — including "อื่นๆ picked, nothing
                                   // typed yet", which is NOT the same as unset.
                                   transformMachine(index, machineIndex, (m) =>
-                                    setMachineWarrantyType(m, e.target.value)
+                                    setMachineWarrantyType(m, next)
                                   )
                                 }
-                                className={`${machineInputBase} ${machineInputNeutral} appearance-none pr-9 ${
-                                  warrantySelect ? "text-gray-800" : "text-gray-400"
-                                }`}
-                              >
-                                {/* "ไม่ระบุ" mirrors the two DatePickers' own
-                                    placeholder — the same "left blank on
-                                    purpose" state, worded the same way. */}
-                                <option value="">ไม่ระบุ</option>
-                                {/* The three options come from the single
-                                    exported constant, never re-typed here. */}
-                                {WARRANTY_TYPE_OPTIONS.map((option) => (
-                                  <option
-                                    key={option.value}
-                                    value={option.value}
-                                    className="text-gray-800"
-                                  >
-                                    {option.label}
-                                  </option>
-                                ))}
-                              </select>
-                              <svg
-                                aria-hidden="true"
-                                className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400"
-                                fill="none"
-                                stroke="currentColor"
-                                viewBox="0 0 24 24"
-                              >
-                                <path
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                  strokeWidth="2"
-                                  d="M19 9l-7 7-7-7"
-                                />
-                              </svg>
-                            </div>
+                              />
+                            </label>
 
                             {/* อื่นๆ → the admin writes their own ประกัน, and
                                 THAT text is what reaches
@@ -848,7 +833,7 @@ export default function QuotationLineItemsEditor({
                                 />
                               </div>
                             )}
-                          </div>
+                          </fieldset>
 
                           {/* `DatePicker` takes neither `id`, `aria-label` nor
                               `disabled`: the label WRAPS it (implicit

@@ -1,5 +1,5 @@
 "use client";
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
@@ -13,6 +13,7 @@ import Toast from "../../components/Toast";
 import type { OrphanedImage } from "../../components/ImageDeleteConfirmDialog";
 import { stripHtml } from "../../lib/stripHtml";
 import type { ContentBlock } from "../../lib/types";
+import type { SearchableDropdownOption } from "../../components/SearchableDropdown";
 import YoutubeEmbed from "../../components/YoutubeEmbed";
 
 // These are only ever rendered inside admin-only states (isEditing,
@@ -24,6 +25,11 @@ const RichTextEditor = dynamic(() => import("../../components/RichTextEditor"), 
 const BlockRangeControl = dynamic(() => import("../../components/BlockRangeControl"), { ssr: false });
 const ConfirmDialog = dynamic(() => import("../../components/ConfirmDialog"), { ssr: false });
 const ImageDeleteConfirmDialog = dynamic(() => import("../../components/ImageDeleteConfirmDialog"), { ssr: false });
+// Same reasoning: both dropdowns below (product link, image position) live
+// behind `isEditing`, which is false for every anonymous visitor — so the
+// component and its portal code never reach the public bundle. The
+// `SearchableDropdownOption` import above is type-only, erased at build time.
+const SearchableDropdown = dynamic(() => import("../../components/SearchableDropdown"), { ssr: false });
 
 interface ContentData {
   id: string;
@@ -64,6 +70,31 @@ interface ShowcaseClientProps {
   initialCategories: ProductCategory[];
   companyInfo: { email: string; phone: string; address: string };
 }
+
+/**
+ * PROJECT RULE — every dropdown is `SearchableDropdown`, never a native
+ * `<select>` (AGENTS.md / ARCHITECTURE.md §11). A native one is painted by the
+ * OPERATING SYSTEM, so on a dark-mode machine it opens as a dark grey popup in
+ * the middle of this white page.
+ *
+ * Two fixed options, so `searchable={false}`. The values stay the exact strings
+ * `ContentBlock.imagePosition` has always held ("left" / "right") — they are
+ * written straight into the blocks JSON this page saves.
+ *
+ * The twin of this control is in `app/create-content/page.tsx`; the two edit the
+ * same field of the same blocks, so they must stay identical.
+ */
+const IMAGE_POSITION_OPTIONS: SearchableDropdownOption[] = [
+  { value: "right", label: "รูปอยู่ขวา" },
+  { value: "left", label: "รูปอยู่ซ้าย" },
+];
+
+/** The unpicked state of the product dropdown. Kept as a real (disabled) option
+ * rather than only a placeholder so it renders in the list exactly like the
+ * native `<option value="" disabled>` it replaces: visible, never re-selectable
+ * once a product has been chosen. `handleSaveEdit` is what actually enforces
+ * the field (it toasts "กรุณาเลือก Product…" and refuses to save on ""). */
+const PRODUCT_PLACEHOLDER = "-- กรุณาเลือก Product --";
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
@@ -236,6 +267,43 @@ export default function ShowcaseClient({
 
   const [allProducts, setAllProducts] = useState<ProductItem[]>(initialProducts);
   const [allCategories, setAllCategories] = useState<ProductCategory[]>(initialCategories);
+
+  /**
+   * The product list, flattened for `SearchableDropdown`.
+   *
+   * `SearchableDropdown` has no `<optgroup>`, so the category that used to be
+   * the group heading becomes each row's `subLabel` — the products keep the
+   * exact same ORDER (category by category, products in API order within a
+   * category), the same values (`p.id`, "" for the unpicked state), the same
+   * disabled rows and the same label text as the native `<select>` had.
+   *
+   * EDIT MODE ONLY: the dropdown itself renders behind `isEditing`, so this
+   * builds nothing at all for the anonymous visitors this page also serves.
+   */
+  const productOptions = useMemo<SearchableDropdownOption[]>(() => {
+    if (!isEditing) return [];
+    return [
+      { value: "", label: PRODUCT_PLACEHOLDER, disabled: true },
+      ...allCategories.flatMap((cat) =>
+        allProducts
+          .filter((p) => p.categoryId === cat.id)
+          .map((p) => {
+            // Already linked to a DIFFERENT content → not pickable (this
+            // content's own product stays selectable).
+            const isLinked = allContents.some(
+              (c) => c.productId === p.id && c.id !== content.id
+            );
+            const title = stripHtml(p.title_en);
+            return {
+              value: p.id,
+              label: isLinked ? `${title} (มี Content แล้ว)` : title,
+              subLabel: stripHtml(cat.name_en),
+              disabled: isLinked,
+            };
+          })
+      ),
+    ];
+  }, [isEditing, allCategories, allProducts, allContents, content.id]);
 
   // Delete content confirm
   const [showDeleteContentConfirm, setShowDeleteContentConfirm] = useState(false);
@@ -694,29 +762,16 @@ export default function ShowcaseClient({
                 {isEditing ? (
                   <div className="mt-3">
                     <label className="block text-xs font-semibold text-gray-500 mb-1">ผูกกับ Product (จำเป็น)</label>
-                    <select
+                    {/* Searchable: the catalog is long, so the search box earns
+                        its place here (unlike the two-option image-position
+                        control further down). */}
+                    <SearchableDropdown
+                      options={productOptions}
                       value={editProductId}
-                      onChange={(e) => setEditProductId(e.target.value)}
-                      className="text-sm border border-gray-300 rounded-lg px-3 py-1.5 focus:outline-none focus:border-orange-400 bg-white"
-                    >
-                      <option value="" disabled>-- กรุณาเลือก Product --</option>
-                      {allCategories.map((cat) => (
-                        <optgroup key={cat.id} label={stripHtml(cat.name_en)}>
-                          {allProducts
-                            .filter((p) => p.categoryId === cat.id)
-                            .map((p) => {
-                              // Find if this product is already linked to another content
-                              const linkedContent = allContents.find((c) => c.productId === p.id && c.id !== content?.id);
-                              const isLinked = !!linkedContent;
-                              return (
-                                <option key={p.id} value={p.id} disabled={isLinked}>
-                                  {stripHtml(p.title_en)} {isLinked ? "(มี Content แล้ว)" : ""}
-                                </option>
-                              );
-                            })}
-                        </optgroup>
-                      ))}
-                    </select>
+                      onChange={setEditProductId}
+                      placeholder={PRODUCT_PLACEHOLDER}
+                      className="w-full max-w-md"
+                    />
                   </div>
                 ) : content.productId ? (
                   <div className="mt-2">
@@ -1048,18 +1103,17 @@ export default function ShowcaseClient({
                               🔄 เปลี่ยนรูป
                             </button>
                           )}
-                          <select
+                          <SearchableDropdown
+                            searchable={false}
+                            options={IMAGE_POSITION_OPTIONS}
                             value={block.imagePosition || "right"}
-                            onChange={(e) =>
+                            onChange={(value) =>
                               updateBlock(block.id, {
-                                imagePosition: e.target.value as "left" | "right",
+                                imagePosition: value as "left" | "right",
                               })
                             }
-                            className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-orange-400"
-                          >
-                            <option value="right">รูปอยู่ขวา</option>
-                            <option value="left">รูปอยู่ซ้าย</option>
-                          </select>
+                            className="w-40"
+                          />
                           {block.imageUrl && (
                             <BlockRangeControl
                               label="🔍 ขนาดรูป"

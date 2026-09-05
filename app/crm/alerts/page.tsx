@@ -5,6 +5,8 @@ import Link from "next/link";
 import { useAuth } from "../../context/AuthContext";
 import Toast from "../../components/Toast";
 import ConfirmDialog from "../../components/ConfirmDialog";
+import SearchableDropdown from "../../components/SearchableDropdown";
+import type { SearchableDropdownOption } from "../../components/SearchableDropdown";
 import { CALIBRATION_VALIDITY_MONTHS, type CrmAlerts, type CustomerEquipment } from "../../lib/types";
 import { toLocalDateString, bangkokDateAtHour, bangkokDateAtHourFromNow, addMonthsToDateString } from "../../lib/dateFormat";
 
@@ -12,6 +14,16 @@ import { toLocalDateString, bangkokDateAtHour, bangkokDateAtHourFromNow, addMont
 import EquipmentEditModal from "../../components/modals/EquipmentEditModal";
 import EquipmentDetailsModal from "../../components/modals/EquipmentDetailsModal";
 import SalesRecordEditModal from "../../components/modals/SalesRecordEditModal";
+
+/** The snooze durations, in the order the old <select> listed them. Module
+ *  scope so the array identity never changes between renders. */
+const SNOOZE_DAY_OPTIONS: SearchableDropdownOption[] = [
+  { value: "1", label: "1 วัน" },
+  { value: "3", label: "3 วัน" },
+  { value: "7", label: "7 วัน" },
+  { value: "14", label: "14 วัน" },
+  { value: "30", label: "1 เดือน" },
+];
 
 export default function AlertsPage() {
   const router = useRouter();
@@ -673,17 +685,26 @@ export default function AlertsPage() {
               {snoozeMode === "days" ? (
                 <div>
                   <label className="block text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">เลื่อนไปอีก (วัน)</label>
-                  <select 
-                    value={snoozeDays} 
-                    onChange={(e) => setSnoozeDays(Number(e.target.value))}
-                    className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 text-gray-700 bg-white"
-                  >
-                    <option value={1}>1 วัน</option>
-                    <option value={3}>3 วัน</option>
-                    <option value={7}>7 วัน</option>
-                    <option value={14}>14 วัน</option>
-                    <option value={30}>1 เดือน</option>
-                  </select>
+                  {/* PROJECT RULE — every dropdown is `SearchableDropdown`, never
+                      a native <select>. A native one is painted by the OPERATING
+                      SYSTEM, so on a dark-mode machine it opens as a dark grey
+                      popup in the middle of this white modal.
+
+                      `searchable={false}`: five fixed durations, so a search box
+                      would be dead weight. Nothing is lost by dropping the
+                      native control here — the <select> carried no `required`
+                      and `snoozeDays` starts at 3, so this branch of
+                      `handleSnooze` can never see an empty value (unlike the
+                      ระบุวันที่ branch, which keeps its own explicit checks).
+                      Values stay numeric in state; only the dropdown speaks
+                      strings. */}
+                  <SearchableDropdown
+                    searchable={false}
+                    value={String(snoozeDays)}
+                    onChange={(value) => setSnoozeDays(Number(value))}
+                    options={SNOOZE_DAY_OPTIONS}
+                    buttonClassName="h-[46px] px-4 rounded-xl border-gray-200 focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500"
+                  />
                 </div>
               ) : (
                 <div>

@@ -1,8 +1,10 @@
 "use client";
-import { useState, useRef, useEffect, Suspense } from "react";
+import { useState, useRef, useEffect, useMemo, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "../context/AuthContext";
 import ColorPickerDropdown from "../components/ColorPickerDropdown";
+import SearchableDropdown from "../components/SearchableDropdown";
+import type { SearchableDropdownOption } from "../components/SearchableDropdown";
 import RichTextEditor from "../components/RichTextEditor";
 import BlockRangeControl from "../components/BlockRangeControl";
 import Toast from "../components/Toast";
@@ -26,6 +28,31 @@ interface ProductItem {
   title_en: string;
   title_zh: string;
 }
+
+/**
+ * PROJECT RULE — every dropdown on this page is `SearchableDropdown`, never a
+ * native `<select>` (AGENTS.md / ARCHITECTURE.md §11). A native one is painted
+ * by the OPERATING SYSTEM, so on a dark-mode machine it opens as a dark grey
+ * popup in the middle of this white form.
+ *
+ * Two fixed options, so `searchable={false}` — a search box over two rows is
+ * dead weight. The values stay the exact strings `ContentBlock.imagePosition`
+ * has always held ("left" / "right"), because they are written straight into
+ * the blocks JSON that both this page and `/showcase/[id]` save.
+ *
+ * The twin of this control lives in `app/showcase/[id]/ShowcaseClient.tsx`
+ * (the in-place editor of the same blocks) and must stay identical to it.
+ */
+const IMAGE_POSITION_OPTIONS: SearchableDropdownOption[] = [
+  { value: "right", label: "รูปอยู่ขวา" },
+  { value: "left", label: "รูปอยู่ซ้าย" },
+];
+
+/** The unpicked state of the product dropdown. Kept as a real (disabled) option
+ * rather than only a placeholder so it renders in the list exactly like the
+ * native `<option value="" disabled>` it replaces: visible, never re-selectable
+ * once a product has been chosen. */
+const PRODUCT_PLACEHOLDER = "-- กรุณาเลือก Product --";
 
 function CreateContentInner() {
   const router = useRouter();
@@ -91,6 +118,42 @@ function CreateContentInner() {
     };
     fetchProductsAndContents();
   }, []);
+
+  /**
+   * The product list, flattened for `SearchableDropdown`.
+   *
+   * `SearchableDropdown` has no `<optgroup>`, so the category that used to be
+   * the group heading becomes each row's `subLabel` — the products keep the
+   * exact same ORDER (category by category, products in API order within a
+   * category), the same values (`p.id`, "" for the unpicked state), the same
+   * disabled rows and the same label text as the native `<select>` had. A
+   * product whose categoryId matches no category is left out, exactly as the
+   * `<optgroup>` version left it out.
+   */
+  const productOptions = useMemo<SearchableDropdownOption[]>(() => {
+    // The product this page was opened for (?productId=…) stays selectable even
+    // when it is already linked — same exception the native <option> made.
+    const preselectedProductId = searchParams.get("productId");
+    return [
+      { value: "", label: PRODUCT_PLACEHOLDER, disabled: true },
+      ...allCategories.flatMap((cat) =>
+        allProducts
+          .filter((p) => p.categoryId === cat.id)
+          .map((p) => {
+            const isLinked = linkedProductIds.has(p.id);
+            return {
+              value: p.id,
+              label: isLinked
+                ? `${p.title_en} (มี Content แล้ว - ต้องลบของเก่าก่อน)`
+                : p.title_en,
+              subLabel: cat.name_en,
+              disabled: isLinked && p.id !== preselectedProductId,
+            };
+          })
+      ),
+    ];
+  }, [allCategories, allProducts, linkedProductIds, searchParams]);
+
   const addTextBlock = () => {
     const newBlock: ContentBlock = {
       id: crypto.randomUUID(),
@@ -397,27 +460,16 @@ function CreateContentInner() {
           <label className="block text-sm font-semibold mb-2 text-gray-700">
             ผูกกับ Product (จำเป็น)
           </label>
-          <select
+          {/* Searchable: the catalog is long, so the search box earns its place
+              here (unlike the two-option image-position control below). */}
+          <SearchableDropdown
+            options={productOptions}
             value={selectedProductId}
-            onChange={(e) => setSelectedProductId(e.target.value)}
-            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 bg-white"
-          >
-            <option value="" disabled>-- กรุณาเลือก Product --</option>
-            {allCategories.map((cat) => (
-              <optgroup key={cat.id} label={cat.name_en}>
-                {allProducts
-                  .filter((p) => p.categoryId === cat.id)
-                  .map((p) => {
-                    const isLinked = linkedProductIds.has(p.id);
-                    return (
-                      <option key={p.id} value={p.id} disabled={isLinked && p.id !== searchParams.get("productId")}>
-                        {p.title_en} {isLinked ? "(มี Content แล้ว - ต้องลบของเก่าก่อน)" : ""}
-                      </option>
-                    );
-                  })}
-              </optgroup>
-            ))}
-          </select>
+            onChange={setSelectedProductId}
+            placeholder={PRODUCT_PLACEHOLDER}
+            className="w-full"
+            buttonClassName="px-4 py-2"
+          />
           {selectedProductId && (
             <p className="mt-2 text-xs text-orange-600 font-medium">
               ✅ จะผูก content นี้กับ: {allProducts.find((p) => p.id === selectedProductId)?.title_en}
@@ -712,18 +764,17 @@ function CreateContentInner() {
                             🔄 เปลี่ยนรูป
                           </button>
                         )}
-                        <select
+                        <SearchableDropdown
+                          searchable={false}
+                          options={IMAGE_POSITION_OPTIONS}
                           value={block.imagePosition || "right"}
-                          onChange={(e) =>
+                          onChange={(value) =>
                             updateBlock(block.id, {
-                              imagePosition: e.target.value as "left" | "right",
+                              imagePosition: value as "left" | "right",
                             })
                           }
-                          className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-orange-400"
-                        >
-                          <option value="right">รูปอยู่ขวา</option>
-                          <option value="left">รูปอยู่ซ้าย</option>
-                        </select>
+                          className="w-40"
+                        />
                         {block.imageUrl && (
                           <BlockRangeControl
                             label="🔍 ขนาดรูป"

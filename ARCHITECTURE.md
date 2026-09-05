@@ -409,6 +409,17 @@ stored in an httpOnly `session` cookie. `createSession` / `getSession` /
 −/+ steps + live readout), `RichTextEditor`. Import the shared version instead of
 defining a local one.
 
+**Dropdowns are always [`SearchableDropdown`](./app/components/SearchableDropdown.tsx),
+never a native `<select>`.** The OS paints a native one, so on a dark-mode machine
+it opens as a dark grey popup inside a white form — the reason this rule exists.
+The shared component also portals its panel to `<body>`, so a scrolling modal
+can't clip it. `searchable={false}` drops the search box for a few fixed options;
+wrap it in `<fieldset disabled>` for the disabled state (it takes no `disabled`
+prop). Money inputs are [`FormattedNumberInput`](./app/components/FormattedNumberInput.tsx)
+(thousands separators) and dates are [`DatePicker`](./app/components/DatePicker.tsx)
+(month/year dropdowns, portalled to `#root-portal`) for the same reason: a raw
+`<input type="number">` or `type="date"` looks nothing like the rest of the admin UI.
+
 ### 12. i18n strings
 Add UI copy to [`app/i18n/translations.ts`](./app/i18n/translations.ts) and read
 it with `useT()` / `useLanguage()`. Don't hardcode user-facing strings in
