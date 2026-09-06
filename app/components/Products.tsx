@@ -12,6 +12,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { ProductCategory, ProductData } from "../lib/types";
 import { pageList } from "../lib/pagination";
+import { reorderVisible } from "../lib/reorderVisible";
 import RichTextEditor from "./RichTextEditor";
 import { stripHtml } from "../lib/stripHtml";
 import ImageDeleteConfirmDialog, { type OrphanedImage } from "./ImageDeleteConfirmDialog";
@@ -364,6 +365,98 @@ export default function Products({ dataPromise }: ProductsProps) {
     setDragOverProdId(id);
   };
 
+  // The ordering the "ทั้งหมด" view applies on top of the saved order: ranked
+  // products first (by rank), everything else left as it is. Shared with the
+  // `filteredItems` sort below so the warning below can never drift from it.
+  const bestSellerCompare = (a: ProductData, b: ProductData) => {
+    // Both have a rank: sort by rank ascending
+    if (a.bestSellerRank != null && b.bestSellerRank != null) {
+      return a.bestSellerRank - b.bestSellerRank;
+    }
+    // Only 'a' has a rank: it goes first
+    if (a.bestSellerRank != null) return -1;
+    // Only 'b' has a rank: it goes first
+    if (b.bestSellerRank != null) return 1;
+    // Neither have a rank: preserve existing sortOrder/category ordering
+    return 0;
+  };
+
+  // True when the arrangement the admin just asked for will NOT survive the
+  // re-render: in the "ทั้งหมด" view the list is re-sorted by bestSellerRank,
+  // so e.g. an unranked row dragged above a Best Seller bounces straight back.
+  // The save itself is correct — the display simply re-sorts — so we tell him
+  // instead of letting the row silently jump back.
+  const bestSellerWillOverride = (newVisibleIds: string[]) => {
+    if (selectedCategory !== -1) return false;
+    const byId = new Map(products.map(p => [p.id, p]));
+    const rows = newVisibleIds
+      .map(id => byId.get(id))
+      .filter((p): p is ProductData => p != null);
+    const resorted = [...rows].sort(bestSellerCompare);
+    return resorted.some((p, i) => p.id !== rows[i].id);
+  };
+
+  /**
+   * Move `itemId` to `visiblePosition` (1-based) **in the list on screen**, then
+   * save. Both the drag handler and the number box go through here, so they can
+   * never disagree about what a position means.
+   */
+  const applyReorder = async (
+    itemId: string,
+    visiblePosition: number,
+    notifySuccess: boolean,
+  ) => {
+    if (!canDrag) return;
+
+    const { ids, visibleIds: newVisibleIds, changed } = reorderVisible(
+      products.map(p => p.id),
+      filteredItems.map(p => p.id),
+      itemId,
+      visiblePosition,
+    );
+    if (!changed) return;
+
+    const byId = new Map(products.map(p => [p.id, p]));
+    const newProducts = ids
+      .map(id => byId.get(id))
+      .filter((p): p is ProductData => p != null);
+
+    const previousProducts = products;
+    setProducts(newProducts);
+
+    try {
+      const res = await fetch("/api/products/reorder", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ productIds: newProducts.map(p => p.id) })
+      });
+      if (!res.ok) throw new Error("Failed to save reorder");
+
+      // Re-fetch the full list (including unpublished) from the admin API
+      // to ensure state is perfectly synced with the DB.
+      const freshRes = await fetch("/api/products");
+      if (freshRes.ok) {
+        const all: ProductData[] = await freshRes.json();
+        setProducts(all);
+      }
+
+      router.refresh();
+
+      if (bestSellerWillOverride(newVisibleIds)) {
+        showToast(
+          "บันทึกลำดับแล้ว แต่ตำแหน่งที่เห็นจะไม่เปลี่ยนตามที่จัด เพราะมุมมอง \"ทั้งหมด\" จะแสดงสินค้าขายดี (Best Seller) ไว้บนสุดเสมอ — กรุณาจัดลำดับโดยเลือกหมวดหมู่สินค้าก่อน หรือลบลำดับสินค้าขายดีของสินค้านั้นออก",
+          "error"
+        );
+      } else if (notifySuccess) {
+        showToast("จัดเรียงลำดับสำเร็จ", "success");
+      }
+    } catch (err) {
+      console.error(err);
+      setProducts(previousProducts); // Rollback optimistic UI
+      showToast("ไม่สามารถบันทึกลำดับสินค้าได้", "error");
+    }
+  };
+
   const handleProdDrop = async (e: React.DragEvent, targetId: string) => {
     if (!canDrag || !draggedProdId || draggedProdId === targetId) {
       setDragOverProdId(null);
@@ -372,81 +465,19 @@ export default function Products({ dataPromise }: ProductsProps) {
     e.preventDefault();
     setDragOverProdId(null);
 
-    const sourceIdx = products.findIndex(p => p.id === draggedProdId);
-    const targetIdx = products.findIndex(p => p.id === targetId);
-
-    if (sourceIdx === -1 || targetIdx === -1) return;
-
-    const newProducts = [...products];
-    const [draggedItem] = newProducts.splice(sourceIdx, 1);
-    newProducts.splice(targetIdx, 0, draggedItem);
-
-    setProducts(newProducts);
+    const draggedId = draggedProdId;
     setDraggedProdId(null);
 
-    try {
-      const res = await fetch("/api/products/reorder", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ productIds: newProducts.map(p => p.id) })
-      });
-      if (!res.ok) throw new Error("Failed to save reorder");
-      
-      // Re-fetch the full list (including unpublished) from the admin API
-      // to ensure state is perfectly synced with the DB.
-      const freshRes = await fetch("/api/products");
-      if (freshRes.ok) {
-        const all: ProductData[] = await freshRes.json();
-        setProducts(all);
-      }
-      
-      router.refresh();
-    } catch (err) {
-      console.error(err);
-      setProducts(products); // Rollback optimistic UI
-      showToast("ไม่สามารถบันทึกลำดับสินค้าได้", "error");
-    }
+    // A drop means "put this row where that row is" — expressed as a position
+    // in the list on screen, which is exactly what the number box types in.
+    const targetPosition = filteredItems.findIndex(p => p.id === targetId) + 1;
+    if (targetPosition === 0) return;
+
+    await applyReorder(draggedId, targetPosition, false);
   };
 
   const handleManualSort = async (itemId: string, newPosition: number) => {
-    if (!canDrag) return;
-    
-    const validTargetIndex = Math.max(0, Math.min(newPosition - 1, filteredItems.length - 1));
-    const targetItem = filteredItems[validTargetIndex];
-    if (!targetItem || targetItem.id === itemId) return;
-
-    const sourceIdx = products.findIndex(p => p.id === itemId);
-    const targetIdx = products.findIndex(p => p.id === targetItem.id);
-
-    if (sourceIdx === -1 || targetIdx === -1) return;
-
-    const newProducts = [...products];
-    const [draggedItem] = newProducts.splice(sourceIdx, 1);
-    newProducts.splice(targetIdx, 0, draggedItem);
-
-    setProducts(newProducts);
-
-    try {
-      const res = await fetch("/api/products/reorder", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ productIds: newProducts.map(p => p.id) })
-      });
-      if (!res.ok) throw new Error("Failed to save reorder");
-      
-      const freshRes = await fetch("/api/products");
-      if (freshRes.ok) {
-        const all: ProductData[] = await freshRes.json();
-        setProducts(all);
-      }
-      
-      router.refresh();
-      showToast("จัดเรียงลำดับสำเร็จ", "success");
-    } catch (err) {
-      console.error(err);
-      setProducts(products); // Rollback
-      showToast("ไม่สามารถบันทึกลำดับสินค้าได้", "error");
-    }
+    await applyReorder(itemId, newPosition, true);
   };
 
   const handleDeleteProduct = async () => {
@@ -565,20 +596,9 @@ export default function Products({ dataPromise }: ProductsProps) {
   });
 
   if (selectedCategory === -1) {
-    filteredItems.sort((a, b) => {
-      // Both have a rank: sort by rank ascending
-      if (a.bestSellerRank != null && b.bestSellerRank != null) {
-        return a.bestSellerRank - b.bestSellerRank;
-      }
-      // Only 'a' has a rank: it goes first
-      if (a.bestSellerRank != null) return -1;
-      // Only 'b' has a rank: it goes first
-      if (b.bestSellerRank != null) return 1;
-      
-      // Neither have a rank: preserve existing sortOrder/category ordering
-      // Note: Array.prototype.sort is stable in modern JS, but if we want to be safe:
-      return 0;
-    });
+    // Array.prototype.sort is stable in modern JS, so rows that compare equal
+    // keep their sortOrder/category ordering.
+    filteredItems.sort(bestSellerCompare);
   }
 
   // When an admin is logged in, the SSR/ISR payload only contains published
