@@ -22,6 +22,26 @@
  * That is the CONSEQUENCE, and the admin is meant to understand it, not be
  * stopped by it.
  *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * IT SHOWS ITS WORKING (owner: "ให้บันทึกยอดขายเป็นราคาหลังหักส่วนลด")
+ * ─────────────────────────────────────────────────────────────────────────────
+ * The sale now records the price actually charged, so every discount the
+ * quotation carries has to be visible on the row it comes off:
+ *
+ *     ยอดรวมบรรทัด = จำนวน × ราคาต่อหน่วย − ส่วนลด
+ *
+ * All three terms are on screen, the middle one is the quotation's own unit
+ * price (still gross, still matching the document the customer signed), and the
+ * result is exactly what is posted as `totalAmount` — because the box and the
+ * payload both call `computeSaleLineTotal`. There is no second copy of that
+ * formula in this file, and there must never be one: two copies is how the
+ * screen and the database drift apart while everyone approves numbers they were
+ * never shown.
+ *
+ * The per-line discount arrives resolved (`buildLineDrafts` turns ฿/% and the
+ * line's frozen share of ส่วนลดท้ายใบ into ONE baht figure), and from then on it
+ * behaves like ต้นทุนสินค้า: the admin edits it, and nothing else ever moves it.
+ *
  * It is a CONTROLLED component: it owns no line state at all. `lines` in,
  * `onLinesChange` out, and every transformation goes through the pure helpers
  * in `app/lib/quotationToSale.ts` (`setLineQty`, `applyProductSelection`,
@@ -100,6 +120,7 @@ import {
   WARRANTY_TYPE_OTHER,
   applyProductSelection,
   collectSerials,
+  computeSaleLineTotal,
   copyWarrantyToAllMachines,
   findDuplicateSerialsInForm,
   findMissingCosts,
@@ -107,15 +128,18 @@ import {
   findOverQuotedLines,
   findResoldLines,
   normalizeSerial,
+  quotedDiscountTotal,
   setLineQty,
   setMachineWarrantyType,
   setMachineWarrantyTypeText,
   summarizeBill,
+  summarizeBillDiscounts,
   validateLineDrafts,
   warrantyTypeCustomText,
   warrantyTypeSelectValue,
 } from "../lib/quotationToSale";
 import type {
+  BillDiscountSummary,
   BillSummary,
   CatalogProduct,
   DuplicateSerialGroup,
@@ -158,8 +182,12 @@ export interface LineEditorReport {
   overQuotedLines: SaleLineDraft[];
   /** Ticked lines that already have a recorded sale (task 13.3). */
   resoldLines: SaleLineDraft[];
-  /** The same reduction the on-screen summary shows (task 12.10). */
+  /** The same reduction the on-screen summary shows (task 12.10).
+   * `summary.totalAmount` is the price actually charged — AFTER the discounts. */
   summary: BillSummary;
+  /** The discount side of the same bill: what comes off it, and how much of the
+   * quotation's ส่วนลดท้ายใบ this (possibly partial) sale carries. */
+  discounts: BillDiscountSummary;
   /** Non-empty serials of the ticked lines, for the serial-check request. */
   serials: string[];
   /** `errors.length === 0`. The parent still owns the save decision. */
@@ -274,6 +302,7 @@ export default function QuotationLineItemsEditor({
       overQuotedLines: findOverQuotedLines(rows),
       resoldLines: findResoldLines(rows),
       summary: summarizeBill(rows),
+      discounts: summarizeBillDiscounts(rows),
       serials: collectSerials(rows),
       canSave: errors.length === 0,
     };
@@ -374,7 +403,11 @@ export default function QuotationLineItemsEditor({
    * parsing, and hands back a plain number — so this only has to guard against
    * a non-finite value ever reaching a draft. */
   const handleMoneyChange = useCallback(
-    (index: number, field: "unitPrice" | "costAmount", value: number) => {
+    (
+      index: number,
+      field: "unitPrice" | "costAmount" | "discountAmount",
+      value: number
+    ) => {
       updateLine(index, (line) => ({
         ...line,
         [field]: Number.isFinite(value) ? value : line[field],
@@ -421,8 +454,13 @@ export default function QuotationLineItemsEditor({
   );
 
   // ── Render ───────────────────────────────────────────────────────────────
-  const { summary } = report;
+  const { summary, discounts } = report;
   const grossProfit = summary.totalAmount - summary.costAmount;
+  /** A partial sale of a quotation that carries a ส่วนลดท้ายใบ: the ticked lines
+   * bring only their own frozen shares, and the rest waits on the lines it
+   * belongs to. Said out loud, because ฿Y ≠ ฿X looks like a bug otherwise. */
+  const partialDocDiscount =
+    discounts.quotedDocDiscountTotal > 0 && summary.lineCount < rows.length;
   const terms = String(warrantyTerms ?? "").trim();
   const missingCount = report.missingSerials.length;
 
@@ -455,11 +493,51 @@ export default function QuotationLineItemsEditor({
         </span>
       </div>
 
+      {/* ── ส่วนลดท้ายใบ: applied by default, never silent, always editable ──
+          The old note said the system does not prorate a document discount.
+          That was true when revenue lived on the sale row; it is not true now
+          that every report reads the LINE, and a discount that reaches no line
+          is a discount the sale never records. So it is spread by value and
+          shown here, with each line's own share printed on its own row. */}
+      {discounts.quotedDocDiscountTotal > 0 && (
+        <div className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-indigo-900">
+          <div className="text-xs font-bold">
+            ใบเสนอราคานี้มีส่วนลดท้ายใบ ฿{fmtBaht(discounts.quotedDocDiscountTotal)} —
+            ระบบเฉลี่ยตามสัดส่วนมูลค่าของแต่ละรายการให้แล้ว
+          </div>
+          <div className="text-[11px] mt-1">
+            ส่วนลดของแต่ละรายการแสดงอยู่ในช่อง «ส่วนลด (฿)» ของรายการนั้น แก้ได้ทีละรายการ
+            และยอดขายที่บันทึกคือราคาหลังหักส่วนลด
+          </div>
+          {partialDocDiscount && (
+            <div className="text-[11px] mt-1 font-semibold">
+              เลือกขาย {fmtInt(summary.lineCount)} จาก {fmtInt(rows.length)} รายการ —
+              ส่วนลดท้ายใบถูกเฉลี่ยตามมูลค่าของทั้งใบ รายการที่เลือกจึงรับส่วนลดท้ายใบรวม ฿
+              {fmtBaht(discounts.selectedDocDiscountTotal)} (ไม่ใช่ ฿
+              {fmtBaht(discounts.quotedDocDiscountTotal)} ทั้งก้อน) ส่วนที่เหลือรออยู่กับ
+              รายการที่ยังไม่ได้ขาย
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ── Line cards ─────────────────────────────────────────────────── */}
       {rows.map((line, index) => {
         const alreadySold = line.soldQty > 0;
         const overQuoted = line.selected && line.qty > line.quotedQty;
-        const lineTotal = Math.max(0, line.qty) * (Number(line.unitPrice) || 0);
+        // THE one definition of this line's money — the same call
+        // `buildSalePayload` makes, so the ยอดรวมบรรทัด box below cannot say
+        // anything the request does not.
+        const money = computeSaleLineTotal(line);
+        const typedDiscount = Number(line.discountAmount) || 0;
+        /** The admin typed (or the quotation quoted) more discount than the line
+         * is worth. Legal — it floors the line at ฿0 — but it must be said. */
+        const discountCapped = typedDiscount > money.discountAmount + 0.005;
+        const quotedDiscount = quotedDiscountTotal(line);
+        /** The qty has moved off the quoted one while a discount is riding on
+         * the row. The baht figure deliberately does NOT follow it. */
+        const discountFrozenHint =
+          line.selected && money.discountAmount > 0 && line.qty !== line.quotedQty;
         const linkedToCatalog = !!line.productId && line.productId !== CUSTOM_PRODUCT_SENTINEL;
         // Report 6, the visible half. Same timing as the blank-serial hint just
         // below: advice until save is pressed, red on the input afterwards.
@@ -503,6 +581,9 @@ export default function QuotationLineItemsEditor({
                 <div className="text-xs text-gray-500 mt-1">
                   ในใบเสนอราคา: {fmtInt(line.quotedQty)} {line.unit || "หน่วย"} · ราคา/หน่วย ฿
                   {fmtBaht(line.unitPrice)}
+                  {/* The basis the admin is departing from, so "frozen" never
+                      means "stranded": he can always see what was quoted. */}
+                  {quotedDiscount > 0 ? ` · ลด ฿${fmtBaht(quotedDiscount)}` : ""}
                 </div>
                 {alreadySold && !line.selected && (
                   <div className="text-xs text-amber-700 mt-1">
@@ -515,8 +596,13 @@ export default function QuotationLineItemsEditor({
             {/* Expanded editor — only for a ticked line */}
             {line.selected && (
               <div className="px-4 pb-4 space-y-4 border-t border-indigo-100 pt-4">
-                {/* Qty / price / cost / line total */}
-                <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                {/* Qty / price / discount / cost / line total.
+                    TWO columns, not five: this editor lives in a `max-w-2xl`
+                    modal, so the row is ~560px wide however big the screen is.
+                    Five across would give every money box ~110px — narrower
+                    than "1,234,567.89". The total spans the full width as the
+                    RESULT line, where it reads as the sum of the row above it. */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className={labelCls} htmlFor={`${uid}-qty-${line.key}`}>
                       จำนวนที่ขายจริง <span className="text-red-500">*</span>
@@ -546,6 +632,16 @@ export default function QuotationLineItemsEditor({
                         มากกว่าจำนวนในใบเสนอราคา ({fmtInt(line.quotedQty)}) — บันทึกได้ แต่โปรดตรวจสอบ
                       </p>
                     ) : null}
+                    {/* Warn, never auto-change — same discipline as the
+                        over-quoted rule above. A ฿ discount is a ฿ discount:
+                        scaling it to a qty the customer never agreed to would
+                        invent a number nobody quoted. */}
+                    {discountFrozenHint && (
+                      <p className="text-[11px] text-amber-700 mt-1">
+                        จำนวนต่างจากที่เสนอ ({fmtInt(line.quotedQty)}) ส่วนลดยังเป็นยอดเดิม ฿
+                        {fmtBaht(money.discountAmount)} — ปรับเองได้ถ้าตกลงลดตามสัดส่วน
+                      </p>
+                    )}
                   </div>
 
                   {/* Report 2 — money fields use FormattedNumberInput so 20000
@@ -567,7 +663,57 @@ export default function QuotationLineItemsEditor({
                         }`}
                       />
                     </label>
-                    <p className="text-[11px] text-gray-400 mt-1">คัดลอกจากใบเสนอราคา แก้ได้</p>
+                    <p className="text-[11px] text-gray-400 mt-1">
+                      คัดลอกจากใบเสนอราคาตรงตัว (ก่อนหักส่วนลด) แก้ได้
+                    </p>
+                  </fieldset>
+
+                  {/* ── ส่วนลด (฿) ────────────────────────────────────────────
+                      The discount the customer really got, in baht, on the row
+                      it belongs to. Pre-filled from the quotation (its own
+                      ส่วนลดรายรายการ plus this line's frozen share of
+                      ส่วนลดท้ายใบ) and editable to anything — including 0.
+                      Never a rate: it does not move when the qty or the price
+                      does, which is the one property the admin has to be able
+                      to hold in his head. */}
+                  <fieldset className="min-w-0" disabled={disabled}>
+                    <label className="block">
+                      <span className={labelCls}>ส่วนลด (฿)</span>
+                      <FormattedNumberInput
+                        value={Number.isFinite(line.discountAmount) ? line.discountAmount : 0}
+                        onChange={(value) => handleMoneyChange(index, "discountAmount", value)}
+                        placeholder="0"
+                        className={`${inputBase} text-right font-medium ${
+                          typedDiscount < 0
+                            ? inputDanger
+                            : discountCapped
+                              ? inputWarn
+                              : inputNeutral
+                        }`}
+                      />
+                    </label>
+                    {/* Where the number came from, spelled out — the admin is
+                        approving a figure that differs from the quotation's
+                        unit price, so he has to be able to see why. */}
+                    {typedDiscount < 0 ? (
+                      <p className="text-[11px] text-red-600 mt-1 font-semibold">
+                        ส่วนลดต้องไม่ติดลบ
+                      </p>
+                    ) : discountCapped ? (
+                      <p className="text-[11px] text-amber-700 mt-1">
+                        ส่วนลดมากกว่ายอดของบรรทัดนี้ — หักได้สูงสุด ฿{fmtBaht(money.amount)}{" "}
+                        ยอดรวมบรรทัดจึงเป็น ฿0
+                      </p>
+                    ) : line.quotedLineDiscount > 0 || line.quotedDocDiscountShare > 0 ? (
+                      <p className="text-[11px] text-gray-500 mt-1">
+                        จากใบเสนอราคา: ส่วนลดรายรายการ ฿{fmtBaht(line.quotedLineDiscount)} +
+                        ส่วนลดท้ายใบเฉลี่ย ฿{fmtBaht(line.quotedDocDiscountShare)}
+                      </p>
+                    ) : (
+                      <p className="text-[11px] text-gray-400 mt-1">
+                        ใบเสนอราคาไม่ได้ลดรายการนี้ — ใส่เองได้ถ้าตกลงลดหน้างาน
+                      </p>
+                    )}
                   </fieldset>
 
                   <fieldset className="min-w-0" disabled={disabled}>
@@ -597,18 +743,37 @@ export default function QuotationLineItemsEditor({
                     )}
                   </fieldset>
 
-                  <div>
-                    <span className={labelCls}>ยอดรวมบรรทัด (฿)</span>
-                    <div className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm text-right font-bold text-gray-800 bg-gray-50">
-                      {fmtBaht(lineTotal)}
+                  {/* THE RESULT LINE — and it shows its working, because this
+                      is the number that becomes `sales_record_items.totalAmount`
+                      and it no longer equals จำนวน × ราคาต่อหน่วย. Reading the
+                      whole equation on one line is what stops «3 × ฿1,000 =
+                      ฿2,000» from looking like a broken screen. */}
+                  <div className="sm:col-span-2">
+                    <span className={labelCls}>ยอดรวมบรรทัด (฿) — ราคาที่บันทึกจริง</span>
+                    <div className="w-full px-3 py-2 border border-gray-200 rounded-lg bg-gray-50 flex flex-wrap items-baseline justify-end gap-x-2 gap-y-1">
+                      <span className="text-[11px] text-gray-500 tabular-nums">
+                        {fmtInt(money.qty)} × ฿{fmtBaht(line.unitPrice)}
+                        {money.discountAmount > 0
+                          ? ` − ฿${fmtBaht(money.discountAmount)}`
+                          : ""}{" "}
+                        =
+                      </span>
+                      <span className="text-sm font-bold text-gray-800">
+                        ฿{fmtBaht(money.netAmount)}
+                      </span>
                     </div>
                   </div>
                 </div>
 
-                {/* Task 12.3 — the quote-level discount is never prorated. */}
+                {/* REPLACES the old "ระบบไม่เฉลี่ยส่วนลดระดับใบให้อัตโนมัติ"
+                    note (task 12.3), which is no longer true and would now be
+                    worse than no note at all: the sale records the discounted
+                    price, and the document discount IS spread onto the lines. */}
                 <p className="text-[11px] text-gray-500 -mt-1">
-                  ราคาต่อหน่วยถูกคัดลอกจากใบเสนอราคาตรงตัว (ก่อนหักส่วนลดและก่อน VAT) —
-                  ระบบไม่เฉลี่ยส่วนลดระดับใบให้อัตโนมัติ ถ้าดีลจริงลดราคา กรุณาแก้ตัวเลขเอง
+                  ราคาต่อหน่วยคัดลอกจากใบเสนอราคาตรงตัว (ก่อนหักส่วนลด ก่อน VAT) ส่วนลดหักที่ช่อง
+                  «ส่วนลด (฿)» และระบบบันทึกยอดขายเป็น «ราคาหลังหักส่วนลด» —
+                  ยอดรวมบรรทัด = จำนวน × ราคาต่อหน่วย − ส่วนลด ·
+                  ส่วนลดเป็นยอดบาท ระบบไม่ปรับให้เอง แก้จำนวนหรือราคาแล้วส่วนลดยังเท่าเดิม
                 </p>
 
                 {/* Task 12.4 / 12.5 — catalog link, and the category that follows it */}

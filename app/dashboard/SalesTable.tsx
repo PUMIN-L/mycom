@@ -177,22 +177,39 @@ function SaleDetailPanel({
                 <th className="pb-2 pr-3">สินค้า</th>
                 <th className="pb-2 pr-3 text-right">จำนวน</th>
                 <th className="pb-2 pr-3 text-right">ราคา/หน่วย</th>
+                {/* ราคา/หน่วย is the GROSS price the quotation quoted, ยอดรวม is
+                    what was actually charged, and since a sale records the price
+                    after the discount the two no longer multiply out. The gap
+                    between them IS the discount, so it is printed rather than
+                    left to look like a broken row. */}
+                <th className="pb-2 pr-3 text-right">ส่วนลด</th>
                 <th className="pb-2 pr-3 text-right">ยอดรวม</th>
                 <th className="pb-2 text-right">ต้นทุนสินค้า</th>
               </tr>
             </thead>
             <tbody>
-              {items.map((it, idx) => (
+              {items.map((it, idx) => {
+                // Recovered, not stored: `qty × unitPrice − totalAmount`, the
+                // same identity the converter documents. Negative (a total ABOVE
+                // the gross, which nothing in this app writes) shows as "—"
+                // rather than as a discount that was never given.
+                const gross = Number(it.qty || 0) * Number(it.unitPrice || 0);
+                const discount = Math.round((gross - Number(it.totalAmount || 0)) * 100) / 100;
+                return (
                 <tr key={it.id || idx} className="border-t border-gray-50">
                   <td className="py-2 pr-3 text-sm text-gray-800">
                     {stripHtml(it.productName) || "ไม่ระบุสินค้า"}
                   </td>
                   <td className="py-2 pr-3 text-sm text-right text-gray-600">{Number(it.qty || 0)}</td>
                   <td className="py-2 pr-3 text-sm text-right text-gray-600">฿{fmtDec(it.unitPrice)}</td>
+                  <td className="py-2 pr-3 text-sm text-right text-gray-500">
+                    {discount > 0 ? `−฿${fmtDec(discount)}` : "—"}
+                  </td>
                   <td className="py-2 pr-3 text-sm text-right font-semibold text-gray-800">฿{fmtDec(it.totalAmount)}</td>
                   <td className="py-2 text-sm text-right text-amber-600">฿{fmtDec(it.costAmount)}</td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>

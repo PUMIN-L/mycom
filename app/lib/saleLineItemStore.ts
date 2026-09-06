@@ -83,11 +83,35 @@ function mapRow(row: RowDataPacket | Record<string, unknown>): SaleLineItem {
 }
 
 /**
+ * Did the caller actually SEND a total for this line — as opposed to leaving it
+ * out for us to compute?
+ *
+ * ฿0 IS A REAL TOTAL. Since the sale records the price actually charged
+ * ("ให้บันทึกยอดขายเป็นราคาหลังหักส่วนลด"), a line given away — a 100% discount,
+ * or a discount as large as the line — is genuinely worth 0 baht. The test this
+ * replaced was `submittedTotal > 0`, which read that 0 as "nothing was sent" and
+ * quietly restored the GROSS `qty × unitPrice`: the free machine came back on
+ * every report at full list price, `sales_records.totalAmount` (which is
+ * re-derived as SUM of these rows) came back with it, and the margin above it
+ * was wrong with nothing on screen to show why.
+ *
+ * So: absent (undefined / null / "" / unparseable) computes; a finite number,
+ * zero included, is taken at its word. Every payload this repo sends from
+ * `buildSalePayload` carries an explicit `totalAmount`, so the fallback now only
+ * ever serves a caller that genuinely omitted the field.
+ */
+export function isTotalAmountProvided(value: unknown): boolean {
+  if (value === undefined || value === null) return false;
+  if (typeof value === "string" && value.trim() === "") return false;
+  return Number.isFinite(Number(value));
+}
+
+/**
  * Normalize one submitted line. `sortOrder` falls back to the submitted
- * position, and `totalAmount` to qty × unitPrice when the caller did not send
- * an explicit total — keeping the documented invariant
+ * position, and `totalAmount` to qty × unitPrice ONLY when the caller sent no
+ * total at all (see `isTotalAmountProvided`) — keeping the documented invariant
  * `sales_records.totalAmount = SUM(items.totalAmount)` computable from what
- * the form sent.
+ * the form sent, without ever overwriting a submitted ฿0.
  */
 function cleanItem(item: Partial<SaleLineItem>, index: number) {
   const qty = toQty(item.qty);
@@ -102,7 +126,9 @@ function cleanItem(item: Partial<SaleLineItem>, index: number) {
     categoryId: toCategoryId(item.categoryId),
     qty,
     unitPrice,
-    totalAmount: submittedTotal > 0 ? submittedTotal : toMoney(qty * unitPrice, MAX_AMOUNT),
+    totalAmount: isTotalAmountProvided(item.totalAmount)
+      ? submittedTotal
+      : toMoney(qty * unitPrice, MAX_AMOUNT),
     costAmount: toMoney(item.costAmount, MAX_AMOUNT),
     quotationItemId: quotationItemId || null,
     sortOrder: toSortOrder(item.sortOrder, index),

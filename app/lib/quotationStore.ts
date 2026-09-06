@@ -240,7 +240,18 @@ export interface QuotationSummary {
 }
 
 interface QuoteDataLite {
-  items?: Array<{ qty?: number; unitPrice?: number }>;
+  /** `discount`/`discountType` are the PER-LINE ones and are declared here for
+   * the same reason the document-level pair below is: `summarize` hands this
+   * object straight to `computeQuoteTotals`, which reads them. They were absent
+   * from this type while the runtime blob already carried them — harmless until
+   * someone map/rebuilds `items` through it and silently drops every
+   * ส่วนลดรายรายการ out of the saved-list total. */
+  items?: Array<{
+    qty?: number;
+    unitPrice?: number;
+    discount?: number;
+    discountType?: "amount" | "percent";
+  }>;
   discount?: number;
   discountType?: "amount" | "percent";
   vatEnabled?: boolean;

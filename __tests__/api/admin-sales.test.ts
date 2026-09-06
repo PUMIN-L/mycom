@@ -166,6 +166,27 @@ describe('Admin Sales API', () => {
       expect(error).toContain('ต้นทุนสินค้า');
     });
 
+    it('rejects a negative totalAmount', async () => {
+      // Since the sale records the price AFTER the discount, the store stores a
+      // submitted total verbatim — ฿0 included. A negative one can therefore no
+      // longer be quietly turned back into qty × unitPrice, so it has to be
+      // refused here or it lands in the revenue reports looking like real money.
+      const error = await expectRejected({
+        saleDate: '2026-08-22',
+        items: [{ productName: 'Scale A', qty: 1, unitPrice: 100, totalAmount: -100 }],
+      });
+      expect(error).toContain('ยอดรวมรายการ');
+    });
+
+    it('ACCEPTS totalAmount 0 — a machine given away is a real, recordable sale', async () => {
+      const res = await postSale({
+        saleDate: '2026-08-22',
+        items: [{ productName: 'Scale A', qty: 1, unitPrice: 5000, totalAmount: 0, costAmount: 3000 }],
+      });
+      expect(res.status).toBe(201);
+      expect(vi.mocked(createSaleWithLineItems).mock.calls[0][0].items[0].totalAmount).toBe(0);
+    });
+
     it('accepts an omitted unitPrice/costAmount (the store defaults them to 0)', async () => {
       const res = await postSale({
         saleDate: '2026-08-22',

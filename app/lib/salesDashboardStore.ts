@@ -6,7 +6,7 @@ import { bangkokDateString, bangkokParts } from "./dateFormat";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 import type { SalesRecord, CostItem, CustomerEquipment } from "./types";
-import { replaceLineItemsForSale } from "./saleLineItemStore";
+import { replaceLineItemsForSale, isTotalAmountProvided } from "./saleLineItemStore";
 import type { SaleLineItem } from "./saleLineItemStore";
 import { syncEquipmentRowsForSalesRecord } from "./crmStore";
 import type { EquipmentRowInput } from "./crmStore";
@@ -135,6 +135,13 @@ function cleanInput(data: SalesRecordInput) {
     qty: Math.max(1, Math.min(1000000, Math.round(Number(data.qty) || 0))),
     unitPrice: Math.max(0, Math.min(999999999.99, Number(data.unitPrice) || 0)),
     totalAmount: Math.max(0, Math.min(9999999999.99, Number(data.totalAmount) || 0)),
+    /**
+     * Whether that number was SENT or defaulted to 0 by the line above — the
+     * one bit `Number(x) || 0` throws away, and the one the "auto-compute the
+     * total" fallbacks need. A fully discounted sale is worth ฿0, so `> 0` can
+     * no longer mean "the caller said nothing". See `isTotalAmountProvided`.
+     */
+    totalAmountProvided: isTotalAmountProvided(data.totalAmount),
     costAmount: Math.max(0, Math.min(9999999999.99, Number(data.costAmount) || 0)),
     saleType: data.saleType === "service" ? "service" : "equipment",
     saleDate: (() => {
@@ -190,8 +197,9 @@ async function insertSalesRecordRow(
   v: ReturnType<typeof cleanInput>,
   now: string
 ): Promise<void> {
-  // Auto-compute totalAmount if not provided
-  const totalAmount = v.totalAmount > 0 ? v.totalAmount : v.qty * v.unitPrice;
+  // Auto-compute totalAmount only when the caller sent none — a SUBMITTED ฿0 is
+  // a real total now that a sale records the price after the discount.
+  const totalAmount = v.totalAmountProvided ? v.totalAmount : v.qty * v.unitPrice;
   await exec(
     `INSERT INTO sales_records
        (id, salespersonId, customerId, companyId, productId, productName,
@@ -294,7 +302,10 @@ export async function updateSalesRecord(
   const existing = await getSalesRecord(id);
   if (!existing) return null;
   const v = cleanInput({ ...existing, ...data });
-  const totalAmount = v.totalAmount > 0 ? v.totalAmount : v.qty * v.unitPrice;
+  // The merge means "provided" is true whenever the STORED sale has a total, so
+  // a plain re-save of a discounted sale keeps its ฿0/net figure instead of
+  // being healed back up to qty × unitPrice.
+  const totalAmount = v.totalAmountProvided ? v.totalAmount : v.qty * v.unitPrice;
   await withTransaction(async (conn) => {
     // Same lock as every other write that touches this sale's totals, so a
     // concurrent recalc cannot interleave between the row and its line item.
@@ -467,7 +478,11 @@ function cleanLineItem(item: Partial<SaleLineItem>, index: number): LineSummary 
         : null,
     qty,
     unitPrice,
-    totalAmount: provided > 0 ? round2(provided) : round2(qty * unitPrice),
+    // A submitted ฿0 is kept as ฿0 — see `isTotalAmountProvided`. This is the
+    // line that decides what the product / category reports count as revenue.
+    totalAmount: isTotalAmountProvided(item.totalAmount)
+      ? round2(provided)
+      : round2(qty * unitPrice),
     costAmount: Math.max(0, Math.min(9999999999.99, Number(item.costAmount) || 0)),
     sortOrder,
   };
@@ -1419,8 +1434,9 @@ async function writeProductCost(
       if (target === 0) return;
       throw new ProductCostNotAttributableError();
     }
-    const totalAmount =
-      sale.totalAmount > 0 ? sale.totalAmount : sale.qty * sale.unitPrice;
+    const totalAmount = sale.totalAmountProvided
+      ? sale.totalAmount
+      : sale.qty * sale.unitPrice;
     await syncSingleLineItemToScalars(conn, salesRecordId, sale, totalAmount);
     lines = await readLines(conn, salesRecordId);
     if (lines.length !== 1) throw new ProductCostNotAttributableError();

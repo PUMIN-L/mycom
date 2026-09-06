@@ -217,6 +217,39 @@ describe('salesDashboardStore', () => {
       expect(sqls.some((s) => s.includes('DELETE'))).toBe(false);
     });
 
+    it('a re-save of a fully discounted sale keeps ฿0 — it is not healed back to qty × unitPrice', async () => {
+      // The sale a 100% discount produces: the unit price is still the list
+      // price the customer signed, and the money actually charged is ฿0. The
+      // old `totalAmount > 0 ? totalAmount : qty * unitPrice` read that 0 as
+      // "the caller sent nothing" and restored ฿5,000 — silently, on every
+      // re-save, to the row AND to its line item.
+      const existing = {
+        id: 'rec-free', salespersonId: 'sp-1', customerId: 'c-1', companyId: '',
+        productId: 'p-1', productName: 'Scale A', categoryId: 1, qty: 1,
+        unitPrice: 5000, totalAmount: 0, costAmount: 0, saleDate: '2026-09-06',
+        quotationRef: '', equipmentId: null, note: '', createdAt: '2026-09-06T00:00:00.000Z',
+      };
+      vi.mocked(query)
+        .mockResolvedValueOnce([[existing]] as any) // existing record
+        .mockResolvedValueOnce([[]] as any) // equipments
+        .mockResolvedValueOnce([[{ ...existing, note: 'แถมเครื่อง' }]] as any) // reload
+        .mockResolvedValueOnce([[]] as any);
+      conn.query.mockImplementation(async (sql: string) =>
+        sql.includes('FROM sales_record_items') ? [[{ id: 'sri-free' }]] : [[]]
+      );
+
+      await updateSalesRecord('rec-free', { note: 'แถมเครื่อง' });
+
+      const rowUpdate = conn.query.mock.calls.find((c) =>
+        String(c[0]).includes('UPDATE sales_records SET')
+      );
+      expect(rowUpdate![1]![8]).toBe(0); // totalAmount, not 5000
+      const lineUpdate = conn.query.mock.calls.find((c) =>
+        String(c[0]).includes('UPDATE sales_record_items')
+      );
+      expect(lineUpdate![1]).toEqual(['p-1', 'Scale A', 1, 1, 5000, 0, 'sri-free']);
+    });
+
     it('updateSalesRecord returns null if record does not exist', async () => {
       vi.mocked(query).mockResolvedValueOnce([[]] as any);
       const res = await updateSalesRecord('non-existent', { qty: 2 });
@@ -1826,6 +1859,110 @@ describe('salesDashboardStore — schema v33 line items', () => {
       // the line, not to the row that was deleted.
       expect(db.tables.sales_record_items[0].costAmount).toBe(20000);
       expect(db.tables.sales_records[0].costAmount).toBe(23000);
+    });
+  });
+
+  describe('9.17 the sale records the price AFTER the discount — ฿0 is a real total', () => {
+    /**
+     * The owner's rule ("ให้บันทึกยอดขายเป็นราคาหลังหักส่วนลด") makes a line
+     * worth ฿0 an ordinary thing: a 100% ส่วนลด, or a discount as large as the
+     * line, records the free machine at zero. The store used to treat a
+     * submitted 0 as "no total was sent" and put the GROSS qty × unitPrice back
+     * — so the giveaway reappeared in สินค้าขายดี / รายได้ตามหมวดหมู่ at full
+     * list price and the margin above it was wrong with nothing to show why.
+     */
+    const SALE = { salespersonId: 'sp-1', customerId: 'c-1', companyId: 'co-1', saleDate: '2026-09-06' };
+
+    it('stores a 100%-discounted line at ฿0 and leaves the paid line alone', async () => {
+      const db = createFakeDb();
+      installFakeTransaction(db);
+      installFakeQuery(db);
+
+      const sale = await createSaleWithLineItems({
+        sale: SALE,
+        items: [
+          // ฿120,000 with ฿12,000 off.
+          { productId: 'p-1', productName: 'เครื่องชั่ง XA-220', categoryId: 1, qty: 1, unitPrice: 120000, totalAmount: 108000, costAmount: 80000 },
+          // Thrown in free — the unit price stays on the row, the revenue is 0.
+          { productId: 'p-2', productName: 'เครื่องชั่ง PS-1000', categoryId: 1, qty: 1, unitPrice: 45000, totalAmount: 0, costAmount: 30000 },
+        ],
+        equipments: [],
+      });
+
+      expect(db.tables.sales_record_items.map((r) => r.totalAmount)).toEqual([108000, 0]);
+      // The gross price survives where it belongs, so the discount stays
+      // recoverable as qty × unitPrice − totalAmount.
+      expect(db.tables.sales_record_items.map((r) => r.unitPrice)).toEqual([120000, 45000]);
+      // Σ items.totalAmount — the invariant every report reads.
+      expect(sale.totalAmount).toBe(108000);
+      expect(db.tables.sales_records[0].totalAmount).toBe(108000);
+      // COST DID NOT MOVE: a discount reduces revenue only.
+      expect(db.tables.sales_record_items.map((r) => r.costAmount)).toEqual([80000, 30000]);
+      expect(sale.costAmount).toBe(110000);
+    });
+
+    it('a whole bill given away records ฿0 revenue and its real cost', async () => {
+      const db = createFakeDb();
+      installFakeTransaction(db);
+      installFakeQuery(db);
+
+      const sale = await createSaleWithLineItems({
+        sale: SALE,
+        items: [
+          { productId: 'p-1', productName: 'เครื่องชั่ง XA-220', categoryId: 1, qty: 1, unitPrice: 120000, totalAmount: 0, costAmount: 80000 },
+          { productId: 'p-2', productName: 'เครื่องชั่ง PS-1000', categoryId: 1, qty: 2, unitPrice: 45000, totalAmount: 0, costAmount: 30000 },
+        ],
+        equipments: [],
+      });
+
+      expect(db.tables.sales_record_items.map((r) => r.totalAmount)).toEqual([0, 0]);
+      expect(sale.totalAmount).toBe(0);
+      expect(db.tables.sales_records[0].totalAmount).toBe(0);
+      expect(sale.costAmount).toBe(110000); // the machines still cost what they cost
+    });
+
+    it('still computes qty × unitPrice for a caller that sends NO total at all', async () => {
+      // The legacy flat payload, and any API client that omits the field: the
+      // fallback is intact, it just no longer fires on an explicit 0.
+      const db = createFakeDb();
+      installFakeTransaction(db);
+      installFakeQuery(db);
+
+      const sale = await createSaleWithLineItems({
+        sale: SALE,
+        items: [
+          { productId: 'p-1', productName: 'เครื่องชั่ง XA-220', categoryId: 1, qty: 2, unitPrice: 500, costAmount: 100 },
+          { productId: 'p-2', productName: 'เครื่องชั่ง PS-1000', categoryId: 1, qty: 3, unitPrice: 1000, totalAmount: undefined, costAmount: 100 },
+        ],
+        equipments: [],
+      });
+
+      expect(db.tables.sales_record_items.map((r) => r.totalAmount)).toEqual([1000, 3000]);
+      expect(sale.totalAmount).toBe(4000);
+    });
+
+    it('a discounted bill stores exactly what the quotation charges, to the satang', async () => {
+      // The worked example: 2 × ฿3,000 with ฿500 off, 3 × ฿1,000 with 10% off,
+      // and ฿1,000 ส่วนลดท้ายใบ prorated 670.73 / 329.27.
+      //   line 1: 6,000 − (500 + 670.73) = 4,829.27
+      //   line 2: 3,000 − (300 + 329.27) = 2,370.73
+      //   Σ = 7,200.00 = the quotation's pre-VAT total after both discounts.
+      const db = createFakeDb();
+      installFakeTransaction(db);
+      installFakeQuery(db);
+
+      const sale = await createSaleWithLineItems({
+        sale: SALE,
+        items: [
+          { productId: 'p-1', productName: 'A', categoryId: 1, qty: 2, unitPrice: 3000, totalAmount: 4829.27, costAmount: 1000 },
+          { productId: 'p-2', productName: 'B', categoryId: 1, qty: 3, unitPrice: 1000, totalAmount: 2370.73, costAmount: 900 },
+        ],
+        equipments: [],
+      });
+
+      expect(db.tables.sales_record_items.map((r) => r.totalAmount)).toEqual([4829.27, 2370.73]);
+      expect(sale.totalAmount).toBe(7200);
+      expect(sale.costAmount).toBe(1900);
     });
   });
 });

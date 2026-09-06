@@ -66,8 +66,15 @@ function validateItems(items: unknown): string | null {
   if (!Array.isArray(items) || items.length === 0) {
     return "กรุณาระบุรายการสินค้าอย่างน้อย 1 รายการ";
   }
+  // `totalAmount` is checked here, not clamped in the store: since the sale
+  // records the price AFTER the discount, an explicit 0 is a legal total (a
+  // free machine) and is stored as sent — which means a negative or unparseable
+  // one can no longer be quietly turned back into qty × unitPrice. It has to be
+  // refused with the line named, or a nonsense figure lands in the revenue
+  // reports looking exactly like a real one.
   const money: Array<[keyof SaleLineItem, string]> = [
     ["unitPrice", "ราคาต่อหน่วย"],
+    ["totalAmount", "ยอดรวมรายการ"],
     ["costAmount", "ต้นทุนสินค้า"],
   ];
   for (let i = 0; i < items.length; i++) {

@@ -254,6 +254,14 @@ export default function DashboardPage() {
       items: selection.items,
       sold: selection.sold,
       products,
+      // ส่วนลดท้ายใบ, handed in WHOLE so `buildLineDrafts` can weight it against
+      // every line of the quotation and freeze one baht share onto each. Weigh
+      // it against the ticked lines instead and a partial sale would take the
+      // entire bill discount, then take it again on the next partial sale.
+      // A quotation without these keys prorates to zeros and converts exactly
+      // as it always has.
+      discount: selection.data?.discount,
+      discountType: selection.data?.discountType,
     });
     setLines(drafts);
     setLinesDirty(false);

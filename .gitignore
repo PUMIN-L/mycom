@@ -44,3 +44,9 @@ next-env.d.ts
 /test-*.js
 /scratch/
 /dummy.pdf
+
+# patch/merge debris. A committed *.orig is a stale duplicate of a file that has
+# since moved on, so a grep of the test suite finds matches in a file vitest
+# never runs — the same class of false clean that a binary file gives you.
+*.orig
+*.rej

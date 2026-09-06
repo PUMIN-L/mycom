@@ -13,6 +13,7 @@ import {
   buildLineDrafts,
   buildSalePayload,
   collectSerials,
+  computeSaleLineTotal,
   copyWarrantyToAllMachines,
   describeNameMatch,
   findDuplicateSerialsInForm,
@@ -25,6 +26,8 @@ import {
   normalizeName,
   normalizeSerial,
   PRODUCT_COST_TYPE,
+  prorateDocumentDiscount,
+  quotedDiscountTotal,
   resizeMachines,
   resolveAutoFill,
   resolveProductIdForApi,
@@ -39,6 +42,7 @@ import {
   selectedLines,
   setLineQty,
   summarizeBill,
+  summarizeBillDiscounts,
   summarizeBillLevelCosts,
   summarizeSoldLines,
   validateLineDrafts,
@@ -929,6 +933,491 @@ describe('selectedLines', () => {
     lines[0] = { ...lines[0], selected: false };
     expect(selectedLines(lines).map((l) => l.quotationItemId)).toEqual(['qi2', 'qi3']);
     expect(selectedLines(null)).toEqual([]);
+  });
+});
+
+// --- discounts: the sale records the price actually charged ------------------
+//
+// Owner, today: "ให้บันทึกยอดขายเป็นราคาหลังหักส่วนลด". A quotation carries a
+// per-line discount (฿ or %) AND a document-level one; both have to reach
+// `sales_record_items.totalAmount` or the dashboard reports more revenue than
+// was ever invoiced.
+//
+// The convention every assertion below is pinned to:
+//   unitPrice   stays GROSS — verbatim from the quotation, the number the
+//               customer signed.
+//   totalAmount is NET — qty × unitPrice − ส่วนลด.
+// so `qty × unitPrice !== totalAmount` on a discounted line, deliberately, and
+// the discount stays recoverable as the difference with no schema change.
+
+/** ส่วนลดรายรายการ in all three flavours: baht, percent, and none at all. */
+const DISCOUNT_ITEMS: QuotationLine[] = [
+  // 3 × 1,000 − ฿1,000 = 2,000
+  { id: 'd1', productId: 'p1', name: 'เครื่อง A', qty: 3, unit: 'เครื่อง', unitPrice: 1000, discount: 1000 },
+  // 2 × 5,000 − 10% = 9,000
+  {
+    id: 'd2',
+    productId: 'p3',
+    name: 'เครื่อง B',
+    qty: 2,
+    unit: 'เครื่อง',
+    unitPrice: 5000,
+    discount: 10,
+    discountType: 'percent',
+  },
+  // 1 × 2,000, untouched — the old-quote shape, mixed in on purpose
+  { id: 'd3', productId: '', name: 'เครื่อง C', qty: 1, unit: 'เครื่อง', unitPrice: 2000 },
+];
+// afterLineDiscounts = 2,000 + 9,000 + 2,000 = 13,000
+
+/** Three identical ฿1,000 lines — the case from the design whose document
+ *  discount does NOT divide evenly. */
+const EVEN_ITEMS: QuotationLine[] = [
+  { id: 'e1', name: 'A', qty: 1, unitPrice: 1000 },
+  { id: 'e2', name: 'B', qty: 1, unitPrice: 1000 },
+  { id: 'e3', name: 'C', qty: 1, unitPrice: 1000 },
+];
+
+function discountDrafts(
+  items: QuotationLine[] = DISCOUNT_ITEMS,
+  discount?: unknown,
+  discountType?: unknown
+): SaleLineDraft[] {
+  return buildLineDrafts({ items, sold: [], products: PRODUCTS, discount, discountType });
+}
+
+describe('prorateDocumentDiscount — ส่วนลดท้ายใบ, spread by value', () => {
+  it('is all zeros for a quotation that carries no document discount', () => {
+    expect(prorateDocumentDiscount({ items: DISCOUNT_ITEMS })).toEqual([0, 0, 0]);
+    expect(prorateDocumentDiscount({ items: DISCOUNT_ITEMS, discount: 0 })).toEqual([0, 0, 0]);
+    // A malformed blob answers with zeros rather than throwing.
+    expect(prorateDocumentDiscount({ items: DISCOUNT_ITEMS, discount: NaN })).toEqual([0, 0, 0]);
+    expect(prorateDocumentDiscount({})).toEqual([]);
+    expect(prorateDocumentDiscount({ items: [] })).toEqual([]);
+  });
+
+  it('weights each share by the line value AFTER its own per-line discount', () => {
+    // base 13,000; ฿1,300 is 10% of it, so each line takes 10% of its own net.
+    expect(prorateDocumentDiscount({ items: DISCOUNT_ITEMS, discount: 1300 })).toEqual([
+      200, 900, 200,
+    ]);
+  });
+
+  it('treats a percent document discount the same way', () => {
+    expect(
+      prorateDocumentDiscount({ items: DISCOUNT_ITEMS, discount: 10, discountType: 'percent' })
+    ).toEqual([200, 900, 200]);
+  });
+
+  it('sums to the discount EXACTLY when it does not divide evenly', () => {
+    // The worked case from the design: ฿100 over three ฿1,000 lines is
+    // 33.333… each. Rounding all three down loses a satang, so the residual
+    // goes to the largest line — here a three-way tie, broken by lowest index.
+    const shares = prorateDocumentDiscount({ items: EVEN_ITEMS, discount: 100 });
+    expect(shares).toEqual([33.34, 33.33, 33.33]);
+    expect(shares.reduce((a, b) => a + b, 0)).toBeCloseTo(100, 10);
+  });
+
+  it('gives a residual back to the largest line when rounding OVERSHOOTS', () => {
+    // 400/100/100 of 600, discount ฿10 → 6.67 + 1.67 + 1.67 = 10.01: a satang
+    // too much. It comes off the largest line, not off an arbitrary one.
+    const shares = prorateDocumentDiscount({
+      items: [
+        { qty: 1, unitPrice: 400 },
+        { qty: 1, unitPrice: 100 },
+        { qty: 1, unitPrice: 100 },
+      ],
+      discount: 10,
+    });
+    expect(shares).toEqual([6.66, 1.67, 1.67]);
+    expect(shares.reduce((a, b) => a + b, 0)).toBeCloseTo(10, 10);
+  });
+
+  it('puts the residual on the largest line, not the first one', () => {
+    // nets 1,000 / 1,000 / 1,000.01 — line #3 is the largest by a satang.
+    const shares = prorateDocumentDiscount({
+      items: [
+        { qty: 1, unitPrice: 1000 },
+        { qty: 1, unitPrice: 1000 },
+        { qty: 1, unitPrice: 1000.01 },
+      ],
+      discount: 100,
+    });
+    expect(shares.reduce((a, b) => a + b, 0)).toBeCloseTo(100, 10);
+    expect(shares[2]).toBeGreaterThan(shares[0]);
+  });
+
+  it('never gives a line more than that line is worth', () => {
+    // A 100% document discount: every share is exactly its own line's net.
+    const shares = prorateDocumentDiscount({
+      items: DISCOUNT_ITEMS,
+      discount: 100,
+      discountType: 'percent',
+    });
+    expect(shares).toEqual([2000, 9000, 2000]);
+    expect(shares.reduce((a, b) => a + b, 0)).toBe(13000);
+  });
+
+  it('skips a line the per-line discount already zeroed', () => {
+    const shares = prorateDocumentDiscount({
+      items: [
+        { qty: 1, unitPrice: 1000, discount: 100, discountType: 'percent' }, // free
+        { qty: 1, unitPrice: 1000 },
+      ],
+      discount: 100,
+    });
+    expect(shares).toEqual([0, 100]);
+  });
+
+  it('caps a ฿ document discount at the bill, exactly as computeQuoteTotals does', () => {
+    const shares = prorateDocumentDiscount({ items: EVEN_ITEMS, discount: 999999 });
+    expect(shares).toEqual([1000, 1000, 1000]); // capped at 3,000, not 999,999
+  });
+
+  it('is a subset sum: any selection of shares is ≤ the whole discount', () => {
+    const shares = prorateDocumentDiscount({ items: DISCOUNT_ITEMS, discount: 1300 });
+    for (const pick of [[0], [1], [2], [0, 2], [1, 2], [0, 1]]) {
+      expect(pick.reduce((sum, i) => sum + shares[i], 0)).toBeLessThan(1300);
+    }
+    expect(shares.reduce((a, b) => a + b, 0)).toBe(1300);
+  });
+});
+
+describe('buildLineDrafts — resolving the quotation discount ONCE', () => {
+  it('leaves a quotation with NO discount keys completely untouched', () => {
+    // The bit-identical guard, from a quotation object that has no `discount`
+    // and no `discountType` anywhere in it — the shape of every quote saved
+    // before per-line discounts existed.
+    expect(JSON.stringify(QUOTE_ITEMS)).not.toContain('discount');
+    const lines = drafts();
+    expect(lines.map((l) => l.discountAmount)).toEqual([0, 0, 0]);
+    expect(lines.map((l) => l.quotedLineDiscount)).toEqual([0, 0, 0]);
+    expect(lines.map((l) => l.quotedDocDiscountShare)).toEqual([0, 0, 0]);
+    // …and handing the (absent) document-level fields in explicitly changes
+    // nothing at all.
+    expect(buildLineDrafts({ items: QUOTE_ITEMS, sold: [], products: PRODUCTS })).toEqual(
+      buildLineDrafts({
+        items: QUOTE_ITEMS,
+        sold: [],
+        products: PRODUCTS,
+        discount: undefined,
+        discountType: undefined,
+      })
+    );
+  });
+
+  it('resolves ฿ and % per-line discounts into one baht figure each', () => {
+    const lines = discountDrafts();
+    expect(lines.map((l) => l.quotedLineDiscount)).toEqual([1000, 1000, 0]);
+    expect(lines.map((l) => l.quotedDocDiscountShare)).toEqual([0, 0, 0]);
+    expect(lines.map((l) => l.discountAmount)).toEqual([1000, 1000, 0]);
+    // The unit price is NOT touched — it stays the gross number the customer
+    // signed for, so the discount stays auditable as qty × unitPrice − total.
+    expect(lines.map((l) => l.unitPrice)).toEqual([1000, 5000, 2000]);
+  });
+
+  it('adds the prorated ส่วนลดท้ายใบ share on top of the per-line one', () => {
+    const lines = discountDrafts(DISCOUNT_ITEMS, 1300);
+    expect(lines.map((l) => l.quotedLineDiscount)).toEqual([1000, 1000, 0]);
+    expect(lines.map((l) => l.quotedDocDiscountShare)).toEqual([200, 900, 200]);
+    expect(lines.map((l) => l.discountAmount)).toEqual([1200, 1900, 200]);
+    // …and the two halves are kept separately so the editor can name them.
+    expect(lines.map(quotedDiscountTotal)).toEqual([1200, 1900, 200]);
+  });
+
+  it('resolves a % line discount from the QUOTED qty, then freezes it in baht', () => {
+    const [, b] = discountDrafts();
+    expect(b.quotedQty).toBe(2);
+    expect(b.discountAmount).toBe(1000); // 10% of 2 × 5,000
+    // Cutting the qty does NOT rescale it: ฿1,000 off is ฿1,000 off.
+    expect(setLineQty(b, 1).discountAmount).toBe(1000);
+    expect(setLineQty(b, 7).discountAmount).toBe(1000);
+  });
+
+  it('caps a per-line discount at its own line, exactly as the quotation does', () => {
+    const [line] = discountDrafts([{ id: 'x', name: 'X', qty: 1, unitPrice: 1000, discount: 5000 }]);
+    expect(line.discountAmount).toBe(1000); // not 5,000
+  });
+
+  it('does not mutate the quotation items while resolving discounts', () => {
+    const items = JSON.parse(JSON.stringify(DISCOUNT_ITEMS));
+    buildLineDrafts({ items, products: PRODUCTS, discount: 1300 });
+    expect(items).toEqual(DISCOUNT_ITEMS);
+  });
+});
+
+describe('computeSaleLineTotal — THE one definition of a sale line', () => {
+  it('is round2(qty × unitPrice) and nothing else without a discount', () => {
+    for (const [qty, unitPrice] of [
+      [3, 120000],
+      [1, 4500],
+      [2, 50000],
+      [7, 1234.56],
+    ] as const) {
+      const money = computeSaleLineTotal({ qty, unitPrice, discountAmount: 0 });
+      expect(money.netAmount).toBe(Math.round(qty * unitPrice * 100) / 100);
+      expect(money.netAmount).toBe(money.amount);
+      expect(money.discountAmount).toBe(0);
+    }
+  });
+
+  it('subtracts the discount from the line, leaving unitPrice alone', () => {
+    expect(computeSaleLineTotal({ qty: 3, unitPrice: 1000, discountAmount: 1000 })).toEqual({
+      qty: 3,
+      amount: 3000,
+      discountAmount: 1000,
+      netAmount: 2000,
+    });
+  });
+
+  it('floors the line at ฿0 instead of ever going negative', () => {
+    expect(computeSaleLineTotal({ qty: 1, unitPrice: 1000, discountAmount: 99999 })).toEqual({
+      qty: 1,
+      amount: 1000,
+      discountAmount: 1000, // capped at the line, the excess dropped
+      netAmount: 0,
+    });
+  });
+
+  it('reads a missing/garbage discount as no discount', () => {
+    const gross = { qty: 2, unitPrice: 1000 };
+    expect(computeSaleLineTotal({ ...gross, discountAmount: undefined as never }).netAmount).toBe(2000);
+    expect(computeSaleLineTotal({ ...gross, discountAmount: NaN }).netAmount).toBe(2000);
+    expect(computeSaleLineTotal({ ...gross, discountAmount: -50 }).netAmount).toBe(2000);
+    expect(computeSaleLineTotal(null).netAmount).toBe(0);
+  });
+
+  it('reports the qty it actually multiplied by, so the editor can show its working', () => {
+    // The editor prints «qty × price − discount = total» from this object; if it
+    // printed the raw half-typed field instead it would print a false equation.
+    expect(computeSaleLineTotal({ qty: 0, unitPrice: 1000, discountAmount: 0 }).qty).toBe(1);
+    expect(computeSaleLineTotal({ qty: 3, unitPrice: 1000, discountAmount: 0 }).qty).toBe(3);
+  });
+});
+
+describe('buildSalePayload — the sale records the price after the discount', () => {
+  it('posts the NET line total and the GROSS unit price', () => {
+    const payload = buildSalePayload(withCosts(discountDrafts(DISCOUNT_ITEMS, 1300), 100));
+    expect(payload.items.map((i) => ({ qty: i.qty, unitPrice: i.unitPrice, totalAmount: i.totalAmount }))).toEqual([
+      { qty: 3, unitPrice: 1000, totalAmount: 1800 }, // 3,000 − 1,000 − 200
+      { qty: 2, unitPrice: 5000, totalAmount: 8100 }, // 10,000 − 1,000 − 900
+      { qty: 1, unitPrice: 2000, totalAmount: 1800 }, // 2,000 − 0 − 200
+    ]);
+    // The bill reconciles with the quotation to the satang:
+    // afterLineDiscounts 13,000 − ส่วนลดท้ายใบ 1,300 = 11,700.
+    expect(payload.totalAmount).toBe(11700);
+    // …and the discount stays recoverable from the stored row alone.
+    for (const item of payload.items) {
+      expect(item.qty * item.unitPrice - item.totalAmount).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  it('agrees exactly with the summary the form shows above the save button', () => {
+    const lines = withCosts(discountDrafts(DISCOUNT_ITEMS, 1300), 100);
+    expect(summarizeBill(lines).totalAmount).toBe(buildSalePayload(lines).totalAmount);
+    expect(summarizeBill(lines).totalAmount).toBe(11700);
+  });
+
+  it('records a 100%-discounted line at ฿0 — a free machine is really free', () => {
+    const lines = withCosts(
+      discountDrafts([
+        { id: 'free', name: 'เครื่องแถม', qty: 1, unitPrice: 5000, discount: 100, discountType: 'percent' },
+        { id: 'paid', name: 'เครื่องขาย', qty: 1, unitPrice: 5000 },
+      ]),
+      100
+    );
+    const payload = buildSalePayload(lines);
+    expect(payload.items[0]).toMatchObject({ qty: 1, unitPrice: 5000, totalAmount: 0 });
+    expect(payload.items[1]).toMatchObject({ totalAmount: 5000 });
+    expect(payload.totalAmount).toBe(5000);
+  });
+
+  it('never posts a negative line total, however big the typed discount', () => {
+    const line = { ...discountDrafts()[0], discountAmount: 999999 };
+    const payload = buildSalePayload(withCosts([line], 100));
+    expect(payload.items[0].totalAmount).toBe(0);
+    expect(payload.totalAmount).toBe(0);
+  });
+
+  it('does NOT rescale the discount when the qty moves off the quoted one', () => {
+    // ฿1,900 off line B (฿1,000 per-line + ฿900 ส่วนลดท้ายใบ). Selling 1 of the
+    // 2 quoted machines keeps that ฿1,900: scaling it to ฿950 would invent a
+    // number the quotation never quoted and the customer never agreed to.
+    const b = setLineQty(discountDrafts(DISCOUNT_ITEMS, 1300)[1], 1);
+    expect(b.discountAmount).toBe(1900);
+    const payload = buildSalePayload(withCosts([b], 100));
+    expect(payload.items[0]).toMatchObject({ qty: 1, unitPrice: 5000, totalAmount: 3100 });
+  });
+
+  it('honours a discount the admin retyped by hand, and only that', () => {
+    const lines = discountDrafts(DISCOUNT_ITEMS, 1300);
+    lines[0] = { ...lines[0], discountAmount: 0 }; // "ไม่ลดแล้ว"
+    const payload = buildSalePayload(withCosts(lines, 100));
+    expect(payload.items[0].totalAmount).toBe(3000); // full 3 × 1,000
+    expect(payload.items[1].totalAmount).toBe(8100); // the others are untouched
+    expect(payload.items[2].totalAmount).toBe(1800);
+  });
+
+  it('splits the uneven ฿100 across three ฿1,000 lines and still reconciles', () => {
+    const payload = buildSalePayload(withCosts(discountDrafts(EVEN_ITEMS, 100), 10));
+    expect(payload.items.map((i) => i.totalAmount)).toEqual([966.66, 966.67, 966.67]);
+    expect(payload.totalAmount).toBe(2900); // 3,000 − 100, to the satang
+  });
+});
+
+describe('the partial sale — a ส่วนลดท้ายใบ is never handed out twice', () => {
+  it('carries only the ticked lines’ own frozen shares', () => {
+    const lines = discountDrafts(DISCOUNT_ITEMS, 1300);
+    // Sell A and C today; B waits.
+    const today = withCosts(
+      lines.map((l, i) => (i === 1 ? { ...l, selected: false } : l)),
+      100
+    );
+    const payload = buildSalePayload(today);
+    expect(payload.items.map((i) => i.totalAmount)).toEqual([1800, 1800]);
+    // ฿200 + ฿200 of the ฿1,300 — NOT the whole ฿1,300 crammed onto two lines.
+    const discounts = summarizeBillDiscounts(today);
+    expect(discounts.quotedDocDiscountTotal).toBe(1300);
+    expect(discounts.selectedDocDiscountTotal).toBe(400);
+    expect(discounts.discountTotal).toBe(1400); // A (1,000 + 200) + C (0 + 200)
+    expect(discounts.grossTotal).toBe(5000); // 3,000 + 2,000
+  });
+
+  it('sums to exactly the document discount across every partial sale', () => {
+    // The quotation is sold in two visits. Each visit re-reads the SAME
+    // quotation, so the shares are re-derived from the whole document both
+    // times — and the two bills together take ฿1,300, never ฿2,600.
+    const gross = 3000 + 10000 + 2000;
+    const firstVisit = buildSalePayload(
+      withCosts(
+        discountDrafts(DISCOUNT_ITEMS, 1300).map((l, i) => (i === 1 ? { ...l, selected: false } : l)),
+        100
+      )
+    );
+    const secondVisit = buildSalePayload(
+      withCosts(
+        discountDrafts(DISCOUNT_ITEMS, 1300).map((l, i) => (i === 1 ? l : { ...l, selected: false })),
+        100
+      )
+    );
+    const invoiced = firstVisit.totalAmount + secondVisit.totalAmount;
+    expect(invoiced).toBe(11700);
+    // ส่วนลดรายรายการ 2,000 + ส่วนลดท้ายใบ 1,300 = 3,300, once and only once.
+    expect(gross - invoiced).toBe(3300);
+  });
+
+  it('does not renormalise when the selection changes', () => {
+    // Ticking B back on adds B's OWN share and nothing else — the shares are
+    // frozen at load time, not recomputed against whatever is ticked now.
+    const lines = discountDrafts(DISCOUNT_ITEMS, 1300);
+    const onlyA = lines.map((l, i) => (i === 0 ? l : { ...l, selected: false }));
+    const aAndB = lines.map((l, i) => (i === 2 ? { ...l, selected: false } : l));
+    expect(buildSalePayload(withCosts(onlyA, 100)).totalAmount).toBe(1800);
+    expect(buildSalePayload(withCosts(aAndB, 100)).totalAmount).toBe(1800 + 8100);
+  });
+});
+
+describe('cost is untouched by any of this', () => {
+  it('keeps costAmount exactly as it was typed, discount or no discount', () => {
+    const discounted = withCosts(discountDrafts(DISCOUNT_ITEMS, 1300), 700);
+    const plain = withCosts(discountDrafts(DISCOUNT_ITEMS), 700);
+    expect(buildSalePayload(discounted).items.map((i) => i.costAmount)).toEqual([700, 700, 700]);
+    expect(buildSalePayload(discounted).costAmount).toBe(2100);
+    // The revenue moved; the cost did not. That is the whole point: the margin
+    // now tells the truth the pre-discount price used to hide. Adding the
+    // ส่วนลดท้ายใบ takes ฿1,300 more off the revenue and NOTHING off the cost.
+    expect(buildSalePayload(plain).costAmount).toBe(buildSalePayload(discounted).costAmount);
+    expect(buildSalePayload(plain).totalAmount).toBe(13000); // per-line only
+    expect(buildSalePayload(discounted).totalAmount).toBe(11700); // + ท้ายใบ
+  });
+
+  it('starts every line at costAmount 0 even when the quotation discounts it', () => {
+    expect(discountDrafts(DISCOUNT_ITEMS, 1300).map((l) => l.costAmount)).toEqual([0, 0, 0]);
+  });
+
+  it('records a real loss instead of hiding it behind a gross price', () => {
+    // ฿5,000 machine, ฿4,800 cost, ฿1,000 discounted away → sold at a loss.
+    const lines = withCosts(
+      discountDrafts([{ id: 'x', name: 'X', qty: 1, unitPrice: 5000, discount: 1000 }]),
+      4800
+    );
+    const summary = summarizeBill(lines);
+    expect(summary.totalAmount).toBe(4000);
+    expect(summary.totalAmount - summary.costAmount).toBe(-800);
+  });
+});
+
+describe('validateLineDrafts — the discount field', () => {
+  it('refuses a negative discount (a surcharge wearing a discount’s name)', () => {
+    const lines = withCosts(discountDrafts(), 100).map((l, i) =>
+      i === 0 ? { ...l, discountAmount: -1 } : l
+    );
+    expect(validateLineDrafts(lines)).toContain('รายการที่ 1 (เครื่อง A): ส่วนลดต้องเป็นตัวเลขที่ไม่ติดลบ');
+  });
+
+  it('refuses a non-finite discount', () => {
+    const lines = withCosts(discountDrafts(), 100).map((l, i) =>
+      i === 0 ? { ...l, discountAmount: NaN } : l
+    );
+    expect(validateLineDrafts(lines).some((e) => e.includes('ส่วนลด'))).toBe(true);
+  });
+
+  it('does NOT block a discount bigger than the line — that is a free machine', () => {
+    const lines = withCosts(discountDrafts(), 100).map((l, i) =>
+      i === 0 ? { ...l, discountAmount: 999999 } : l
+    );
+    expect(validateLineDrafts(lines).some((e) => e.includes('ส่วนลด'))).toBe(false);
+    expect(buildSalePayload(lines).items[0].totalAmount).toBe(0);
+  });
+
+  it('says nothing about the discount on an undiscounted bill', () => {
+    expect(validateLineDrafts(filled(drafts())).some((e) => e.includes('ส่วนลด'))).toBe(false);
+  });
+});
+
+describe('summarizeBillDiscounts', () => {
+  it('is all zeros for a bill with no discount anywhere', () => {
+    expect(summarizeBillDiscounts(drafts())).toEqual({
+      grossTotal: 464500,
+      discountTotal: 0,
+      quotedDocDiscountTotal: 0,
+      selectedDocDiscountTotal: 0,
+    });
+  });
+
+  it('counts the ส่วนลดท้ายใบ of UNTICKED lines too, so the banner can say ฿X vs ฿Y', () => {
+    const lines = discountDrafts(DISCOUNT_ITEMS, 1300).map((l, i) =>
+      i === 0 ? l : { ...l, selected: false }
+    );
+    const d = summarizeBillDiscounts(lines);
+    expect(d.quotedDocDiscountTotal).toBe(1300); // the whole document's
+    expect(d.selectedDocDiscountTotal).toBe(200); // what this bill carries
+    expect(d.discountTotal).toBe(1200);
+    expect(d.grossTotal).toBe(3000);
+  });
+
+  it('reports the discount that is really coming off, not the typed one', () => {
+    const lines = [{ ...discountDrafts()[0], discountAmount: 999999 }];
+    expect(summarizeBillDiscounts(lines).discountTotal).toBe(3000); // capped
+  });
+
+  it('survives an empty/absent line list', () => {
+    expect(summarizeBillDiscounts(null).discountTotal).toBe(0);
+    expect(summarizeBillDiscounts([]).quotedDocDiscountTotal).toBe(0);
+  });
+});
+
+describe('quotedDiscountTotal — the «ในใบเสนอราคา … ลด ฿X» reference', () => {
+  it('adds the per-line discount and the document share', () => {
+    expect(quotedDiscountTotal({ quotedLineDiscount: 1000, quotedDocDiscountShare: 900 })).toBe(1900);
+  });
+
+  it('is 0 for an old quotation, and never negative', () => {
+    expect(quotedDiscountTotal({ quotedLineDiscount: 0, quotedDocDiscountShare: 0 })).toBe(0);
+    expect(quotedDiscountTotal({ quotedLineDiscount: -5, quotedDocDiscountShare: -5 })).toBe(0);
+    expect(
+      quotedDiscountTotal({ quotedLineDiscount: NaN, quotedDocDiscountShare: undefined as never })
+    ).toBe(0);
   });
 });
 

@@ -23,7 +23,36 @@
  * creates. `findMissingSerials` therefore survives as ADVICE — the editor uses
  * it to say which machines will show up in that feed — and must never be turned
  * back into a blocker here.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * MONEY: THE SALE RECORDS THE PRICE ACTUALLY CHARGED (owner, today)
+ * ─────────────────────────────────────────────────────────────────────────────
+ * "ให้บันทึกยอดขายเป็นราคาหลังหักส่วนลด". A quotation now carries TWO discounts —
+ * a per-line one (฿ or %) and the document-level one — and both of them have to
+ * reach `sales_record_items.totalAmount`, or the dashboard reports more revenue
+ * than the customer was ever invoiced.
+ *
+ *   unitPrice   stays GROSS — copied verbatim from the quotation, the number the
+ *               customer signed, and the only place the machine's list price
+ *               survives.
+ *   totalAmount is NET — `qty × unitPrice − ส่วนลด`, what is actually charged.
+ *
+ * So `qty × unitPrice ≠ totalAmount` on a discounted line, deliberately. Every
+ * reader of this money (the dashboard aggregates, the exports, the sale/line
+ * invariant `sales_records.totalAmount = Σ items.totalAmount`) reads the STORED
+ * total and none of them re-multiplies, so they are all correct the moment the
+ * total is net. The discount stays recoverable, with no schema change, as
+ * `qty × unitPrice − totalAmount`.
+ *
+ * The arithmetic itself is NOT re-derived here: `computeLineTotal` /
+ * `computeQuoteTotals` in `app/lib/quotationTotals.ts` are the one definition of
+ * quotation money, and this module only resolves their answer into ONE editable
+ * baht figure per line (`SaleLineDraft.discountAmount`) at draft-build time.
+ * After that the figure NEVER moves on its own — see `buildLineDrafts`.
  */
+
+import { computeLineTotal, computeQuoteTotals } from "./quotationTotals";
+import type { QuoteLineInput, QuoteTotalsInput } from "./quotationTotals";
 
 // ---------------------------------------------------------------------------
 // Shared constants
@@ -274,6 +303,16 @@ export interface QuotationLine {
   qty?: number;
   unit?: string;
   unitPrice?: number;
+  /**
+   * ส่วนลดรายรายการ. OPTIONAL, exactly as `QuoteItem` declares it: a quotation
+   * is one JSON blob, so every quote saved before per-line discounts existed
+   * simply has NO such key. `computeLineTotal` reads a missing/zero/negative
+   * discount as "no discount" and passes the line amount through untouched, so
+   * an old quotation converts to the numbers it has always converted to.
+   */
+  discount?: number;
+  /** How to read `discount`. Anything but "percent" is baht. */
+  discountType?: "amount" | "percent";
 }
 
 /** One entry of `GET /api/quotations/[id]/sold` → `items[]`. */
@@ -389,9 +428,39 @@ export interface SaleLineDraft {
   /** The editable "จำนวนที่ขายจริง". Defaults to `quotedQty`. */
   qty: number;
   unit: string;
-  /** Copied VERBATIM from the quotation — pre-discount, pre-VAT (task 12.3). */
+  /**
+   * Copied VERBATIM from the quotation — GROSS: pre-discount, pre-VAT. It stays
+   * gross on purpose. The discount lives in `discountAmount` and comes off
+   * `totalAmount`, so the unit price of the sale still matches the unit price on
+   * the quotation and the invoice, and the discount stays auditable. Dividing
+   * the net back into a per-unit price is what would break: ฿2,000 over 3 units
+   * is 666.666…, unstorable in `DECIMAL(12,2)`, so 3 × 666.67 = 2,000.01 and the
+   * arithmetic is wrong by a satang forever.
+   */
   unitPrice: number;
-  /** Product cost of the WHOLE line. Defaults to 0, edited by hand (12.6). */
+  /**
+   * ส่วนลดของบรรทัดนี้ (฿) — the price reduction actually granted, and the whole
+   * reason `qty × unitPrice ≠ totalAmount`. Born as the quotation's own answer
+   * (`quotedLineDiscount + quotedDocDiscountShare`) and then EDITABLE, exactly
+   * like ต้นทุนสินค้า on the same row.
+   *
+   * IT NEVER MOVES ON ITS OWN. It is a baht amount, not a rate: changing the qty
+   * or the unit price leaves it exactly where it is (the editor says so, and
+   * warns when the qty drifts off the quoted one). ฿1,000 off a line is ฿1,000
+   * off; rescaling it by 2/3 would invent ฿666.67 — a number the quotation never
+   * quoted and the customer never agreed to.
+   */
+  discountAmount: number;
+  /** REFERENCE ONLY — ส่วนลดรายรายการ as the quotation quoted it, for the
+   * «ในใบเสนอราคา … ลด ฿X» hint. Never re-applied, never recomputed. */
+  quotedLineDiscount: number;
+  /** REFERENCE ONLY — this line's frozen share of ส่วนลดท้ายใบ, weighted
+   * against the WHOLE quotation (see `prorateDocumentDiscount`). */
+  quotedDocDiscountShare: number;
+  /** Product cost of the WHOLE line. Defaults to 0, edited by hand (12.6).
+   * Untouched by any of the discount arithmetic above: revenue falls on a
+   * discounted deal, cost stays at what we paid, and the margin tells the truth
+   * the pre-discount price used to hide. */
   costAmount: number;
   /** Exactly `qty` rows, kept in step by `resizeMachines`. */
   machines: MachineDraft[];
@@ -405,6 +474,18 @@ export interface BuildLineDraftsInput {
    * guessed from a name, and a link is never validated against a list we
    * were not given. */
   products?: readonly CatalogProduct[] | null;
+  /**
+   * ส่วนลดท้ายใบ — `data.discount` / `data.discountType` of the quotation blob,
+   * straight from the picker (`QuotationSelection.data`). Typed loosely because
+   * that blob is JSON: anything unparseable reads as "no discount".
+   *
+   * Handed in WHOLE, for all `items`, because the proration weights must be
+   * computed against the whole quotation and frozen per line — see
+   * `prorateDocumentDiscount`. Omit it and every share is 0, which is exactly
+   * how a quotation with no document discount converts.
+   */
+  discount?: unknown;
+  discountType?: unknown;
 }
 
 export function blankMachine(): MachineDraft {
@@ -458,6 +539,209 @@ function resolveCatalogLink(
   };
 }
 
+// ---------------------------------------------------------------------------
+// 2b. Discounts — quotation money → ONE editable baht figure per sale line
+// ---------------------------------------------------------------------------
+
+/**
+ * Round to the satang the way `quotationTotals.round2` does: nudge by a relative
+ * epsilon so a value that is *mathematically* an exact half-satang rounds up
+ * like a human expects instead of being dragged down by its binary
+ * representation (10.5% of 3,000 is 315, but 7.5% of 1,234.60 is 92.595, which
+ * floats store as 92.59499999999998).
+ *
+ * Deliberately NOT the module's own `round2` and deliberately not a change to
+ * it: `round2` is on the bit-identical path (`lineTotal = round2(qty ×
+ * unitPrice)`) and must keep behaving exactly as it always has. This one is used
+ * only where a discount is genuinely being split.
+ */
+function roundSatang(n: number): number {
+  const scaled = n * 100;
+  const rounded =
+    Math.round(scaled + Math.sign(scaled) * Math.abs(scaled) * 1e-12) / 100;
+  return rounded === 0 ? 0 : rounded; // normalise -0 to 0
+}
+
+/** Anything that is not exactly "percent" is baht — same rule as
+ * `computeLineTotal` / `computeQuoteTotals`, so a stray value from a JSON blob
+ * can never be read as a percentage by accident. */
+function toDiscountType(value: unknown): "amount" | "percent" {
+  return value === "percent" ? "percent" : "amount";
+}
+
+/**
+ * Split the DOCUMENT-level discount across the quotation's lines, in baht, one
+ * share per line in `items` order.
+ *
+ * Why prorate at all, when the editor used to say (correctly, for its time) that
+ * a bill-level discount belongs to no particular line: since revenue became
+ * per-line there is nowhere else to put it. `sales_records.totalAmount` is FORCED
+ * to `Σ sales_record_items.totalAmount` on every write, and the product/category
+ * reports read `sales_record_items.totalAmount` — so a document discount parked
+ * anywhere but on the lines is erased the next time anything touches the sale,
+ * and the sale records more revenue than was invoiced. Which is the defect the
+ * owner asked us to stop.
+ *
+ * The split:
+ *   base    = afterLineDiscounts over ALL lines (the per-line discounts first)
+ *   w_i     = line_i.netAmount / base
+ *   share_i = round(discountValue × w_i), capped at line_i.netAmount
+ *   the residual (discountValue − Σ share_i, a satang or two of rounding) goes
+ *   to the LARGEST line by netAmount, ties broken by the lowest index.
+ * so `Σ share_i === discountValue` EXACTLY, never a satang more or less.
+ *
+ * THE DENOMINATOR IS THE WHOLE QUOTATION, never the ticked lines. Each share is
+ * frozen onto its own line at load time and never renormalised, so selling 2 of
+ * 5 lines today carries only those 2 lines' shares and leaves the other 3 for
+ * whenever they are sold. Weighing against the selection instead would grant the
+ * whole bill discount to today's 2 lines AND again to the remaining 3 next month.
+ *
+ * Returns all zeros when there is no document discount (or nothing to take it
+ * off), which is what makes every quotation saved before today inert: `x − 0`
+ * is `x` for every double, so the converted numbers are bit-identical.
+ *
+ * Pure and total: a malformed blob answers with zeros rather than throwing.
+ */
+export function prorateDocumentDiscount(input: QuoteTotalsInput): number[] {
+  const items = Array.isArray(input?.items) ? input.items : [];
+  const shares = new Array<number>(items.length).fill(0);
+  if (items.length === 0) return shares;
+
+  const totals = computeQuoteTotals(input);
+  const target = roundSatang(Math.max(totals.discountValue, 0));
+  const base = totals.afterLineDiscounts;
+  // No discount, or nothing to take it off (an empty/negative quotation).
+  if (!(target > 0) || !(base > 0)) return shares;
+
+  // Each share is capped at its OWN line, settled to the satang so that every
+  // share is a figure that can actually be stored and typed back in.
+  const caps = totals.lines.map((l) => roundSatang(Math.max(l.netAmount, 0)));
+
+  let assigned = 0;
+  totals.lines.forEach((line, index) => {
+    const net = Math.max(line.netAmount, 0);
+    const share = Math.min(roundSatang((target * net) / base), caps[index]);
+    shares[index] = share;
+    assigned = roundSatang(assigned + share);
+  });
+
+  // The residual — the satang or two that rounding N shares to 2 dp always
+  // leaves over — goes to the LARGEST line by value, ties broken by the lowest
+  // index, so `Σ shares === discountValue` EXACTLY. If that line has no room
+  // left (its share is already its whole value) the next-largest takes what it
+  // can: the walk is over a fixed, deterministic order, so the same quotation
+  // always splits the same way.
+  let residual = roundSatang(target - assigned);
+  if (residual !== 0) {
+    const order = caps
+      .map((_, index) => index)
+      .sort((a, b) => caps[b] - caps[a] || a - b);
+    for (const index of order) {
+      if (residual === 0) break;
+      // Up: how much more this line could absorb. Down: how much it can give
+      // back, never past 0.
+      const room =
+        residual > 0 ? roundSatang(caps[index] - shares[index]) : -shares[index];
+      if (room === 0) continue;
+      const take =
+        residual > 0 ? Math.min(room, residual) : Math.max(room, residual);
+      shares[index] = roundSatang(shares[index] + take);
+      residual = roundSatang(residual - take);
+    }
+  }
+  return shares;
+}
+
+/** The quotation's own discount for one line, split into the two things the
+ * editor has to be able to name separately. Both in baht, both already settled
+ * to the satang. */
+export interface QuotedLineDiscount {
+  /** ส่วนลดรายรายการ — this line's own discount, ฿ or % already resolved. */
+  lineDiscount: number;
+  /** This line's share of ส่วนลดท้ายใบ (see `prorateDocumentDiscount`). */
+  docShare: number;
+}
+
+/**
+ * Resolve a whole quotation's discounts into one `{ lineDiscount, docShare }`
+ * per line, ONCE, from the QUOTED quantities and prices. Everything downstream
+ * treats the sum as a plain baht amount the admin may retype.
+ */
+function resolveQuotedDiscounts(
+  items: readonly QuotationLine[],
+  discount: unknown,
+  discountType: unknown
+): QuotedLineDiscount[] {
+  const totalsInput: QuoteTotalsInput = {
+    items: items.map((line) => (line || {}) as QuoteLineInput),
+    discount: toFiniteNumber(discount, 0),
+    discountType: toDiscountType(discountType),
+  };
+  const shares = prorateDocumentDiscount(totalsInput);
+  return items.map((line, index) => ({
+    lineDiscount: Math.max(computeLineTotal(line || {}).discountValue, 0),
+    docShare: Math.max(shares[index] || 0, 0),
+  }));
+}
+
+/** What one draft line's discount adds up to, as quoted — the reference the
+ * editor prints next to «ในใบเสนอราคา» and compares the admin's own figure
+ * against. */
+export function quotedDiscountTotal(
+  line: Pick<SaleLineDraft, "quotedLineDiscount" | "quotedDocDiscountShare">
+): number {
+  return round2(
+    Math.max(toFiniteNumber(line?.quotedLineDiscount, 0), 0) +
+      Math.max(toFiniteNumber(line?.quotedDocDiscountShare, 0), 0)
+  );
+}
+
+/** One line's money, from the three editable fields. THE one definition — the
+ * payload and the editor's «ยอดรวมบรรทัด» box both come from here, so what the
+ * admin reads on screen is exactly what is posted. */
+export interface SaleLineMoney {
+  /** The quantity the arithmetic actually used — `toQty`-normalised, exactly as
+   * `buildSalePayload` normalises it. Handed back so the editor can print the
+   * working («3 × ฿1,000 − ฿1,000 = ฿2,000») with the SAME number the payload
+   * multiplies by, instead of the raw half-typed field. */
+  qty: number;
+  /** `qty × unitPrice` — gross, before the discount. */
+  amount: number;
+  /** The discount actually taken off, capped at `amount` so a line can never go
+   * negative (the same cap `computeLineTotal` applies on the quotation side). */
+  discountAmount: number;
+  /** `amount − discountAmount` — what the customer is charged, and exactly what
+   * lands in `sales_record_items.totalAmount`. */
+  netAmount: number;
+}
+
+/**
+ * The money of ONE draft line.
+ *
+ * With no discount this is `round2(qty × unitPrice)` and nothing else: the
+ * subtraction of a zero is the identity on every IEEE-754 double, so a quotation
+ * with no discount keys converts to the very same numbers it always did.
+ */
+export function computeSaleLineTotal(
+  line: Pick<SaleLineDraft, "qty" | "unitPrice" | "discountAmount"> | null | undefined
+): SaleLineMoney {
+  const qty = toQty(line?.qty, 1);
+  const unitPrice = toMoney(line?.unitPrice);
+  const amount = round2(qty * unitPrice);
+  // Cap FIRST, subtract after — a discount bigger than the line floors it at 0
+  // and the excess is dropped, never carried onto another line.
+  const discountAmount = Math.min(
+    Math.max(toMoney(line?.discountAmount), 0),
+    Math.max(amount, 0)
+  );
+  return {
+    qty,
+    amount,
+    discountAmount,
+    netAmount: round2(amount - discountAmount),
+  };
+}
+
 /**
  * Quotation items (+ what has already been sold) → the editable rows the form
  * renders. Pre-ticks ONLY lines with nothing sold yet (task 13.2); the admin
@@ -466,12 +750,20 @@ function resolveCatalogLink(
 export function buildLineDrafts(input: BuildLineDraftsInput): SaleLineDraft[] {
   const items = asArray(input.items);
   const sold = soldQtyByItem(input.sold);
+  // ONCE, over ALL N lines, before anything is ticked or untickable — the
+  // whole-quotation base is what makes a partial sale carry only its own share.
+  const discounts = resolveQuotedDiscounts(
+    items,
+    input.discount,
+    input.discountType
+  );
   return items.map((raw, index) => {
     const line = raw || {};
     const quotationItemId = String(line.id ?? "").trim();
     const quotedQty = toQty(line.qty, 1);
     const soldQty = quotationItemId ? sold.get(quotationItemId) || 0 : 0;
     const link = resolveCatalogLink(line.productId, input.products);
+    const quoted = discounts[index] || { lineDiscount: 0, docShare: 0 };
     return {
       key: quotationItemId || `line-${index}`,
       quotationItemId,
@@ -485,6 +777,11 @@ export function buildLineDrafts(input: BuildLineDraftsInput): SaleLineDraft[] {
       qty: quotedQty,
       unit: String(line.unit ?? "").trim(),
       unitPrice: toMoney(line.unitPrice),
+      // Resolved ONCE, from the quoted qty and price, into one baht figure that
+      // then behaves like ต้นทุนสินค้า: typed by hand, changed only by typing.
+      discountAmount: round2(quoted.lineDiscount + quoted.docShare),
+      quotedLineDiscount: quoted.lineDiscount,
+      quotedDocDiscountShare: quoted.docShare,
       costAmount: 0,
       machines: Array.from({ length: quotedQty }, blankMachine),
     };
@@ -724,7 +1021,13 @@ export function buildSalePayload(
   chosen.forEach((line, index) => {
     const lineQty = toQty(line.qty, 1);
     const unitPrice = toMoney(line.unitPrice);
-    const lineTotal = round2(lineQty * unitPrice);
+    // THE price actually charged (owner: "ให้บันทึกยอดขายเป็นราคาหลังหักส่วนลด").
+    // `unitPrice` above still goes out GROSS; the discount comes off the total.
+    // With no discount, `netAmount` is `round2(qty × unitPrice)` and nothing
+    // else, so an undiscounted quotation posts the numbers it always posted.
+    const lineTotal = computeSaleLineTotal(line).netAmount;
+    // Cost is NOT part of that expression — no qty term, no price term, no
+    // discount term. Revenue falls on a discounted deal; cost does not move.
     const lineCost = toMoney(line.costAmount);
     const productId = resolveProductIdForApi(line.productId);
     const productName = String(line.productName ?? "").trim();
@@ -961,6 +1264,53 @@ export function summarizeBill(
   };
 }
 
+/** The discount side of the same bill — everything the editor's banner and the
+ * summary strip have to be able to say without doing arithmetic of their own. */
+export interface BillDiscountSummary {
+  /** Σ ยอดก่อนหักส่วนลด of the ticked lines (`qty × unitPrice`). */
+  grossTotal: number;
+  /** Σ ส่วนลด actually coming off THIS bill (capped per line). */
+  discountTotal: number;
+  /** Σ ส่วนลดท้ายใบ over ALL the quotation's lines — the whole document
+   * discount, whether or not those lines are being sold today. */
+  quotedDocDiscountTotal: number;
+  /** The part of it carried by the TICKED lines. Less than
+   * `quotedDocDiscountTotal` on a partial sale — the rest waits on the lines it
+   * belongs to, and is never handed out twice. */
+  selectedDocDiscountTotal: number;
+}
+
+/**
+ * The discounts of the current bill. Read straight off the drafts (the admin may
+ * have retyped any of them), except `quotedDocDiscountTotal`, which is the
+ * quotation's own frozen figure and therefore counts every line, ticked or not.
+ */
+export function summarizeBillDiscounts(
+  lines: readonly SaleLineDraft[] | null | undefined
+): BillDiscountSummary {
+  const all = asArray(lines);
+  let grossTotal = 0;
+  let discountTotal = 0;
+  let quotedDocDiscountTotal = 0;
+  let selectedDocDiscountTotal = 0;
+  for (const line of all) {
+    if (!line) continue;
+    const share = Math.max(toFiniteNumber(line.quotedDocDiscountShare, 0), 0);
+    quotedDocDiscountTotal = round2(quotedDocDiscountTotal + share);
+    if (!line.selected) continue;
+    const money = computeSaleLineTotal(line);
+    grossTotal = round2(grossTotal + money.amount);
+    discountTotal = round2(discountTotal + money.discountAmount);
+    selectedDocDiscountTotal = round2(selectedDocDiscountTotal + share);
+  }
+  return {
+    grossTotal,
+    discountTotal,
+    quotedDocDiscountTotal,
+    selectedDocDiscountTotal,
+  };
+}
+
 export interface SoldSummary {
   /** X of "X/Y" — lines of this quotation with at least one recorded sale. */
   soldLines: number;
@@ -1039,6 +1389,14 @@ export function validateLineDrafts(
     const cost = Number(line.costAmount);
     if (!Number.isFinite(cost) || cost < 0) {
       errors.push(`${label}: ต้นทุนสินค้าต้องเป็นตัวเลขที่ไม่ติดลบ`);
+    }
+    // A discount BIGGER than the line is not an error — `computeSaleLineTotal`
+    // caps it and the editor says so in Thai (a 100% discount is a real thing:
+    // the free machine is recorded at ฿0). A NEGATIVE one is: it would be a
+    // surcharge wearing a discount's name.
+    const discount = Number(line.discountAmount);
+    if (!Number.isFinite(discount) || discount < 0) {
+      errors.push(`${label}: ส่วนลดต้องเป็นตัวเลขที่ไม่ติดลบ`);
     }
   });
   // (No serial rule here — report 7. `findMissingSerials` is advice the editor
