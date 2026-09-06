@@ -48,6 +48,10 @@ function SavedBillingContent() {
   const initialTab = (searchParams?.get("tab") as CombinedDocType | "all") || "all";
   const [filter, setFilter] = useState<CombinedDocType | "all">(initialTab);
   const [pendingDelete, setPendingDelete] = useState<BillingSummary | null>(null);
+  /** A delete the server refused because money is attached, plus its Thai
+   *  reason — the admin is offered ยกเลิกเอกสาร here instead of a dead end. */
+  const [blockedDelete, setBlockedDelete] = useState<{ item: BillingSummary; message: string } | null>(null);
+  const [cancelling, setCancelling] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
   const [orphanedImages, setOrphanedImages] = useState<OrphanedImage[]>([]);
@@ -126,6 +130,18 @@ function SavedBillingContent() {
             reason: "ลบเอกสาร"
           })));
         }
+      } else if (res.status === 409) {
+        // The document carries payments. Deleting it would orphan financial
+        // records (billing_payments deliberately has no FK), so the server
+        // refuses and offers ยกเลิกเอกสาร instead — which keeps the payment
+        // history and the reserved document number.
+        const data = await res.json().catch(() => null);
+        setPendingDelete(null);
+        setBlockedDelete({
+          item: pendingDelete,
+          message: data?.error ?? "เอกสารนี้มีการรับชำระเงินแล้ว ไม่สามารถลบได้",
+        });
+        return;
       } else {
         showToast("ลบไม่สำเร็จ", "error");
       }
@@ -134,6 +150,25 @@ function SavedBillingContent() {
     } finally {
       setDeleting(false);
       setPendingDelete(null);
+    }
+  }
+
+  async function handleCancelDocument() {
+    if (!blockedDelete) return;
+    setCancelling(true);
+    try {
+      const res = await fetch(`/api/billing/${blockedDelete.item.id}/receivable`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cancelled: true }),
+      });
+      if (!res.ok) throw new Error();
+      showToast("ยกเลิกเอกสารแล้ว (เอกสารและประวัติการรับชำระยังอยู่)", "success");
+      setBlockedDelete(null);
+    } catch {
+      showToast("ยกเลิกเอกสารไม่สำเร็จ", "error");
+    } finally {
+      setCancelling(false);
     }
   }
 
@@ -184,6 +219,9 @@ function SavedBillingContent() {
         <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
           <h1 className="text-xl font-bold text-gray-900">📋 เอกสารที่บันทึกไว้</h1>
           <div className="flex items-center gap-2 flex-wrap">
+            <Link href="/billing/receivables" className="px-4 py-2 rounded-lg border border-amber-400 text-amber-700 text-sm font-semibold hover:bg-amber-50 transition">
+              💰 ลูกหนี้ค้างชำระ
+            </Link>
             <Link href="/adminpanel" className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition">
               🏠 หน้าระบบจัดการ
             </Link>
@@ -427,6 +465,20 @@ function SavedBillingContent() {
           </div>
         )}
       </div>
+
+      {/* The 🗑️ button refused: money is attached. */}
+      {blockedDelete && (
+        <ConfirmDialog
+          title="ลบเอกสารนี้ไม่ได้"
+          message={`${blockedDelete.message}\n\nต้องการ "ยกเลิกเอกสาร" แทนหรือไม่? เอกสารและประวัติการรับชำระจะยังอยู่ครบ เพียงแต่จะไม่ถูกนับเป็นลูกหนี้อีก`}
+          confirmText="ยกเลิกเอกสาร"
+          loadingText="กำลังยกเลิก..."
+          cancelText="ปิด"
+          onConfirm={handleCancelDocument}
+          onCancel={() => setBlockedDelete(null)}
+          loading={cancelling}
+        />
+      )}
 
       {/* Delete confirmation */}
       {pendingDelete && (

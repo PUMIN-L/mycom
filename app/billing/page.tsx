@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "../context/AuthContext";
@@ -10,10 +10,18 @@ import { computeQuoteTotals } from "../lib/quotationTotals";
 import {
   BILLING_LABELS,
   BILLING_PREFIX,
+  billingDocNoPrefixes,
   nextBillingDocNo,
 } from "../lib/billingNumber";
 import type { BillingDocType } from "../lib/billingNumber";
-import { toLocalDateString } from "../lib/dateFormat";
+import {
+  toLocalDateString,
+  addDaysToDateString,
+  formatDisplayDate,
+  isValidDateString,
+} from "../lib/dateFormat";
+import { DEFAULT_CREDIT_TERM_DAYS } from "../lib/alertThresholds";
+import { PAYMENT_METHODS, DEFAULT_PAYMENT_METHOD } from "../lib/paymentMethods";
 
 // ── Billing Document Builder ────────────────────────────────────────────────
 // Admin-only tool to create Invoice / Billing Note / Receipt.
@@ -69,6 +77,14 @@ interface BillingState {
   discountType: "amount" | "percent";
   vatEnabled: boolean;
   note: string;
+  // ── ครบกำหนดชำระ ─────────────────────────────────────────────────────────
+  // Whatever is in this box at save time is what goes into the `dueDate`
+  // column. "Was it overridden?" is DERIVED for display (dueDate !== docDate +
+  // the current term), never stored — the same reasoning that stops
+  // setLineDiscountAmount stamping `discount: 0` onto a line nobody edited.
+  dueDate: string;
+  /** The invoice this ใบเสร็จรับเงิน settles. Receipt-only. */
+  settlesDocId: string;
   // Receipt-specific
   paymentMethod: string;
   paymentDate: string;
@@ -84,6 +100,55 @@ interface QuotationOption {
 
 const fmt = (n: number) =>
   n.toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+interface LedgerEntry {
+  /** The document that owns the number (`quotationId` in the shared ledger). */
+  id: string;
+  docNo: string;
+}
+
+/**
+ * Every number the shared `used_docnos` ledger already owns under `bases` —
+ * however old, because the query behind `?base=` is NOT date-windowed.
+ *
+ * This is the lookup a MINT has to use. `/api/billing/docnos` returns only the
+ * last 7 days, which is right for warning about a duplicate and wrong for
+ * issuing one: a billing number embeds the date as DDMMYY, and that is the same
+ * six digits as the legacy YYMMDD shape of a different day a year earlier
+ * (25 Jun 2026 → "250626" ← 26 Jun 2025). Numbers issued under that prefix last
+ * year are invisible in a 7-day window but the ledger still owns them forever,
+ * so minting from the window walks straight into a duplicate-key refusal the
+ * admin can only escape by inventing a number by hand.
+ *
+ * It goes through the quotations route because there is ONE ledger for both
+ * quotations and billing documents (app/lib/quotationStore.ts, listDocNosByBase)
+ * — the route is prefix-agnostic and answers for INV/BN/RC exactly as for QT.
+ * The server stays the authority; the client only asks it a narrower question.
+ * Each base matches at most one day's numbers, so the answers are tiny.
+ */
+async function fetchLedgerByBases(bases: readonly string[]): Promise<LedgerEntry[]> {
+  const lists = await Promise.all(
+    bases.map(async (base) => {
+      try {
+        const res = await fetch(
+          `/api/quotations/docnos?base=${encodeURIComponent(base)}`
+        );
+        if (!res.ok) return [];
+        const list = await res.json();
+        return Array.isArray(list) ? list : [];
+      } catch {
+        return [];
+      }
+    })
+  );
+  return lists
+    .flat()
+    .filter((x: { docNo?: unknown }) => typeof x?.docNo === "string")
+    .map((x: { docNo: string; quotationId?: unknown }) => ({
+      id: String(x.quotationId ?? ""),
+      docNo: x.docNo,
+    }));
+}
 
 const emptyState = (): BillingState => {
   const now = new Date();
@@ -112,7 +177,9 @@ const emptyState = (): BillingState => {
     discountType: "amount",
     vatEnabled: true,
     note: "",
-    paymentMethod: "โอนเงิน",
+    dueDate: "",
+    settlesDocId: "",
+    paymentMethod: DEFAULT_PAYMENT_METHOD,
     paymentDate: iso,
     paymentRef: "",
   };
@@ -132,20 +199,15 @@ const DOC_TYPE_OPTIONS: { value: BillingDocType; label: string }[] = [
   { value: "receipt", label: "🧾 ใบเสร็จรับเงิน (Receipt)" },
 ];
 
-const PAYMENT_METHODS = [
-  "โอนเงิน",
-  "เงินสด",
-  "เช็ค",
-  "บัตรเครดิต",
-  "อื่นๆ",
-];
-
 export default function BillingPage() {
   const router = useRouter();
   const { isLoggedIn, isLoading } = useAuth();
   const [b, setB] = useState<BillingState>(emptyState);
   const [quotations, setQuotations] = useState<QuotationOption[]>([]);
-  const [existingDocs, setExistingDocs] = useState<{ id: string; docNo: string }[]>([]);
+  const [existingDocs, setExistingDocs] = useState<LedgerEntry[]>([]);
+  // Every number the ledger owns under THIS day's prefixes, at any age — the
+  // set a new number is minted against (see fetchLedgerByBases).
+  const [prefixDocs, setPrefixDocs] = useState<LedgerEntry[]>([]);
   const [generating, setGenerating] = useState(false);
   const [saving, setSaving] = useState(false);
   const [loadingQuotation, setLoadingQuotation] = useState(false);
@@ -155,6 +217,35 @@ export default function BillingPage() {
   // A brand-new doc (not reopened) — eligible to auto-advance its docNo.
   const isFreshRef = useRef(true);
   const lastAutoDocNoRef = useRef<string>("");
+
+  // ── ลูกหนี้ค้างชำระ ─────────────────────────────────────────────────────
+  /** The configured default credit term. Falls back to the shared constant so
+   *  the box is usable before the settings row exists or if the fetch fails. */
+  const [creditTermDays, setCreditTermDays] = useState<number>(DEFAULT_CREDIT_TERM_DAYS);
+  /** Invoices that still owe money — the ใบเสร็จรับเงิน's "ชำระให้ใบแจ้งหนี้"
+   *  dropdown. Naming one is what turns issuing a receipt into recording the
+   *  payment, in a single transaction on the server. */
+  const [openInvoices, setOpenInvoices] = useState<
+    { id: string; docNo: string; customerName: string; outstanding: number }[]
+  >([]);
+  /** The document this save REPLACES, when we arrived through "แก้ไข (New
+   *  Ver.)". Without it the original keeps its debt and the invoice is billed
+   *  twice. */
+  const supersedesIdRef = useRef<string | null>(null);
+  /**
+   * Is "ครบกำหนดชำระ" still following `docDate + term`? (State, not a ref: the
+   * box's displayed value is derived from it during render.)
+   *
+   * True only for a brand-new document nobody has typed a due date into — so
+   * changing วันที่ moves the box with it. It flips to false the moment the
+   * admin edits the field, and it starts false for ANY reopened document:
+   * a saved due date is a term already agreed with that customer on that
+   * invoice, not a live formula, so neither a later change to the global credit
+   * term nor a change of วันที่ may silently move it. It is also what stops an
+   * old invoice with no due date being auto-stamped with one merely because the
+   * owner opened it and downloaded its PDF (which POSTs the document first).
+   */
+  const [dueDateAuto, setDueDateAuto] = useState(true);
 
   // ── Unsaved-changes guard ──
   const { isDirty, setSnapshot, guardedNavigate, showModal, confirmLeave, cancelLeave, setShowModal } = useLeaveGuard(b);
@@ -183,11 +274,25 @@ export default function BillingPage() {
       .catch(() => {});
 
     // Reserved document numbers (ledger, NOT the live /api/billing list) — for
-    // the duplicate warning and the auto-run next number. Survives deletion
-    // (separate `used_docnos` table), same pattern as the quotation builder:
-    // without this, deleting a document made its number look "free" again to
-    // the suggester while the ledger still held the reservation, so the very
-    // next auto-suggested number would 409 forever.
+    // the duplicate warning. Survives deletion (separate `used_docnos` table),
+    // same pattern as the quotation builder: without this, deleting a document
+    // made its number look "free" again to the suggester while the ledger still
+    // held the reservation, so the very next auto-suggested number would 409
+    // forever.
+    // This is the last 7 days only, which is enough to warn on but NOT enough
+    // to mint from — `prefixDocs` below covers that.
+    fetch("/api/settings/credit-term")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d && Number.isFinite(Number(d.days))) setCreditTermDays(Number(d.days));
+      })
+      .catch(() => {});
+
+    fetch("/api/billing/open-invoices")
+      .then((r) => (r.ok ? r.json() : []))
+      .then((list) => setOpenInvoices(Array.isArray(list) ? list : []))
+      .catch(() => {});
+
     fetch("/api/billing/docnos")
       .then((r) => (r.ok ? r.json() : []))
       .then((list) =>
@@ -229,36 +334,41 @@ export default function BillingPage() {
             
             if (isClone) {
               const baseDocNo = newDocNo.replace(/(?:-V|v)\d+$/i, "");
-              
-              // Fetch docs directly to avoid race condition with existingDocs state
+
+              // Ask the LEDGER for this base, not the live /api/billing list:
+              // the ledger is never purged, so it still owns every version
+              // number ever issued — including ones whose document has since
+              // been deleted, which the live list no longer shows. Reading the
+              // live list handed back a "v1" the ledger already owned and the
+              // save bounced off the PRIMARY KEY. (Same fix, same reason, as
+              // nextVersionDocNo in the quotation builder.)
               let maxV = 0;
-              try {
-                const res = await fetch("/api/billing");
-                const list = await res.json();
-                const docs = Array.isArray(list) ? list : [];
-                docs.forEach(d => {
-                  if (d.docNo && d.docNo.startsWith(baseDocNo)) {
-                    const match = d.docNo.match(/(?:-V|v)(\d+)$/i);
-                    if (match) {
-                      const v = parseInt(match[1], 10);
-                      if (v > maxV) maxV = v;
-                    } else if (d.docNo === baseDocNo) {
-                      if (maxV === 0) maxV = 0;
-                    }
-                  }
-                });
-              } catch (e) {
-                // If fetch fails, fallback to simple increment
+              const versions = await fetchLedgerByBases([baseDocNo]);
+              if (versions.length === 0) {
+                // Ledger unreachable or genuinely empty — fall back to bumping
+                // this document's own version rather than reusing v1.
                 const vMatch = newDocNo.match(/(?:-V|v)(\d+)$/i);
-                if (vMatch) maxV = parseInt(vMatch[1], 10);
+                if (vMatch) maxV = parseInt(vMatch[1], 10) || 0;
               }
-              
+              for (const v of versions) {
+                const match = v.docNo.match(/(?:-V|v)(\d+)$/i);
+                if (!match) continue;
+                const n = parseInt(match[1], 10);
+                if (!Number.isNaN(n) && n > maxV) maxV = n;
+              }
+
               newDocNo = `${baseDocNo}v${maxV + 1}`;
               
               // safe fallback for crypto.randomUUID
               newId = typeof crypto !== 'undefined' && crypto.randomUUID 
                 ? crypto.randomUUID() 
                 : Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+
+              // Remember the row this new version REPLACES. The server stamps
+              // `supersededById` on it inside the same transaction, which is
+              // what stops the ledger billing the same debt twice — the old
+              // row is never deleted or flagged by this flow otherwise.
+              supersedesIdRef.current = doc.id;
             }
 
             setB({
@@ -268,10 +378,16 @@ export default function BillingPage() {
               docType: doc.docType,
               docNo: newDocNo,
               linkedQuotationId: doc.linkedQuotationId,
-              paymentMethod: doc.paymentMethod ?? "โอนเงิน",
+              // The stored column wins over whatever the blob happens to carry:
+              // the ledger's "ตั้งวันครบกำหนด" writes the column directly, so
+              // the blob's copy can legitimately be older.
+              dueDate: doc.dueDate ?? "",
+              settlesDocId: doc.settlesDocId ?? "",
+              paymentMethod: doc.paymentMethod ?? DEFAULT_PAYMENT_METHOD,
               paymentDate: doc.paymentDate ?? "",
               paymentRef: doc.paymentRef ?? "",
             });
+            setDueDateAuto(false);
             // Snapshot after hydration
             setTimeout(() => setSnapshot(), 0);
           }
@@ -280,15 +396,37 @@ export default function BillingPage() {
     }
   }, []);
 
+  // The ledger's own view of THIS day's prefixes, both shapes, at any age.
+  // Kept out of the render path on purpose: the form shows a provisional number
+  // immediately from whatever is already loaded and the effect below advances
+  // it the moment this lands, so the admin never waits on a round-trip.
+  useEffect(() => {
+    if (!isLoggedIn || !b.docDate) return;
+    let cancelled = false;
+    fetchLedgerByBases(billingDocNoPrefixes(b.docType, b.docDate)).then((rows) => {
+      if (!cancelled) setPrefixDocs(rows);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [isLoggedIn, b.docType, b.docDate]);
+
+  // docNo → the id of the document that owns it, across BOTH ledger reads.
+  // Numbers under other days'/types' prefixes are harmless here: the allocator
+  // ignores them, and the duplicate check only ever looks one number up.
+  const knownDocNos = useMemo(() => {
+    const owners = new Map<string, string>();
+    for (const d of [...existingDocs, ...prefixDocs]) {
+      if (d.docNo) owners.set(d.docNo, d.id);
+    }
+    return owners;
+  }, [existingDocs, prefixDocs]);
+
   // Auto-generate docNo when type or date changes — ONLY for fresh (new) documents.
   // Reopened docs keep their saved docNo.
   useEffect(() => {
     if (!isFreshRef.current || !b.docDate) return;
-    const next = nextBillingDocNo(
-      b.docType,
-      b.docDate,
-      existingDocs.map((d) => d.docNo)
-    );
+    const next = nextBillingDocNo(b.docType, b.docDate, [...knownDocNos.keys()]);
     setB((prev) => {
       // Allow update if the current docNo is empty (initial) or matches the last auto-generated one
       if (prev.docNo === "" || prev.docNo === lastAutoDocNoRef.current) {
@@ -297,7 +435,7 @@ export default function BillingPage() {
       }
       return prev; // user manually edited it
     });
-  }, [b.docType, b.docDate, existingDocs]);
+  }, [b.docType, b.docDate, knownDocNos]);
 
   function showToast(message: string, type: "success" | "error") {
     setToast({ message, type });
@@ -306,6 +444,22 @@ export default function BillingPage() {
 
   const set = <K extends keyof BillingState>(key: K, value: BillingState[K]) =>
     setB((prev) => ({ ...prev, [key]: value }));
+
+  // ── ครบกำหนดชำระ ──────────────────────────────────────────────────────────
+  // DERIVED AT RENDER, not synced into state by an effect: while the document
+  // is still following the formula, the box simply SHOWS วันที่ + the credit
+  // term, so changing วันที่ moves it with no extra render and no chance of the
+  // two drifting. It is materialised into `dueDate` only when the admin types
+  // over it (which ends the formula) or when the document is saved.
+  //
+  // A consequence worth having: an untouched due date never dirties the
+  // unsaved-changes fingerprint, so merely opening a document does not make it
+  // look edited.
+  const formulaDueDate =
+    b.docDate && isValidDateString(addDaysToDateString(b.docDate, creditTermDays))
+      ? addDaysToDateString(b.docDate, creditTermDays)
+      : "";
+  const effectiveDueDate = dueDateAuto ? formulaDueDate : b.dueDate;
 
   // Link to a quotation → auto-fill all data
   async function linkQuotation(quotationId: string) {
@@ -393,11 +547,83 @@ export default function BillingPage() {
   // identical six-column table and single "รวมเป็นเงิน" row it always did.
   const hasLineDiscounts = lineDiscountTotal > 0;
 
-  // Duplicate docNo check
+  // Duplicate docNo check — against everything either ledger read has seen.
   const trimmedDocNo = b.docNo.trim();
   const docNoDup =
-    trimmedDocNo !== "" &&
-    existingDocs.some((d) => d.docNo === trimmedDocNo && d.id !== b.id);
+    trimmedDocNo !== "" && (knownDocNos.get(trimmedDocNo) ?? b.id) !== b.id;
+
+  function postBillingDocument(state: BillingState) {
+    // Resolve the formula ONCE, here, so the column, the stored blob and the
+    // printed sheet all carry the same due date — the box on screen shows this
+    // exact value while the formula is still active.
+    // A receipt is evidence money ARRIVED — it has no due date of its own, and
+    // storing a meaningless one would put a date in a column every ageing query
+    // reads.
+    const resolvedDueDate =
+      state.docType === "receipt"
+        ? ""
+        : (dueDateAuto
+            ? state.docDate
+              ? addDaysToDateString(state.docDate, creditTermDays)
+              : ""
+            : state.dueDate) || "";
+    const dueDate = isValidDateString(resolvedDueDate) ? resolvedDueDate : null;
+
+    return fetch("/api/billing", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: state.id,
+        docType: state.docType,
+        docNo: state.docNo,
+        linkedQuotationId: state.linkedQuotationId,
+        data: { ...state, dueDate: dueDate ?? "" },
+        paymentMethod: state.paymentMethod,
+        paymentDate: state.paymentDate,
+        paymentRef: state.paymentRef,
+        // ครบกำหนดชำระ. NULL means no term was ever agreed, and NULL IS NEVER
+        // OVERDUE — that is what keeps documents saved before this feature out
+        // of the alert feed until a human opts them in from the ledger.
+        dueDate,
+        // A receipt that names the invoice it settles records the payment in
+        // the same transaction, so issuing a receipt stays one action.
+        settlesDocId: state.docType === "receipt" ? state.settlesDocId || null : null,
+        // Stamps `supersededById` on the row this new version replaces.
+        supersedesId: supersedesIdRef.current,
+      }),
+    });
+  }
+
+  /**
+   * The ledger refused this number (409). Re-read it — the whole prefix, not
+   * the 7-day window — and move on to the next free one.
+   *
+   * The INSERT into `used_docnos` remains the only arbiter: two admins minting
+   * in the same second still both compute the same number and exactly one of
+   * them wins the PRIMARY KEY. This is what happens to the loser, and to
+   * anyone who walked into a number issued in another year. Advancing is the
+   * whole point — a refusal the admin can only clear by inventing a number by
+   * hand is not an outcome this form is allowed to reach.
+   *
+   * Returns the saved state on success, or null if nothing better was found.
+   */
+  async function retryWithNextFreeDocNo(
+    state: BillingState
+  ): Promise<{ state: BillingState; res: Response } | null> {
+    const rows = await fetchLedgerByBases(
+      billingDocNoPrefixes(state.docType, state.docDate)
+    );
+    setPrefixDocs(rows);
+    const free = nextBillingDocNo(state.docType, state.docDate, [
+      ...knownDocNos.keys(),
+      ...rows.map((r) => r.docNo),
+    ]);
+    if (!free || free === state.docNo) return null;
+    const advanced = { ...state, docNo: free };
+    setB(advanced);
+    lastAutoDocNoRef.current = free;
+    return { state: advanced, res: await postBillingDocument(advanced) };
+  }
 
   // Save billing document
   async function handleSave() {
@@ -407,20 +633,17 @@ export default function BillingPage() {
     }
     setSaving(true);
     try {
-      const res = await fetch("/api/billing", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          id: b.id,
-          docType: b.docType,
-          docNo: b.docNo,
-          linkedQuotationId: b.linkedQuotationId,
-          data: b,
-          paymentMethod: b.paymentMethod,
-          paymentDate: b.paymentDate,
-          paymentRef: b.paymentRef,
-        }),
-      });
+      let state = b;
+      let res = await postBillingDocument(state);
+      let advancedTo = "";
+      if (res.status === 409) {
+        const retry = await retryWithNextFreeDocNo(state);
+        if (retry) {
+          state = retry.state;
+          res = retry.res;
+          advancedTo = state.docNo;
+        }
+      }
       if (res.status === 409) {
         const data = await res.json().catch(() => null);
         showToast(data?.error ?? "เลขที่เอกสารซ้ำ", "error");
@@ -428,8 +651,13 @@ export default function BillingPage() {
       }
       if (!res.ok) throw new Error();
       setSnapshot(); // Mark as saved
-      showToast("บันทึกสำเร็จ", "success");
-      router.push(`/billing/saved?tab=${b.docType}`);
+      showToast(
+        advancedTo
+          ? `บันทึกสำเร็จ — เลขที่เดิมถูกใช้แล้ว ระบบเปลี่ยนเป็น ${advancedTo} ให้อัตโนมัติ`
+          : "บันทึกสำเร็จ",
+        "success"
+      );
+      router.push(`/billing/saved?tab=${state.docType}`);
     } catch {
       showToast("บันทึกไม่สำเร็จ กรุณาลองใหม่", "error");
     } finally {
@@ -446,22 +674,21 @@ export default function BillingPage() {
     }
     setGenerating(true);
     // Save first
+    let advancedTo = "";
     try {
-      await fetch("/api/billing", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          id: b.id,
-          docType: b.docType,
-          docNo: b.docNo,
-          linkedQuotationId: b.linkedQuotationId,
-          data: b,
-          paymentMethod: b.paymentMethod,
-          paymentDate: b.paymentDate,
-          paymentRef: b.paymentRef,
-        }),
-      });
+      const res = await postBillingDocument(b);
+      if (res.status === 409) {
+        // Same recovery as handleSave — never rasterise a number the ledger
+        // just refused, or the customer gets a PDF for a document that was
+        // never saved under that number.
+        const retry = await retryWithNextFreeDocNo(b);
+        if (retry?.res.ok) advancedTo = retry.state.docNo;
+      }
     } catch { /* best-effort */ }
+
+    // Let React repaint the sheet with the new number before html2canvas reads
+    // it out of the DOM.
+    if (advancedTo) await new Promise((r) => setTimeout(r, 60));
 
     try {
       const sheet = document.getElementById("billing-sheet");
@@ -485,8 +712,16 @@ export default function BillingPage() {
       pdf.addImage(imgData, "JPEG", 0, 0, pageW, pageH);
 
       const prefix = BILLING_PREFIX[b.docType];
-      pdf.save(`${prefix}-${(b.docNo || "document").replace(/[^\w.-]/g, "_")}.pdf`);
-      showToast("ดาวน์โหลด PDF สำเร็จ", "success");
+      // `b` is the pre-advance state in this closure, so name the file after
+      // the number that was actually reserved.
+      const savedDocNo = advancedTo || b.docNo;
+      pdf.save(`${prefix}-${(savedDocNo || "document").replace(/[^\w.-]/g, "_")}.pdf`);
+      showToast(
+        advancedTo
+          ? `ดาวน์โหลด PDF สำเร็จ — เลขที่เดิมถูกใช้แล้ว ระบบเปลี่ยนเป็น ${advancedTo} ให้อัตโนมัติ`
+          : "ดาวน์โหลด PDF สำเร็จ",
+        "success"
+      );
     } catch {
       showToast("สร้าง PDF ไม่สำเร็จ กรุณาลองใหม่", "error");
     } finally {
@@ -631,6 +866,49 @@ export default function BillingPage() {
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
               />
             </div>
+
+            {/* ── ครบกำหนดชำระ ──────────────────────────────────────────────
+                Only on the documents that can carry a debt. A receipt is
+                evidence money ARRIVED; it never has a due date of its own. */}
+            {b.docType !== "receipt" && (
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 mb-1">
+                  ครบกำหนดชำระ
+                </label>
+                <input
+                  type="date"
+                  value={effectiveDueDate}
+                  onChange={(e) => {
+                    // Any keystroke here ends the formula for this document —
+                    // from now on วันที่ moves on its own.
+                    setDueDateAuto(false);
+                    set("dueDate", e.target.value);
+                  }}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                />
+                <div className="flex items-center gap-2 mt-1 flex-wrap">
+                  <p className="text-[11px] text-gray-400">
+                    ค่าเริ่มต้น: เครดิต {creditTermDays} วัน
+                    {effectiveDueDate ? ` (${formatDisplayDate(effectiveDueDate)})` : ""}
+                  </p>
+                  {/* Derived for display, never stored — the same reasoning
+                      that stops a line being stamped with `discount: 0`. */}
+                  {effectiveDueDate &&
+                    b.docDate &&
+                    effectiveDueDate !== formulaDueDate && (
+                      <span className="text-[10px] font-bold text-orange-600 bg-orange-100 px-2 py-0.5 rounded-full">
+                        แก้ไขเอง
+                      </span>
+                    )}
+                </div>
+                {/* Backdated terms are real, so this warns rather than blocks. */}
+                {effectiveDueDate && b.docDate && effectiveDueDate < b.docDate && (
+                  <p className="text-[11px] text-amber-600 mt-1">
+                    ⚠️ วันครบกำหนดอยู่ก่อนวันที่เอกสาร
+                  </p>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Customer Info */}
@@ -689,6 +967,36 @@ export default function BillingPage() {
           {b.docType === "receipt" && (
             <div className="bg-white rounded-xl shadow-sm p-4 space-y-3">
               <h2 className="font-bold text-gray-800">💳 ข้อมูลการชำระเงิน</h2>
+
+              {/* ── ชำระให้ใบแจ้งหนี้ ────────────────────────────────────────
+                  An ใบเสร็จรับเงิน DISCHARGES debt; it never creates it. Naming
+                  the invoice it settles is what makes issuing the receipt also
+                  record the payment — the server writes both in ONE
+                  transaction. Leaving it blank settles nothing, and the ledger
+                  says so rather than guessing which invoice this belonged to. */}
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 mb-1">
+                  ชำระให้ใบแจ้งหนี้
+                </label>
+                <SearchableDropdown
+                  value={b.settlesDocId}
+                  onChange={(val) => set("settlesDocId", val)}
+                  options={[
+                    { value: "", label: "-- ยังไม่ผูกกับใบแจ้งหนี้ --" },
+                    ...openInvoices.map((inv) => ({
+                      value: inv.id,
+                      label: `${inv.docNo} — ${inv.customerName} (ค้าง ${fmt(inv.outstanding)})`,
+                    })),
+                  ]}
+                  placeholder="ค้นหาใบแจ้งหนี้..."
+                />
+                {!b.settlesDocId && (
+                  <p className="text-[11px] text-amber-600 mt-1">
+                    ใบเสร็จนี้ยังไม่ได้ผูกกับใบแจ้งหนี้ — ยอดค้างของลูกค้าจะยังไม่ลดลง
+                  </p>
+                )}
+              </div>
+
               <div>
                 <label className="block text-xs font-semibold text-gray-500 mb-1">ช่องทางชำระเงิน</label>
                 <SearchableDropdown

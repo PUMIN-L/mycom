@@ -168,6 +168,50 @@ describe('listDocNosByBase', () => {
     expect(await listDocNosByBase('   ')).toEqual([]);
     expect(query).not.toHaveBeenCalled();
   });
+
+  // ── Its second caller: MINTING (task 5b) ──────────────────────────────────
+  // A day's DDMMYY prefix is the same six digits as the legacy YYMMDD prefix of
+  // a day one year earlier (25 Jun 2026 → "250626" ← 26 Jun 2025), and the
+  // ledger is never purged, so those older numbers are still owned. They fall
+  // outside listRecentDocNos()' 7-day window, so this is the ONLY lookup that
+  // can show a mint what it must step over.
+  it('answers for a whole DAY PREFIX, so a mint sees every year that used it', async () => {
+    vi.mocked(query).mockResolvedValue([
+      [
+        // Issued 26 Jun 2025 in the legacy shape — over a year old.
+        { docNo: 'QT250626-22', quotationId: 'old-2025' },
+        { docNo: 'QT250626-23', quotationId: 'old-2025b' },
+      ],
+    ] as any);
+
+    // The prefix a quotation dated 25 Jun 2026 mints under.
+    expect(await listDocNosByBase('QT250626-')).toEqual([
+      { docNo: 'QT250626-22', quotationId: 'old-2025' },
+      { docNo: 'QT250626-23', quotationId: 'old-2025b' },
+    ]);
+    const [sql, params] = callAt(0);
+    expect(params).toEqual(['QT250626-%']);
+    // No cutoff of any kind — age is exactly what must NOT filter here.
+    expect(sql).not.toContain('createdAt');
+  });
+
+  it('answers for BILLING prefixes too — used_docnos is one shared ledger', async () => {
+    vi.mocked(query).mockResolvedValue([
+      [{ docNo: 'INV250626-22', quotationId: 'inv-2025' }],
+    ] as any);
+    expect(await listDocNosByBase('INV250626-')).toEqual([
+      { docNo: 'INV250626-22', quotationId: 'inv-2025' },
+    ]);
+    expect(callAt(0)[1]).toEqual(['INV250626-%']);
+  });
+
+  it('does not let one day prefix reach into another', async () => {
+    // The trailing "-" is load-bearing: without it "QT2506" would also match
+    // QT250601-…, QT250615-… and so on.
+    vi.mocked(query).mockResolvedValue([[]] as any);
+    await listDocNosByBase('RC100826-');
+    expect(callAt(0)[1]).toEqual(['RC100826-%']);
+  });
 });
 
 describe('purgeOldDocNos', () => {

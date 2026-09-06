@@ -40,9 +40,14 @@ process.env.DB_USER = 'tester';
 process.env.DB_PASSWORD = 'pw';
 process.env.DB_NAME = 'testdb';
 
-// A version SELECT result that MATCHES SCHEMA_VERSION (36) → bootstrap fast-path,
+// A version SELECT result that MATCHES SCHEMA_VERSION (37) → bootstrap fast-path,
 // skipping DDL. Value is a string because settings stores VARCHAR values.
-const SCHEMA_VERSION = '36';
+//
+// ⚠️ This constant only ever goes UP, in step with db.ts. The bootstrap's fast
+// path is `stored >= SCHEMA_VERSION`, so a number the live database has already
+// recorded can never trigger a migration again — reusing one silently skips the
+// entire migration in production (that is how v33 was burned).
+const SCHEMA_VERSION = '37';
 const SCHEMA_MATCH: [Array<{ value: string }>, unknown[]] = [[{ value: SCHEMA_VERSION }], []];
 // An empty result → no schema_version row / no admin row → full bootstrap.
 const EMPTY: [unknown[], unknown[]] = [[], []];
@@ -780,11 +785,12 @@ describe('db.ts', () => {
       expect(crmTasksDdl).toMatch(/dueDate VARCHAR\(20\) DEFAULT NULL/);
       expect(sql.some((s) => /ADD CONSTRAINT \w+ FOREIGN KEY[\s\S]*(task_links|crm_tasks|task_topics)/.test(s))).toBe(false);
 
-      // Stamping anything but 36 either re-runs the DDL forever or (if a burned
-      // number were reused) skips the whole migration, as v33 already did once.
+      // Stamping anything but the CURRENT version either re-runs the DDL
+      // forever or (if a burned number were reused) skips the whole migration,
+      // as v33 already did once.
       expect(mockConnection.query).toHaveBeenCalledWith(
         expect.stringContaining('INSERT INTO settings'),
-        ['36'],
+        [SCHEMA_VERSION],
       );
     });
 
@@ -1382,5 +1388,120 @@ describe('db.ts', () => {
 
       expect(mockConnection.release).toHaveBeenCalled();
     });
+  });
+});
+
+// ── v37: ลูกหนี้ค้างชำระ ──────────────────────────────────────────────────────
+describe('v37 receivables schema', () => {
+  it('adds every derived column with ONE ALTER each, so a partial run is re-runnable', async () => {
+    const db = await freshImport();
+    mockConnection.query.mockResolvedValue(EMPTY);
+
+    await db.getDbConnection();
+    const sql = bootstrapSql();
+    const hasSql = (re: RegExp) => sql.some((s) => re.test(s));
+
+    // One statement per column: a multi-column ALTER would hit
+    // ER_DUP_FIELDNAME on the first existing column, abort, and leave the rest
+    // missing forever — the error is swallowed as benign on every future run.
+    const columns = [
+      /ALTER TABLE billing_documents ADD COLUMN IF NOT EXISTS docDate VARCHAR\(10\) DEFAULT NULL/,
+      /ALTER TABLE billing_documents ADD COLUMN IF NOT EXISTS dueDate VARCHAR\(10\) DEFAULT NULL/,
+      /ALTER TABLE billing_documents ADD COLUMN IF NOT EXISTS totalAmount DECIMAL\(12,2\) NOT NULL DEFAULT 0/,
+      /ALTER TABLE billing_documents ADD COLUMN IF NOT EXISTS paidAmount DECIMAL\(12,2\) NOT NULL DEFAULT 0/,
+      /ALTER TABLE billing_documents ADD COLUMN IF NOT EXISTS customerName VARCHAR\(255\) NOT NULL DEFAULT ''/,
+      /ALTER TABLE billing_documents ADD COLUMN IF NOT EXISTS customerPhone VARCHAR\(50\) NOT NULL DEFAULT ''/,
+      /ALTER TABLE billing_documents ADD COLUMN IF NOT EXISTS receivableOverride TINYINT\(1\) DEFAULT NULL/,
+      /ALTER TABLE billing_documents ADD COLUMN IF NOT EXISTS settlesDocId VARCHAR\(36\) DEFAULT NULL/,
+      /ALTER TABLE billing_documents ADD COLUMN IF NOT EXISTS supersededById VARCHAR\(36\) DEFAULT NULL/,
+      /ALTER TABLE billing_documents ADD COLUMN IF NOT EXISTS cancelledAt VARCHAR\(255\) DEFAULT NULL/,
+    ];
+    for (const column of columns) {
+      expect(hasSql(column)).toBe(true);
+    }
+    // Every ALTER TABLE billing_documents statement adds exactly one column.
+    const billingAlters = sql.filter((s) => /ALTER TABLE billing_documents/.test(s));
+    expect(billingAlters).toHaveLength(columns.length);
+    for (const statement of billingAlters) {
+      expect(statement.match(/ADD COLUMN/g)).toHaveLength(1);
+    }
+  });
+
+  it('adds the receivable indexes, each in its own statement', async () => {
+    const db = await freshImport();
+    mockConnection.query.mockResolvedValue(EMPTY);
+
+    await db.getDbConnection();
+    const sql = bootstrapSql();
+    const hasSql = (re: RegExp) => sql.some((s) => re.test(s));
+
+    expect(hasSql(/CREATE INDEX idx_billing_receivable ON billing_documents \(docType, dueDate\)/)).toBe(true);
+    expect(hasSql(/CREATE INDEX idx_billing_settles ON billing_documents \(settlesDocId\)/)).toBe(true);
+  });
+
+  it('creates billing_payments with its indexes inline and NO foreign key', async () => {
+    const db = await freshImport();
+    mockConnection.query.mockResolvedValue(EMPTY);
+
+    await db.getDbConnection();
+    const sql = bootstrapSql();
+
+    const ddl = sql.find((s) => /CREATE TABLE IF NOT EXISTS billing_payments/.test(s))!;
+    expect(ddl).toBeDefined();
+    expect(ddl).toContain('INDEX idx_bp_doc (billingDocumentId)');
+    expect(ddl).toContain('INDEX idx_bp_paidDate (paidDate)');
+    // Corrections never delete: the void columns are part of the table itself.
+    expect(ddl).toContain('voidedAt VARCHAR(255) DEFAULT NULL');
+    expect(ddl).toContain('voidReason VARCHAR(255) DEFAULT NULL');
+    // No FK, per the house rule — this app hard-deletes documents, so the link
+    // is soft and deleteBillingDocument carries the ban instead.
+    expect(ddl).not.toMatch(/FOREIGN KEY/);
+    expect(ddl).not.toMatch(/REFERENCES billing_documents/);
+  });
+
+  it('creates billing_documents BEFORE altering it, so a fresh database works too', async () => {
+    const db = await freshImport();
+    mockConnection.query.mockResolvedValue(EMPTY);
+
+    await db.getDbConnection();
+
+    const tableIdx = indexOfSql('CREATE TABLE IF NOT EXISTS billing_documents');
+    const alterIdx = indexOfSql('ALTER TABLE billing_documents ADD COLUMN IF NOT EXISTS docDate');
+    const paymentsIdx = indexOfSql('CREATE TABLE IF NOT EXISTS billing_payments');
+    expect(tableIdx).toBeGreaterThanOrEqual(0);
+    expect(tableIdx).toBeLessThan(alterIdx);
+    expect(alterIdx).toBeLessThan(paymentsIdx);
+  });
+
+  it('performs NO data backfill in SQL — totalAmount needs computeQuoteTotals', async () => {
+    const db = await freshImport();
+    mockConnection.query.mockResolvedValue(EMPTY);
+
+    await db.getDbConnection();
+    const sql = bootstrapSql();
+
+    // Any UPDATE that tried to compute money in SQL would become a second,
+    // drifting source of truth for it.
+    expect(sql.some((s) => /UPDATE billing_documents/.test(s))).toBe(false);
+    // And nothing invents a dueDate, which is what keeps day one quiet.
+    expect(sql.some((s) => /SET dueDate/.test(s))).toBe(false);
+  });
+
+  it('swallows ER_DUP_FIELDNAME on ONE column without skipping the others', async () => {
+    const db = await freshImport();
+    const dup = Object.assign(new Error('duplicate column'), { code: 'ER_DUP_FIELDNAME' });
+    mockConnection.query.mockImplementation((sql: string) =>
+      /ADD COLUMN IF NOT EXISTS docDate/.test(sql) ? Promise.reject(dup) : Promise.resolve(EMPTY)
+    );
+
+    await db.getDbConnection();
+    const sql = bootstrapSql();
+
+    // The later columns were still attempted, and the version was still stamped.
+    expect(sql.some((s) => /ADD COLUMN IF NOT EXISTS cancelledAt/.test(s))).toBe(true);
+    expect(mockConnection.query).toHaveBeenCalledWith(
+      expect.stringContaining("INSERT INTO settings (name, value) VALUES ('schema_version', ?)"),
+      [SCHEMA_VERSION],
+    );
   });
 });

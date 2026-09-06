@@ -18,8 +18,13 @@ import {
   companyAddressQuery,
   toThaiE164,
   CONTACT_EMAIL_SETTING,
+  getCreditTermDays,
+  setCreditTermDays,
+  BILLING_CREDIT_TERM_SETTING,
+  MAX_CREDIT_TERM_DAYS,
   type CompanyProfile,
 } from '@/app/lib/settingsStore';
+import { DEFAULT_CREDIT_TERM_DAYS } from '@/app/lib/alertThresholds';
 import { CONTACT_EMAIL } from '@/app/lib/contact';
 
 describe('settingsStore', () => {
@@ -172,5 +177,51 @@ describe('settingsStore', () => {
     it('does not double up the country code when 66 is typed without a plus', () => {
       expect(toThaiE164('66-62-012-9895')).toBe('+66620129895');
     });
+  });
+});
+
+// ── เครดิตเทอมเริ่มต้น ──────────────────────────────────────────────────────
+// A plain `settings` row, the repo's only global-setting mechanism — the same
+// one contact_email, the company profile and schema_version itself all use.
+describe('credit term setting', () => {
+  const mockQuery = vi.mocked(query);
+  beforeEach(() => vi.clearAllMocks());
+
+  it('reads the stored value from the settings row', async () => {
+    mockQuery.mockResolvedValueOnce([[{ value: '45' }], []] as never);
+    expect(await getCreditTermDays()).toBe(45);
+    expect(mockQuery.mock.calls[0][1]).toEqual([BILLING_CREDIT_TERM_SETTING]);
+  });
+
+  it('falls back to the shared constant when the row does not exist yet', async () => {
+    // 100% of installs are in this state until someone visits /settings, so the
+    // feature has to work without it.
+    mockQuery.mockResolvedValueOnce([[], []] as never);
+    expect(await getCreditTermDays()).toBe(DEFAULT_CREDIT_TERM_DAYS);
+  });
+
+  it('falls back rather than returning NaN for an unparseable stored value', async () => {
+    mockQuery.mockResolvedValueOnce([[{ value: 'สามสิบ' }], []] as never);
+    expect(await getCreditTermDays()).toBe(DEFAULT_CREDIT_TERM_DAYS);
+  });
+
+  it('clamps a stored value that is out of range in either direction', async () => {
+    mockQuery.mockResolvedValueOnce([[{ value: '-10' }], []] as never);
+    expect(await getCreditTermDays()).toBe(0);
+    mockQuery.mockResolvedValueOnce([[{ value: '99999' }], []] as never);
+    expect(await getCreditTermDays()).toBe(MAX_CREDIT_TERM_DAYS);
+  });
+
+  it('accepts 0 days (cash on delivery) rather than treating it as "unset"', async () => {
+    mockQuery.mockResolvedValueOnce([[{ value: '0' }], []] as never);
+    expect(await getCreditTermDays()).toBe(0);
+  });
+
+  it('writes the clamped value, so what is read back is exactly what was written', async () => {
+    mockQuery.mockResolvedValue([{ affectedRows: 1 }, []] as never);
+    expect(await setCreditTermDays(45)).toBe(45);
+    expect(mockQuery.mock.calls[0][1]).toEqual([BILLING_CREDIT_TERM_SETTING, '45']);
+    expect(await setCreditTermDays(9999)).toBe(MAX_CREDIT_TERM_DAYS);
+    expect(await setCreditTermDays(-5)).toBe(0);
   });
 });

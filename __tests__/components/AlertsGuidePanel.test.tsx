@@ -33,7 +33,7 @@ function guideText(): string {
   return screen.getByRole('dialog').textContent!.replace(/\s+/g, ' ');
 }
 
-describe('AlertsGuidePanel — the seven required topics', () => {
+describe('AlertsGuidePanel — the required topics', () => {
   it('covers every alert category plus the board, the bell and the links', () => {
     renderGuide();
     const text = guideText();
@@ -49,6 +49,7 @@ describe('AlertsGuidePanel — the seven required topics', () => {
       'ใกล้ถึงกำหนดสอบเทียบ',
       'ข้อมูลไม่ครบ',
       'เอกสารค้าง',
+      'ลูกหนี้ค้างชำระ',
       'เลื่อนแจ้งเตือน คืออะไร',
       'กระดานงาน “สิ่งที่ต้องทำ”',
       'ตัวเลขบนกระดิ่ง นับอะไรบ้าง',
@@ -58,9 +59,9 @@ describe('AlertsGuidePanel — the seven required topics', () => {
     }
 
     // Every section answers all three questions, in the same order.
-    expect(screen.getAllByText('ขึ้นเมื่อไร').length).toBe(10);
-    expect(screen.getAllByText('เกณฑ์ที่ระบบใช้จริง').length).toBe(10);
-    expect(screen.getAllByText('ทำอย่างไรถึงจะหายไป').length).toBe(10);
+    expect(screen.getAllByText('ขึ้นเมื่อไร').length).toBe(11);
+    expect(screen.getAllByText('เกณฑ์ที่ระบบใช้จริง').length).toBe(11);
+    expect(screen.getAllByText('ทำอย่างไรถึงจะหายไป').length).toBe(11);
     expect(text.length).toBeGreaterThan(500);
   });
 });

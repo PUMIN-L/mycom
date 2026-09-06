@@ -6,6 +6,8 @@ import {
   bangkokCurrentMonth,
   isValidDateString,
   addMonthsToDateString,
+  addDaysToDateString,
+  daysBetweenDateStrings,
   formatDisplayDate,
 } from '@/app/lib/dateFormat';
 
@@ -155,5 +157,54 @@ describe('formatDisplayDate', () => {
     // A stray value should look odd on screen, not erase the row's date.
     expect(formatDisplayDate('ไม่ระบุ')).toBe('ไม่ระบุ');
     expect(formatDisplayDate('2026-13-01')).toBe('2026-13-01');
+  });
+});
+
+// ── Credit terms and ageing ────────────────────────────────────────────────
+describe('addDaysToDateString', () => {
+  it('adds a credit term and keeps the lexically-sortable shape', () => {
+    expect(addDaysToDateString('2026-08-01', 30)).toBe('2026-08-31');
+  });
+
+  it('rolls over a month and a year boundary', () => {
+    expect(addDaysToDateString('2026-08-15', 30)).toBe('2026-09-14');
+    expect(addDaysToDateString('2026-12-20', 30)).toBe('2027-01-19');
+  });
+
+  it('handles a leap day without shifting a day', () => {
+    expect(addDaysToDateString('2028-02-28', 1)).toBe('2028-02-29');
+    expect(addDaysToDateString('2028-02-28', 2)).toBe('2028-03-01');
+  });
+
+  it('a term of 0 (เงินสด) returns the same day', () => {
+    expect(addDaysToDateString('2026-08-01', 0)).toBe('2026-08-01');
+  });
+
+  it('returns an unparseable input UNCHANGED rather than "NaN-NaN-NaN"', () => {
+    // These values reach VARCHAR columns compared lexically — a malformed one
+    // must look odd, never silently poison a range query.
+    expect(addDaysToDateString('', 30)).toBe('');
+    expect(addDaysToDateString('01/08/2026', 30)).toBe('01/08/2026');
+  });
+});
+
+describe('daysBetweenDateStrings', () => {
+  it('is positive when the second date is later, negative when earlier', () => {
+    expect(daysBetweenDateStrings('2026-08-25', '2026-09-06')).toBe(12);
+    expect(daysBetweenDateStrings('2026-09-09', '2026-09-06')).toBe(-3);
+  });
+
+  it('is 0 for the same day — money due today is not late today', () => {
+    expect(daysBetweenDateStrings('2026-09-06', '2026-09-06')).toBe(0);
+  });
+
+  it('counts whole days across a year boundary', () => {
+    expect(daysBetweenDateStrings('2026-12-31', '2027-01-01')).toBe(1);
+  });
+
+  it('returns null for a missing or malformed side, so a caller can render "-"', () => {
+    expect(daysBetweenDateStrings(null, '2026-09-06')).toBeNull();
+    expect(daysBetweenDateStrings('2026-09-06', undefined)).toBeNull();
+    expect(daysBetweenDateStrings('not-a-date', '2026-09-06')).toBeNull();
   });
 });

@@ -51,6 +51,16 @@ const nextConfig: NextConfig = {
         destination: "/adminpanel",
         permanent: false,
       },
+      {
+        // The header/footer wizard was replaced by the general PDF editor and
+        // its page.tsx deleted. Anyone holding a bookmark (or an open tab that
+        // predates the deploy) would otherwise hit a 404. `permanent: false`
+        // like the entry above: a 308 would be cached by the browser forever,
+        // which is not a promise worth making about an admin-only tool path.
+        source: "/tools/pdf-header-footer",
+        destination: "/tools/pdf-editor",
+        permanent: false,
+      },
     ];
   },
   async headers() {

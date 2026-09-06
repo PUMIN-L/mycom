@@ -177,7 +177,17 @@ export async function reserveDocNo(
   );
 }
 
-/** All currently-reserved numbers from the last 7 days. */
+/**
+ * All currently-reserved numbers from the last 7 days.
+ *
+ * ⚠️ This window is for WARNING about a duplicate, never for MINTING one. Both
+ * quotation and billing numbers embed the date as DDMMYY, and that shape is
+ * identical to the legacy YYMMDD shape of a different day in a different year
+ * (25 Jun 2026 → "250626" ← 26 Jun 2025). Last year's numbers are outside this
+ * window but `used_docnos` still owns them forever, so an allocator fed from
+ * here mints a number the PRIMARY KEY then refuses. Mint from
+ * listDocNosByBase() with the day's prefixes instead.
+ */
 export async function listRecentDocNos(): Promise<UsedDocNo[]> {
   const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
   const [rows] = await query<RowDataPacket[]>(
@@ -188,16 +198,27 @@ export async function listRecentDocNos(): Promise<UsedDocNo[]> {
 }
 
 /**
- * Every reserved number that begins with `base` — e.g. "QT260719-23" finds
- * "QT260719-23", "QT260719-23v1", "QT260719-23v2".
+ * Every reserved number that begins with `base`, in the SHARED ledger — so it
+ * answers for billing prefixes (INV/BN/RC) exactly as it does for QT.
  *
- * Deliberately NOT windowed by date, unlike listRecentDocNos(). Quotations are
- * kept for two years and this business's sales cycle runs for months, so the
- * document an admin clones is very often older than that 7-day window — and
- * `used_docnos` is never purged (see the cleanup cron), so its PRIMARY KEY still
- * owns every version number ever issued. Working out the next version from the
- * recent window alone would hand back a "v1" the ledger already owns, and the
- * save would then be rejected with a docNo conflict the admin cannot resolve.
+ * Deliberately NOT windowed by date, unlike listRecentDocNos(). `used_docnos`
+ * is never purged (see the cleanup cron), so its PRIMARY KEY still owns every
+ * number ever issued, and this is the only lookup that can see all of them.
+ * Two callers depend on that:
+ *
+ *  1. VERSIONING — `base` is a whole number, e.g. "QT260719-23", finding
+ *     "QT260719-23", "QT260719-23v1", "QT260719-23v2". Quotations are kept for
+ *     two years and this business's sales cycle runs for months, so the
+ *     document an admin clones is normally far older than the 7-day window.
+ *  2. MINTING — `base` is a day's PREFIX, e.g. "QT250626-" or "INV250626-",
+ *     finding every number ever issued under it. Necessary because the DDMMYY
+ *     date shape of one day equals the legacy YYMMDD shape of another day a
+ *     year earlier, so a day's prefix can already be owned by numbers issued
+ *     in a different year (see the header of quotationNumber.ts).
+ *
+ * In both cases reading the recent window instead hands back a number the
+ * ledger already owns, and the save is then rejected with a docNo conflict the
+ * admin has no way to clear.
  */
 export async function listDocNosByBase(base: string): Promise<UsedDocNo[]> {
   const trimmed = String(base ?? "").trim();

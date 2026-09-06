@@ -241,6 +241,29 @@ export interface CostItem {
   createdAt: string;
 }
 
+/**
+ * One ลูกหนี้ค้างชำระ alert card. Every field is a DENORMALISED COLUMN on
+ * `billing_documents` — the card renders without a single JSON parse, which is
+ * what lets the bell poll this category without reading 2000 blobs.
+ */
+export interface ReceivableAlert {
+  id: string;
+  docNo: string;
+  docType: string;
+  /** The document's own วันที่, never `createdAt` — that is rewritten on every
+   *  save, including the save /billing performs before generating a PDF. */
+  docDate: string | null;
+  dueDate: string | null;
+  customerName: string;
+  customerPhone: string;
+  linkedQuotationId: string | null;
+  totalAmount: number;
+  paidAmount: number;
+  /** `max(0, total - paid)`. The number the card shows in large type — the
+   *  OUTSTANDING balance, not the document total. */
+  outstanding: number;
+}
+
 export interface CrmAlerts {
   expiringWarranties: CustomerEquipment[];
   nearingCalibration: CustomerEquipment[];
@@ -276,6 +299,16 @@ export interface CrmAlerts {
   /** True count of customer-scoped follow-ups, which can exceed
    * customerCallFollowUps.length since that list is capped. */
   customerCallFollowUpsTotal: number;
+  /** Billing documents that carry debt, still have a balance, and are within
+   * RECEIVABLE_ALERT_LEAD_DAYS of their due date (or already past it). Like
+   * ข้อมูลไม่ครบ this has NO closing date window — nothing clears it but the
+   * money arriving — so the list is capped and the true count travels
+   * separately. A document with no `dueDate` is NEVER here: nobody agreed a
+   * term on it, so it is not late. */
+  overdueReceivables: ReceivableAlert[];
+  /** True count of overdue/near-due receivables, which can exceed
+   * overdueReceivables.length since that list is capped. */
+  overdueReceivablesTotal: number;
   /** Pending board tasks whose dueDate has ARRIVED (Bangkok calendar day).
    * Tasks with no due date, and tasks due later, are excluded on purpose —
    * see countDueTasks() in taskStore.ts. */

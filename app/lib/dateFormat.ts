@@ -109,6 +109,47 @@ export function bangkokCurrentMonth(): string {
 }
 
 /**
+ * `dateStr` ("YYYY-MM-DD") shifted forward by `days` days — for credit terms
+ * ("ครบกำหนด = วันที่เอกสาร + เครดิต N วัน"). UTC internally so the result never
+ * shifts by a day from the caller's own timezone, and the output keeps the
+ * "YYYY-MM-DD" shape those VARCHAR date columns are compared lexically on.
+ *
+ * An unparseable input is returned unchanged rather than becoming "NaN-NaN-NaN":
+ * a stray value must look odd, not silently poison a range query.
+ */
+export function addDaysToDateString(dateStr: string, days: number): string {
+  if (!isValidDateString(String(dateStr ?? "").trim())) return dateStr;
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const shifted = new Date(Date.UTC(y, m - 1, d + Math.trunc(days)));
+  const yyyy = shifted.getUTCFullYear();
+  const mm = String(shifted.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(shifted.getUTCDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+/**
+ * Whole calendar days from `from` to `to`, both "YYYY-MM-DD" — positive when
+ * `to` is later. Used for "เกินกำหนด N วัน" and for the ageing buckets, where
+ * both ends are already Bangkok calendar dates, so plain UTC midnights give the
+ * exact day difference with no DST or offset to reason about.
+ *
+ * Returns null when either side is not a valid date string, so a caller can
+ * render "-" instead of a number computed from garbage.
+ */
+export function daysBetweenDateStrings(
+  from: string | null | undefined,
+  to: string | null | undefined
+): number | null {
+  const a = String(from ?? "").trim();
+  const b = String(to ?? "").trim();
+  if (!isValidDateString(a) || !isValidDateString(b)) return null;
+  const [ay, am, ad] = a.split("-").map(Number);
+  const [by, bm, bd] = b.split("-").map(Number);
+  const diff = Date.UTC(by, bm - 1, bd) - Date.UTC(ay, am - 1, ad);
+  return Math.round(diff / 86400000);
+}
+
+/**
  * `dateStr` ("YYYY-MM-DD") shifted forward by `months` calendar months — for
  * "N months after X" reminders (e.g. calibration due 10 months after the last
  * calibration date). Uses UTC internally so the result never shifts by a day

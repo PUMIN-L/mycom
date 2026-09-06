@@ -45,3 +45,17 @@ export const MISSING_DELIVERY_DOC_DAYS = 20;
 /** "เอกสารค้าง", case B: a sale that has an invoice number but still no
  *  receipt number this many days after the sale date. */
 export const MISSING_RECEIPT_DOC_DAYS = 30;
+
+/** Default credit term, in days: a new billing document's "ครบกำหนดชำระ" is
+ *  pre-filled with `docDate + this`. It is only the FALLBACK — the real value
+ *  is the `billing_credit_term_days` settings row (settingsStore.getCreditTermDays),
+ *  which the admin edits on /settings. It lives here, not next to that reader,
+ *  because settingsStore imports the DB driver and this number is rendered by
+ *  client components (the billing builder and AlertsGuidePanel) too. */
+export const DEFAULT_CREDIT_TERM_DAYS = 30;
+
+/** How many days BEFORE its due date a receivable starts appearing in the alert
+ *  feed, so the owner can make the courtesy call before the invoice is actually
+ *  late. Like calibration, this category has NO upper bound: nothing closes a
+ *  receivable alert except the money arriving (or a snooze). */
+export const RECEIVABLE_ALERT_LEAD_DAYS = 7;

@@ -9,6 +9,7 @@ import {
   quotationDocNoPrefix,
   legacyQuotationDocNoPrefix,
   quotationDocNoPrefixes,
+  docNoPrefixes,
 } from '@/app/lib/quotationNumber';
 
 // The LEGACY shape: QT + YYMMDD + "-NN" (every number issued before task 5).
@@ -74,7 +75,10 @@ describe('quotationNumber', () => {
     });
   });
 
-  describe('nextDocNo (single prefix — the legacy call shape, still used by billing)', () => {
+  // The single-string signature. Billing moved to the two-prefix form with the
+  // rest of the DDMMYY change, but the signature is public and must keep
+  // behaving exactly as it always has for anything that still passes one.
+  describe('nextDocNo (single prefix)', () => {
     it('returns prefix + "22" when nothing has been used', () => {
       expect(nextDocNo(LEGACY_PREFIX, [])).toBe('QT20260719-22');
     });
@@ -160,6 +164,76 @@ describe('quotationNumber', () => {
       expect(
         nextDocNo(prefixes, [null as unknown as string, `${LEGACY}25`, undefined as unknown as string])
       ).toBe(`${CURRENT}26`);
+    });
+  });
+
+  // ── docNoPrefixes: the shared builder billing reuses ─────────────────────
+  describe('docNoPrefixes', () => {
+    it('is exactly what quotationDocNoPrefixes is built from', () => {
+      expect(docNoPrefixes('QT', ISO)).toEqual(quotationDocNoPrefixes(ISO));
+    });
+
+    it('wraps any literal — this is how INV/BN/RC get the same two shapes', () => {
+      expect(docNoPrefixes('INV', '2026-09-05')).toEqual(['INV050926-', 'INV260905-']);
+      expect(docNoPrefixes('BN', '2026-09-05')).toEqual(['BN050926-', 'BN260905-']);
+      expect(docNoPrefixes('RC', '2026-09-05')).toEqual(['RC050926-', 'RC260905-']);
+    });
+
+    it('de-duplicates for a date whose two shapes coincide', () => {
+      expect(docNoPrefixes('INV', '2026-09-26')).toEqual(['INV260926-']);
+    });
+
+    it('yields a bare "<literal>-" for a non-ISO date', () => {
+      expect(docNoPrefixes('INV', '')).toEqual(['INV-']);
+    });
+  });
+
+  // ── The cross-YEAR collision (task 5b) ───────────────────────────────────
+  // 25 Jun 2026 mints DDMMYY "250626". 26 Jun 2025 was issued as YYMMDD
+  // "250626". Same prefix, two different days, one year apart — and
+  // `used_docnos` still owns the 2025 numbers forever.
+  describe('nextDocNo across a year boundary', () => {
+    const Y2026 = '2026-06-25'; // DDMMYY → 250626
+    const Y2025 = '2025-06-26'; // YYMMDD → 250626
+    const SHARED = 'QT250626-';
+
+    it('proves the two days really do share one prefix', () => {
+      expect(quotationDocNoPrefixes(Y2026)).toEqual([SHARED, 'QT260625-']);
+      expect(quotationDocNoPrefixes(Y2025)).toEqual(['QT260625-', SHARED]);
+    });
+
+    it('continues past LAST YEAR\'s numbers instead of landing on one of them', () => {
+      // These are the numbers 26 Jun 2025 issued. Before the fix the 2026 mint
+      // could not see them (the client read a 7-day window) and handed back
+      // "QT250626-22", which used_docnos then refused — leaving the admin with
+      // "เลขที่ใบเสนอราคาซ้ำ" and nothing to do but type a number by hand.
+      const ledger = [`${SHARED}22`, `${SHARED}23`, `${SHARED}24`];
+      expect(nextDocNo(quotationDocNoPrefixes(Y2026), ledger)).toBe(`${SHARED}25`);
+    });
+
+    it('is symmetric — a 2025 document steps past the 2026 day too', () => {
+      // Both dates list both prefixes, so the two days share one sequence
+      // whichever of them is being written.
+      const ledger = ['QT260625-40', `${SHARED}22`];
+      expect(nextDocNo(quotationDocNoPrefixes(Y2025), ledger)).toBe('QT260625-41');
+    });
+
+    it('NEVER returns a number the used list already holds', () => {
+      // The guarantee itself, independent of how any suffix happens to parse.
+      const ledger = [
+        `${SHARED}22`,
+        `${SHARED}23`,
+        'QT260625-24',
+        `${SHARED}25v1`,
+        'QT250626-nonsense',
+      ];
+      const minted = nextDocNo(quotationDocNoPrefixes(Y2026), ledger);
+      expect(ledger).not.toContain(minted);
+      expect(minted.startsWith(SHARED)).toBe(true);
+    });
+
+    it('still starts a genuinely untouched shared prefix at DOCNO_START', () => {
+      expect(nextDocNo(quotationDocNoPrefixes(Y2026), [])).toBe(`${SHARED}${DOCNO_START}`);
     });
   });
 });

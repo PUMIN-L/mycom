@@ -40,6 +40,10 @@ export default function GlobalAdminBell() {
             // True pending follow-up-call count, NOT customerCallFollowUps.length
             // — that array is capped at 100 rows for display.
             (data.customerCallFollowUpsTotal ?? data.customerCallFollowUps?.length ?? 0) +
+            // Same treatment: nothing closes a receivable alert but the money
+            // arriving, so its list is capped at 100 for display and the TRUE
+            // total is what the bell has to count.
+            (data.overdueReceivablesTotal ?? data.overdueReceivables?.length ?? 0) +
             // Board tasks whose due date has ARRIVED. Tasks with no due date and
             // tasks due later are deliberately excluded — that is why the API
             // sends a separate count instead of a task total.

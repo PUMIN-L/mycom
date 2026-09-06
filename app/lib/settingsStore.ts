@@ -1,6 +1,7 @@
 import { query } from "./db";
 import type { RowDataPacket } from "mysql2";
 import { CONTACT_EMAIL } from "./contact";
+import { DEFAULT_CREDIT_TERM_DAYS } from "./alertThresholds";
 
 // Key-value settings configurable from the CMS (/settings, admin-only).
 // Reads fall back to a hardcoded default so the app works before the row exists.
@@ -25,6 +26,55 @@ export async function setSetting(name: string, value: string): Promise<void> {
 /** Where contact-form submissions are emailed. Falls back to the shared constant. */
 export async function getContactEmail(): Promise<string> {
   return (await getSetting(CONTACT_EMAIL_SETTING)) || CONTACT_EMAIL;
+}
+
+// ── Default credit term (เครดิตเทอม) ────────────────────────────────────────
+// The number of days after a billing document's own วันที่ (`docDate`) that its
+// "ครบกำหนดชำระ" is pre-filled with. Configured ONCE by the admin on /settings
+// and applied automatically to new documents; any individual document can
+// override its own due date in the builder.
+//
+// Deliberately NOT OTP-gated, unlike `contact_email` and the company profile.
+// The OTP on those guards outward-facing IDENTITY — an attacker redirecting
+// where leads are emailed, or rewriting the address printed on the public site.
+// A credit term is internal and low blast radius: the worst a wrong value does
+// is pre-fill "45" instead of "30" into a box the admin can see and change on
+// the next document. An OTP round trip for that is friction with no threat
+// behind it. It follows the same "click แก้ไข before the fields unlock" pattern
+// the company profile uses, which is what actually prevents the real risk here
+// (a stray keystroke on a page opened for something else).
+
+export const BILLING_CREDIT_TERM_SETTING = "billing_credit_term_days";
+
+/** Widest term that can be stored. A year of credit is already absurd for this
+ *  business; the clamp exists so a typo can never write a value that makes
+ *  every new invoice due in the next century. */
+export const MAX_CREDIT_TERM_DAYS = 365;
+
+/**
+ * The configured default credit term, in days. Falls back to
+ * DEFAULT_CREDIT_TERM_DAYS (alertThresholds.ts — the same constant the guide
+ * panel and the builder's hint print) when the row does not exist yet or holds
+ * something unparseable, so the feature works before anyone visits /settings.
+ */
+export async function getCreditTermDays(): Promise<number> {
+  const raw = await getSetting(BILLING_CREDIT_TERM_SETTING);
+  const n = parseInt(raw ?? "", 10);
+  return Number.isFinite(n)
+    ? Math.min(Math.max(n, 0), MAX_CREDIT_TERM_DAYS)
+    : DEFAULT_CREDIT_TERM_DAYS;
+}
+
+/** Store the default credit term, clamped to 0..365. Clamping (rather than
+ *  rejecting) matches getCreditTermDays, so what is read back is always exactly
+ *  what was written. */
+export async function setCreditTermDays(days: number): Promise<number> {
+  const clamped = Math.min(
+    Math.max(Number.isFinite(days) ? Math.trunc(days) : DEFAULT_CREDIT_TERM_DAYS, 0),
+    MAX_CREDIT_TERM_DAYS
+  );
+  await setSetting(BILLING_CREDIT_TERM_SETTING, String(clamped));
+  return clamped;
 }
 
 // ── Company profile (address, phone) ────────────────────────────────────────

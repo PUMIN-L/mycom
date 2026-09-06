@@ -87,3 +87,22 @@ describe("resolveAlertEditRoute", () => {
     });
   });
 });
+
+describe('resolveAlertEditRoute — ลูกหนี้ค้างชำระ', () => {
+  it('opens the billing document itself, read-only', () => {
+    expect(
+      resolveAlertEditRoute({ type: 'receivable', data: { id: 'inv-1' } })
+    ).toEqual({ kind: 'billing_document', billingDocumentId: 'inv-1' });
+  });
+
+  it('refuses the "undefined"/"null" spellings that built /api/.../undefined in the first place', () => {
+    expect(resolveAlertEditRoute({ type: 'receivable', data: { id: 'undefined' } })).toEqual({ kind: 'none' });
+    expect(resolveAlertEditRoute({ type: 'receivable', data: { id: 'null' } })).toEqual({ kind: 'none' });
+    expect(resolveAlertEditRoute({ type: 'receivable', data: {} })).toEqual({ kind: 'none' });
+  });
+
+  it('does not fall through to the equipment path, which would open the wrong modal', () => {
+    const route = resolveAlertEditRoute({ type: 'receivable', data: { id: 'inv-1' } });
+    expect(route.kind).not.toBe('equipment_inline');
+  });
+});

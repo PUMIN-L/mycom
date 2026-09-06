@@ -1659,6 +1659,129 @@ describe('getAlerts — "today" must be Bangkok (UTC+7) time, not server UTC', (
     expect(calibrationCall![1]).toEqual([10, '2026-08-05', '2026-08-04T19:00:00.000Z']);
   });
 
+  // ── ลูกหนี้ค้างชำระ ───────────────────────────────────────────────────────
+  it('opens the receivable alert 7 days BEFORE the due date, with no upper bound', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-04T19:00:00.000Z')); // Bangkok: Aug 5
+
+    await getAlerts();
+
+    const call = topQuery.mock.calls.find(([sql]) =>
+      String(sql).includes('FROM billing_documents b')
+    )!;
+    // The cutoff is Bangkok today + the lead days, not server-UTC today.
+    expect(call[1]).toEqual(['2026-08-12', '2026-08-04T19:00:00.000Z']);
+    // Nothing closes this but payment, so there is no lower bound on dueDate.
+    expect(String(call[0])).not.toMatch(/b\.dueDate\s*>=/);
+  });
+
+  it('NEVER alerts on a document with no due date — day one must not spike the bell', async () => {
+    await getAlerts();
+    const call = topQuery.mock.calls.find(([sql]) =>
+      String(sql).includes('FROM billing_documents b')
+    )!;
+    expect(String(call[0])).toContain('b.dueDate IS NOT NULL');
+  });
+
+  it('applies the debtCarrier rule: invoices by default, overrides in both directions', async () => {
+    await getAlerts();
+    const sql = String(
+      topQuery.mock.calls.find(([s]) => String(s).includes('FROM billing_documents b'))![0]
+    ).replace(/\s+/g, ' ');
+    expect(sql).toContain(
+      "(b.receivableOverride = 1 OR (b.receivableOverride IS NULL AND b.docType = 'invoice'))"
+    );
+    expect(sql).toContain('b.cancelledAt IS NULL');
+    expect(sql).toContain('b.supersededById IS NULL');
+  });
+
+  it('compares the balance with a satang tolerance, never float equality', async () => {
+    await getAlerts();
+    const sql = String(
+      topQuery.mock.calls.find(([s]) => String(s).includes('FROM billing_documents b'))![0]
+    );
+    expect(sql).toContain('b.totalAmount - b.paidAmount > 0.005');
+    expect(sql).not.toMatch(/b\.paidAmount\s*=\s*b\.totalAmount/);
+  });
+
+  it('joins alert_snoozes on its OWN alertType with the identical snooze clause', async () => {
+    await getAlerts();
+    const sql = String(
+      topQuery.mock.calls.find(([s]) => String(s).includes('FROM billing_documents b'))![0]
+    ).replace(/\s+/g, ' ');
+    expect(sql).toContain(
+      "LEFT JOIN alert_snoozes sno ON sno.alertType = 'receivable' AND sno.referenceId = b.id"
+    );
+    expect(sql).toContain('(sno.snoozeUntil IS NULL OR sno.snoozeUntil <= ?)');
+  });
+
+  it('never reads the JSON blob for the alert feed', async () => {
+    await getAlerts();
+    const sql = String(
+      topQuery.mock.calls.find(([s]) => String(s).includes('FROM billing_documents b'))![0]
+    );
+    expect(sql).not.toMatch(/b\.data\b/);
+  });
+
+  it('reports the true receivable total separately from the capped list', async () => {
+    topQuery.mockImplementation((sql: string) => {
+      const text = String(sql);
+      if (text.includes('FROM billing_documents b') && text.includes('COUNT(*)')) {
+        return Promise.resolve([[{ cnt: 143 }]]);
+      }
+      if (text.includes('FROM billing_documents b')) {
+        return Promise.resolve([
+          Array.from({ length: 100 }, (_, i) => ({
+            id: `inv-${i}`,
+            docNo: `INV-${i}`,
+            docType: 'invoice',
+            totalAmount: '100.00',
+            paidAmount: '0.00',
+            outstanding: '100.00',
+          })),
+        ]);
+      }
+      return Promise.resolve([[]]);
+    });
+
+    const alerts = await getAlerts();
+    expect(alerts.overdueReceivables).toHaveLength(100);
+    expect(alerts.overdueReceivablesTotal).toBe(143);
+  });
+
+  it('hands the card NUMBERS, not the DECIMAL strings mysql2 returns, and floors the outstanding', async () => {
+    topQuery.mockImplementation((sql: string) => {
+      const text = String(sql);
+      if (text.includes('FROM billing_documents b') && !text.includes('COUNT(*)')) {
+        return Promise.resolve([
+          [
+            {
+              id: 'inv-1',
+              docNo: 'INV260801-01',
+              docType: 'invoice',
+              docDate: '2026-08-01',
+              dueDate: '2026-08-31',
+              customerName: 'บริษัท ก',
+              customerPhone: '02-1',
+              linkedQuotationId: 'q1',
+              totalAmount: '100000.00',
+              paidAmount: '130000.00',
+              outstanding: '-30000.00',
+            },
+          ],
+        ]);
+      }
+      return Promise.resolve([[]]);
+    });
+
+    const alerts = await getAlerts();
+    const card = alerts.overdueReceivables[0];
+    expect(card.totalAmount).toBe(100000);
+    expect(card.paidAmount).toBe(130000);
+    // An overpaid document must never subtract from the company's total.
+    expect(card.outstanding).toBe(0);
+  });
+
   it('still surfaces a calibration that is already overdue, not just ones approaching', async () => {
     // Unlike warranty (silenced by status='Expired'), nothing marks a
     // calibration as "done" except recording a NEW calibrationDate — so an
@@ -2187,7 +2310,7 @@ describe('getAlerts — warrantyAlertEnabled silences the warranty alert ONLY', 
 });
 
 describe('getAlerts — every pre-existing key survives the split', () => {
-  it('returns all six original keys plus the two new customer-call keys', async () => {
+  it('returns all six original keys, the two customer-call keys and the two receivable keys', async () => {
     topQuery.mockResolvedValue([[]]);
 
     const alerts = await getAlerts();
@@ -2202,6 +2325,10 @@ describe('getAlerts — every pre-existing key survives the split', () => {
         'missingDocuments',
         'nearingCalibration',
         'upcomingSchedules',
+        // Adding a category must never quietly drop one — that is what this
+        // exhaustive assertion is for.
+        'overdueReceivables',
+        'overdueReceivablesTotal',
       ].sort()
     );
   });

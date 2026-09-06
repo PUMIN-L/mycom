@@ -51,6 +51,19 @@ export default function SettingsPage() {
   // be typed into, so a stray click can't accidentally start editing.
   const [companyEditing, setCompanyEditing] = useState(false);
   const [showCompanyOtpModal, setShowCompanyOtpModal] = useState(false);
+
+  // ── เครดิตเทอมเริ่มต้น (ลูกหนี้ค้างชำระ) ──────────────────────────────────
+  // Same "click แก้ไข before the fields unlock" pattern as the company profile,
+  // but deliberately NO OTP: the OTPs on the contact email and the company
+  // profile guard outward-facing IDENTITY (where leads are emailed, what the
+  // public site prints). A credit term is internal, never leaves the admin UI,
+  // and never moves a due date that is already saved — an OTP round trip to
+  // change "30" to "45" would be friction with no threat behind it.
+  const [creditTermDays, setCreditTermDays] = useState<string>("");
+  const [creditTermLoading, setCreditTermLoading] = useState(true);
+  const [creditTermLoadFailed, setCreditTermLoadFailed] = useState(false);
+  const [creditTermSaving, setCreditTermSaving] = useState(false);
+  const [creditTermEditing, setCreditTermEditing] = useState(false);
   const [companyOtp, setCompanyOtp] = useState("");
 
   // Orphan Scanner State
@@ -230,6 +243,57 @@ export default function SettingsPage() {
     loadCompanyProfile();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLoggedIn]);
+
+  async function loadCreditTerm() {
+    setCreditTermLoading(true);
+    setCreditTermLoadFailed(false);
+    try {
+      const res = await fetch("/api/settings/credit-term");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setCreditTermDays(String(data.days ?? ""));
+    } catch {
+      setCreditTermLoadFailed(true);
+      showToast("โหลดค่าเครดิตเทอมไม่สำเร็จ", "error");
+    } finally {
+      setCreditTermLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!isLoggedIn) return;
+    loadCreditTerm();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoggedIn]);
+
+  async function handleSaveCreditTerm(e: React.FormEvent) {
+    e.preventDefault();
+    const days = parseInt(creditTermDays, 10);
+    if (!Number.isFinite(days) || days < 0 || days > 365) {
+      showToast("จำนวนวันต้องอยู่ระหว่าง 0 ถึง 365", "error");
+      return;
+    }
+    setCreditTermSaving(true);
+    try {
+      const res = await fetch("/api/settings/credit-term", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ days }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        showToast(data?.error ?? "บันทึกไม่สำเร็จ", "error");
+        return;
+      }
+      setCreditTermDays(String(data.days));
+      setCreditTermEditing(false);
+      showToast("บันทึกเครดิตเทอมแล้ว", "success");
+    } catch {
+      showToast("บันทึกไม่สำเร็จ กรุณาลองใหม่", "error");
+    } finally {
+      setCreditTermSaving(false);
+    }
+  }
 
   async function handleCancelCompanyEdit() {
     setCompanyEditing(false);
@@ -559,6 +623,77 @@ export default function SettingsPage() {
                 className="flex-1 px-6 py-3 bg-orange-500 text-white font-bold rounded-lg hover:bg-orange-600 transition disabled:opacity-50"
               >
                 {companySaving ? "กำลังดำเนินการ..." : "💾 บันทึกข้อมูลบริษัท"}
+              </button>
+            </div>
+          )}
+        </form>
+
+        {/* เครดิตเทอมเริ่มต้น — ตั้งครั้งเดียว ใช้กับเอกสารใหม่ทุกใบ */}
+        <form onSubmit={handleSaveCreditTerm} className="mt-8 bg-white rounded-lg shadow p-6 space-y-4">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+                ⏳ เครดิตเทอมเริ่มต้น
+              </h2>
+              <p className="text-sm text-gray-600 mt-1">
+                ใช้คำนวณ &quot;ครบกำหนดชำระ&quot; ของเอกสารใหม่ =
+                วันที่บนเอกสาร + จำนวนวันนี้ แก้เป็นรายใบได้ตอนสร้างเอกสาร
+              </p>
+            </div>
+            {!creditTermEditing && (
+              <button
+                type="button"
+                onClick={() => setCreditTermEditing(true)}
+                disabled={creditTermLoading || creditTermLoadFailed}
+                className="shrink-0 px-4 py-2 rounded-lg border border-orange-400 text-orange-600 font-semibold hover:bg-orange-50 transition text-sm disabled:opacity-50"
+              >
+                ✏️ แก้ไข
+              </button>
+            )}
+          </div>
+
+          <div>
+            <label className="block text-sm font-semibold mb-2 text-gray-700">
+              จำนวนวัน (0 - 365)
+            </label>
+            <input
+              type="number"
+              min={0}
+              max={365}
+              required
+              value={creditTermLoading ? "" : creditTermDays}
+              placeholder={creditTermLoading ? "กำลังโหลด..." : "30"}
+              disabled={creditTermLoading || creditTermLoadFailed || !creditTermEditing}
+              onChange={(e) => setCreditTermDays(e.target.value)}
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 disabled:bg-gray-100 disabled:text-gray-400"
+            />
+          </div>
+
+          <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
+            ℹ️ การเปลี่ยนค่านี้ <strong>ไม่ย้อนไปแก้เอกสารที่บันทึกไว้แล้ว</strong> —
+            วันครบกำหนดคือเงื่อนไขที่ตกลงกับลูกค้าไว้ในใบนั้น ไม่ใช่สูตรที่คำนวณใหม่ทุกครั้ง
+            ค่านี้จะมีผลกับเอกสารที่สร้างใหม่เท่านั้น
+          </div>
+
+          {creditTermEditing && (
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setCreditTermEditing(false);
+                  loadCreditTerm();
+                }}
+                disabled={creditTermSaving}
+                className="px-6 py-3 border border-gray-300 text-gray-700 font-bold rounded-lg hover:bg-gray-50 transition disabled:opacity-50"
+              >
+                ยกเลิก
+              </button>
+              <button
+                type="submit"
+                disabled={creditTermSaving}
+                className="flex-1 px-6 py-3 bg-orange-500 text-white font-bold rounded-lg hover:bg-orange-600 transition disabled:opacity-50"
+              >
+                {creditTermSaving ? "กำลังบันทึก..." : "💾 บันทึกเครดิตเทอม"}
               </button>
             </div>
           )}

@@ -28,6 +28,29 @@
 // captures another day's numbers, which is exactly what the allocator needs:
 // one running sequence per day, no matter which shape a number was issued in.
 //
+// ── ACROSS YEARS the two shapes DO collide, and that is not a bug ────────────
+// Drop the shared-year assumption and the equality above has real solutions:
+//
+//   25 Jun 2026 → current "250626"      26 Jun 2025 → legacy "250626"
+//
+// Two different calendar days, one identical prefix "QT250626-". `used_docnos`
+// is never purged, so the 2025 day's numbers are still owned forever and a
+// number minted for the 2026 day lands straight on top of one of them — the
+// INSERT is refused and the admin is told his number is a duplicate.
+//
+// Nothing here "resolves" that collision, because it cannot be resolved: the
+// numbers issued in 2025 are already with customers and with the revenue
+// department. What the allocator does instead is REFUSE TO MINT A NUMBER THE
+// LEDGER ALREADY OWNS (see nextDocNo) — the two colliding days simply share one
+// running sequence, and the second of them continues where the first stopped.
+//
+// ⚠️ That guarantee is only as good as the `used` list handed in. A list read
+//    from a DATE-WINDOWED query (listRecentDocNos' 7 days) cannot contain last
+//    year's numbers, so it cannot see the collision. Callers that MINT must
+//    feed the non-date-windowed ledger for these exact prefixes
+//    (listDocNosByBase / `GET /api/quotations/docnos?base=…`). A windowed list
+//    is fine for warning about duplicates, never for issuing.
+//
 // ── The one thing that genuinely changed: ordering ──────────────────────────
 // The legacy shape sorted chronologically as plain text because the year came
 // first. The current one does NOT ("050926" < "060826"). Nothing in this app
@@ -94,8 +117,22 @@ export function legacyQuotationDocNoPrefix(isoDate: string): string {
  * are already out with customers.
  */
 export function quotationDocNoPrefixes(isoDate: string): string[] {
-  const current = quotationDocNoPrefix(isoDate);
-  const legacy = legacyQuotationDocNoPrefix(isoDate);
+  return docNoPrefixes(QUOTATION_DOCNO_PREFIX, isoDate);
+}
+
+/**
+ * The generic form of the above: every prefix a document whose numbers begin
+ * with `literal` may legitimately carry for `isoDate` — current shape first,
+ * then legacy, de-duplicated where the two coincide.
+ *
+ * Billing numbers (INV/BN/RC) went through the very same DDMMYY change and
+ * carry the very same pair of shapes, so `billingDocNoPrefixes` is this
+ * function with a different literal rather than a second implementation of the
+ * same idea.
+ */
+export function docNoPrefixes(literal: string, isoDate: string): string[] {
+  const current = `${literal}${docNoDatePart(isoDate)}-`;
+  const legacy = `${literal}${legacyDocNoDatePart(isoDate)}-`;
   return current === legacy ? [current] : [current, legacy];
 }
 
@@ -103,10 +140,24 @@ export function quotationDocNoPrefixes(isoDate: string): string[] {
  * Next free trailing number for a date prefix: the day's first number is
  * DOCNO_START (-22), then -23, -24, …
  *
- * `prefix` is either a single prefix (the billing helpers still pass one) or a
- * list of prefixes that all name the SAME day — every one of them is scanned
- * for the day's highest number, and the number is issued under the FIRST.
- * Numbers belonging to other days are ignored, as are unparseable suffixes.
+ * `prefix` is either a single prefix (the single-string signature every
+ * existing caller uses) or a list of prefixes naming the SAME day in both
+ * shapes — every one of them is scanned for the day's highest number, and the
+ * number is issued under the FIRST. Numbers belonging to other days are
+ * ignored, as are unparseable suffixes.
+ *
+ * THE GUARANTEE: the returned number is not one of `used`. Taking max+1 alone
+ * is not enough — max+1 is only free among the numbers it could see, and a
+ * number can be owned under a prefix the mint is not scanning (an `NN` that
+ * parses to nothing, a hand-typed number, and above all last year's numbers
+ * under a prefix the two date shapes make identical — see the header). So the
+ * candidate is walked forward until it names a number `used` does not hold,
+ * and the day's sequence simply continues past whatever is already issued
+ * instead of landing on it and being refused at save time.
+ *
+ * ⚠️ The guarantee is exactly as complete as `used` is: hand this the
+ *    non-date-windowed ledger for these prefixes when MINTING (see header).
+ *    The loop terminates because `used` is finite.
  */
 export function nextDocNo(
   prefix: string | readonly string[],
@@ -117,9 +168,14 @@ export function nextDocNo(
   // Numbers are always issued under the first (current-shape) prefix.
   const issueUnder = prefixes[0] ?? "";
 
+  // `taken` holds every number verbatim, not just the parseable ones, because
+  // the question it answers is "would this exact string be refused by the
+  // used_docnos PRIMARY KEY?".
+  const taken = new Set<string>();
   let max = 0;
   for (const d of used ?? []) {
     if (typeof d !== "string") continue;
+    taken.add(d);
     for (const p of prefixes) {
       if (!d.startsWith(p)) continue;
       const n = parseInt(d.slice(p.length), 10);
@@ -127,5 +183,8 @@ export function nextDocNo(
       break; // one prefix per number — the shapes never overlap (see header)
     }
   }
-  return `${issueUnder}${pad2(Math.max(max + 1, DOCNO_START))}`;
+
+  let n = Math.max(max + 1, DOCNO_START);
+  while (taken.has(`${issueUnder}${pad2(n)}`)) n++;
+  return `${issueUnder}${pad2(n)}`;
 }

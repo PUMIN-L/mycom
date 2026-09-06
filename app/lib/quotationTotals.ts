@@ -77,8 +77,14 @@ export const VAT_RATE = 0.07;
  * *mathematically* an exact half-satang rounds up like a human would expect
  * rather than being dragged down by its binary representation (7.5% of 1234.60
  * is 92.595, which floats store as 92.59499999999998 → 92.60, not 92.59).
+ *
+ * Exported because `grandTotal` itself is NOT rounded (only per-line discounts
+ * pass through here), so 7% VAT on an odd base leaves float dust. The billing
+ * store settles that dust with THIS function before writing
+ * `billing_documents.totalAmount`, so the number in the receivables column is
+ * the same satang the printed sheet shows.
  */
-function round2(n: number): number {
+export function round2(n: number): number {
   const scaled = n * 100;
   const rounded =
     Math.round(scaled + Math.sign(scaled) * Math.abs(scaled) * 1e-12) / 100;

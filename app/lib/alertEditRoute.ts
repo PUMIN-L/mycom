@@ -29,6 +29,11 @@ export type AlertEditRoute =
   /** `target.data` IS the equipment row already (ประกัน / สอบเทียบ /
    * ข้อมูลไม่ครบ) — open `EquipmentEditModal` with it as-is. */
   | { kind: "equipment_inline" }
+  /** ลูกหนี้ค้างชำระ — open the billing document itself, read-only. The card's
+   * PRIMARY action is "บันทึกรับชำระ", which opens a modal in place; this is
+   * only the secondary "go and look at the invoice" path, so it navigates
+   * rather than fetching anything first. */
+  | { kind: "billing_document"; billingDocumentId: string }
   /** Nothing sensible to open (no target, or a row with no usable id). */
   | { kind: "none" };
 
@@ -39,7 +44,8 @@ export type AlertEditTargetType =
   | "warranty"
   | "calibration"
   | "incomplete"
-  | "missing_doc";
+  | "missing_doc"
+  | "receivable";
 
 export interface AlertEditTarget {
   type?: string | null;
@@ -79,6 +85,11 @@ export function resolveAlertEditRoute(
   if (target.type === "missing_doc") {
     const salesRecordId = usableId(data.id);
     return salesRecordId ? { kind: "sales_record", salesRecordId } : { kind: "none" };
+  }
+
+  if (target.type === "receivable") {
+    const billingDocumentId = usableId(data.id);
+    return billingDocumentId ? { kind: "billing_document", billingDocumentId } : { kind: "none" };
   }
 
   if (target.type === "schedule" || target.type === "customer_call") {

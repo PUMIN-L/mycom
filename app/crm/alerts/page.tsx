@@ -48,6 +48,10 @@ import {
   ALERT_SCHEDULE_DAYS,
   ALERT_LIST_DISPLAY_LIMIT,
 } from "../../lib/alertThresholds";
+import { daysBetweenDateStrings } from "../../lib/dateFormat";
+import RecordPaymentModal, {
+  type PaymentTargetDoc,
+} from "../../components/modals/RecordPaymentModal";
 
 /** The snooze durations, in the order the old <select> listed them. Module
  *  scope so the array identity never changes between renders. */
@@ -124,9 +128,14 @@ export default function AlertsPage() {
 
   // View Details Modal
   const [selectedAlert, setSelectedAlert] = useState<{
-    type: "schedule" | "customer_call" | "warranty" | "calibration" | "incomplete" | "missing_doc";
+    type: "schedule" | "customer_call" | "warranty" | "calibration" | "incomplete" | "missing_doc" | "receivable";
     data: any;
   } | null>(null);
+
+  // ลูกหนี้ค้างชำระ: "บันทึกรับชำระ" opens the SAME modal the ledger uses, in
+  // place. It deliberately does NOT navigate away — recording a payment is one
+  // action, and losing the alert feed to do it would make it two.
+  const [paymentTarget, setPaymentTarget] = useState<PaymentTargetDoc | null>(null);
 
   // Edit form for a customer-scoped follow-up call (no equipment involved).
   const [editingSchedule, setEditingSchedule] = useState<ScheduleEditState | null>(null);
@@ -364,6 +373,13 @@ export default function AlertsPage() {
       return;
     }
 
+    if (route.kind === "billing_document") {
+      // Secondary path only: the card's primary action is the payment modal.
+      router.push(`/billing?id=${encodeURIComponent(route.billingDocumentId)}&view=1`);
+      setSelectedAlert(null);
+      return;
+    }
+
     if (route.kind === "equipment_inline") {
       // warranty / calibration / incomplete -> target.data IS the equipment
       setEditingEquipment(target.data);
@@ -466,6 +482,7 @@ export default function AlertsPage() {
         ...(alerts.upcomingSchedules || []).map((data) => ({ type: "schedule" as const, data })),
         ...(callFollowUps || []).map((data) => ({ type: "customer_call" as const, data })),
         ...(alerts.missingDocuments || []).map((data) => ({ type: "missing_doc" as const, data })),
+        ...(alerts.overdueReceivables || []).map((data) => ({ type: "receivable" as const, data })),
       ]
     : [];
 
@@ -480,9 +497,16 @@ export default function AlertsPage() {
     if (aIsOverdue && !bIsOverdue) return -1;
     if (!aIsOverdue && bIsOverdue) return 1;
 
-    // 2. Missing docs next (these are already overdue per the SQL logic)
-    if (a.type === "missing_doc" && b.type !== "missing_doc") return -1;
-    if (a.type !== "missing_doc" && b.type === "missing_doc") return 1;
+    // 2. Money that is actually LATE ranks with the missing documents. A
+    //    receivable still inside its courtesy window (it appears a few days
+    //    BEFORE the due date) is NOT late yet, so it does not jump the queue.
+    const lateness = (x: typeof a) =>
+      x.type === "receivable" ? (daysBetweenDateStrings(x.data.dueDate, today) ?? 0) : 0;
+    const aUrgent = a.type === "missing_doc" || (a.type === "receivable" && lateness(a) > 0);
+    const bUrgent = b.type === "missing_doc" || (b.type === "receivable" && lateness(b) > 0);
+    if (aUrgent && !bUrgent) return -1;
+    if (!aUrgent && bUrgent) return 1;
+    if (a.type === "receivable" && b.type === "receivable") return lateness(b) - lateness(a);
 
     // 3. Expired warranties next
     const aIsExp = a.type === "warranty" && warrantyDaysLeft(a.data.warrantyEndDate) !== null && warrantyDaysLeft(a.data.warrantyEndDate)! <= 0;
@@ -492,6 +516,16 @@ export default function AlertsPage() {
 
     return 0;
   });
+
+  // The TRUE receivable count, not the capped array — this category has no
+  // closing date window, so its backlog can run past the display cap exactly
+  // like ข้อมูลไม่ครบ does.
+  const receivablesTotal =
+    alerts?.overdueReceivablesTotal ?? alerts?.overdueReceivables?.length ?? 0;
+  const receivablesHiddenCount = Math.max(
+    0,
+    receivablesTotal - (alerts?.overdueReceivables?.length || 0)
+  );
 
   const incompleteTotal = alerts?.incompleteEquipmentsTotal ?? alerts?.incompleteEquipments?.length ?? 0;
   const incompleteHiddenCount = Math.max(0, incompleteTotal - (alerts?.incompleteEquipments?.length || 0));
@@ -555,6 +589,7 @@ export default function AlertsPage() {
         allAlerts.length
           - (alerts?.incompleteEquipments?.length || 0) + incompleteTotal
           - (callFollowUps?.length || 0) + callFollowUpsTotal
+          - (alerts?.overdueReceivables?.length || 0) + receivablesTotal
       ),
       color: "bg-gray-100 text-gray-700",
     },
@@ -566,6 +601,10 @@ export default function AlertsPage() {
     { id: "calibration", label: "ใกล้ถึงกำหนดสอบเทียบ", count: countOr(alerts?.nearingCalibration?.length || 0), color: "bg-cyan-50 text-cyan-700 border-cyan-200" },
     { id: "incomplete", label: "ข้อมูลไม่ครบ", count: countOr(incompleteTotal), color: "bg-rose-50 text-rose-700 border-rose-200" },
     { id: "missing_doc", label: "เอกสารค้าง", count: countOr(alerts?.missingDocuments?.length || 0), color: "bg-red-50 text-red-700 border-red-200" },
+    // Labelled by WHO owes money, not by a document, so it can never be
+    // confused with "เอกสารค้าง" above — that one is about missing reference
+    // NUMBERS on sales_records and has nothing to do with billing_documents.
+    { id: "receivable", label: "ลูกหนี้ค้างชำระ", count: countOr(receivablesTotal), color: "bg-amber-50 text-amber-700 border-amber-200" },
   ];
 
   // ── Task board wiring ─────────────────────────────────────────────────────
@@ -974,6 +1013,90 @@ export default function AlertsPage() {
                 );
               }
 
+              if (alert.type === "receivable") {
+                // Everything on this card comes from denormalised columns —
+                // it renders without a single JSON parse, which is what keeps
+                // the bell cheap enough to poll.
+                const daysLate = daysBetweenDateStrings(alert.data.dueDate, today) ?? 0;
+                const partPaid = (alert.data.paidAmount || 0) > 0.005;
+                return (
+                  // Clicking the body opens the invoice itself (via the pure
+                  // resolveAlertEditRoute) rather than the generic details
+                  // modal: that modal is built around equipment/schedule rows
+                  // and has nothing to say about a debt. Everything worth
+                  // knowing is already on this card.
+                  <div key={idx} onClick={() => handleEditClick(alert)} className="bg-white rounded-2xl p-5 border border-gray-100 hover:border-amber-200 hover:shadow-lg transition-all cursor-pointer group relative overflow-hidden flex flex-col">
+                    <div className="absolute top-0 left-0 w-1 h-full bg-amber-500"></div>
+                    <div className="flex justify-between items-start mb-4">
+                      <div className="px-2.5 py-1 rounded-md text-xs font-bold bg-amber-50 text-amber-700 flex items-center gap-1.5">
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 9v1m0-9c-1.11 0-2.08.402-2.599 1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                        ลูกหนี้ค้างชำระ
+                      </div>
+                      <span className="text-xs font-bold text-gray-400">{formatDisplayDate(alert.data.dueDate)}</span>
+                    </div>
+
+                    <h4 className="font-bold text-gray-900 mb-1 line-clamp-1">{alert.data.customerName || alert.data.docNo || "ลูกค้าทั่วไป"}</h4>
+                    <p className="text-sm text-gray-500 mb-3 line-clamp-1">
+                      {alert.data.docNo || "-"}
+                      {alert.data.linkedQuotationId ? " · อ้างอิงใบเสนอราคา" : ""}
+                    </p>
+
+                    {/* The OUTSTANDING balance in large type — never the
+                        document total, which is not what is owed. */}
+                    <p className="text-2xl font-bold text-gray-900 leading-none">
+                      ฿{(alert.data.outstanding || 0).toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </p>
+                    <p className={`text-xs font-semibold mt-1 ${daysLate > 0 ? "text-red-600" : "text-gray-500"}`}>
+                      {daysLate > 0
+                        ? `เกินกำหนด ${daysLate} วัน`
+                        : daysLate === 0
+                          ? "ครบกำหนดวันนี้"
+                          : `อีก ${Math.abs(daysLate)} วัน`}
+                    </p>
+                    {partPaid && (
+                      <p className="text-xs text-gray-500 mt-1">
+                        ชำระแล้ว ฿{(alert.data.paidAmount || 0).toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} จาก ฿{(alert.data.totalAmount || 0).toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (มัดจำ)
+                      </p>
+                    )}
+                    {/* Chasing money is a phone call. */}
+                    {alert.data.customerPhone && (
+                      <a
+                        href={`tel:${alert.data.customerPhone}`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="text-xs text-blue-600 hover:underline mt-2 inline-block"
+                      >
+                        📞 {alert.data.customerPhone}
+                      </a>
+                    )}
+
+                    <div className="mt-auto pt-4 flex gap-2 w-full">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setPaymentTarget({
+                            id: alert.data.id,
+                            docNo: alert.data.docNo,
+                            customerName: alert.data.customerName,
+                            totalAmount: alert.data.totalAmount,
+                            paidAmount: alert.data.paidAmount,
+                          });
+                        }}
+                        className="flex-1 px-3 py-2 bg-green-600 text-white text-sm font-semibold rounded-xl hover:bg-green-700 transition-colors flex items-center justify-center gap-1.5"
+                      >
+                        บันทึกรับชำระ
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setSnoozeAlertTarget({ type: "receivable", id: alert.data.id }); }}
+                        className="px-3 py-2 bg-amber-50 text-amber-700 text-sm font-semibold rounded-xl hover:bg-amber-100 transition-colors flex items-center justify-center gap-1.5"
+                        title="เลื่อนแจ้งเตือน"
+                      >
+                         ⏱️
+                      </button>
+                    </div>
+                  </div>
+                );
+              }
+
               if (alert.type === "missing_doc") {
                 return (
                   <div key={idx} onClick={() => setSelectedAlert(alert)} className="bg-white rounded-2xl p-5 border border-gray-100 hover:border-red-200 hover:shadow-lg transition-all cursor-pointer group relative overflow-hidden flex flex-col">
@@ -1023,6 +1146,11 @@ export default function AlertsPage() {
         {(activeTab === "all" || activeTab === "customer_call") && callFollowUpsHiddenCount > 0 && (
           <p className="text-center text-sm text-gray-500 mt-3">
             และอีก {callFollowUpsHiddenCount} รายการนัดโทรลูกค้า (แสดงผลสูงสุด {ALERT_ROW_CAP} รายการ)
+          </p>
+        )}
+        {(activeTab === "all" || activeTab === "receivable") && receivablesHiddenCount > 0 && (
+          <p className="text-center text-sm text-gray-500 mt-3">
+            และอีก {receivablesHiddenCount} รายการลูกหนี้ค้างชำระ (แสดงผลสูงสุด {ALERT_ROW_CAP} รายการ)
           </p>
         )}
         {/* On "ทั้งหมด" the missing call cards would otherwise be invisible. */}
@@ -1491,6 +1619,22 @@ export default function AlertsPage() {
         />
       )}
       
+      {/* ลูกหนี้ค้างชำระ: recording a payment happens HERE, on the feed. It does
+          not navigate away — one payment must stay one action, and the alert
+          clears itself because the WHERE requires an outstanding balance. */}
+      {paymentTarget && (
+        <RecordPaymentModal
+          doc={paymentTarget}
+          onClose={() => setPaymentTarget(null)}
+          onSaved={(message) => {
+            setPaymentTarget(null);
+            showToast(message, "success");
+            fetchAlerts();
+          }}
+          onError={(message) => showToast(message, "error")}
+        />
+      )}
+
       {editingSalesRecordId && (
         <SalesRecordEditModal
           editingId={editingSalesRecordId}

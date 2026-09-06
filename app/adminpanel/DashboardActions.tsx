@@ -80,9 +80,14 @@ export default function DashboardActions() {
       color: "bg-gray-50 text-gray-700 border-gray-200 hover:border-gray-400 hover:shadow-gray-100",
     },
     {
-      href: "/tools/pdf-header-footer",
-      title: "เครื่องมือ PDF (หัว/ท้ายกระดาษ)",
-      description: "ใส่รูปหัวกระดาษและท้ายกระดาษลงใน PDF",
+      // Was /tools/pdf-header-footer (a 3-step wizard that only stamped a
+      // header/footer image). That page is deleted and the old path redirects
+      // here. The 📄 icon and the violet tone stay: the tool's own chrome is
+      // violet, so changing them would make the card stop matching the page it
+      // opens.
+      href: "/tools/pdf-editor",
+      title: "เครื่องมือแก้ไข PDF",
+      description: "ทับขาว พิมพ์ข้อความ ใส่รูป/ลายเซ็น กรอกฟอร์ม และจัดการหน้า",
       icon: "📄",
       color: "bg-violet-50 text-violet-600 border-violet-200 hover:border-violet-400 hover:shadow-violet-100",
     },
