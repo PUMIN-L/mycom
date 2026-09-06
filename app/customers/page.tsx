@@ -173,6 +173,14 @@ function CustomersInner() {
   const [isEditingCustomerNote, setIsEditingCustomerNote] = useState(false);
   const [customerNoteDraft, setCustomerNoteDraft] = useState("");
   const [isSavingCustomerNote, setIsSavingCustomerNote] = useState(false);
+  // These two keep the edit box the SAME SIZE the note was while reading it.
+  // A customer note here is a call log that grows for years — five or six dated
+  // entries is normal — so a fixed `rows={3}` box meant pressing แก้ไข shrank a
+  // full screen of history into a four-line porthole the admin had to scroll
+  // through to find the end. `noteViewRef` measures the rendered paragraph the
+  // moment แก้ไข is pressed, and that height becomes the textarea's floor.
+  const noteViewRef = useRef<HTMLParagraphElement | null>(null);
+  const [noteMinHeight, setNoteMinHeight] = useState<number | null>(null);
 
   const [deleteConfirmCompany, setDeleteConfirmCompany] = useState<Company | null>(null);
   const [deleteConfirmCustomer, setDeleteConfirmCustomer] = useState<Customer | null>(null);
@@ -986,6 +994,10 @@ function CustomersInner() {
                     <button
                       type="button"
                       onClick={() => {
+                        // Measure BEFORE the paragraph unmounts — once
+                        // `isEditingCustomerNote` flips, the element is gone and
+                        // its height is unrecoverable.
+                        setNoteMinHeight(noteViewRef.current?.offsetHeight ?? null);
                         setCustomerNoteDraft(viewingCustomer.note || "");
                         setIsEditingCustomerNote(true);
                       }}
@@ -1000,9 +1012,33 @@ function CustomersInner() {
                     <textarea
                       rows={3}
                       autoFocus
-                      className="w-full bg-white border border-orange-200 rounded-xl px-4 py-2.5 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-orange-500 resize-none"
+                      // Grow with the text, and never start smaller than the
+                      // note looked a moment ago. `height:auto` first is what
+                      // lets it SHRINK again after a deletion — without it
+                      // scrollHeight only ever reports the taller past size.
+                      // `min-height` then clamps the result, so the box is
+                      // max(what fits, what was on screen while reading).
+                      ref={(el) => {
+                        if (!el) return;
+                        el.style.height = "auto";
+                        el.style.height = `${el.scrollHeight}px`;
+                      }}
+                      style={noteMinHeight ? { minHeight: noteMinHeight } : undefined}
+                      // Same type size and same colour as the paragraph above,
+                      // so pressing แก้ไข does not also reflow and recolour the
+                      // text the admin was mid-way through reading. `text-sm`
+                      // and `text-gray-800` used to make the note visibly
+                      // shrink and go grey the instant it became editable.
+                      // resize-none because the box already sizes itself, and a
+                      // hand-dragged smaller box would clip text under
+                      // overflow-hidden.
+                      className="w-full bg-white border border-orange-200 rounded-xl px-4 py-2.5 text-orange-900 focus:outline-none focus:ring-2 focus:ring-orange-500 resize-none overflow-hidden"
                       value={customerNoteDraft}
-                      onChange={(e) => setCustomerNoteDraft(e.target.value)}
+                      onChange={(e) => {
+                        setCustomerNoteDraft(e.target.value);
+                        e.currentTarget.style.height = "auto";
+                        e.currentTarget.style.height = `${e.currentTarget.scrollHeight}px`;
+                      }}
                     />
                     <div className="flex justify-end gap-2">
                       <button
@@ -1024,7 +1060,9 @@ function CustomersInner() {
                     </div>
                   </div>
                 ) : (
-                  <p className="text-orange-900 whitespace-pre-wrap">{viewingCustomer.note || "-"}</p>
+                  <p ref={noteViewRef} className="text-orange-900 whitespace-pre-wrap">
+                    {viewingCustomer.note || "-"}
+                  </p>
                 )}
               </div>
 
