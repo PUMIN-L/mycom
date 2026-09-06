@@ -9,6 +9,7 @@ import SearchableDropdown from "../../components/SearchableDropdown";
 import RecordPaymentModal, {
   type PaymentTargetDoc,
 } from "../../components/modals/RecordPaymentModal";
+import ReceivablesGuidePanel from "../../components/ReceivablesGuidePanel";
 import {
   PAYMENT_STATE_LABELS,
   dueStateLabel,
@@ -88,6 +89,10 @@ export default function ReceivablesPage() {
   const [savingDueDate, setSavingDueDate] = useState(false);
   const [confirmBulkDueDates, setConfirmBulkDueDates] = useState(false);
   const [bulkSaving, setBulkSaving] = useState(false);
+  /** คู่มือการใช้งาน — a plain boolean, like /crm/alerts and the PDF editor: no
+   *  route, no query string, so opening it never disturbs the bucket tile, the
+   *  customer filter or the ยังไม่กำหนด tick the admin was reading. */
+  const [isGuideOpen, setIsGuideOpen] = useState(false);
 
   useEffect(() => {
     if (!authLoading && !isLoggedIn) router.replace("/login");
@@ -229,6 +234,16 @@ export default function ReceivablesPage() {
         <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
           <h1 className="text-xl font-bold text-gray-900">💰 ลูกหนี้ค้างชำระ</h1>
           <div className="flex items-center gap-2 flex-wrap">
+            <button
+              type="button"
+              onClick={() => setIsGuideOpen(true)}
+              className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition"
+              aria-haspopup="dialog"
+              aria-expanded={isGuideOpen}
+              title="อธิบายว่าหน้านี้นับใบไหนเป็นหนี้ ต้องกดตรงไหน และตรวจว่าตัวเลขถูกได้อย่างไร"
+            >
+              📖 คู่มือการใช้งาน
+            </button>
             <Link
               href="/billing/saved"
               className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition"
@@ -635,6 +650,17 @@ export default function ReceivablesPage() {
           onConfirm={handleBulkDueDates}
           onCancel={() => setConfirmBulkDueDates(false)}
           loading={bulkSaving}
+        />
+      )}
+
+      {/* ── คู่มือการใช้งาน ─────────────────────────────────────────────────
+          Rendered LAST so it stacks above every other layer, and fed the credit
+          term THIS page loaded from the settings row — the guide quotes that,
+          never a number typed into its own text. */}
+      {isGuideOpen && (
+        <ReceivablesGuidePanel
+          creditTermDays={data?.creditTermDays ?? null}
+          onClose={() => setIsGuideOpen(false)}
         />
       )}
     </div>
