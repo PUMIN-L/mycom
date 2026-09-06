@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withRoute } from "../../../lib/apiHelpers";
-import { purgeExpiredQuotations, purgeOldDocNos } from "../../../lib/quotationStore";
+import { purgeExpiredQuotations } from "../../../lib/quotationStore";
 
 // GET /api/quotations/cleanup — invoked daily by Vercel Cron (see vercel.json)
 // to delete quotations past their retention window (RETENTION_DAYS below) plus
@@ -8,7 +8,10 @@ import { purgeExpiredQuotations, purgeOldDocNos } from "../../../lib/quotationSt
 //
 // Secured with CRON_SECRET: when that env var is set, Vercel sends it as
 // `Authorization: Bearer <CRON_SECRET>`. If CRON_SECRET is unset the endpoint
-// fails closed (401), so auto-cleanup only runs once the secret is configured.
+// fails closed (401), so auto-cleanup only runs once the secret is configured —
+// and says so in the log, because "the cron is switched off" otherwise looks
+// exactly like "somebody knocked on the door". /api/health also names it in its
+// admin-only `warnings`.
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -16,16 +19,45 @@ export const dynamic = "force-dynamic";
 // 30-day window purged the quotation right about when the customer decided to
 // buy — leaving the sale form's quotation picker empty exactly when it matters.
 const RETENTION_DAYS = 730;
-// Deliberately UNRELATED to RETENTION_DAYS: the docNo ledger (used_docnos) only
-// needs to outlive a date-prefixed number's own day, so it stays at ~2 days and
-// must NOT follow the quotation retention window.
-const DOCNO_RETENTION_DAYS = 2;
+// NOTE: the docNo ledger (used_docnos) is deliberately NOT purged here — it is
+// kept for conversion-rate analytics (see app/lib/quotationStore.ts, the
+// used_docnos section). There is no docNo retention constant and no
+// purgeOldDocNos import in this route on purpose; if you ever reinstate it, its
+// window is its OWN (~2 days, a docNo only has to outlive its date prefix) and
+// must never be tied to RETENTION_DAYS.
 
 export const GET = withRoute(
   "ล้างใบเสนอราคาไม่สำเร็จ",
   async (request: NextRequest) => {
     const secret = process.env.CRON_SECRET;
     const auth = request.headers.get("authorization");
+
+    // Two different situations used to be one silent 401: "someone knocked
+    // without the secret" and "this cron is switched off entirely". The second
+    // one is an operator problem — Vercel's nightly call is rejected too, so
+    // nothing is EVER purged and the Cloudinary images of dead quotations pile
+    // up — and it has to be visible in the logs. Grep `cron:quotations-cleanup`.
+    //
+    // Logged on every unauthenticated hit rather than once per process. Note
+    // what that exposes: middleware.ts gates no /api path, so ANY anonymous
+    // caller can drive this line. That is acceptable, but not because the route
+    // is unlisted — obscurity is not the argument. It is acceptable because
+    // Vercel already writes a request log for every one of those hits, so the
+    // marginal cost is one extra line per request rather than a new channel,
+    // and because the string is a CONSTANT: nothing the caller sends (header,
+    // query, body) reaches the log, so there is no log-injection surface. A
+    // once-per-process guard would buy back that one line at the price of a
+    // worse failure — the line missing from exactly the nightly run an operator
+    // goes looking for.
+    if (!secret) {
+      console.error(
+        "[cron:quotations-cleanup] DISABLED CRON_SECRET is not set — every caller (including Vercel Cron) gets 401, so NO quotation will ever be purged and their Cloudinary images will keep accumulating. Set CRON_SECRET in the Vercel project env to enable the nightly cleanup."
+      );
+    }
+
+    // Fails closed either way, and the RESPONSE is byte-identical in both
+    // cases: an unauthorised caller must not be able to probe whether
+    // CRON_SECRET is configured. The distinction lives in the server log only.
     if (!secret || auth !== `Bearer ${secret}`) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }

@@ -320,5 +320,99 @@ describe('Documents API Route', () => {
       expect(res.status).toBe(500);
       expect(await res.text()).toBe('Internal Server Error');
     });
+
+    it('pins the content type AND tells the browser not to sniff it', async () => {
+      fetchMock.mockResolvedValue({ status: 200, ok: true, body: null } as any);
+
+      const res = await PROXY_GET(proxyRequest(cloudUrl));
+      expect(res.headers.get('content-type')).toBe('application/pdf');
+      expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+    });
+
+    // Bandwidth (cost) control, not access control — the route stays public.
+    // Keyed on its own x-forwarded-for so the flood cannot spill into the
+    // tests above, which all share the "unknown" bucket.
+    const CEILING = 300;
+
+    it('429s a single IP that floods it, without an upstream fetch', async () => {
+      fetchMock.mockResolvedValue({ status: 200, ok: true, body: null } as any);
+      const flood = (n: number) =>
+        PROXY_GET(
+          new NextRequest(
+            `http://localhost:3000/api/documents/proxy?url=${encodeURIComponent(cloudUrl)}&n=${n}`,
+            { headers: { 'x-forwarded-for': '203.0.113.7' } }
+          )
+        );
+
+      for (let i = 0; i < CEILING; i++) expect((await flood(i)).status).toBe(200);
+      expect(fetchMock).toHaveBeenCalledTimes(CEILING);
+
+      const blocked = await flood(CEILING);
+      expect(blocked.status).toBe(429);
+      expect(await blocked.text()).toBe('Too many requests');
+      expect(Number(blocked.headers.get('retry-after'))).toBeGreaterThan(0);
+      // The point of the limit: the expensive upstream call never happened.
+      expect(fetchMock).toHaveBeenCalledTimes(CEILING);
+    });
+
+    // Regression guard on the CEILING itself. The limiter keys on an IP, and an
+    // IP is a whole CGNAT/campus egress here, not one person — so the ceiling
+    // has to clear a realistic shared address by a wide margin. One PDF open is
+    // 1 request (pdf.js gets no Accept-Ranges from the fresh header set, so it
+    // does not switch to chunked range requests) plus 1 if download is clicked.
+    it('leaves a busy shared (NAT) address far below the limit', async () => {
+      fetchMock.mockResolvedValue({ status: 200, ok: true, body: null } as any);
+      // 20 unrelated readers behind one address, each opening 6 datasheets and
+      // downloading 3 of them, inside the same five-minute window.
+      const readers = 20;
+      const requestsPerReader = 6 + 3;
+      const realisticPeak = readers * requestsPerReader; // 180
+      expect(realisticPeak).toBeLessThan(CEILING);
+
+      const office = (n: number) =>
+        PROXY_GET(
+          new NextRequest(
+            `http://localhost:3000/api/documents/proxy?url=${encodeURIComponent(cloudUrl)}&n=${n}`,
+            { headers: { 'x-forwarded-for': '198.51.100.42' } }
+          )
+        );
+      for (let i = 0; i < realisticPeak; i++) {
+        expect((await office(i)).status).toBe(200);
+      }
+    });
+
+    // A second address is unaffected by the first one's exhausted quota —
+    // otherwise one abuser would take the public catalog down for everyone.
+    it('does not let one flooding IP block a different IP', async () => {
+      fetchMock.mockResolvedValue({ status: 200, ok: true, body: null } as any);
+      const from = (ip: string, n: number) =>
+        PROXY_GET(
+          new NextRequest(
+            `http://localhost:3000/api/documents/proxy?url=${encodeURIComponent(cloudUrl)}&n=${n}`,
+            { headers: { 'x-forwarded-for': ip } }
+          )
+        );
+
+      for (let i = 0; i < CEILING; i++) await from('203.0.113.9', i);
+      expect((await from('203.0.113.9', CEILING)).status).toBe(429);
+      // Innocent bystander, still served.
+      expect((await from('203.0.113.10', 0)).status).toBe(200);
+    });
+
+    // A spoofed multi-value header must not widen the allowance: only the first
+    // entry is the key, so the extra values buy the caller nothing.
+    it('keys on the first x-forwarded-for entry when several are supplied', async () => {
+      fetchMock.mockResolvedValue({ status: 200, ok: true, body: null } as any);
+      const spoof = (n: number) =>
+        PROXY_GET(
+          new NextRequest(
+            `http://localhost:3000/api/documents/proxy?url=${encodeURIComponent(cloudUrl)}&n=${n}`,
+            { headers: { 'x-forwarded-for': `203.0.113.11, 10.0.0.${n % 250}` } }
+          )
+        );
+
+      for (let i = 0; i < CEILING; i++) await spoof(i);
+      expect((await spoof(CEILING)).status).toBe(429);
+    });
   });
 });

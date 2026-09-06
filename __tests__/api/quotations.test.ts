@@ -239,6 +239,56 @@ describe('Quotations API', () => {
       expect(purgeExpiredQuotations).not.toHaveBeenCalled();
     });
 
+    it('logs a distinct, greppable line when CRON_SECRET is unset (disabled cron)', async () => {
+      delete process.env.CRON_SECRET;
+      const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      try {
+        await cleanupGET(cleanupReq('Bearer anything'));
+        const line = spy.mock.calls.map((c) => String(c[0])).join('\n');
+        expect(line).toContain('[cron:quotations-cleanup]');
+        expect(line).toContain('DISABLED');
+        expect(line).toContain('CRON_SECRET');
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it('does not log the disabled line when the secret IS set but the caller is wrong', async () => {
+      const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      try {
+        await cleanupGET(cleanupReq('Bearer wrong-secret'));
+        expect(spy).not.toHaveBeenCalled();
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it('gives an unauthorised caller the SAME body whether or not the secret is configured', async () => {
+      const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      try {
+        const configured = await cleanupGET(cleanupReq('Bearer wrong-secret'));
+        delete process.env.CRON_SECRET;
+        const unconfigured = await cleanupGET(cleanupReq('Bearer wrong-secret'));
+        // The "cron is switched off" signal belongs in the log only — a prober
+        // must not be able to tell the two states apart from the response.
+        expect(configured.status).toBe(401);
+        expect(configured.status).toBe(unconfigured.status);
+        expect(await configured.clone().json()).toEqual(
+          await unconfigured.clone().json()
+        );
+        // Headers too, not just the body: a differing content-type or length
+        // would be just as good an oracle as a differing message.
+        const headersOf = (r: Response) =>
+          [...r.headers.entries()].sort(([a], [b]) => a.localeCompare(b));
+        expect(headersOf(configured)).toEqual(headersOf(unconfigured));
+        // And byte-for-byte, so a whitespace or key-order difference cannot
+        // sneak past the structural JSON comparison above.
+        expect(await configured.text()).toBe(await unconfigured.text());
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
     it('purges quotations but NEVER touches billing documents (invoices/receipts are permanent records)', async () => {
       vi.mocked(purgeExpiredQuotations).mockResolvedValue(3);
       const res = await cleanupGET(cleanupReq('Bearer cron-test-secret'));

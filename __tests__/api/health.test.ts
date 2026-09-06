@@ -107,6 +107,50 @@ describe('Health API Route', () => {
     expect(body.db).toEqual({ connected: false, error: 'CONNECTION_FAILED' });
   });
 
+  // ── Disabled-cron visibility (CRON_SECRET) ───────────────────────────────
+
+  it('warns an admin, in words, that the cleanup cron is disabled without CRON_SECRET', async () => {
+    stubAllRequiredEnv();
+    vi.stubEnv('CRON_SECRET', '');
+    vi.mocked(pingDb).mockResolvedValue({ latencyMs: 3 } as any);
+    vi.mocked(getSession).mockResolvedValue(admin);
+
+    const res = await GET();
+    const body = await res.json();
+    expect(body.env.missingRecommended).toContain('CRON_SECRET');
+    expect(body.warnings.join(' ')).toContain('CRON_SECRET');
+    expect(body.warnings.join(' ')).toMatch(/purged/i);
+    // A missing recommended var is not fatal — the deploy is still "ok".
+    expect(res.status).toBe(200);
+    expect(body.status).toBe('ok');
+  });
+
+  it('carries no CRON_SECRET warning when the secret is configured', async () => {
+    stubAllRequiredEnv();
+    vi.stubEnv('CRON_SECRET', 'present');
+    vi.stubEnv('ADMIN_PASSWORD', 'present');
+    vi.stubEnv('SMTP_USER', 'present');
+    vi.stubEnv('SMTP_PASS', 'present');
+    vi.mocked(pingDb).mockResolvedValue({ latencyMs: 3 } as any);
+    vi.mocked(getSession).mockResolvedValue(admin);
+
+    const body = await (await GET()).json();
+    expect(body.env.missingRecommended).toEqual([]);
+    expect(body.warnings).toEqual([]);
+  });
+
+  it('never shows the warnings to an anonymous caller', async () => {
+    stubAllRequiredEnv();
+    vi.stubEnv('CRON_SECRET', ''); // disabled cron
+    vi.mocked(pingDb).mockResolvedValue({ latencyMs: 3 } as any);
+    vi.mocked(getSession).mockResolvedValue(null);
+
+    const body = await (await GET()).json();
+    // Anonymous stays exactly {status, timestamp}: the warnings name env vars.
+    expect(Object.keys(body).sort()).toEqual(['status', 'timestamp']);
+    expect(body.warnings).toBeUndefined();
+  });
+
   it('reports error (503) for admin when a required env var is missing', async () => {
     stubAllRequiredEnv();
     vi.stubEnv('DB_HOST', ''); // empty === missing

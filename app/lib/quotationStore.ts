@@ -233,7 +233,22 @@ export async function listDocNosByBase(base: string): Promise<UsedDocNo[]> {
   return rows.map((r) => ({ docNo: r.docNo, quotationId: String(r.quotationId) }));
 }
 
-/** Purge reserved numbers older than `days` days. Returns how many were removed. */
+/**
+ * Purge reserved numbers older than `days` days. Returns how many were removed.
+ *
+ * ⚠ NOTHING CALLS THIS, AND NOTHING SHOULD — not the nightly cron, not a route.
+ * The used_docnos ledger is deliberately kept forever now: it is the only
+ * record that a quotation number was ever issued, so it is what the
+ * conversion-rate reporting counts against. Deleting rows here silently and
+ * irreversibly destroys that history; it does NOT free anything the app needs
+ * (docNo collisions are prevented by the ledger, not by its size).
+ *
+ * It is kept exported, unwired, for a deliberate one-off repair (e.g. clearing
+ * numbers reserved by a bad import) run by hand with a known `days` value.
+ * If you are here because you found an unused export and want to "hook it back
+ * up" — don't; deleting it outright would be the other reasonable call, and the
+ * only reason it survives is that manual repair case.
+ */
 export async function purgeOldDocNos(days: number): Promise<number> {
   const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
   const [res] = await query<ResultSetHeader>(
