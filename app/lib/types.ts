@@ -182,12 +182,93 @@ export interface ServiceSchedule {
 
 export interface ServiceLog {
   id: string;
-  scheduleId: string;
+  /** NULL for a log written by a job sheet that has no appointment behind it
+   * (v38) — a walk-in repair is a real visit with no schedule to hang from.
+   * Set (and FK-enforced) for every log written by completing a schedule. */
+  scheduleId: string | null;
+  /** The document number the visit is filed under. For a job-sheet log this is
+   * the `jobNo` printed on the paper the customer signed — the meaning this
+   * column has been waiting for since add-crm-service-tracking created it. */
   serviceReportNumber: string;
   actionDate: string;
   resultDetails: string;
   customerFeedback: string;
   createdAt: string;
+  /** v38: which machine this visit touched. A schedule-born log reaches its
+   * machine through the schedule; a job-sheet log carries it directly. */
+  equipmentId?: string | null;
+  /** v38: the job sheet that wrote this log. (jobId, equipmentId) is UNIQUE, so
+   * closing the same sheet twice cannot produce a second set of logs. */
+  jobId?: string | null;
+}
+
+// ── ใบ Job — the printed service job sheet (v38) ─────────────────────────────
+
+/** `issued` = printed, not necessarily been yet. `completed` = the signed paper
+ * came back and the visit is now history. `cancelled` = the trip never
+ * happened. ONLY the transition to `completed` writes service history — a sheet
+ * that was printed but never taken is not a visit, and a service record that
+ * says otherwise cannot be told apart from a true one afterwards. */
+export const SERVICE_JOB_STATUSES = ["issued", "completed", "cancelled"] as const;
+export type ServiceJobStatus = (typeof SERVICE_JOB_STATUSES)[number];
+
+/** One machine listed on one sheet. Names/serials are NOT snapshotted here —
+ * they are read live from `customer_equipments`, because the serial number on
+ * the paper must be the one the system holds for that unit (the admin never
+ * types it). */
+export interface ServiceJobEquipment {
+  equipmentId: string;
+  sortOrder: number;
+  // Joined display fields (present on reads)
+  productName?: string | null;
+  serialNumber?: string | null;
+  warrantyEndDate?: string | null;
+}
+
+export interface ServiceJob {
+  id: string;
+  /** `JOB<DDMMYY>-NN`, claimed from the same `used_docnos` ledger as quotation
+   * and billing numbers. Assigned once, at creation, and never rewritten. */
+  jobNo: string;
+  companyId: string;
+  customerId: string;
+  jobDate: string; // YYYY-MM-DD — display via formatDisplayDate()
+  /** Optional on purpose: empty means the printed sheet carries a ruled blank
+   * line for the technician to write his own name on at the site. */
+  technicianName: string;
+  /** Plain id + index, never an FK — the appointment can be deleted and this
+   * sheet must still open and print (see db.ts v38). */
+  scheduleId: string | null;
+  status: ServiceJobStatus;
+  /** Typed back in from the handwriting on the returned paper. Optional. */
+  workSummary: string | null;
+  completedAt: string | null;
+  createdAt: string;
+  equipments: ServiceJobEquipment[];
+  // Joined display fields (present on reads)
+  customerName?: string | null;
+  companyName?: string | null;
+  /** True while the linked appointment still exists. False after it was
+   * deleted, which is a normal state, not an error. */
+  scheduleExists?: boolean;
+}
+
+/** One line in a list of sheets. Carries `equipmentCount` instead of the
+ * machines themselves — a list of 500 sheets must not fan out into 500 extra
+ * reads for rows the list never shows. */
+export interface ServiceJobSummary {
+  id: string;
+  jobNo: string;
+  companyId: string;
+  customerId: string;
+  jobDate: string;
+  technicianName: string;
+  status: ServiceJobStatus;
+  completedAt: string | null;
+  createdAt: string;
+  equipmentCount: number;
+  customerName?: string | null;
+  companyName?: string | null;
 }
 
 export interface SalesRecord {

@@ -40,6 +40,14 @@ export const config = {
     '/edit-product/:path*',
     '/quotation',
     '/quotation/:path*',
+    // ใบ Job — the printed service job sheet builder and its list. The sheet is
+    // assembled from customer names, machines and SERIAL NUMBERS, so an ungated
+    // page here hands the whole equipment registry to anyone with the URL.
+    // Nothing under /service-job is ever meant to be public — unlike
+    // /document/[id] and /showcase/{id} below, there is no customer-facing
+    // counterpart to keep out of the matcher.
+    '/service-job',
+    '/service-job/:path*',
     '/settings',
     '/settings/:path*',
     // NOTE: /document/[id] (singular) is the PUBLIC catalog PDF viewer reached

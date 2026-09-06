@@ -12,7 +12,7 @@ import type { QueryResult, FieldPacket, RowDataPacket } from "mysql2";
 // did not lower the 33 already written to `settings`, so the next change to
 // reuse 33 was skipped entirely and its tables were never created in
 // production. Reverting a migration means moving FORWARD to a new number.
-const SCHEMA_VERSION = 37;
+const SCHEMA_VERSION = 38;
 
 type DbPool = ReturnType<typeof mysql.createPool>;
 
@@ -792,6 +792,142 @@ async function bootstrapSchemaOnce(): Promise<void> {
     try {
       await connection.query(
         `ALTER TABLE service_logs ADD CONSTRAINT fk_sl_schedule FOREIGN KEY (scheduleId) REFERENCES service_schedules(id) ON DELETE CASCADE`
+      );
+    } catch (error) {
+      if (!isBenignSchemaError(error)) throw error;
+    }
+
+    // ── v38: ใบ Job — the printed service job sheet ──────────────────────────
+    //
+    // A job sheet is a PIECE OF PAPER the office prints, the technician carries
+    // to the site, writes on by hand and the customer signs. Nothing is ever
+    // scanned back in. The system owns only the two ends of that trip: the data
+    // printed on the sheet, and the fact — recorded when the signed paper comes
+    // back — that the visit happened, under this job number.
+    //
+    // v38 first REPAIRS service_logs so it can hold a log that a job sheet
+    // wrote. Until now a log could only exist under a schedule (`scheduleId`
+    // NOT NULL + FK), but a job sheet is legitimately created with NO
+    // appointment behind it ("งานด่วนที่ลูกค้าโทรเรียกวันนั้น" — see the spec),
+    // so its log has no schedule to hang from. Three additive changes:
+    //
+    //   • `scheduleId` becomes NULLABLE. The FK stays exactly as it is — an FK
+    //     permits NULL — so a schedule-linked log still cascades with its
+    //     schedule and nothing about the existing flow changes.
+    //   • `equipmentId` says WHICH MACHINE the visit touched. A schedule-born
+    //     log reaches its machine through the schedule; a job-born log cannot,
+    //     and the whole point of the sheet is per-machine history.
+    //   • `jobId` says which sheet wrote it, and (jobId, equipmentId) is UNIQUE,
+    //     so "ปิดงาน" pressed twice CANNOT write a second set of logs — the
+    //     structure refuses it, not a check someone can later forget. NULLs
+    //     compare as distinct in a MySQL/TiDB unique index, so every pre-v38
+    //     row (both columns NULL) is untouched by it.
+    for (const columnDef of [
+      "ADD COLUMN equipmentId VARCHAR(36) DEFAULT NULL",
+      "ADD COLUMN jobId VARCHAR(36) DEFAULT NULL",
+    ]) {
+      try {
+        await connection.query(`ALTER TABLE service_logs ${columnDef}`);
+      } catch (error) {
+        if (!isBenignSchemaError(error)) throw error;
+      }
+    }
+    try {
+      await connection.query(
+        `ALTER TABLE service_logs MODIFY COLUMN scheduleId VARCHAR(36) NULL`
+      );
+    } catch (error) {
+      if (!isBenignSchemaError(error)) throw error;
+    }
+    for (const indexDef of [
+      "CREATE INDEX idx_sl_equipment ON service_logs (equipmentId)",
+      "CREATE UNIQUE INDEX uq_sl_job_equipment ON service_logs (jobId, equipmentId)",
+    ]) {
+      try {
+        await connection.query(indexDef);
+      } catch (error) {
+        if (!isBenignSchemaError(error)) throw error;
+      }
+    }
+
+    // One row per printed sheet.
+    //
+    // NO FOREIGN KEYS AT ALL, on purpose — the same rule `task_links` and
+    // `sales_records.quotationId` already follow. A sheet that has been printed,
+    // signed and filed is a fact about the past: it must not vanish, or refuse
+    // to open, because the appointment it came from was deleted, or because a
+    // customer/company row was tidied up. `scheduleId` in particular is a plain
+    // id + index, never an FK, precisely so deleting a schedule leaves the sheet
+    // whole (the store treats "schedule not found" as normal, not an error).
+    //
+    // `technicianName` is DELIBERATELY allowed to be empty: the owner's rule is
+    // "พิมพ์ชื่อเอง หรือถ้าไม่พิมก็เว้นไว้ให้ช่างไปเขียนเอง" — an empty value
+    // means the printed sheet carries a RULED BLANK LINE for a pen, not a hole.
+    //
+    // `status`: 'issued' (printed, not yet been) → 'completed' (paper came back)
+    // or 'cancelled'. History is written ONLY on the completed transition — see
+    // serviceJobStore.completeJob.
+    await connection.query(`
+        CREATE TABLE IF NOT EXISTS service_jobs (
+          id VARCHAR(36) PRIMARY KEY,
+          jobNo VARCHAR(255) NOT NULL UNIQUE,
+          companyId VARCHAR(255) NOT NULL,
+          customerId VARCHAR(255) NOT NULL,
+          jobDate VARCHAR(20) NOT NULL,
+          technicianName VARCHAR(255) NOT NULL DEFAULT '',
+          scheduleId VARCHAR(36) DEFAULT NULL,
+          status VARCHAR(20) NOT NULL DEFAULT 'issued',
+          workSummary TEXT NULL,
+          completedAt VARCHAR(255) DEFAULT NULL,
+          createdAt VARCHAR(255) NOT NULL,
+          INDEX idx_sj_customer (customerId),
+          INDEX idx_sj_status_date (status, jobDate),
+          INDEX idx_sj_schedule (scheduleId),
+          INDEX idx_sj_createdAt (createdAt)
+        )
+      `);
+    // Also standalone: a database whose table predates one of these indexes
+    // would never get it from CREATE TABLE IF NOT EXISTS. ER_DUP_KEYNAME on
+    // the fresh-DB path is benign.
+    for (const indexDef of [
+      "CREATE INDEX idx_sj_customer ON service_jobs (customerId)",
+      "CREATE INDEX idx_sj_status_date ON service_jobs (status, jobDate)",
+      "CREATE INDEX idx_sj_schedule ON service_jobs (scheduleId)",
+      "CREATE INDEX idx_sj_createdAt ON service_jobs (createdAt)",
+    ]) {
+      try {
+        await connection.query(indexDef);
+      } catch (error) {
+        if (!isBenignSchemaError(error)) throw error;
+      }
+    }
+
+    // The machines on a sheet — one site visit can cover several ("1 ใบใส่
+    // หลายเครื่องได้"), which is the normal case, not the exception.
+    //
+    // PRIMARY KEY (jobId, equipmentId), keyed exactly like `alert_snoozes
+    // (alertType, referenceId)` and `task_links`. That composite key is what
+    // makes THE SAME MACHINE TWICE ON ONE SHEET impossible by structure —
+    // a rule the database enforces on every writer forever, rather than an
+    // if-statement that the next form to be written can forget.
+    //
+    // `sortOrder` fixes the printed order, so a sheet reprinted next year lists
+    // its machines in the same order as the one the customer signed.
+    await connection.query(`
+        CREATE TABLE IF NOT EXISTS service_job_equipments (
+          jobId VARCHAR(36) NOT NULL,
+          equipmentId VARCHAR(36) NOT NULL,
+          sortOrder INT NOT NULL DEFAULT 0,
+          PRIMARY KEY (jobId, equipmentId),
+          INDEX idx_sje_equipment (equipmentId)
+        )
+      `);
+    // Answers "every job sheet this machine has ever been on" for the equipment
+    // history panel, which reads by equipmentId — the opposite direction to the
+    // primary key.
+    try {
+      await connection.query(
+        `CREATE INDEX idx_sje_equipment ON service_job_equipments (equipmentId)`
       );
     } catch (error) {
       if (!isBenignSchemaError(error)) throw error;

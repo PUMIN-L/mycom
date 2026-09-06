@@ -504,6 +504,57 @@ Add UI copy to [`app/i18n/translations.ts`](./app/i18n/translations.ts) and read
 it with `useT()` / `useLanguage()`. Don't hardcode user-facing strings in
 components.
 
+### 13. ใบ Job — the printed service job sheet (schema v38)
+
+**It is a piece of paper.** The office fills it in from data the system already
+holds, prints it, the technician carries it to the customer's site, writes what
+he did on it **by hand**, and the customer signs it **with a pen**. The signed
+paper comes back and is filed in a folder. Nothing is scanned, uploaded or
+signed on a screen — there is no signature pad and no attachment step, by the
+owner's explicit decision.
+
+| Piece | Where |
+| --- | --- |
+| Builder + A4 sheet + PDF download | `app/service-job/page.tsx` |
+| Register of issued sheets, and the **only** ปิดงาน button | `app/service-job/saved/page.tsx` |
+| Store | `app/lib/serviceJobStore.ts` |
+| Number (`JOB<DDMMYY>-NN`, shared `used_docnos` ledger) | `app/lib/serviceJobNumber.ts` |
+| Routes | `app/api/service-jobs/` (`route.ts`, `[id]/`, `[id]/complete/`, `[id]/cancel/`) |
+
+Tables: `service_jobs` (one row per sheet) and `service_job_equipments`
+(`PRIMARY KEY (jobId, equipmentId)` — that composite key is what makes the same
+machine twice on one sheet impossible *by structure*, not by an if-statement a
+future form can forget). `service_logs` gained `equipmentId` + `jobId` with a
+**UNIQUE `(jobId, equipmentId)`**, and its `scheduleId` became nullable, because
+a walk-in repair is a real visit with no appointment behind it.
+
+> ⚠️ **SERVICE HISTORY IS WRITTEN WHEN THE JOB IS CLOSED, NEVER WHEN THE SHEET IS
+> ISSUED.** This is the rule someone will "simplify" away. `createJob` writes
+> **zero** `service_logs` rows; `completeJob` writes one per machine, with
+> `serviceReportNumber = jobNo`, and closes the linked appointment — all in one
+> transaction. A sheet that was printed and never taken is not a visit, and a
+> service record claiming otherwise can never afterwards be told apart from a
+> true one. Closing twice writes nothing extra (row read `FOR UPDATE`, the flip
+> is `WHERE status = 'issued'` and a zero-row result stands down, and the UNIQUE
+> index is the last line).
+
+> ⚠️ **Nothing in this feature touches `customer_equipments.calibrationDate`** —
+> the store never issues a write against that table at all, and two tests assert
+> it. The work description is handwriting on paper; the system cannot know
+> whether the visit was a calibration or a five-minute lamp check, and guessing
+> would push the next calibration reminder out — silencing an alert that should
+> ring (see §Recent Changes, calibration reminders).
+
+Two more rules that look like styling and are not: **the serial number is never
+typed** (it is read off the chosen `customer_equipments` row; there is no input
+for it anywhere), and **the sheet's blank areas are the product** — the งานที่ทำ
+column stays empty, the description block is *ruled* (unlined paper makes
+handwriting drift), and the number of ruled lines grows as the machine table
+shrinks so a one-machine sheet does not print a third of an A4 page as unusable
+white. `scheduleId` is a plain id + index, **never an FK**: deleting the
+appointment must leave the sheet whole (`getJob` LEFT JOINs it and reports
+`scheduleExists: false`).
+
 ---
 
 ## Database (`lib/db.ts`)
@@ -544,7 +595,10 @@ components.
   product line under a sale, see §8a), `sale_cost_items`, `expenses`,
   `recurring_expenses`, `alert_snoozes`, plus the manual task board (v35) —
   **`task_topics`**, **`crm_tasks`**, **`task_links`** (see §8c; `task_links`
-  has a composite PK and, like the rest of that group, no foreign keys).
+  has a composite PK and, like the rest of that group, no foreign keys), plus
+  the printed service job sheet (v38) — **`service_jobs`**,
+  **`service_job_equipments`** (composite PK `(jobId, equipmentId)`, no foreign
+  keys; see §13).
 
 > ⚠️ The seed inserts an `admin` user (id `admin-001`) from `ADMIN_USERNAME` /
 > `ADMIN_PASSWORD` (env, **not** source) — but only if the row doesn't already

@@ -22,6 +22,9 @@ export default function robots(): MetadataRoute.Robots {
         "/product-specs",
         "/quotation",
         "/billing",
+        // ใบ Job (service job sheets). Every path middleware gates must also be
+        // listed here — __tests__/robots.test.ts compares the two lists.
+        "/service-job",
         "/settings",
         "/documents",
         "/dashboard",

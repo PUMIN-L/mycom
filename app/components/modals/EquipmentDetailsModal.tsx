@@ -1,7 +1,12 @@
 "use client";
 import React, { useState, useEffect } from "react";
+import Link from "next/link";
 import DatePicker from "../DatePicker";
-import type { CustomerEquipment, ServiceSchedule } from "../../lib/types";
+import type {
+  CustomerEquipment,
+  ServiceSchedule,
+  ServiceJobSummary,
+} from "../../lib/types";
 import { toLocalDateString, formatDisplayDate } from "../../lib/dateFormat";
 
 // Note: Local stripHtml function
@@ -50,8 +55,35 @@ export default function EquipmentDetailsModal({
   const [isSaving, setIsSaving] = useState(false);
   const [scheduleFormError, setScheduleFormError] = useState(false);
 
+  // ── ใบ Job ที่เครื่องนี้เคยอยู่ (v38) ───────────────────────────────────────
+  // The paper trail of this one physical unit: every job sheet it has ever been
+  // listed on, newest first. Includes sheets that are still `issued` — those are
+  // printed, NOT proof anybody went yet — which is exactly why every row shows
+  // its status beside the number instead of reading as "times we visited".
+  const [jobs, setJobs] = useState<ServiceJobSummary[]>([]);
+  const [jobsLoading, setJobsLoading] = useState(true);
+
   useEffect(() => {
     fetchSchedules(equipment.id);
+  }, [equipment.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setJobsLoading(true);
+    fetch(`/api/service-jobs?equipmentId=${encodeURIComponent(equipment.id)}`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((list) => {
+        if (!cancelled) setJobs(Array.isArray(list) ? list : []);
+      })
+      .catch(() => {
+        if (!cancelled) setJobs([]);
+      })
+      .finally(() => {
+        if (!cancelled) setJobsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [equipment.id]);
 
   useEffect(() => {
@@ -222,6 +254,17 @@ export default function EquipmentDetailsModal({
     return <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-purple-100 text-purple-700">📞 โทรติดตาม</span>;
   };
 
+  /** `issued` is NOT "we went" — it is "the paper is printed". Kept visually
+   * distinct from ปิดงานแล้ว so a row can never be misread as a visit that has
+   * already happened. */
+  const jobStatusBadge = (status: ServiceJobSummary["status"]) => {
+    if (status === "completed")
+      return <span className="shrink-0 px-2.5 py-1 text-xs font-semibold rounded-full bg-green-100 text-green-700">✅ ปิดงานแล้ว</span>;
+    if (status === "cancelled")
+      return <span className="shrink-0 px-2.5 py-1 text-xs font-semibold rounded-full bg-gray-100 text-gray-500">ยกเลิก</span>;
+    return <span className="shrink-0 px-2.5 py-1 text-xs font-semibold rounded-full bg-amber-100 text-amber-700">📄 ออกใบแล้ว (ยังไม่ปิดงาน)</span>;
+  };
+
   const scheduleStatusBadge = (status: string, date: string) => {
     const isOverdue = status === "pending" && date < toLocalDateString(new Date());
     if (status === "completed")
@@ -283,6 +326,55 @@ export default function EquipmentDetailsModal({
             </div>
           )}
 
+          {/* ── ใบ Job — the service history of THIS machine ─────────────────
+              "เพิ่มในประวัติเครื่องที่เคยขายว่าเคยเข้าไป service มีใบ job เลขที่
+              อะไร" — the number is the point: it is what the office quotes to
+              find the signed paper in the folder. A row is only evidence that
+              the visit HAPPENED once its status says ปิดงานแล้ว. */}
+          <div className="p-6 border-t border-gray-100">
+            <div className="flex justify-between items-center mb-4">
+              <h4 className="text-lg font-bold text-gray-800">🔧 ใบ Job ที่เครื่องนี้เคยอยู่</h4>
+              <Link
+                href={`/service-job?equipmentId=${encodeURIComponent(equipment.id)}`}
+                className="px-4 py-2 bg-orange-500 text-white font-semibold rounded-xl hover:bg-orange-600 transition-all text-sm"
+              >
+                + ออกใบ Job
+              </Link>
+            </div>
+
+            {jobsLoading ? (
+              <div className="space-y-2">
+                {Array.from({ length: 2 }).map((_, i) => (
+                  <div key={i} className="h-14 bg-gray-100 rounded-xl animate-pulse" />
+                ))}
+              </div>
+            ) : jobs.length === 0 ? (
+              <p className="text-gray-400 text-center py-8">ยังไม่เคยออกใบ Job ให้เครื่องนี้</p>
+            ) : (
+              <div className="space-y-2">
+                {jobs.map((job) => (
+                  <Link
+                    key={job.id}
+                    href={`/service-job?id=${encodeURIComponent(job.id)}`}
+                    className="flex justify-between items-center gap-3 border border-gray-100 rounded-xl p-4 hover:bg-gray-50/50 transition-colors"
+                  >
+                    <div className="min-w-0">
+                      <div className="font-mono font-bold text-gray-800 text-sm">
+                        {job.jobNo || "—"}
+                      </div>
+                      <div className="text-xs text-gray-400 mt-0.5">
+                        {formatDisplayDate(job.jobDate) || "—"}
+                        {job.technicianName ? ` · ช่าง ${job.technicianName}` : ""}
+                        {job.equipmentCount > 1 ? ` · ${job.equipmentCount} เครื่องในใบเดียว` : ""}
+                      </div>
+                    </div>
+                    {jobStatusBadge(job.status)}
+                  </Link>
+                ))}
+              </div>
+            )}
+          </div>
+
           {/* Schedules */}
           <div className="p-6 border-t border-gray-100">
             <div className="flex justify-between items-center mb-4">
@@ -313,6 +405,20 @@ export default function EquipmentDetailsModal({
                         {scheduleStatusBadge(s.status, s.scheduledDate)}
                         {s.status === "pending" && (
                           <>
+                            {/* The appointment → the paper the technician
+                                carries to it. The sheet keeps `scheduleId`, so
+                                pressing ปิดงาน on the sheet later closes THIS
+                                appointment too — and because that link is a
+                                plain id with no FK, deleting the appointment
+                                afterwards leaves the sheet intact. */}
+                            <Link
+                              href={`/service-job?scheduleId=${encodeURIComponent(s.id)}`}
+                              onClick={(e) => e.stopPropagation()}
+                              className="px-2.5 py-1.5 bg-orange-50 text-orange-600 hover:bg-orange-100 text-xs font-semibold rounded-lg transition-all"
+                              title="ออกใบ Job จากนัดหมายนี้"
+                            >
+                              🔧 ออกใบ Job
+                            </Link>
                             <button
                               onClick={(e) => { e.stopPropagation(); setEditingSchedule(s); setIsScheduleModalOpen(true); }}
                               className="px-2.5 py-1.5 bg-blue-50 text-blue-600 hover:bg-blue-100 text-xs font-semibold rounded-lg transition-all flex items-center gap-1"

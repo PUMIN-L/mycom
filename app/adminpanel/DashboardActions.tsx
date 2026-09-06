@@ -52,6 +52,17 @@ export default function DashboardActions() {
       color: "bg-teal-50 text-teal-600 border-teal-200 hover:border-teal-400 hover:shadow-teal-100",
     },
     {
+      // ใบ Job — the printed service job sheet. Points at the LIST rather than
+      // the builder (like the accounting card above): the office comes here far
+      // more often to press ปิดงาน on a sheet whose signed paper just came back
+      // than to issue a new one, and the list has "+ สร้างใบ Job ใหม่" on it.
+      href: "/service-job/saved",
+      title: "ใบ Job (งานบริการหน้างาน)",
+      description: "ออกใบให้ช่างถือไปเขียนหน้างาน ลูกค้าเซ็นบนกระดาษ แล้วกดปิดงานเมื่อกระดาษกลับมา",
+      icon: "🔧",
+      color: "bg-sky-50 text-sky-600 border-sky-200 hover:border-sky-400 hover:shadow-sky-100",
+    },
+    {
       href: "/customers",
       title: "จัดการลูกค้า บริษัท & เซลล์",
       description: "ฐานข้อมูลลูกค้า ข้อมูลติดต่อ และข้อมูลรายชื่อเซลล์",

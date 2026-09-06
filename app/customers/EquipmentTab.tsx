@@ -719,6 +719,22 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
                     <td className="py-4 pr-4">{statusBadge(eq)}</td>
                     <td className="py-4">
                       <div className="flex items-center gap-1">
+                        {/* ใบ Job (v38). Opens the sheet builder already
+                            pointed at THIS machine, so its serial number is
+                            carried across from the registry rather than typed
+                            again — a retyped serial binds the visit to the
+                            wrong unit. The machine's existing sheets are listed
+                            in the details view (click the row): that is where a
+                            per-machine history belongs, and fetching a count
+                            for every row here would be one request per row. */}
+                        <Link
+                          href={`/service-job?equipmentId=${encodeURIComponent(eq.id)}`}
+                          onClick={(e) => e.stopPropagation()}
+                          className="p-1.5 text-gray-400 hover:text-orange-600 transition-colors rounded-lg hover:bg-orange-50"
+                          title="ออกใบ Job ให้เครื่องนี้"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                        </Link>
                         <button
                           onClick={(e) => { e.stopPropagation(); setEditing({ ...eq, productId: eq.productId || "_custom" }); setSubmitAttempted(false); setIsModalOpen(true); }}
                           className="p-1.5 text-gray-400 hover:text-indigo-600 transition-colors rounded-lg hover:bg-indigo-50"
