@@ -9,6 +9,17 @@ import {
   RECEIVABLE_ALERT_LEAD_DAYS,
   DEFAULT_CREDIT_TERM_DAYS,
 } from "../lib/alertThresholds";
+// The date-search caps live in `alertDateSearch.ts` (which imports only
+// `dateFormat`, so a client component can read it) rather than in
+// `alertThresholds.ts`. Same rule as every other number on this page: the guide
+// quotes the constant the queries and the API actually run on, never a figure
+// typed into a sentence.
+import {
+  DATE_SEARCH_MAX_RANGE_DAYS,
+  DATE_SEARCH_ROW_CAP,
+  BULK_RESCHEDULE_MAX_ITEMS,
+  BULK_RESCHEDULE_MAX_SHIFT_DAYS,
+} from "../lib/alertDateSearch";
 
 /**
  * The in-page user guide for /crm/alerts (tasks.md 18.1-18.14).
@@ -495,7 +506,107 @@ export default function AlertsGuidePanel({
             }
           />
 
-          {/* ── 8. กระดานงาน (18.9) ─────────────────────────────────────── */}
+          {/* ── 9. ค้นหาแจ้งเตือนตามวันที่ + เลื่อนวันหลายรายการพร้อมกัน ───
+              Placed straight after "เลื่อนแจ้งเตือน" on purpose: the two are
+              the pair the owner is most likely to confuse, and the difference
+              between hiding a card and rewriting a real appointment date is
+              exactly the thing this guide exists to spell out. */}
+          <GuideSection
+            icon="🔎"
+            title="ค้นหาแจ้งเตือนตามวันที่ และเลื่อนวันหลายรายการพร้อมกัน"
+            tone="border-l-emerald-500"
+            badge={{ label: "ใหม่", className: "bg-emerald-100 text-emerald-700" }}
+            appears={
+              <>
+                กดปุ่ม <strong>“เปิดการค้นหา”</strong> ที่หัวหน้านี้ แล้วเลือก{" "}
+                <strong>วันเดียว</strong> หรือ <strong>ช่วงวัน</strong> — ระบบจะแสดงทุกอย่างที่ตกอยู่ในวันนั้น
+                <strong> ทั้งที่ผ่านมาแล้วและที่ยังไม่ถึง</strong> ไม่ติดหน้าต่างวันของฟีดด้านบน
+                (ฟีดตั้งใจให้สั้น จึงเห็นเฉพาะช่วงใกล้ๆ ส่วนการค้นหาเห็นทุกวันที่มีจริง)
+              </>
+            }
+            rule={
+              <ul className="space-y-1.5 mt-1">
+                <li className="wrap-break-word">
+                  ค้นหาได้ครั้งละไม่เกิน <Val>{DATE_SEARCH_MAX_RANGE_DAYS} วัน</Val>{" "}
+                  และแสดงผลสูงสุดหมวดละ <Val>{DATE_SEARCH_ROW_CAP}</Val> รายการ
+                  (ถ้ามีมากกว่านั้นจะบอกไว้ใต้ตารางว่า “และอีก N รายการ”)
+                </li>
+                <li className="wrap-break-word">
+                  <strong>ที่เลื่อนวันได้มี 3 อย่างเท่านั้น</strong> คือ{" "}
+                  <strong>กำหนดการ</strong> <strong>นัดโทรลูกค้า</strong> และ{" "}
+                  <strong>สิ่งที่ต้องทำ</strong> เพราะวันของสามอย่างนี้คือ{" "}
+                  <strong>วันที่เรานัดเอง</strong> — เลื่อนได้โดยไม่ทำให้ข้อมูลอะไรผิดความจริง
+                  (ยกเว้นใบที่ปิดงาน/ยกเลิก/ทำเสร็จไปแล้ว และงานที่ยังไม่ได้ใส่วันครบกำหนด
+                  ช่องติ๊กจะเป็นสีเทา)
+                </li>
+                <li className="wrap-break-word">
+                  <strong>ประกันใกล้หมด</strong> และ <strong>ใกล้ถึงกำหนดสอบเทียบ</strong>{" "}
+                  <strong>ค้นหาเจอและเห็นได้ แต่ติ๊กไม่ได้</strong> — วันหมดประกันคือ{" "}
+                  <strong>ข้อเท็จจริงของเครื่อง</strong> การย้ายที่นี่เท่ากับปลอมวันหมดประกัน
+                  ส่วนวันครบกำหนดสอบเทียบคำนวณจากวันสอบเทียบครั้งล่าสุด
+                  การเลื่อนคือการปิดเสียงเตือนที่ควรดัง ถ้าจะแก้จริงให้ไป{" "}
+                  <strong>แก้ที่ข้อมูลเครื่องของลูกค้า</strong> (ใส่วันหมดประกันใหม่
+                  หรือบันทึกวันสอบเทียบครั้งใหม่ แล้ววันครบกำหนดจะขยับเอง)
+                </li>
+                <li className="wrap-break-word">
+                  <strong>ลูกหนี้ค้างชำระ</strong> ก็ติ๊กไม่ได้เหมือนกัน — วันครบกำหนดชำระคือ{" "}
+                  <strong>เงื่อนไขเครดิตที่ตกลงกับลูกค้าไว้</strong> การเลื่อนคือการยืดเครดิตให้ลูกค้า
+                  ต้องทำที่ <strong>หน้าลูกหนี้ค้างชำระ</strong> ไม่ใช่ที่นี่
+                </li>
+                <li className="wrap-break-word">
+                  <strong>ข้อมูลไม่ครบ</strong> และ <strong>เอกสารค้าง</strong>{" "}
+                  <strong>ไม่ปรากฏในผลการค้นหาเลย</strong> เพราะสองหมวดนี้ไม่มีวันครบกำหนดของตัวเอง
+                  (หมวดหนึ่งคือช่องที่ยังไม่ได้กรอก อีกหมวดวัดจาก “อายุ” ของใบขาย)
+                  จึงไม่มีวันให้ค้นหาและไม่มีวันให้เลื่อน
+                </li>
+                <li className="wrap-break-word">
+                  เลื่อนได้ครั้งละไม่เกิน <Val>{BULK_RESCHEDULE_MAX_ITEMS}</Val> รายการ
+                  และเลื่อนได้ไม่เกิน <Val>{BULK_RESCHEDULE_MAX_SHIFT_DAYS} วัน</Val> ต่อครั้ง
+                  ถ้าเลือกเกินระบบจะ <strong>ไม่ทำให้เลย</strong> และบอกให้แบ่งเป็นหลายครั้ง —
+                  ไม่ตัดส่วนเกินทิ้งเงียบๆ แล้วบอกว่าสำเร็จ
+                </li>
+              </ul>
+            }
+            clears={[
+              <>
+                <strong>ติ๊กเลือก:</strong> ติ๊กหน้ารายการทีละใบ หรือกด{" "}
+                <strong>“เลือกทั้งหมด”</strong> — ปุ่มนี้จะ <strong>ข้ามรายการที่เลื่อนไม่ได้ให้เอง</strong>{" "}
+                (ไม่ติ๊กไปแล้วให้เซิร์ฟเวอร์ปฏิเสธทีหลัง) และบอกไว้ว่าเลือกให้กี่จากกี่รายการ
+              </>,
+              <>
+                <strong>เลื่อนได้ 2 แบบ:</strong> “ตั้งเป็นวันที่เดียวกัน” คือทุกใบที่ติ๊กไปอยู่วันเดียวกันหมด
+                ส่วน “เลื่อน ±N วัน” คือทุกใบขยับเท่ากัน <strong>ระยะห่างระหว่างใบยังเท่าเดิม</strong>{" "}
+                (ใส่เลขติดลบเพื่อดึงงานย้อนกลับมาก่อนหน้าได้)
+              </>,
+              <>
+                <strong>ก่อนบันทึกจะมีหน้าต่างยืนยันเสมอ</strong> บอกจำนวนรายการ และแสดงตัวอย่าง{" "}
+                <strong>วันเดิม → วันใหม่</strong> ของรายการแรกๆ ให้ดูก่อน — อ่านตรงนี้ก่อนกดยืนยันทุกครั้ง
+              </>,
+              <>
+                <strong>หลังบันทึก</strong> ระบบจะบอกว่าสำเร็จกี่รายการ และถ้ามีใบไหนทำไม่ได้
+                จะบอกว่า <strong>ใบไหน และเพราะอะไร</strong> เป็นรายใบ ไม่ใช่ขึ้นว่า “ผิดพลาด” เฉยๆ
+              </>,
+              <>
+                <strong>ดูเป็นตารางหรือการ์ดก็ได้:</strong> ค้นหาครั้งแรกจะเปิดเป็น{" "}
+                <strong>ตาราง</strong> เพราะผลการค้นหาคือรายการยาวๆ ที่ต้องกวาดตาดู
+                แต่ถ้ากดสลับไปดูแบบการ์ด ระบบจะ <strong>จำไว้</strong> และครั้งต่อไปเปิดเป็นการ์ดให้เลย
+                (จำเฉพาะ <strong>ผลการค้นหา</strong> เท่านั้น ไม่ไปเปลี่ยนการ์ดแจ้งเตือนอัตโนมัติหรือกระดานงาน)
+              </>,
+            ]}
+            note={
+              <>
+                <strong>คนละเรื่องกับ “เลื่อนแจ้งเตือน ⏱️” ด้านบน</strong> — ปุ่ม ⏱️ แค่{" "}
+                <strong>ซ่อนการ์ดชั่วคราว</strong> วันนัดจริงไม่เปลี่ยน เดี๋ยวการ์ดก็กลับมา
+                ส่วนการเลื่อนวันตรงนี้ <strong>แก้วันนัดจริง</strong> ที่บันทึกไว้ในระบบ
+                ลูกค้ารายนั้นจะถูกเข้าไปหาในวันใหม่จริงๆ และ{" "}
+                <strong>งานบนกระดาน “สิ่งที่ต้องทำ” ที่ถูกเลื่อนออกไปวันข้างหน้า
+                จะหลุดจากการนับบนกระดิ่งทันที</strong> (กระดิ่งนับเฉพาะงานที่ถึงกำหนดแล้ว)
+                ไม่ใช่ระบบทำงานผิด
+              </>
+            }
+          />
+
+          {/* ── 10. กระดานงาน (18.9) ────────────────────────────────────── */}
           <GuideSection
             icon="📝"
             title="กระดานงาน “สิ่งที่ต้องทำ”"

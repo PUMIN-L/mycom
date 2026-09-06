@@ -8,6 +8,12 @@ import {
   MISSING_DELIVERY_DOC_DAYS,
   MISSING_RECEIPT_DOC_DAYS,
 } from '@/app/lib/alertThresholds';
+import {
+  DATE_SEARCH_MAX_RANGE_DAYS,
+  DATE_SEARCH_ROW_CAP,
+  BULK_RESCHEDULE_MAX_ITEMS,
+  BULK_RESCHEDULE_MAX_SHIFT_DAYS,
+} from '@/app/lib/alertDateSearch';
 
 // The guide's whole reason for existing is that it must never disagree with the
 // alert queries. These tests therefore assert the numbers ONLY through the same
@@ -51,6 +57,9 @@ describe('AlertsGuidePanel — the required topics', () => {
       'เอกสารค้าง',
       'ลูกหนี้ค้างชำระ',
       'เลื่อนแจ้งเตือน คืออะไร',
+      // The date search is a capability of this page, so it is documented here
+      // like every other one.
+      'ค้นหาแจ้งเตือนตามวันที่ และเลื่อนวันหลายรายการพร้อมกัน',
       'กระดานงาน “สิ่งที่ต้องทำ”',
       'ตัวเลขบนกระดิ่ง นับอะไรบ้าง',
       'ลิงก์ที่ผูกไว้ในงาน',
@@ -59,9 +68,9 @@ describe('AlertsGuidePanel — the required topics', () => {
     }
 
     // Every section answers all three questions, in the same order.
-    expect(screen.getAllByText('ขึ้นเมื่อไร').length).toBe(11);
-    expect(screen.getAllByText('เกณฑ์ที่ระบบใช้จริง').length).toBe(11);
-    expect(screen.getAllByText('ทำอย่างไรถึงจะหายไป').length).toBe(11);
+    expect(screen.getAllByText('ขึ้นเมื่อไร').length).toBe(12);
+    expect(screen.getAllByText('เกณฑ์ที่ระบบใช้จริง').length).toBe(12);
+    expect(screen.getAllByText('ทำอย่างไรถึงจะหายไป').length).toBe(12);
     expect(text.length).toBeGreaterThan(500);
   });
 });
@@ -97,6 +106,46 @@ describe('AlertsGuidePanel — thresholds come from the live constants', () => {
     expect(text).toContain(`${MISSING_DELIVERY_DOC_DAYS} วัน`);
     expect(text).toContain(`${MISSING_RECEIPT_DOC_DAYS} วัน`);
     expect(text).toContain(String(ALERT_LIST_DISPLAY_LIMIT));
+  });
+
+  it('quotes the date-search caps from the same constants the API enforces', () => {
+    renderGuide();
+    const text = guideText();
+
+    expect(text).toContain(`${DATE_SEARCH_MAX_RANGE_DAYS} วัน`);
+    expect(text).toContain(String(DATE_SEARCH_ROW_CAP));
+    expect(text).toContain(String(BULK_RESCHEDULE_MAX_ITEMS));
+    expect(text).toContain(`${BULK_RESCHEDULE_MAX_SHIFT_DAYS} วัน`);
+  });
+});
+
+describe('AlertsGuidePanel — the date search, and what may be moved', () => {
+  it('names the three movable kinds and gives a reason for each immovable one', () => {
+    renderGuide();
+    const text = guideText();
+
+    // The question the owner would otherwise ask every single time.
+    expect(text).toContain('ที่เลื่อนวันได้มี 3 อย่างเท่านั้น');
+    expect(text).toContain('ค้นหาเจอและเห็นได้ แต่ติ๊กไม่ได้');
+    expect(text).toContain('ข้อเท็จจริงของเครื่อง');
+    expect(text).toContain('เงื่อนไขเครดิตที่ตกลงกับลูกค้าไว้');
+    // The two dateless categories cannot be found by a date search at all.
+    expect(text).toContain('ไม่ปรากฏในผลการค้นหาเลย');
+  });
+
+  it('separates "เลื่อนแจ้งเตือน" (hide a card) from moving the real date', () => {
+    renderGuide();
+    const text = guideText();
+    expect(text).toContain('แก้วันนัดจริง');
+    expect(text).toContain('เลือกทั้งหมด');
+  });
+
+  it('states the table-first default and that a card choice is remembered', () => {
+    renderGuide();
+    const text = guideText();
+    expect(text).toContain('ค้นหาครั้งแรกจะเปิดเป็น');
+    expect(text).toContain('ตาราง');
+    expect(text).toContain('จำไว้');
   });
 });
 

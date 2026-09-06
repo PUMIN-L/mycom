@@ -43,6 +43,12 @@ import TaskTopicManagerModal from "../../components/TaskTopicManagerModal";
 // nothing else — no route, no query string — so reading it never changes the
 // URL nor the alert tab the admin had selected (18.13).
 import AlertsGuidePanel from "../../components/AlertsGuidePanel";
+
+// ค้นหาแจ้งเตือนตามวันที่ — an ADDITION to this page, never a replacement. It
+// sits above the automatic feed and below the tab strip, owns its own data, and
+// touches neither the feed nor the task board except by asking the page to
+// refetch after a date actually moved.
+import AlertDateSearchPanel from "../../components/AlertDateSearchPanel";
 import {
   ALERT_WARRANTY_DAYS,
   ALERT_SCHEDULE_DAYS,
@@ -104,6 +110,11 @@ export default function AlertsPage() {
    *  never touches the router or `activeTab`, so opening and closing it leaves
    *  the URL at /crm/alerts and the selected tab exactly where it was (18.13). */
   const [isGuideOpen, setIsGuideOpen] = useState(false);
+  /** ค้นหาแจ้งเตือนตามวันที่ — closed on arrival so the feed and its tab strip
+   *  still open exactly where they always did. Once opened the panel STAYS
+   *  MOUNTED (hidden with a class, not unmounted), so collapsing it to glance at
+   *  the feed does not throw away a search result and a half-made selection. */
+  const [isDateSearchOpen, setIsDateSearchOpen] = useState(false);
 
   // Snooze state
   const [snoozeAlertTarget, setSnoozeAlertTarget] = useState<{ type: string; id: string } | null>(null);
@@ -705,6 +716,42 @@ export default function AlertsPage() {
       </div>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8">
+        {/* ── ค้นหาแจ้งเตือนตามวันที่ ───────────────────────────────────────
+            The owner's request: pick a day (or a range), see everything that
+            falls on it — past as freely as future — then tick rows and move
+            their dates together. It is a SEPARATE block from the feed: it does
+            not add a tab, does not change the feed's windows, and does not
+            reach the task board below. */}
+        <div className="mb-8">
+          <button
+            type="button"
+            onClick={() => setIsDateSearchOpen((open) => !open)}
+            aria-expanded={isDateSearchOpen}
+            aria-controls="alert-date-search"
+            className="w-full flex flex-wrap items-center justify-between gap-3 bg-white border border-gray-100 rounded-2xl shadow-sm px-5 py-4 text-left hover:border-gray-200 transition-all"
+          >
+            <span className="min-w-0">
+              <span className="block font-bold text-gray-900">🔎 ค้นหาแจ้งเตือนตามวันที่</span>
+              <span className="block text-sm text-gray-500 mt-0.5">
+                เลือกวันเดียวหรือช่วงวัน ดูได้ทั้งอดีตและอนาคต แล้วติ๊กเลือกเพื่อเลื่อนวันพร้อมกัน
+              </span>
+            </span>
+            <span className="shrink-0 px-4 py-2 bg-gray-900 text-white text-sm font-semibold rounded-xl">
+              {isDateSearchOpen ? "ซ่อนการค้นหา" : "เปิดการค้นหา"}
+            </span>
+          </button>
+        </div>
+
+        <div id="alert-date-search" className={isDateSearchOpen ? undefined : "hidden"}>
+          <AlertDateSearchPanel
+            onToast={showToast}
+            // A moved appointment can enter or leave the feed's window, so the
+            // feed is re-read — but only after something actually moved.
+            onRescheduled={fetchAlerts}
+            onUnauthorized={handleUnauthorized}
+          />
+        </div>
+
         {/* Stale data is still on screen after a failed refresh — say so instead
             of pretending the numbers are current (task 11.17). */}
         {alertsError && alerts && !isLoading && (
