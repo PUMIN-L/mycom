@@ -212,6 +212,11 @@ interface AlertDateSearchPanelProps {
    *  reloads — a moved appointment may enter or leave its window. */
   onRescheduled: () => void;
   onUnauthorized: () => void;
+  /** Closes the block. Supplied by the page so the ONE header this block has
+   *  carries the close control — the page used to draw its own title, summary
+   *  and toggle directly above this identical header, which read as the same
+   *  section rendered twice. Optional so the panel still stands alone in tests. */
+  onClose?: () => void;
   /** Asia/Bangkok "today", injectable so tests do not depend on the clock. */
   today?: string;
 }
@@ -219,6 +224,7 @@ interface AlertDateSearchPanelProps {
 type SearchMode = "single" | "range";
 
 export default function AlertDateSearchPanel({
+  onClose,
   onToast,
   onRescheduled,
   onUnauthorized,
@@ -630,6 +636,15 @@ export default function AlertDateSearchPanel({
               (หน้าฟีดด้านล่างเห็นเฉพาะช่วงที่ใกล้ถึงเท่านั้น) แล้วติ๊กเลือกเพื่อเลื่อนวันพร้อมกันได้
             </p>
           </div>
+          {onClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              className="shrink-0 px-4 py-2 bg-indigo-600 text-white text-sm font-semibold rounded-xl hover:bg-indigo-700 transition-all shadow-sm"
+            >
+              ซ่อนการค้นหา
+            </button>
+          )}
         </div>
 
         {/* Which mode he is in, said in three ways at once: the pressed button,
@@ -700,7 +715,7 @@ export default function AlertDateSearchPanel({
           <button
             type="submit"
             disabled={isSearching}
-            className="px-6 py-2.5 bg-gray-900 text-white font-semibold rounded-xl hover:bg-gray-800 transition-all text-sm shadow-sm disabled:opacity-50"
+            className="px-6 py-2.5 bg-indigo-600 text-white font-semibold rounded-xl hover:bg-indigo-700 transition-all text-sm shadow-sm disabled:opacity-50"
           >
             {isSearching ? "กำลังค้นหา..." : "ค้นหา"}
           </button>
@@ -828,7 +843,7 @@ export default function AlertDateSearchPanel({
               <button
                 type="button"
                 onClick={handleSelectAll}
-                className="px-4 py-2 bg-gray-900 text-white text-sm font-semibold rounded-xl hover:bg-gray-800 transition-all shadow-sm"
+                className="px-4 py-2 bg-indigo-600 text-white text-sm font-semibold rounded-xl hover:bg-indigo-700 transition-all shadow-sm"
               >
                 ☑️ เลือกทั้งหมด
               </button>
@@ -929,7 +944,7 @@ export default function AlertDateSearchPanel({
 
           {/* ── The bulk bar ─────────────────────────────────────────── */}
           {selected.size > 0 && (
-            <div className="sticky bottom-4 mt-5 z-20 rounded-2xl border border-gray-900/10 bg-gray-900 text-white shadow-xl px-4 py-4">
+            <div className="sticky bottom-4 mt-5 z-20 rounded-2xl border border-indigo-950/20 bg-indigo-900 text-white shadow-xl px-4 py-4">
               <div className="flex flex-wrap items-end gap-3">
                 <div className="mr-auto">
                   <p className="text-sm font-bold">เลือกไว้ {selected.size} รายการ</p>
@@ -948,7 +963,7 @@ export default function AlertDateSearchPanel({
                     onClick={() => setBulkMode("set")}
                     aria-pressed={bulkMode === "set"}
                     className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition-all ${
-                      bulkMode === "set" ? "bg-white text-gray-900" : "text-gray-200 hover:text-white"
+                      bulkMode === "set" ? "bg-white text-indigo-900" : "text-indigo-100 hover:text-white"
                     }`}
                   >
                     ตั้งเป็นวันที่เดียวกัน
@@ -958,7 +973,7 @@ export default function AlertDateSearchPanel({
                     onClick={() => setBulkMode("shift")}
                     aria-pressed={bulkMode === "shift"}
                     className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition-all ${
-                      bulkMode === "shift" ? "bg-white text-gray-900" : "text-gray-200 hover:text-white"
+                      bulkMode === "shift" ? "bg-white text-indigo-900" : "text-indigo-100 hover:text-white"
                     }`}
                   >
                     เลื่อน ±N วัน

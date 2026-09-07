@@ -686,15 +686,22 @@ export default function AlertsPage() {
             </div>
           </div>
 
-          {/* Tabs */}
-          <div className="flex gap-2 mt-8 overflow-x-auto pb-2 no-scrollbar">
+          {/* Tabs. Hidden while the date search is open — the search has its own
+              category filter, so leaving this strip on screen would put two
+              filters in front of the admin, only one of which affects what he
+              is looking at. */}
+          <div
+            className={`flex gap-2 mt-8 overflow-x-auto pb-2 no-scrollbar ${
+              isDateSearchOpen ? "hidden" : ""
+            }`}
+          >
             {tabOptions.map((tab) => (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
                 className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold whitespace-nowrap transition-all duration-200 border ${
                   activeTab === tab.id
-                    ? "bg-gray-900 text-white border-gray-900 shadow-md"
+                    ? "bg-indigo-600 text-white border-indigo-600 shadow-md"
                     : `bg-white border-gray-200 text-gray-600 hover:bg-gray-50 hover:border-gray-300`
                 }`}
               >
@@ -722,29 +729,36 @@ export default function AlertsPage() {
             their dates together. It is a SEPARATE block from the feed: it does
             not add a tab, does not change the feed's windows, and does not
             reach the task board below. */}
-        <div className="mb-8">
-          <button
-            type="button"
-            onClick={() => setIsDateSearchOpen((open) => !open)}
-            aria-expanded={isDateSearchOpen}
-            aria-controls="alert-date-search"
-            className="w-full flex flex-wrap items-center justify-between gap-3 bg-white border border-gray-100 rounded-2xl shadow-sm px-5 py-4 text-left hover:border-gray-200 transition-all"
-          >
-            <span className="min-w-0">
-              <span className="block font-bold text-gray-900">🔎 ค้นหาแจ้งเตือนตามวันที่</span>
-              <span className="block text-sm text-gray-500 mt-0.5">
-                เลือกวันเดียวหรือช่วงวัน ดูได้ทั้งอดีตและอนาคต แล้วติ๊กเลือกเพื่อเลื่อนวันพร้อมกัน
+        {/* Shown ONLY while the search is closed. Open it and the panel below
+            draws the one header, with ซ่อนการค้นหา inside it — this used to
+            render its own copy of the same title and summary directly above the
+            panel's identical header, which read as the section duplicated. */}
+        {!isDateSearchOpen && (
+          <div className="mb-8">
+            <button
+              type="button"
+              onClick={() => setIsDateSearchOpen(true)}
+              aria-expanded={false}
+              aria-controls="alert-date-search"
+              className="w-full flex flex-wrap items-center justify-between gap-3 bg-white border border-gray-100 rounded-2xl shadow-sm px-5 py-4 text-left hover:border-indigo-200 transition-all"
+            >
+              <span className="min-w-0">
+                <span className="block font-bold text-gray-900">🔎 ค้นหาแจ้งเตือนตามวันที่</span>
+                <span className="block text-sm text-gray-500 mt-0.5">
+                  เลือกวันเดียวหรือช่วงวัน ดูได้ทั้งอดีตและอนาคต แล้วติ๊กเลือกเพื่อเลื่อนวันพร้อมกัน
+                </span>
               </span>
-            </span>
-            <span className="shrink-0 px-4 py-2 bg-gray-900 text-white text-sm font-semibold rounded-xl">
-              {isDateSearchOpen ? "ซ่อนการค้นหา" : "เปิดการค้นหา"}
-            </span>
-          </button>
-        </div>
+              <span className="shrink-0 px-4 py-2 bg-indigo-600 text-white text-sm font-semibold rounded-xl">
+                เปิดการค้นหา
+              </span>
+            </button>
+          </div>
+        )}
 
         <div id="alert-date-search" className={isDateSearchOpen ? undefined : "hidden"}>
           <AlertDateSearchPanel
             onToast={showToast}
+            onClose={() => setIsDateSearchOpen(false)}
             // A moved appointment can enter or leave the feed's window, so the
             // feed is re-read — but only after something actually moved.
             onRescheduled={fetchAlerts}
@@ -752,8 +766,22 @@ export default function AlertsPage() {
           />
         </div>
 
-        {/* Stale data is still on screen after a failed refresh — say so instead
-            of pretending the numbers are current (task 11.17). */}
+        {/* ── THE AUTOMATIC FEED ──────────────────────────────────────────
+            Hidden in its entirety while the date search is open, and restored
+            untouched when it closes (the owner's request). The search answers
+            "what is on this day"; the feed answers "what is coming up soon".
+            Showing both at once puts two lists of alert cards on one screen
+            with different rules about what is in them, and the one being
+            scrolled is not the one just searched.
+
+            Hidden, NOT unmounted, and deliberately: `alerts`, `activeTab` and
+            the in-flight fetch all live in the page, so unmounting would throw
+            away a loaded feed and re-fetch it on every close. This keeps the
+            state and only stops drawing it.
+
+            Stale data is still on screen after a failed refresh — say so
+            instead of pretending the numbers are current (task 11.17). */}
+        <div className={isDateSearchOpen ? "hidden" : undefined}>
         {alertsError && alerts && !isLoading && (
           <div className="mb-6 flex flex-col sm:flex-row sm:items-center gap-3 bg-red-50 border border-red-200 rounded-2xl px-5 py-4">
             <div className="flex-1">
@@ -786,7 +814,7 @@ export default function AlertsPage() {
             </p>
             <button
               onClick={fetchAlerts}
-              className="px-6 py-2.5 bg-gray-900 text-white font-semibold rounded-xl hover:bg-gray-800 transition-all text-sm shadow-sm"
+              className="px-6 py-2.5 bg-indigo-600 text-white font-semibold rounded-xl hover:bg-indigo-700 transition-all text-sm shadow-sm"
             >
               🔄 รีเฟรช
             </button>
@@ -1165,7 +1193,7 @@ export default function AlertsPage() {
                     </div>
                     
                     <div className="mt-auto flex gap-2 w-full">
-                      <button className="flex-1 px-3 py-2 bg-gray-900 text-white text-sm font-semibold rounded-xl hover:bg-gray-800 transition-colors flex items-center justify-center gap-1.5">
+                      <button className="flex-1 px-3 py-2 bg-indigo-600 text-white text-sm font-semibold rounded-xl hover:bg-indigo-700 transition-colors flex items-center justify-center gap-1.5">
                         ตามเอกสาร →
                       </button>
                       <button 
@@ -1209,6 +1237,8 @@ export default function AlertsPage() {
             </button>
           </p>
         )}
+        </div>
+        {/* ── END OF THE AUTOMATIC FEED ─────────────────────────────────── */}
 
         {/* ── กระดานงานที่บันทึกเอง ───────────────────────────────────────────
             A SEPARATE block, deliberately outside the alert grid above and
