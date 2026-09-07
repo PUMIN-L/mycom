@@ -97,6 +97,7 @@ interface CustomerRow {
   id: string;
   companyId: string;
   name: string;
+  phone?: string;
   companyName?: string;
 }
 
@@ -151,6 +152,8 @@ export default function ServiceJobPage() {
    * opens, prints and closes; the screen just says so instead of breaking. */
   const [scheduleGone, setScheduleGone] = useState(false);
   const [picked, setPicked] = useState<PickedEquipment[]>([]);
+  /** Additional contacts shown on the printed sheet (display only, same company). */
+  const [additionalContacts, setAdditionalContacts] = useState<string[]>([]);
 
   // ── Lookups ───────────────────────────────────────────────────────────────
   const [companies, setCompanies] = useState<CompanyRow[]>([]);
@@ -445,6 +448,24 @@ export default function ServiceJobPage() {
     () => customers.find((c) => c.id === customerId)?.name || "",
     [customers, customerId]
   );
+  const customerPhone = useMemo(
+    () => customers.find((c) => c.id === customerId)?.phone || "",
+    [customers, customerId]
+  );
+
+  /** All contacts to display on the sheet: primary + additional. */
+  const allContacts = useMemo(() => {
+    const ids = [customerId, ...additionalContacts].filter(Boolean);
+    const seen = new Set<string>();
+    const result: { name: string; phone: string }[] = [];
+    for (const id of ids) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const c = customers.find((r) => r.id === id);
+      if (c) result.push({ name: c.name || "", phone: c.phone || "" });
+    }
+    return result;
+  }, [customerId, additionalContacts, customers]);
 
   // The ruled note area grows into whatever the machine table leaves free, so a
   // one-machine sheet does not print a third of an A4 page as unusable white.
@@ -508,6 +529,8 @@ export default function ServiceJobPage() {
       return;
     }
     setCustomerId(value);
+    // Remove from additional if it was there
+    setAdditionalContacts((prev) => prev.filter((id) => id !== value));
   }
 
   function applyPartySwitch() {
@@ -516,8 +539,10 @@ export default function ServiceJobPage() {
     if (confirmSwitchParty.kind === "company") {
       setCompanyId(confirmSwitchParty.value);
       setCustomerId("");
+      setAdditionalContacts([]);
     } else {
       setCustomerId(confirmSwitchParty.value);
+      setAdditionalContacts((prev) => prev.filter((id) => id !== confirmSwitchParty!.value));
     }
     setConfirmSwitchParty(null);
   }
@@ -927,6 +952,48 @@ export default function ServiceJobPage() {
                     </p>
                   )}
                 </div>
+                <div>
+                  <label className={labelCls}>ผู้ติดต่อเพิ่มเติม</label>
+                  <fieldset disabled={!customerId} className="disabled:opacity-60">
+                    <SearchableDropdown
+                      options={customerOptions.filter(
+                        (o) => o.value !== customerId && !additionalContacts.includes(o.value)
+                      )}
+                      value=""
+                      onChange={(v) => {
+                        if (v && v !== customerId && !additionalContacts.includes(v)) {
+                          setAdditionalContacts((prev) => [...prev, v]);
+                        }
+                      }}
+                      placeholder={customerId ? "เลือกผู้ติดต่อเพิ่ม..." : "เลือกผู้ติดต่อหลักก่อน"}
+                      buttonClassName={`${inputCls} h-[38px]`}
+                    />
+                  </fieldset>
+                  {additionalContacts.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mt-2">
+                      {additionalContacts.map((id) => {
+                        const c = customers.find((r) => r.id === id);
+                        return (
+                          <span
+                            key={id}
+                            className="inline-flex items-center gap-1 bg-blue-50 text-blue-700 text-xs font-medium px-2.5 py-1 rounded-full border border-blue-200"
+                          >
+                            {c?.name || id}
+                            {!locked && (
+                              <button
+                                type="button"
+                                onClick={() => setAdditionalContacts((prev) => prev.filter((x) => x !== id))}
+                                className="hover:text-red-500 transition text-blue-400"
+                              >
+                                ×
+                              </button>
+                            )}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
               </fieldset>
             </section>
 
@@ -1137,9 +1204,23 @@ export default function ServiceJobPage() {
                     <span className="font-bold text-gray-700">วันที่เข้าบริการ: </span>
                     {jobDate ? formatDisplayDate(jobDate) : <RuledBlank width="38mm" />}
                   </div>
-                  <div>
+                  <div className="col-span-2">
                     <span className="font-bold text-gray-700">ผู้ติดต่อ: </span>
-                    {customerName || <RuledBlank width="52mm" />}
+                    {allContacts.length > 0 ? (
+                      <span>
+                        {allContacts.map((c, i) => (
+                          <span key={i}>
+                            {i > 0 && <span className="text-gray-400">, </span>}
+                            {c.name}
+                            {c.phone && (
+                              <span className="text-gray-500 text-[11px]"> (โทร {c.phone})</span>
+                            )}
+                          </span>
+                        ))}
+                      </span>
+                    ) : (
+                      <RuledBlank width="52mm" />
+                    )}
                   </div>
                   <div>
                     {/* Task 5.7 — a blank technician field prints as a LINE to
