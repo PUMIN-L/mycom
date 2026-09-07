@@ -1174,17 +1174,17 @@ export default function ServiceJobPage() {
                     </div>
                     <div
                       className="mt-2 inline-block rounded-lg overflow-hidden text-right"
-                      style={{ minWidth: "50mm" }}
+                      style={{ minWidth: "38mm" }}
                     >
                       <div
-                        className="bg-gray-800 text-white text-[9px] tracking-wider px-3 py-0.5 text-center font-semibold"
+                        className="bg-gray-800 text-white text-[8px] tracking-wider px-2.5 py-0.5 text-center font-semibold"
                       >
                         เลขที่เอกสาร / DOC NO.
                       </div>
                       <div
-                        className="border-2 border-gray-800 border-t-0 rounded-b-lg px-3 py-1.5 text-center"
+                        className="border-2 border-gray-800 border-t-0 rounded-b-lg px-2.5 py-1 text-center"
                       >
-                        <div className="text-2xl font-black tracking-widest leading-tight text-gray-900">
+                        <div className="text-lg font-black tracking-widest leading-tight text-gray-900">
                           {jobNo || "—"}
                         </div>
                       </div>
