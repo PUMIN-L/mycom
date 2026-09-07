@@ -139,7 +139,13 @@ export default function DatePicker({ selected, onChange, className, placeholderT
       selected={selected}
       onChange={onChange}
       dateFormat="yyyy-MM-dd"
-      className={`w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all ${className || ""}`}
+      // text-gray-900 and the explicit placeholder colour are NOT decoration:
+      // the input background is always light, but the text colour used to be
+      // inherited. Dropped inside a dark container (the bulk-reschedule bar on
+      // /crm/alerts is `bg-gray-900 text-white`) it inherited white-on-white and
+      // the date became invisible while still being there. Pinning both means
+      // this control can never be swallowed by whatever it is placed on.
+      className={`w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all ${className || ""}`}
       placeholderText={placeholderText || "YYYY-MM-DD"}
       isClearable={isClearable}
       popperPlacement="bottom-start"

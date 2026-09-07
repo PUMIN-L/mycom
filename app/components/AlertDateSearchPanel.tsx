@@ -151,6 +151,32 @@ const STATUS_LABELS: Record<string, string> = {
   Expired: "หมดประกันแล้ว",
 };
 
+/**
+ * Colour per status, so the column can be read by scanning rather than by
+ * reading every chip — which is the whole reason the owner asked for a table.
+ * The grouping is by WHAT THE ADMIN HAS TO DO, not by the word itself:
+ *   amber  = waiting on him
+ *   rose   = money owed, or a warranty already gone
+ *   emerald= settled, nothing to do
+ *   slate  = closed without being done, and dimmer than the rest on purpose
+ * Colour is never the only carrier — the Thai label is always present — so this
+ * stays readable to anyone who cannot separate these hues.
+ */
+const STATUS_CHIP: Record<string, string> = {
+  pending: "bg-amber-100 text-amber-800",
+  unpaid: "bg-rose-100 text-rose-700",
+  Expired: "bg-rose-100 text-rose-700",
+  Active: "bg-sky-100 text-sky-700",
+  done: "bg-emerald-100 text-emerald-700",
+  completed: "bg-emerald-100 text-emerald-700",
+  paid: "bg-emerald-100 text-emerald-700",
+  cancelled: "bg-slate-200 text-slate-500",
+};
+
+/** Unknown statuses keep the old neutral chip rather than being force-fitted
+ *  into a colour that would imply a meaning nobody decided. */
+const STATUS_CHIP_FALLBACK = "bg-gray-100 text-gray-600";
+
 /** `productName` can carry markup (the feed renders it with
  *  `dangerouslySetInnerHTML`). This block renders every string as TEXT, so the
  *  tags are stripped for display rather than executed. */
@@ -948,6 +974,11 @@ export default function AlertDateSearchPanel({
                       selected={parseDateValue(targetDate)}
                       onChange={(date) => setTargetDate(date ? toLocalDateString(date) : "")}
                       placeholderText="เลือกวันที่ปลายทาง"
+                      // Sits on the dark bar, so it takes the same treatment as
+                      // the จำนวนวัน input beside it: solid white rather than the
+                      // default grey, and a focus ring light enough to be seen
+                      // against gray-900 (indigo/20 disappears on it).
+                      className="!bg-white focus:!ring-white/40 focus:!border-white"
                     />
                   </div>
                 ) : (
@@ -1027,7 +1058,11 @@ function PresetButton({ label, onClick }: { label: string; onClick: () => void }
 function StatusBadge({ row }: { row: DatedAlertRow }) {
   const label = STATUS_LABELS[row.status] ?? row.status ?? "—";
   return (
-    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-gray-100 text-gray-600 whitespace-nowrap">
+    <span
+      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold whitespace-nowrap ${
+        STATUS_CHIP[row.status] ?? STATUS_CHIP_FALLBACK
+      }`}
+    >
       {label}
     </span>
   );
