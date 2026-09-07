@@ -895,24 +895,37 @@ export default function AlertsPage() {
                 // Future dates read as "อีก N วัน" in the category's own violet,
                 // never the red of something already late (task 9.4).
                 const marker = dueMarkerOf(alert.data.scheduledDate, today);
+                const isToday = marker.tone === "today";
                 return (
-                  <div key={idx} onClick={() => setSelectedAlert(alert)} className="bg-white rounded-2xl p-5 border border-gray-100 hover:border-violet-200 hover:shadow-lg transition-all cursor-pointer group relative overflow-hidden flex flex-col">
-                    <div className={`absolute top-0 left-0 w-1 h-full ${isOverdue ? "bg-red-500" : "bg-violet-500"}`}></div>
+                  <div key={idx} onClick={() => setSelectedAlert(alert)} className={`rounded-2xl p-5 border hover:shadow-lg transition-all cursor-pointer group relative overflow-hidden flex flex-col ${isToday ? "bg-amber-50 border-amber-300 ring-2 ring-amber-300/50" : isOverdue ? "bg-red-50/40 border-red-200" : "bg-white border-gray-100 hover:border-violet-200"}`}>
+                    <div className={`absolute top-0 left-0 w-1 h-full ${isToday ? "bg-amber-500" : isOverdue ? "bg-red-500" : "bg-violet-500"}`}></div>
                     <div className="flex justify-between items-start mb-4 gap-2">
-                      <div className={`px-2.5 py-1 rounded-md text-xs font-bold flex items-center gap-1.5 ${isOverdue ? "bg-red-50 text-red-700" : "bg-violet-50 text-violet-700"}`}>
+                      <div className={`px-2.5 py-1 rounded-md text-xs font-bold flex items-center gap-1.5 ${isToday ? "bg-amber-100 text-amber-800" : isOverdue ? "bg-red-50 text-red-700" : "bg-violet-50 text-violet-700"}`}>
                         📞 นัดโทรลูกค้า
                       </div>
-                      <span className={`text-xs font-bold whitespace-nowrap ${isOverdue ? "text-red-600 bg-red-50 px-2 py-0.5 rounded-full" : "text-violet-700 bg-violet-50 px-2 py-0.5 rounded-full"}`}>
-                        {isOverdue ? "เลยกำหนด" : marker.label}
-                      </span>
+                      {isToday ? (
+                        <span className="text-xs font-bold text-red-600 bg-red-100 px-2.5 py-1 rounded-full flex items-center gap-1 animate-pulse">
+                          <span className="inline-block w-2 h-2 bg-red-500 rounded-full"></span>
+                          วันนี้!
+                        </span>
+                      ) : isOverdue ? (
+                        <span className="text-xs font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded-full">
+                          {marker.label}
+                        </span>
+                      ) : (
+                        <span className="text-xs font-bold whitespace-nowrap text-violet-700 bg-violet-50 px-2 py-0.5 rounded-full">
+                          {marker.label}
+                        </span>
+                      )}
                     </div>
 
                     <h4 className="font-bold text-gray-900 mb-1 line-clamp-1">{alert.data.customerName || "ลูกค้าทั่วไป"}</h4>
                     {alert.data.companyName && (
                       <p className="text-sm text-gray-500 mb-1 line-clamp-1">{alert.data.companyName}</p>
                     )}
-                    <p className="text-xs font-semibold text-gray-600 mb-2">
+                    <p className={`text-xs font-semibold mb-2 ${isOverdue ? "text-red-600" : "text-gray-600"}`}>
                       วันที่นัด: {formatDisplayDate(alert.data.scheduledDate) || "—"}
+                      {isOverdue && <span className="ml-1 text-red-500">({marker.label})</span>}
                     </p>
                     <p className="text-sm text-gray-500 mb-4 line-clamp-2">
                       {alert.data.notes || "ไม่มีโน้ต"}

@@ -197,10 +197,10 @@ describe('POST /api/service-jobs', () => {
     expect(vi.mocked(createJob).mock.calls[0][0].technicianName).toBe('');
   });
 
-  it('never lets the client choose the job number', async () => {
+  it('passes the client-suggested job number to createJob', async () => {
     vi.mocked(createJob).mockResolvedValue(job as never);
     await createRoute(mutReq(BASE, 'POST', { ...validBody, jobNo: 'JOB050926-99' }));
-    expect(vi.mocked(createJob).mock.calls[0][0]).not.toHaveProperty('jobNo');
+    expect(vi.mocked(createJob).mock.calls[0][0].jobNo).toBe('JOB050926-99');
   });
 
   it('turns a store refusal into a THAI 400, not a 500', async () => {

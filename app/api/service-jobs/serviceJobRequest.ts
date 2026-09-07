@@ -31,6 +31,7 @@ export function sanitizeJobBody(data: unknown): ServiceJobInput {
       body.workSummary === undefined || body.workSummary === null
         ? null
         : clean(body.workSummary, 10000),
+    jobNo: clean(body.jobNo, 255) || undefined,
     // Order is meaning here — it is the order the machines print in.
     equipmentIds: rawEquipments.map((id) => clean(id, 36)).filter(Boolean),
   };

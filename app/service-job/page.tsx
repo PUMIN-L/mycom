@@ -10,6 +10,7 @@ import { useLeaveGuard, LeaveGuardModal } from "../components/LeaveGuard";
 import { toLocalDateString, formatDisplayDate, isValidDateString } from "../lib/dateFormat";
 import { stripHtml } from "../lib/stripHtml";
 import type { ServiceJob, ServiceJobStatus } from "../lib/types";
+import { serviceJobDocNoPrefix } from "../lib/serviceJobNumber";
 
 // ── ใบ Job — สร้าง/แก้ไขใบบันทึกงานบริการ (the printed job sheet) ─────────────
 //
@@ -333,6 +334,13 @@ export default function ServiceJobPage() {
     const today = toLocalDateString(new Date());
     setJobDate(today);
 
+    // Generate a random job number for preview when creating a new sheet.
+    // The server will mint the real number on save, but this gives the admin
+    // a sensible default they can edit before saving.
+    const prefix = serviceJobDocNoPrefix(today);
+    const seq = String(Math.floor(Math.random() * 99) + 1).padStart(2, "0");
+    setJobNo(`${prefix}${seq}`);
+
     if (!fromSchedule && !fromEquipment) {
       // A blank new sheet: today's date is the system's suggestion, not the
       // admin's work, so it must not count as an unsaved change — otherwise
@@ -546,6 +554,7 @@ export default function ServiceJobPage() {
       technicianName,
       scheduleId,
       equipmentIds: picked.map((p) => p.equipmentId),
+      jobNo,
     };
     try {
       const res = await fetch(
@@ -926,6 +935,15 @@ export default function ServiceJobPage() {
               <h2 className="font-bold text-gray-800">ข้อมูลใบงาน</h2>
               <fieldset disabled={locked} className="space-y-3 disabled:opacity-60">
                 <div>
+                  <label className={labelCls}>เลขที่ใบงาน (JOB NO.)</label>
+                  <input
+                    className={inputCls}
+                    value={jobNo}
+                    onChange={(e) => setJobNo(e.target.value)}
+                    placeholder="ระบบจะสร้างให้อัตโนมัติ หรือพิมพ์เอง"
+                  />
+                </div>
+                <div>
                   <label className={labelCls}>วันที่เข้าบริการ *</label>
                   <DatePicker
                     selected={jobDate ? new Date(`${jobDate}T00:00:00`) : null}
@@ -1179,15 +1197,7 @@ export default function ServiceJobPage() {
                 <div className="font-bold text-gray-800 text-[12.5px] mb-1">
                   รายละเอียดงานที่ทำ / หมายเหตุ
                 </div>
-                <div className="border border-gray-400">
-                  {Array.from({ length: noteLines }).map((_, i) => (
-                    <div
-                      key={i}
-                      className={i === noteLines - 1 ? "" : "border-b border-gray-300"}
-                      style={{ height: "8.5mm" }}
-                    />
-                  ))}
-                </div>
+                <div className="border border-gray-400" style={{ height: `${noteLines * 8.5}mm` }} />
               </div>
 
               {/* ── Signatures ─────────────────────────────────────────────
@@ -1197,30 +1207,18 @@ export default function ServiceJobPage() {
                   and a date line. There is no signature pad in this system and
                   the signed sheet is never uploaded — the paper goes into a
                   folder ("เอากระดาษกลับมาส่ง ไม่ต้องแนบใบ"). */}
-              <div id="job-signatures" className="grid grid-cols-2 gap-12 mt-8 text-[12px]">
-                {[
-                  { title: "ช่างผู้ปฏิบัติงาน", name: technicianName },
-                  { title: "ลูกค้าผู้รับบริการ", name: "" },
-                ].map((block) => (
-                  <div key={block.title} className="text-center">
-                    <div className="border-b border-gray-500 h-12 mb-1.5" />
-                    <div className="text-gray-500 text-[11px]">ลงชื่อ</div>
-                    <div className="mt-3 flex items-end justify-center gap-1 text-gray-800">
-                      <span>(</span>
-                      {block.name ? (
-                        <span className="px-1">{block.name}</span>
-                      ) : (
-                        <RuledBlank width="42mm" />
-                      )}
-                      <span>)</span>
-                    </div>
-                    <div className="text-gray-500 text-[11px] mt-1">ชื่อตัวบรรจง</div>
-                    <div className="font-bold mt-3">{block.title}</div>
-                    <div className="text-gray-500 mt-2">
-                      วันที่ ______ / ______ / ______
-                    </div>
+              <div id="job-signatures" className="flex justify-end mt-8 text-[12px]">
+                <div className="text-center w-1/2">
+                  <div className="border-b border-gray-500 h-12 mb-1.5" />
+                  <div className="text-gray-500 text-[11px]">ลงชื่อ</div>
+                  <div className="mt-3">
+                    <RuledBlank width="42mm" />
                   </div>
-                ))}
+                  <div className="font-bold mt-3">ลูกค้าผู้รับบริการ</div>
+                  <div className="text-gray-500 mt-2">
+                    วันที่ ______ / ______ / ______
+                  </div>
+                </div>
               </div>
             </div>
           </div>

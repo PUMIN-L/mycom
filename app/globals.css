@@ -254,6 +254,9 @@ input[type="number"] {
   margin: 0.166rem !important;
   border-radius: 8px !important;
 }
+.react-datepicker__day {
+  cursor: pointer !important;
+}
 .react-datepicker__day:hover {
   background-color: #f3f4f6 !important;
 }

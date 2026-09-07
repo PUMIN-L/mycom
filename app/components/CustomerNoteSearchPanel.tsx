@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ConfirmDialog from "./ConfirmDialog";
 import {
   NOTE_MATCH_SAMPLE_CAP,
@@ -364,6 +364,24 @@ export default function CustomerNoteSearchPanel({
     if (isSearching) return;
     runSearch(term, matchCase, useRegex);
   };
+
+  // ── Auto-search with 200ms debounce ──────────────────────────────────────
+  //
+  // Fires the search automatically after the user stops typing for 200ms,
+  // so pressing the button is no longer required. The timer is cancelled on
+  // every keystroke and on unmount, and skipped when the term is empty or
+  // whitespace-only (an empty search is refused by buildMatcher anyway).
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (term.trim() === "") return;
+    debounceRef.current = setTimeout(() => {
+      runSearch(term, matchCase, useRegex);
+    }, 200);
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, [term, matchCase, useRegex, runSearch]);
 
   // ── The matcher behind the results ────────────────────────────────────────
   //

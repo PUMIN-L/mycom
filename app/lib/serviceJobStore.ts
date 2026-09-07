@@ -104,6 +104,9 @@ export interface ServiceJobInput {
   technicianName?: string;
   scheduleId?: string | null;
   workSummary?: string | null;
+  /** Client-suggested job number. Used as-is when provided; otherwise the
+   *  server mints one from the shared `used_docnos` ledger. */
+  jobNo?: string;
   /** In printed order. The first is line 1 on the paper. */
   equipmentIds?: string[];
 }
@@ -337,6 +340,7 @@ interface NormalizedInput {
   technicianName: string;
   scheduleId: string | null;
   workSummary: string | null;
+  jobNo: string;
   equipmentIds: string[];
 }
 
@@ -384,6 +388,7 @@ function normalizeInput(input: ServiceJobInput): NormalizedInput {
       input.workSummary === undefined || input.workSummary === null
         ? null
         : text(input.workSummary, 10000),
+    jobNo: text(input.jobNo, 255),
     equipmentIds,
   };
 }
@@ -516,7 +521,29 @@ export async function createJob(input: ServiceJobInput): Promise<ServiceJob> {
     const now = new Date().toISOString();
 
     await assertEquipmentsBelongToCustomer(conn, data.customerId, data.equipmentIds);
-    const jobNo = await claimJobNo(conn, id, data.jobDate, now);
+
+    // Use client-provided jobNo if present, otherwise mint one.
+    let jobNo: string;
+    if (data.jobNo) {
+      // Attempt to claim the client-suggested number. If it's already taken,
+      // fall back to the auto-mint logic.
+      try {
+        await conn.query(
+          "INSERT INTO used_docnos (docNo, quotationId, createdAt) VALUES (?, ?, ?)",
+          [data.jobNo, id, now]
+        );
+        jobNo = data.jobNo;
+      } catch (err) {
+        if ((err as { code?: string })?.code === "ER_DUP_ENTRY") {
+          // Client's number is taken — fall back to auto-mint.
+          jobNo = await claimJobNo(conn, id, data.jobDate, now);
+        } else {
+          throw err;
+        }
+      }
+    } else {
+      jobNo = await claimJobNo(conn, id, data.jobDate, now);
+    }
 
     await conn.query(
       `INSERT INTO service_jobs

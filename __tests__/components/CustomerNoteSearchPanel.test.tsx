@@ -210,12 +210,17 @@ describe("การค้นหา", () => {
     expect(screen.getByText("สมชาย ใจดี")).toBeInTheDocument();
     expect(screen.getByText("สมหญิง รักดี")).toBeInTheDocument();
 
-    // Every call this screen made, and nothing else.
+    // Every call this screen made — button click and possibly the 200ms auto-
+    // search debounce — goes to note-search and nothing else.
     const urls = fetchMock.mock.calls.map((c) => String(c[0]));
-    expect(urls).toHaveLength(1);
-    expect(urls[0]).toContain("/api/customers/note-search");
-    // A GET: no init object at all, so no method, no body.
-    expect(fetchMock.mock.calls[0][1]).toBeUndefined();
+    expect(urls.length).toBeGreaterThanOrEqual(1);
+    for (const url of urls) {
+      expect(url).toContain("/api/customers/note-search");
+    }
+    // All are GETs: no init object at all, so no method, no body.
+    for (const call of fetchMock.mock.calls) {
+      expect(call[1]).toBeUndefined();
+    }
     expect(replaceCalls(fetchMock)).toHaveLength(0);
   });
 

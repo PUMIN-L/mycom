@@ -130,22 +130,23 @@ describe('the printed sheet', () => {
     expect(headers).toEqual(['ลำดับ', 'ชื่อเครื่อง', 'หมายเลขเครื่อง', 'งานที่ทำ']);
   });
 
-  it('carries a ruled description area and two signature blocks', async () => {
+  it('carries a description area and one customer signature block', async () => {
     render(<ServiceJobPage />);
     await screen.findByText('เครื่องในใบงานนี้');
 
-    // Ruled, not blank: unlined paper makes handwriting drift and scans badly.
+    // Description area exists as a border box (no internal ruled lines).
     const notes = document.getElementById('job-notes')!;
-    expect(notes.querySelectorAll('.border-b').length).toBeGreaterThanOrEqual(5);
+    expect(notes).toBeInTheDocument();
 
     const signatures = document.getElementById('job-signatures')!;
-    expect(within(signatures as HTMLElement).getByText('ช่างผู้ปฏิบัติงาน')).toBeInTheDocument();
+    // Only customer signature block, technician removed.
     expect(within(signatures as HTMLElement).getByText('ลูกค้าผู้รับบริการ')).toBeInTheDocument();
-    // Each block: a signature line, a printed-name line and a date line.
-    expect(within(signatures as HTMLElement).getAllByText('ชื่อตัวบรรจง')).toHaveLength(2);
+    expect(within(signatures as HTMLElement).queryByText('ช่างผู้ปฏิบัติงาน')).toBeNull();
+    // No 'ชื่อตัวบรรจง' text or parentheses.
+    expect(within(signatures as HTMLElement).queryByText('ชื่อตัวบรรจง')).toBeNull();
     expect(
       within(signatures as HTMLElement).getAllByText(/วันที่ ______ \/ ______ \/ ______/)
-    ).toHaveLength(2);
+    ).toHaveLength(1);
   });
 
   it('gives the ruled note area the page the machine table does not use', async () => {
@@ -155,57 +156,49 @@ describe('the printed sheet', () => {
     // The lines are the writing room. A fixed count meant a one-machine sheet
     // printed six lines and left a third of the A4 page blank — paper the
     // technician carries to the site and cannot write on.
-    const ruledRows = () =>
-      document.getElementById('job-notes')!.querySelectorAll<HTMLElement>('div[style*="8.5mm"]')
-        .length;
+    const noteHeight = () => {
+      const el = document.getElementById('job-notes')!.querySelector<HTMLElement>('div[style]');
+      return el ? parseFloat(el.style.height) : 0;
+    };
 
-    const empty = ruledRows();
-    expect(empty).toBeGreaterThanOrEqual(10);
+    const empty = noteHeight();
+    expect(empty).toBeGreaterThanOrEqual(10 * 8.5);
 
     pick('เลือกบริษัท...', 'บจก. ตัวอย่าง');
     pick('เลือกผู้ติดต่อ...', 'คุณสมชาย');
     await screen.findByRole('button', { name: literal('เลือกเครื่องเพื่อเพิ่มลงในใบ') });
     pick('เลือกเครื่องเพื่อเพิ่มลงในใบ', 'เครื่องชั่ง XYZ');
-    const oneMachine = ruledRows();
+    const oneMachine = noteHeight();
 
     pick('เลือกเครื่องเพื่อเพิ่มลงในใบ', 'เครื่องวัดความชื้น ABC');
-    const twoMachines = ruledRows();
+    const twoMachines = noteHeight();
 
     // Each machine takes its own 17mm writing cell in the table, so the note
     // area gives room back as the table grows — and never shrinks to a token.
     expect(twoMachines).toBeLessThan(oneMachine);
     expect(twoMachines).toBeGreaterThanOrEqual(3);
-    // Every row is a real ruled line: all but the last carry the rule itself.
-    expect(
-      document.getElementById('job-notes')!.querySelectorAll('.border-b').length
-    ).toBe(twoMachines - 1);
+    // The note area is a single box whose height reflects the line count.
+    expect(noteHeight()).toBe(twoMachines);
   });
 
-  it('leaves a RULED LINE, not an empty gap, where an unnamed technician signs', async () => {
+  it('leaves a RULED LINE, not an empty gap, where the customer signs', async () => {
     render(<ServiceJobPage />);
     await screen.findByText('เครื่องในใบงานนี้');
 
     const signatures = document.getElementById('job-signatures')!;
-    // Two blocks, and with no technician name typed BOTH printed-name slots
-    // carry a ruled blank for someone to write on at the site.
-    expect(signatures.querySelectorAll('span.border-b').length).toBe(2);
-
-    fireEvent.change(
-      screen.getByPlaceholderText('เว้นว่างไว้ก็ได้ — ให้ช่างเขียนชื่อเองบนกระดาษ'),
-      { target: { value: 'ช่างเอก' } }
-    );
-    // The technician's slot is now his name; the customer's stays a blank line.
-    expect(
-      document.getElementById('job-signatures')!.querySelectorAll('span.border-b').length
-    ).toBe(1);
+    // Customer signature block has a ruled blank for writing a name.
+    expect(signatures.querySelectorAll('span.border-b').length).toBe(1);
   });
 
-  it('shows a placeholder instead of inventing a job number before the first save', async () => {
+  it('generates a random job number on creation instead of a placeholder', async () => {
     render(<ServiceJobPage />);
     await screen.findByText('เครื่องในใบงานนี้');
-    // The number is minted by the server inside the transaction that writes the
-    // row. A number this page chose is a number two browsers could both choose.
-    expect(screen.getByText('— ออกเลขที่เมื่อบันทึก —')).toBeInTheDocument();
+    // The job number is now generated randomly on creation (e.g. JOB070926-15)
+    // and shown in the sheet. No placeholder text.
+    expect(screen.queryByText('— ออกเลขที่เมื่อบันทึก —')).toBeNull();
+    // The job number input should have a value starting with 'JOB'
+    const jobNoInput = screen.getByPlaceholderText('ระบบจะสร้างให้อัตโนมัติ หรือพิมพ์เอง');
+    expect((jobNoInput as HTMLInputElement).value).toMatch(/^JOB/);
   });
 });
 
