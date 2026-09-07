@@ -70,7 +70,7 @@ const getReq = (url: string) => new NextRequest(url, { method: 'GET' });
 const ctx = (id: string) => ({ params: Promise.resolve({ id }) });
 
 const BASE = 'http://localhost:3000/api/service-jobs';
-const job = { id: 'job-1', jobNo: 'JOB050926-22', status: 'issued', equipments: [] };
+const job = { id: 'job-1', jobNo: '050926-22', status: 'issued', equipments: [] };
 const validBody = {
   companyId: 'co-1',
   customerId: 'cust-1',
@@ -156,7 +156,7 @@ describe('POST /api/service-jobs', () => {
     vi.mocked(createJob).mockResolvedValue(job as never);
     const res = await createRoute(mutReq(BASE, 'POST', validBody));
     expect(res.status).toBe(201);
-    expect(await res.json()).toMatchObject({ jobNo: 'JOB050926-22' });
+    expect(await res.json()).toMatchObject({ jobNo: '050926-22' });
   });
 
   it('400s a sheet with no machine on it', async () => {
@@ -199,8 +199,8 @@ describe('POST /api/service-jobs', () => {
 
   it('passes the client-suggested job number to createJob', async () => {
     vi.mocked(createJob).mockResolvedValue(job as never);
-    await createRoute(mutReq(BASE, 'POST', { ...validBody, jobNo: 'JOB050926-99' }));
-    expect(vi.mocked(createJob).mock.calls[0][0].jobNo).toBe('JOB050926-99');
+    await createRoute(mutReq(BASE, 'POST', { ...validBody, jobNo: '050926-99' }));
+    expect(vi.mocked(createJob).mock.calls[0][0].jobNo).toBe('050926-99');
   });
 
   it('turns a store refusal into a THAI 400, not a 500', async () => {

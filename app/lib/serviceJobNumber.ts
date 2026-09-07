@@ -30,8 +30,9 @@ import {
   docNoPrefixes,
 } from "./quotationNumber";
 
-/** The literal prefix every job-sheet number carries. */
-export const SERVICE_JOB_DOCNO_PREFIX = "JOB";
+/** The literal prefix every job-sheet number carries.
+ *  Empty: job numbers are just `DDMMYY-NN` (e.g. 230926-11). */
+export const SERVICE_JOB_DOCNO_PREFIX = "";
 
 /**
  * The prefix a job number issued for `isoDate` gets — DDMMYY.

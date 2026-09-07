@@ -28,7 +28,7 @@ import {
 
 // ── Fixture state the mocked connection answers from ─────────────────────────
 
-const JOB_DATE = '2026-09-05'; // → JOB050926-NN
+const JOB_DATE = '2026-09-05'; // → 050926-NN
 const CUSTOMER = 'cust-1';
 
 let equipmentOwners: Record<string, string>; // equipmentId → customerId
@@ -55,7 +55,7 @@ beforeEach(() => {
   ledgerFatal = false;
   jobRow = {
     id: 'job-1',
-    jobNo: 'JOB050926-22',
+    jobNo: '050926-22',
     jobDate: JOB_DATE,
     status: 'issued',
     scheduleId: null,
@@ -135,7 +135,7 @@ describe('createJob', () => {
 
     const ledger = callsMatching('INSERT INTO used_docnos');
     expect(ledger).toHaveLength(1);
-    expect(ledger[0][1]).toEqual(['JOB050926-22', expect.any(String), expect.any(String)]);
+    expect(ledger[0][1]).toEqual(['050926-22', expect.any(String), expect.any(String)]);
 
     const ledgerIndex = conn.query.mock.calls.findIndex((c) =>
       sqlOf(c).includes('INSERT INTO used_docnos')
@@ -165,14 +165,14 @@ describe('createJob', () => {
   it('steps PAST a number another admin claimed a moment ago instead of failing', async () => {
     // The ledger read saw nothing, but -22 is taken by the time we INSERT:
     // two admins pressed บันทึก at the same instant.
-    ledgerRejects = ['JOB050926-22'];
+    ledgerRejects = ['050926-22'];
 
     await createJob(input());
 
     const ledger = callsMatching('INSERT INTO used_docnos');
     expect(ledger.map((c) => (c[1] as unknown[])[0])).toEqual([
-      'JOB050926-22',
-      'JOB050926-23',
+      '050926-22',
+      '050926-23',
     ]);
     expect(callsMatching('INSERT INTO service_jobs')).toHaveLength(1);
   });
@@ -286,7 +286,7 @@ describe('completeJob', () => {
   it('flips the status, writes ONE service_logs row per machine under the job number, and closes the appointment', async () => {
     jobRow = {
       id: 'job-1',
-      jobNo: 'JOB050926-22',
+      jobNo: '050926-22',
       jobDate: JOB_DATE,
       status: 'issued',
       scheduleId: 'sch-1',
@@ -301,7 +301,7 @@ describe('completeJob', () => {
       const p = params as unknown[];
       expect(p[1]).toBe('sch-1'); // scheduleId — the appointment still exists
       expect(p[3]).toBe('job-1'); // jobId
-      expect(p[4]).toBe('JOB050926-22'); // serviceReportNumber === jobNo
+      expect(p[4]).toBe('050926-22'); // serviceReportNumber === jobNo
       expect(p[5]).toBe(JOB_DATE); // actionDate
     }
     expect((logs[0][1] as unknown[])[2]).toBe('eq-1');
@@ -315,7 +315,7 @@ describe('completeJob', () => {
   });
 
   it('marks the appointment with a status the rest of the CRM knows', async () => {
-    jobRow = { id: 'job-1', jobNo: 'JOB050926-22', jobDate: JOB_DATE, status: 'issued', scheduleId: 'sch-1' };
+    jobRow = { id: 'job-1', jobNo: '050926-22', jobDate: JOB_DATE, status: 'issued', scheduleId: 'sch-1' };
     await completeJob('job-1');
     // SCHEDULE_STATUSES is pending | completed | cancelled — a value outside it
     // would be invisible to every existing filter and label.
@@ -323,7 +323,7 @@ describe('completeJob', () => {
   });
 
   it('CLOSING TWICE writes no second set of logs', async () => {
-    jobRow = { id: 'job-1', jobNo: 'JOB050926-22', jobDate: JOB_DATE, status: 'completed', scheduleId: 'sch-1' };
+    jobRow = { id: 'job-1', jobNo: '050926-22', jobDate: JOB_DATE, status: 'completed', scheduleId: 'sch-1' };
 
     const result = await completeJob('job-1');
 
@@ -342,7 +342,7 @@ describe('completeJob', () => {
   it('a REPLAYED transaction callback still leaves exactly one set of logs', async () => {
     // withTransaction retries up to 3 times; the second run sees the sheet
     // already completed and stands down.
-    jobRow = { id: 'job-1', jobNo: 'JOB050926-22', jobDate: JOB_DATE, status: 'issued', scheduleId: null };
+    jobRow = { id: 'job-1', jobNo: '050926-22', jobDate: JOB_DATE, status: 'issued', scheduleId: null };
     jobEquipmentIds = ['eq-1']; // one machine → one set is exactly one log
     runTransaction = async (fn) => {
       await fn(conn);
@@ -357,7 +357,7 @@ describe('completeJob', () => {
   });
 
   it('closes fine when the linked appointment has been DELETED — the sheet outlives it', async () => {
-    jobRow = { id: 'job-1', jobNo: 'JOB050926-22', jobDate: JOB_DATE, status: 'issued', scheduleId: 'sch-gone' };
+    jobRow = { id: 'job-1', jobNo: '050926-22', jobDate: JOB_DATE, status: 'issued', scheduleId: 'sch-gone' };
     scheduleExists = false;
 
     await expect(completeJob('job-1')).resolves.not.toBeNull();
@@ -371,7 +371,7 @@ describe('completeJob', () => {
   });
 
   it('writes the log with no schedule at all for a walk-in sheet', async () => {
-    jobRow = { id: 'job-1', jobNo: 'JOB050926-22', jobDate: JOB_DATE, status: 'issued', scheduleId: null };
+    jobRow = { id: 'job-1', jobNo: '050926-22', jobDate: JOB_DATE, status: 'issued', scheduleId: null };
     await completeJob('job-1');
     expect((callsMatching('INSERT INTO service_logs')[0][1] as unknown[])[1]).toBeNull();
     expect(callsMatching('FROM service_schedules')).toHaveLength(0);
@@ -406,7 +406,7 @@ describe('completeJob', () => {
   });
 
   it('refuses to close a cancelled sheet', async () => {
-    jobRow = { id: 'job-1', jobNo: 'JOB050926-22', jobDate: JOB_DATE, status: 'cancelled', scheduleId: null };
+    jobRow = { id: 'job-1', jobNo: '050926-22', jobDate: JOB_DATE, status: 'cancelled', scheduleId: null };
     await expect(completeJob('job-1')).rejects.toBeInstanceOf(ServiceJobNotEditableError);
     expect(callsMatching('INSERT INTO service_logs')).toHaveLength(0);
   });
@@ -499,7 +499,7 @@ describe('reads', () => {
   };
 
   it('getJob reports a DELETED appointment as scheduleExists:false instead of failing', async () => {
-    jobRow = { id: 'job-1', jobNo: 'JOB050926-22', jobDate: JOB_DATE, status: 'issued', scheduleId: 'sch-gone' };
+    jobRow = { id: 'job-1', jobNo: '050926-22', jobDate: JOB_DATE, status: 'issued', scheduleId: 'sch-gone' };
     scheduleExists = false;
     const job = await getJob('job-1');
     expect(job?.scheduleExists).toBe(false);

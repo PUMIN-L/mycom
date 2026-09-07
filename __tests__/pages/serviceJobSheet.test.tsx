@@ -193,12 +193,12 @@ describe('the printed sheet', () => {
   it('generates a random job number on creation instead of a placeholder', async () => {
     render(<ServiceJobPage />);
     await screen.findByText('เครื่องในใบงานนี้');
-    // The job number is now generated randomly on creation (e.g. JOB070926-15)
+    // The job number is now generated randomly on creation (e.g. 070926-15)
     // and shown in the sheet. No placeholder text.
     expect(screen.queryByText('— ออกเลขที่เมื่อบันทึก —')).toBeNull();
-    // The job number input should have a value starting with 'JOB'
+    // The job number input should have a value in DDMMYY-NN format
     const jobNoInput = screen.getByPlaceholderText('ระบบจะสร้างให้อัตโนมัติ หรือพิมพ์เอง');
-    expect((jobNoInput as HTMLInputElement).value).toMatch(/^JOB/);
+    expect((jobNoInput as HTMLInputElement).value).toMatch(/^\d{6}-/);
   });
 });
 
