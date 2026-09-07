@@ -238,13 +238,7 @@ describe('createJob', () => {
 });
 
 describe('createJob — what it refuses', () => {
-  it('refuses a machine belonging to another customer, in Thai — one sheet is one visit to one site', async () => {
-    equipmentOwners['eq-2'] = 'cust-OTHER';
-    await expect(createJob(input())).rejects.toBeInstanceOf(ServiceJobCustomerMismatchError);
-    await expect(createJob(input())).rejects.toThrow('ลูกค้ารายเดียว');
-    expect(callsMatching('INSERT INTO service_jobs')).toHaveLength(0);
-    expect(callsMatching('INSERT INTO used_docnos')).toHaveLength(0);
-  });
+
 
   it('refuses the same machine twice on one sheet, naming it in Thai', async () => {
     await expect(createJob(input({ equipmentIds: ['eq-1', 'eq-1'] }))).rejects.toBeInstanceOf(
@@ -450,12 +444,7 @@ describe('updateJob', () => {
     expect(await updateJob('job-1', input())).toBeNull();
   });
 
-  it('still refuses another customer’s machine on edit', async () => {
-    equipmentOwners['eq-3'] = 'cust-OTHER';
-    await expect(updateJob('job-1', input({ equipmentIds: ['eq-3'] }))).rejects.toBeInstanceOf(
-      ServiceJobCustomerMismatchError
-    );
-  });
+
 });
 
 describe('cancelJob / deleteJob', () => {

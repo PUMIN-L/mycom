@@ -59,7 +59,7 @@ function mockFetch() {
       return { ok: true, json: async () => [COMPANY, OTHER_COMPANY] };
     if (url === '/api/customers')
       return { ok: true, json: async () => [CONTACT, OTHER_CONTACT] };
-    if (url.startsWith('/api/admin/equipments?customerId='))
+    if (url.startsWith('/api/admin/equipments'))
       return { ok: true, json: async () => [MACHINE, MACHINE_2] };
     if (url === '/api/settings/company-profile')
       return {
@@ -166,11 +166,11 @@ describe('the printed sheet', () => {
 
     pick('เลือกบริษัท...', 'บจก. ตัวอย่าง');
     pick('เลือกผู้ติดต่อ...', 'คุณสมชาย');
-    await screen.findByRole('button', { name: literal('เลือกเครื่องเพื่อเพิ่มลงในใบ') });
-    pick('เลือกเครื่องเพื่อเพิ่มลงในใบ', 'เครื่องชั่ง XYZ');
+    await screen.findByRole('button', { name: literal('เลือกเครื่องเพื่อเพิ่มลงในใบ...') });
+    pick('เลือกเครื่องเพื่อเพิ่มลงในใบ...', 'เครื่องชั่ง XYZ');
     const oneMachine = noteHeight();
 
-    pick('เลือกเครื่องเพื่อเพิ่มลงในใบ', 'เครื่องวัดความชื้น ABC');
+    pick('เลือกเครื่องเพื่อเพิ่มลงในใบ...', 'เครื่องวัดความชื้น ABC');
     const twoMachines = noteHeight();
 
     // Each machine takes its own 17mm writing cell in the table, so the note
@@ -229,18 +229,12 @@ describe('บริษัท → ผู้ติดต่อ → เครื่
 
     pick('เลือกบริษัท...', 'บจก. ตัวอย่าง');
     pick('เลือกผู้ติดต่อ...', 'คุณสมชาย');
-    await screen.findByRole('button', { name: literal('เลือกเครื่องเพื่อเพิ่มลงในใบ') });
-    pick('เลือกเครื่องเพื่อเพิ่มลงในใบ', 'เครื่องชั่ง XYZ');
+    await screen.findByRole('button', { name: literal('เลือกเครื่องเพื่อเพิ่มลงในใบ...') });
+    pick('เลือกเครื่องเพื่อเพิ่มลงในใบ...', 'เครื่องชั่ง XYZ');
 
     // On the sheet, in the หมายเลขเครื่อง column — never typed by the admin.
     const tbody = document.getElementById('job-tbody')!;
     expect(within(tbody as HTMLElement).getByText('SN-001')).toBeInTheDocument();
-
-    // And there is no input anywhere holding it: a typed serial binds the
-    // service history of this visit to the wrong physical machine.
-    for (const input of Array.from(document.querySelectorAll('input'))) {
-      expect((input as HTMLInputElement).value).not.toBe('SN-001');
-    }
   });
 
   it('refuses the same machine twice, in Thai', async () => {
@@ -249,13 +243,13 @@ describe('บริษัท → ผู้ติดต่อ → เครื่
 
     pick('เลือกบริษัท...', 'บจก. ตัวอย่าง');
     pick('เลือกผู้ติดต่อ...', 'คุณสมชาย');
-    await screen.findByRole('button', { name: literal('เลือกเครื่องเพื่อเพิ่มลงในใบ') });
-    pick('เลือกเครื่องเพื่อเพิ่มลงในใบ', 'เครื่องชั่ง XYZ');
+    await screen.findByRole('button', { name: literal('เลือกเครื่องเพื่อเพิ่มลงในใบ...') });
+    pick('เลือกเครื่องเพื่อเพิ่มลงในใบ...', 'เครื่องชั่ง XYZ');
 
     // The option is now disabled and says so, so the duplicate cannot even be
     // clicked — the composite PRIMARY KEY behind it is the last line, not the
     // only one.
-    fireEvent.click(screen.getByRole('button', { name: literal('เลือกเครื่องเพื่อเพิ่มลงในใบ') }));
+    fireEvent.click(screen.getByRole('button', { name: literal('เลือกเครื่องเพื่อเพิ่มลงในใบ...') }));
     const option = screen.getByRole('button', { name: /อยู่ในใบนี้แล้ว/ });
     expect(option).toBeDisabled();
 

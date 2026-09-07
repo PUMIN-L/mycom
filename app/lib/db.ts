@@ -12,7 +12,7 @@ import type { QueryResult, FieldPacket, RowDataPacket } from "mysql2";
 // did not lower the 33 already written to `settings`, so the next change to
 // reuse 33 was skipped entirely and its tables were never created in
 // production. Reverting a migration means moving FORWARD to a new number.
-const SCHEMA_VERSION = 38;
+const SCHEMA_VERSION = 39;
 
 type DbPool = ReturnType<typeof mysql.createPool>;
 
@@ -878,6 +878,7 @@ async function bootstrapSchemaOnce(): Promise<void> {
           scheduleId VARCHAR(36) DEFAULT NULL,
           status VARCHAR(20) NOT NULL DEFAULT 'issued',
           workSummary TEXT NULL,
+          customEquipments JSON NULL,
           completedAt VARCHAR(255) DEFAULT NULL,
           createdAt VARCHAR(255) NOT NULL,
           INDEX idx_sj_customer (customerId),
@@ -900,6 +901,15 @@ async function bootstrapSchemaOnce(): Promise<void> {
       } catch (error) {
         if (!isBenignSchemaError(error)) throw error;
       }
+    }
+
+    // v39: customEquipments JSON column for manually typed equipment
+    try {
+      await connection.query(
+        `ALTER TABLE service_jobs ADD COLUMN IF NOT EXISTS customEquipments JSON NULL`
+      );
+    } catch (error) {
+      if (!isBenignSchemaError(error)) throw error;
     }
 
     // The machines on a sheet — one site visit can cover several ("1 ใบใส่

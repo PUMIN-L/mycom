@@ -225,9 +225,15 @@ export interface ServiceJobEquipment {
   warrantyEndDate?: string | null;
 }
 
+/** A machine line typed manually — not linked to any equipment in the system. */
+export interface CustomEquipment {
+  productName: string;
+  serialNumber: string;
+}
+
 export interface ServiceJob {
   id: string;
-  /** `JOB<DDMMYY>-NN`, claimed from the same `used_docnos` ledger as quotation
+  /** `DDMMYY-NN`, claimed from the same `used_docnos` ledger as quotation
    * and billing numbers. Assigned once, at creation, and never rewritten. */
   jobNo: string;
   companyId: string;
@@ -245,6 +251,8 @@ export interface ServiceJob {
   completedAt: string | null;
   createdAt: string;
   equipments: ServiceJobEquipment[];
+  /** Manually typed equipment entries (not linked to the DB). */
+  customEquipments: CustomEquipment[];
   // Joined display fields (present on reads)
   customerName?: string | null;
   companyName?: string | null;

@@ -227,11 +227,11 @@ export default function ServiceJobPage() {
     fetch("/api/companies")
       .then((r) => (r.ok ? r.json() : []))
       .then((list) => setCompanies(Array.isArray(list) ? list : []))
-      .catch(() => {});
+      .catch(() => { });
     fetch("/api/customers")
       .then((r) => (r.ok ? r.json() : []))
       .then((list) => setCustomers(Array.isArray(list) ? list : []))
-      .catch(() => {});
+      .catch(() => { });
     fetch("/api/settings/company-profile")
       .then((r) => (r.ok ? r.json() : null))
       .then((p) => {
@@ -241,21 +241,20 @@ export default function ServiceJobPage() {
           phone: p.phone || COMPANY.phone,
         });
       })
-      .catch(() => {});
+      .catch(() => { });
   }, [isLoggedIn]);
 
-  // ── Lookup: the chosen customer's machines ────────────────────────────────
-  // Scoped to ONE customer on purpose. Every machine on a sheet must belong to
-  // the sheet's customer (the store refuses the rest in Thai), because the
-  // paper carries one company name and one signature block.
+  // ── Lookup: all machines in the system ────────────────────────────────────
+  // We now load all equipments so the user can pick any machine in the system,
+  // even if it belongs to another customer.
   useEffect(() => {
-    if (!isLoggedIn || !customerId) {
+    if (!isLoggedIn) {
       setEquipments([]);
       return;
     }
     let cancelled = false;
     setEquipmentsLoading(true);
-    fetch(`/api/admin/equipments?customerId=${encodeURIComponent(customerId)}`)
+    fetch(`/api/admin/equipments`)
       .then((r) => (r.ok ? r.json() : []))
       .then((list) => {
         if (cancelled) return;
@@ -270,7 +269,7 @@ export default function ServiceJobPage() {
     return () => {
       cancelled = true;
     };
-  }, [isLoggedIn, customerId]);
+  }, [isLoggedIn]);
 
   /** Adopt a saved sheet as "the document open on screen": state AND the clean
    * snapshot, so isDirty only fires on edits made from here on. */
@@ -425,20 +424,35 @@ export default function ServiceJobPage() {
   // เครื่อง — the customer's machines, with the ones already on the sheet
   // greyed out rather than hidden, so the admin can see the machine IS there
   // and why it cannot be picked twice.
-  const equipmentOptions = useMemo(
-    () =>
-      equipments.map((e) => {
-        const name = stripHtml(e.productName || "") || "(ไม่ทราบชื่อเครื่อง)";
-        const already = pickedIds.has(e.id);
-        return {
-          value: e.id,
-          label: already ? `${name} — อยู่ในใบนี้แล้ว` : name,
-          subLabel: `หมายเลขเครื่อง: ${e.serialNumber || "—"}`,
-          disabled: already,
-        };
-      }),
-    [equipments, pickedIds]
-  );
+  const equipmentOptions = useMemo(() => {
+    // Sort so the selected customer's equipments appear first
+    const sorted = [...equipments].sort((a, b) => {
+      const aIsOwner = a.customerId === customerId;
+      const bIsOwner = b.customerId === customerId;
+      if (aIsOwner && !bIsOwner) return -1;
+      if (!aIsOwner && bIsOwner) return 1;
+      return (a.productName || "").localeCompare(b.productName || "");
+    });
+
+    return sorted.map((e) => {
+      const name = stripHtml(e.productName || "") || "(ไม่ทราบชื่อเครื่อง)";
+      const already = pickedIds.has(e.id);
+      const isOwner = e.customerId === customerId;
+      
+      let ownerLabel = "";
+      if (!isOwner) {
+        const owner = customers.find(c => c.id === e.customerId);
+        ownerLabel = owner ? ` [ของ: ${owner.name}]` : " [เครื่องของลูกค้ารายอื่น]";
+      }
+
+      return {
+        value: e.id,
+        label: already ? `${name} — อยู่ในใบนี้แล้ว` : `${name}${ownerLabel}`,
+        subLabel: `หมายเลขเครื่อง: ${e.serialNumber || "—"}`,
+        disabled: already,
+      };
+    });
+  }, [equipments, pickedIds, customerId, customers]);
 
   const companyName = useMemo(
     () => companies.find((c) => c.id === companyId)?.name || "",
@@ -826,13 +840,12 @@ export default function ServiceJobPage() {
               )}
               {jobId && (
                 <span
-                  className={`px-2.5 py-1 rounded-full text-xs font-bold ${
-                    status === "completed"
+                  className={`px-2.5 py-1 rounded-full text-xs font-bold ${status === "completed"
                       ? "bg-green-100 text-green-700"
                       : status === "cancelled"
                         ? "bg-gray-100 text-gray-500"
                         : "bg-amber-100 text-amber-700"
-                  }`}
+                    }`}
                 >
                   {STATUS_LABELS[status]}
                 </span>
@@ -899,11 +912,10 @@ export default function ServiceJobPage() {
 
             {scheduleId && (
               <div
-                className={`rounded-xl border px-4 py-3 text-sm ${
-                  scheduleGone
+                className={`rounded-xl border px-4 py-3 text-sm ${scheduleGone
                     ? "border-gray-200 bg-gray-50 text-gray-600"
                     : "border-indigo-200 bg-indigo-50 text-indigo-800"
-                }`}
+                  }`}
               >
                 {scheduleGone ? (
                   <>

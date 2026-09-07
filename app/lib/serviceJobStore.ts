@@ -10,6 +10,7 @@ import type {
   ServiceJobEquipment,
   ServiceJobStatus,
   ServiceJobSummary,
+  CustomEquipment,
 } from "./types";
 
 // ── ใบ Job — the printed service job sheet ───────────────────────────────────
@@ -109,6 +110,8 @@ export interface ServiceJobInput {
   jobNo?: string;
   /** In printed order. The first is line 1 on the paper. */
   equipmentIds?: string[];
+  /** Manually typed equipment not registered in the system. */
+  customEquipments?: { productName?: string; serialNumber?: string }[];
 }
 
 export interface ListServiceJobsOptions {
@@ -169,6 +172,12 @@ const JOB_EQUIPMENT_SELECT = `
   LEFT JOIN products p ON e.productId = p.id`;
 
 function rowToJob(row: RowDataPacket, equipments: ServiceJobEquipment[]): ServiceJob {
+  let customEquipments: CustomEquipment[] = [];
+  try {
+    const raw = row.customEquipments;
+    if (typeof raw === "string") customEquipments = JSON.parse(raw);
+    else if (Array.isArray(raw)) customEquipments = raw;
+  } catch { /* malformed JSON — treat as empty */ }
   return {
     id: String(row.id),
     jobNo: row.jobNo ?? "",
@@ -182,6 +191,7 @@ function rowToJob(row: RowDataPacket, equipments: ServiceJobEquipment[]): Servic
     completedAt: row.completedAt ?? null,
     createdAt: row.createdAt ?? "",
     equipments,
+    customEquipments,
     customerName: row.customerName ?? null,
     companyName: row.companyName ?? null,
     scheduleExists: row.linkedScheduleId != null,
@@ -342,6 +352,7 @@ interface NormalizedInput {
   workSummary: string | null;
   jobNo: string;
   equipmentIds: string[];
+  customEquipments: CustomEquipment[];
 }
 
 function normalizeInput(input: ServiceJobInput): NormalizedInput {
@@ -367,12 +378,23 @@ function normalizeInput(input: ServiceJobInput): NormalizedInput {
     }
     equipmentIds.push(equipmentId);
   }
-  if (equipmentIds.length === 0) {
-    throw new ServiceJobValidationError("กรุณาเลือกเครื่องอย่างน้อย 1 เครื่อง");
+
+  // Parse custom (manually typed) equipment entries
+  const customEquipments: CustomEquipment[] = [];
+  const rawCustom = Array.isArray(input.customEquipments) ? input.customEquipments : [];
+  for (const raw of rawCustom) {
+    const productName = text(raw?.productName, 255);
+    const serialNumber = text(raw?.serialNumber, 255);
+    if (!productName && !serialNumber) continue; // skip fully empty entries
+    customEquipments.push({ productName: productName || "", serialNumber: serialNumber || "" });
   }
-  if (equipmentIds.length > MAX_EQUIPMENTS_PER_JOB) {
+
+  if (equipmentIds.length === 0 && customEquipments.length === 0) {
+    throw new ServiceJobValidationError("กรุณาเลือกหรือเพิ่มเครื่องอย่างน้อย 1 เครื่อง");
+  }
+  if (equipmentIds.length + customEquipments.length > MAX_EQUIPMENTS_PER_JOB) {
     throw new ServiceJobValidationError(
-      `ใบ Job หนึ่งใบใส่เครื่องได้ไม่เกิน ${MAX_EQUIPMENTS_PER_JOB} เครื่อง`
+      `ใบงานบริการหนึ่งใบใส่เครื่องได้ไม่เกิน ${MAX_EQUIPMENTS_PER_JOB} เครื่อง`
     );
   }
 
@@ -380,8 +402,6 @@ function normalizeInput(input: ServiceJobInput): NormalizedInput {
     companyId,
     customerId,
     jobDate,
-    // Empty on purpose is a VALID, complete sheet: the printed paper then
-    // carries a ruled blank line for the technician to write his own name on.
     technicianName: text(input.technicianName, 255),
     scheduleId: text(input.scheduleId, 36) || null,
     workSummary:
@@ -390,19 +410,20 @@ function normalizeInput(input: ServiceJobInput): NormalizedInput {
         : text(input.workSummary, 10000),
     jobNo: text(input.jobNo, 255),
     equipmentIds,
+    customEquipments,
   };
 }
 
 /**
- * Every machine on the sheet must exist and belong to the sheet's customer.
+ * Every machine on the sheet must exist. We no longer restrict machines to
+ * the sheet's customer, allowing borrowing/picking any machine in the system.
  *
  * Runs on the TRANSACTION's connection, so the check and the rows it authorises
  * are one atomic read-then-write rather than a check against a snapshot some
  * other statement may already have moved on from.
  */
-async function assertEquipmentsBelongToCustomer(
+async function assertEquipmentsExist(
   conn: PoolConnection,
-  customerId: string,
   equipmentIds: string[]
 ): Promise<void> {
   const placeholders = equipmentIds.map(() => "?").join(", ");
@@ -410,14 +431,12 @@ async function assertEquipmentsBelongToCustomer(
     `SELECT id, customerId FROM customer_equipments WHERE id IN (${placeholders})`,
     equipmentIds
   );
-  const owners = new Map<string, string>();
-  for (const row of rows) owners.set(String(row.id), String(row.customerId ?? ""));
+  const validIds = new Set<string>();
+  for (const row of rows) validIds.add(String(row.id));
   for (const equipmentId of equipmentIds) {
-    const owner = owners.get(equipmentId);
-    if (owner === undefined) {
+    if (!validIds.has(equipmentId)) {
       throw new ServiceJobValidationError("ไม่พบเครื่องที่เลือกในระบบ");
     }
-    if (owner !== customerId) throw new ServiceJobCustomerMismatchError(equipmentId);
   }
 }
 
@@ -520,7 +539,9 @@ export async function createJob(input: ServiceJobInput): Promise<ServiceJob> {
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
 
-    await assertEquipmentsBelongToCustomer(conn, data.customerId, data.equipmentIds);
+    if (data.equipmentIds.length > 0) {
+      await assertEquipmentsExist(conn, data.equipmentIds);
+    }
 
     // Use client-provided jobNo if present, otherwise mint one.
     let jobNo: string;
@@ -548,8 +569,8 @@ export async function createJob(input: ServiceJobInput): Promise<ServiceJob> {
     await conn.query(
       `INSERT INTO service_jobs
          (id, jobNo, companyId, customerId, jobDate, technicianName, scheduleId,
-          status, workSummary, completedAt, createdAt)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'issued', ?, NULL, ?)`,
+          status, workSummary, customEquipments, completedAt, createdAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'issued', ?, ?, NULL, ?)`,
       [
         id,
         jobNo,
@@ -559,10 +580,13 @@ export async function createJob(input: ServiceJobInput): Promise<ServiceJob> {
         data.technicianName,
         data.scheduleId,
         data.workSummary,
+        data.customEquipments.length > 0 ? JSON.stringify(data.customEquipments) : null,
         now,
       ]
     );
-    await writeEquipments(conn, id, data.equipmentIds);
+    if (data.equipmentIds.length > 0) {
+      await writeEquipments(conn, id, data.equipmentIds);
+    }
     return id;
   });
 
@@ -600,12 +624,14 @@ export async function updateJob(
       );
     }
 
-    await assertEquipmentsBelongToCustomer(conn, data.customerId, data.equipmentIds);
+    if (data.equipmentIds.length > 0) {
+      await assertEquipmentsExist(conn, data.equipmentIds);
+    }
 
     await conn.query(
       `UPDATE service_jobs SET
          companyId = ?, customerId = ?, jobDate = ?, technicianName = ?,
-         scheduleId = ?, workSummary = ?
+         scheduleId = ?, workSummary = ?, customEquipments = ?
        WHERE id = ?`,
       [
         data.companyId,
@@ -614,19 +640,25 @@ export async function updateJob(
         data.technicianName,
         data.scheduleId,
         data.workSummary,
+        data.customEquipments.length > 0 ? JSON.stringify(data.customEquipments) : null,
         id,
       ]
     );
     // Drop the machines that are no longer on the sheet, then upsert the rest
     // with their new print order. Both halves are idempotent, so a replayed
     // callback lands on the same final list.
-    const placeholders = data.equipmentIds.map(() => "?").join(", ");
-    await conn.query(
-      `DELETE FROM service_job_equipments
-       WHERE jobId = ? AND equipmentId NOT IN (${placeholders})`,
-      [id, ...data.equipmentIds]
-    );
-    await writeEquipments(conn, id, data.equipmentIds);
+    if (data.equipmentIds.length > 0) {
+      const placeholders = data.equipmentIds.map(() => "?").join(", ");
+      await conn.query(
+        `DELETE FROM service_job_equipments
+         WHERE jobId = ? AND equipmentId NOT IN (${placeholders})`,
+        [id, ...data.equipmentIds]
+      );
+      await writeEquipments(conn, id, data.equipmentIds);
+    } else {
+      // No system equipment — remove all
+      await conn.query("DELETE FROM service_job_equipments WHERE jobId = ?", [id]);
+    }
     return true;
   });
 
