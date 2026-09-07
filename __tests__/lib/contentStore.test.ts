@@ -32,7 +32,7 @@ import {
   updateContent,
   ContentProductConflictError,
 } from '@/app/lib/contentStore';
-import type { ContentData } from '@/app/lib/contentStore';
+import type { ContentBlock, ContentData } from '@/app/lib/contentStore';
 
 const mockedQuery = vi.mocked(query);
 
@@ -471,6 +471,153 @@ describe('contentStore', () => {
         createdAt: '2026-01-01',
         productId: 'p-old',
       });
+    });
+  });
+
+  // A revision is only worth writing when the value it snapshots differs from
+  // the value about to be written over it. The edit form posts EVERY field on
+  // every save, so "which fields were supplied" said "all of them" even for a
+  // save that changed nothing — and `contents.blocks` is the biggest thing in
+  // `revisions`, with only REVISION_KEEP.content = 5 slots per content before
+  // the genuinely older versions are trimmed away.
+  describe('updateContent — no change, no snapshot', () => {
+    const existingRow = {
+      id: 'c-1',
+      title: 'Old',
+      blocks: JSON.stringify([{ id: 'b', type: 'text', content: '<p>old</p>' }]),
+      createdAt: '2026-01-01',
+      productId: 'p-old',
+    };
+
+    // What "opened the content and pressed save without touching it" posts.
+    const unchangedPayload: Partial<ContentData> = {
+      title: 'Old',
+      blocks: [{ id: 'b', type: 'text', content: '<p>old</p>' }],
+      createdAt: '2026-01-01',
+      productId: 'p-old',
+    };
+
+    const stubUpdate = () => {
+      mockedQuery
+        .mockResolvedValueOnce([[existingRow]] as any) // getContent SELECT
+        .mockResolvedValueOnce([{ affectedRows: 1 }] as any); // UPDATE
+    };
+
+    it('writes NO revision when every posted field already matches the row', async () => {
+      stubUpdate();
+
+      const result = await updateContent('c-1', unchangedPayload);
+
+      expect(saveRevision).not.toHaveBeenCalled();
+      // Only history is skipped — the UPDATE is built exactly as before.
+      const [sql, params] = callArgs(1);
+      expect(sql).toBe('UPDATE contents SET title = ?, blocks = ?, createdAt = ?, productId = ? WHERE id = ?');
+      expect(params[0]).toBe('Old');
+      expect(params[3]).toBe('p-old');
+      // Same product as before, so no re-link transaction was opened either.
+      expect(conn.query).not.toHaveBeenCalled();
+      expect(result?.title).toBe('Old');
+    });
+
+    const realChanges: Array<[string, Partial<ContentData>]> = [
+      ['title', { title: 'New title' }],
+      ['blocks', { blocks: [{ id: 'b', type: 'text', content: '<p>rewritten</p>' }] }],
+      ['a block added to the end', {
+        blocks: [
+          { id: 'b', type: 'text', content: '<p>old</p>' },
+          { id: 'b2', type: 'image', imageUrl: 'https://x/y.png' },
+        ],
+      }],
+      ['createdAt', { createdAt: '2026-05-05' }],
+      ['productId (unlinked)', { productId: null }],
+    ];
+
+    it.each(realChanges)(
+      'writes exactly ONE revision when %s genuinely changes',
+      async (_label, patch) => {
+        stubUpdate();
+
+        await updateContent('c-1', { ...unchangedPayload, ...patch });
+
+        expect(saveRevision).toHaveBeenCalledTimes(1);
+        // The snapshot is of the PREVIOUS value, so it can restore it.
+        expect(saveRevision).toHaveBeenCalledWith(
+          'content',
+          'c-1',
+          expect.objectContaining({ title: 'Old', createdAt: '2026-01-01' })
+        );
+      }
+    );
+
+    it('writes NO revision when the blocks are rebuilt as new objects with the same values', async () => {
+      stubUpdate();
+
+      await updateContent('c-1', {
+        ...unchangedPayload,
+        // Same block, freshly constructed, keys in a different order — what a
+        // round-trip through the editor's state produces. Object identity and
+        // key order are both meaningless here; the value is what matters.
+        blocks: [{ content: '<p>old</p>', type: 'text', id: 'b' } as ContentBlock],
+      });
+
+      expect(saveRevision).not.toHaveBeenCalled();
+      expect(callArgs(1)[0]).toContain('blocks = ?');
+    });
+
+    it('writes NO revision when the only difference is markup the sanitizer strips', async () => {
+      stubUpdate();
+
+      await updateContent('c-1', {
+        ...unchangedPayload,
+        title: 'Old<script>evil()</script>',
+        blocks: [{ id: 'b', type: 'text', content: '<p>old</p><script>evil()</script>' }],
+      });
+
+      // The value the UPDATE writes is identical to the stored one, so a
+      // snapshot of it could restore nothing.
+      expect(saveRevision).not.toHaveBeenCalled();
+      const params = callArgs(1)[1];
+      expect(params[0]).toBe('Old');
+      expect(params[1]).toBe(JSON.stringify([{ id: 'b', type: 'text', content: '<p>old</p>' }]));
+    });
+
+    it('still snapshots a genuine re-link, and only after the FOR UPDATE conflict check has passed', async () => {
+      mockedQuery.mockResolvedValueOnce([[existingRow]] as any); // getContent
+      conn.query.mockReset();
+      conn.query.mockImplementation(async (sql: string) => {
+        if (sql.includes('SELECT id FROM contents WHERE productId')) return [[]];
+        return [{ affectedRows: 1 }];
+      });
+
+      // Everything else identical — only the product link moves.
+      await updateContent('c-1', { ...unchangedPayload, productId: 'p-free' });
+
+      expect(conn.query.mock.calls[0][0]).toContain('FOR UPDATE');
+      expect(saveRevision).toHaveBeenCalledTimes(1);
+      // Through the transaction's own connection, as before.
+      expect(saveRevision).toHaveBeenCalledWith('content', 'c-1', expect.anything(), conn);
+      // Conflict check FIRST, then the snapshot — the dirty check must not
+      // have reordered them.
+      expect(conn.query.mock.invocationCallOrder[0]).toBeLessThan(
+        vi.mocked(saveRevision).mock.invocationCallOrder[0]
+      );
+      expect(conn.query.mock.calls.some((c) => (c[0] as string).startsWith('UPDATE contents'))).toBe(true);
+    });
+
+    it('still rejects a re-link to a product another content owns, even when nothing else changed', async () => {
+      mockedQuery.mockResolvedValueOnce([[existingRow]] as any); // getContent
+      conn.query.mockReset();
+      conn.query.mockImplementation(async (sql: string) => {
+        if (sql.includes('SELECT id FROM contents WHERE productId')) return [[{ id: 'other-content' }]];
+        return [{ affectedRows: 1 }];
+      });
+
+      await expect(
+        updateContent('c-1', { ...unchangedPayload, productId: 'p-taken' })
+      ).rejects.toThrow(ContentProductConflictError);
+
+      expect(saveRevision).not.toHaveBeenCalled();
+      expect(conn.query.mock.calls.some((c) => (c[0] as string).startsWith('UPDATE contents'))).toBe(false);
     });
   });
 });

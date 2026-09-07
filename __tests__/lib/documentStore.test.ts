@@ -6,6 +6,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // updateDocument snapshots the previous value via revisionStore before writing;
 // stub it so it doesn't add a query the call-order assertions don't expect.
 vi.mock('@/app/lib/revisionStore', () => ({ saveRevision: vi.fn() }));
+import { saveRevision } from '@/app/lib/revisionStore';
 
 vi.mock('@/app/lib/db', () => ({
   query: vi.fn(),
@@ -172,6 +173,84 @@ describe('documentStore', () => {
 
       await updateDocument('d-1', {});
       expect(mockedQuery).toHaveBeenCalledTimes(1); // no UPDATE query
+    });
+  });
+
+  // A revision is only worth writing when the value it snapshots differs from
+  // the value about to be written over it. The edit form posts title AND
+  // description on every save, so `sets.length > 0` — the old condition — was
+  // true even for a save that changed nothing, and each of those spent one of
+  // the REVISION_KEEP.document = 20 slots this document's history has.
+  describe('updateDocument — no change, no snapshot', () => {
+    const stubUpdate = (row: Record<string, unknown> = fullRow) => {
+      mockedQuery
+        .mockResolvedValueOnce([[row]] as any) // getDocument SELECT
+        .mockResolvedValueOnce([{ affectedRows: 1 }] as any); // UPDATE
+    };
+
+    // What "opened the document and pressed save without touching it" posts.
+    const unchangedPayload = { title: 'Doc One', description: 'A description' };
+
+    it('writes NO revision when every posted field already matches the row', async () => {
+      stubUpdate();
+
+      await updateDocument('d-1', unchangedPayload);
+
+      expect(saveRevision).not.toHaveBeenCalled();
+      // Only history is skipped — the UPDATE is built exactly as before.
+      const [sql, params] = callArgs(1);
+      expect(sql).toContain('UPDATE documents SET title = ?, description = ? WHERE id = ?');
+      expect(params).toEqual(['Doc One', 'A description', 'd-1']);
+    });
+
+    const realChanges: Array<[string, Partial<DocumentData>]> = [
+      ['title', { title: 'Renamed' }],
+      ['description', { description: 'A different description' }],
+      ['pdfUrl', { pdfUrl: 'https://x/two.pdf' }],
+      ['coverUrl', { coverUrl: 'https://x/two.png' }],
+      ['sortOrder', { sortOrder: 9 }],
+    ];
+
+    it.each(realChanges)(
+      'writes exactly ONE revision when %s genuinely changes',
+      async (_label, patch) => {
+        stubUpdate();
+
+        await updateDocument('d-1', { ...unchangedPayload, ...patch });
+
+        expect(saveRevision).toHaveBeenCalledTimes(1);
+        // The snapshot is of the PREVIOUS value, so it can restore it.
+        expect(saveRevision).toHaveBeenCalledWith(
+          'document',
+          'd-1',
+          expect.objectContaining({ title: 'Doc One', description: 'A description' })
+        );
+      }
+    );
+
+    it('writes NO revision when the only difference is markup the sanitizer strips', async () => {
+      stubUpdate();
+
+      await updateDocument('d-1', {
+        title: 'Doc One<script>evil()</script>',
+        description: '<b>A description</b>',
+      });
+
+      // What the UPDATE writes is identical to what is stored, so a snapshot
+      // of it could restore nothing.
+      expect(saveRevision).not.toHaveBeenCalled();
+      expect(callArgs(1)[1]).toEqual(['Doc One', 'A description', 'd-1']);
+    });
+
+    it('treats a stored NULL description and an incoming empty string as the same value', async () => {
+      stubUpdate({ ...fullRow, description: null });
+
+      await updateDocument('d-1', { title: 'Doc One', description: '' });
+
+      // mapDocumentRow reads a NULL description back as "", so writing "" over
+      // it changes nothing any reader of this row can see.
+      expect(saveRevision).not.toHaveBeenCalled();
+      expect(callArgs(1)[0]).toContain('description = ?');
     });
   });
 

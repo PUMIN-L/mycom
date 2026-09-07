@@ -1258,6 +1258,40 @@ export async function getAlerts(
 }
 
 /**
+ * Delete `alert_snoozes` rows that have already expired. Called nightly by the
+ * cleanup cron (`GET /api/quotations/cleanup`).
+ *
+ * These rows are dead data the moment they expire: every alert query in this
+ * file already ignores a snooze whose `snoozeUntil` has passed, so an expired
+ * row changes no alert, is never read, and is never rewritten — snoozing the
+ * same alert again `ON DUPLICATE KEY UPDATE`s the row rather than adding one.
+ * Nothing has ever deleted them.
+ *
+ * ⚠️ THE BOUNDARY IS DELIBERATELY ONE DAY CONSERVATIVE. The alert queries all
+ * treat a snooze as spent when `sno.snoozeUntil <= today`, comparing a full ISO
+ * timestamp ("2026-09-07T05:00:00.000Z") against a bare Bangkok date string
+ * ("2026-09-07") as TEXT — so a snooze set for today is still live all day (the
+ * longer string sorts after the shorter one) and only lapses tomorrow. This
+ * DELETE therefore uses `<`, not `<=`: every row it removes is one that every
+ * alert query has already stopped honouring. Widening it to `<=` would purge a
+ * snooze that is still suppressing an alert, and the alert would reappear a day
+ * early — the one way a cleanup job here can be user-visible.
+ *
+ * `service_logs` (real service history) and `used_docnos` (kept forever for
+ * conversion-rate analytics — see quotationStore) are NOT in scope and must
+ * stay out of it.
+ */
+export async function purgeExpiredAlertSnoozes(
+  today: string = bangkokDateString(new Date())
+): Promise<number> {
+  const [result] = await query<ResultSetHeader>(
+    "DELETE FROM alert_snoozes WHERE snoozeUntil < ?",
+    [today]
+  );
+  return result?.affectedRows ?? 0;
+}
+
+/**
  * Snoozes an alert until the specified ISO timestamp.
  */
 export async function snoozeAlert(

@@ -60,7 +60,7 @@ app/
 │   ├── quotations/       save/list/delete quotes + docnos/ ledger + cleanup/ cron
 │   ├── settings/         contact-email/ (get/change the contact inbox address)
 │   ├── contact/          public contact form (stores lead + emails) + messages/ inbox
-│   ├── revisions/        edit history list + [id]/restore/ (product/content/document)
+│   ├── revisions/        edit history list + [id]/restore/ (product/content/document/customer)
 │   ├── upload/           Cloudinary upload + delete/
 │   └── health/           DB reachability probe (public, force-dynamic)
 │
@@ -75,7 +75,7 @@ app/
 │   ├── quotationNumber.ts docNo running-number helpers (DOCNO_START=22, nextDocNo).
 │   ├── settingsStore.ts  Key/value settings (contact_email).
 │   ├── contactMessageStore.ts  Persisted contact-form leads (admin inbox).
-│   ├── revisionStore.ts  Edit-history snapshots for product/content/document.
+│   ├── revisionStore.ts  Edit-history snapshots for product/content/document/customer.
 │   ├── session.ts        JWT encrypt/decrypt + cookie helpers (server-only).
 │   ├── apiHelpers.ts     ⭐ withRoute / requireAuth / jsonError / ApiError + CSRF guard.
 │   ├── cloudinaryHelper.ts  upload / delete / collect-image-urls / pdf-cover.
@@ -257,7 +257,13 @@ deleted/auto-purged. Save + reserve run in **one transaction**
 a *different* quote aborts with 409, and the quote can never be persisted without
 its reservation — so the "one live number" invariant holds under failure and
 concurrency. A Vercel Cron (`/api/quotations/cleanup`, gated by `CRON_SECRET`) purges
-quotations past `RETENTION_DAYS`.
+quotations past `RETENTION_DAYS` **and expired `alert_snoozes` rows**
+(`purgeExpiredAlertSnoozes` in `crmStore.ts`, `snoozesPurged` in the log line).
+That purge is one day conservative on purpose — it deletes with `<` against
+today's Bangkok date, a strict subset of the `snoozeUntil <= today` the alert
+queries already treat as spent, so no alert can reappear early because of it.
+`service_logs` (real service history) and `used_docnos` (kept for
+conversion-rate analytics) are deliberately not swept.
 
 **Retention is 2 years (`RETENTION_DAYS = 730`), not 30 days.** This business's
 sales cycle runs for months to years, so the old 30-day window purged the
@@ -462,12 +468,71 @@ Changing the recipient notifies **both** the old and new addresses. Visitor
 fields go into structured `{name,address}` objects to prevent header injection.
 
 ### 9a. Edit history (revisions)
-Every `updateProduct` / `updateContent` / `updateDocument` snapshots the previous
-value into `revisions` ([`revisionStore.ts`](./app/lib/revisionStore.ts)) BEFORE
+Every `updateProduct` / `updateContent` / `updateDocument` that actually changes
+something snapshots the previous value into `revisions`
+([`revisionStore.ts`](./app/lib/revisionStore.ts)) BEFORE
 overwriting, so an accidental edit is restorable via
 `POST /api/revisions/[id]/restore`. Restore lives in the route (not the store) so
 the stores → `revisionStore` dependency stays acyclic. Restore is itself an
 update, so it too is undoable.
+
+**Customers** (`entityType: "customer"`) are in the same history: every write to
+`customers.note` — the ✏️ hand edit and the bulk search-and-replace alike —
+snapshots the previous note first. Their restore writes **one column,
+`note`**, and says so in the response (`restoredFields: ["note"]`), because
+`note` is the only field those writers ever overwrite; putting `name` / `phone`
+/ `email` / `companyId` back from an old snapshot would revert edits nobody asked
+to revert and could point a customer at a deleted company. It refuses, in Thai,
+a snapshot longer than the 2000-character ceiling the customer routes impose with
+`substring(0, 2000)` (that truncation is silent, so a restore must not walk into
+it) and a customer row that has since been deleted — an undo of a note does not
+resurrect a customer. The allowlist in `app/api/revisions/route.ts` is keyed by
+`RevisionEntityType`, so adding a type to the union fails the build until the
+list route can serve it.
+
+**Storage is bounded — three rules, all in `revisionStore.ts`.** `revisions` is
+the biggest thing this database will hold once ~6,000 customers with years-long
+call logs are imported, so:
+
+1. **A customer snapshot stores `{ name, note }`, not the whole row.** The
+   restore writes one column, so `companyId` / `department` / `phone` / `email`
+   / `id` were bytes that could never be restored. The shape is
+   **self-describing, not versioned**: the restore route keys off the presence
+   of a `note` key, so the full-row snapshots already in production restore
+   exactly as before and no migration is needed. `product` / `content` /
+   `document` snapshots are still whole — their restores re-apply every field.
+2. **No change, no snapshot — all four entity types.** `PUT /api/customers/[id]`
+   compares the **post-`sanitizePlainText`, post-`substring(0, 2000)`** note
+   against the stored one and skips the revision when they match (comparing the
+   raw request body instead would still snapshot a save that changed nothing
+   that gets written). `replaceInNotes` and the restore route already had the
+   same rule. `updateContent` / `updateProduct` / `updateDocument` now follow
+   it too: they used to decide from **which fields were supplied**, and an edit
+   form posts every field on every save, so opening something and pressing save
+   wrote a full snapshot — for a content, the whole rich-text document. Each
+   store's `set()` now takes a third argument, "does this column's new value
+   differ from the row's", and only `saveRevision` is gated on it; **the UPDATE
+   is built exactly as before**. The comparison is always against the value the
+   UPDATE will write (post-sanitize, post-truncation) and treats a stored NULL
+   as the `""` / `0` / `null` that the row-mapper reads it back as.
+   `contents.blocks` is JSON, so both sides go through the same
+   `sanitizeBlocks()` and a key-sorting serializer (`canonicalize` in
+   `contentStore.ts`) — object key order is not a value here, block order is,
+   and the written value is still a plain `JSON.stringify`. A product's
+   `supplierIds` counts as a change even though it is not a column of
+   `products`: it is in the snapshot and a restore re-applies it.
+3. **A per-entity ceiling (`REVISION_KEEP`).** After every INSERT, `saveRevision`
+   keeps the newest N snapshots for that `(entityType, entityId)` and deletes
+   the rest **on the same connection**, so inside `withTransaction` the trim
+   commits or rolls back with the snapshot. N is `customer: 10`, `content: 5`
+   (full rich-text HTML — individually the largest rows), `product: 20`,
+   `document: 20`.
+   > ⚠️ The ordering is the load-bearing part: `createdAt` is a VARCHAR ISO
+   > string, so two snapshots written in the same millisecond share it exactly.
+   > The trim orders `(id = ?) DESC, createdAt DESC, id DESC` — the primary key
+   > breaks the tie so the order is total and deterministic, and the row just
+   > inserted is pinned to the front so neither a tie nor a skewed serverless
+   > clock can make the newest write the one thrown away.
 
 ### 9b. Observability
 [`instrumentation.ts`](./instrumentation.ts) (Next 16, project root) exports

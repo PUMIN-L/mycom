@@ -32,6 +32,11 @@ import {
   purgeOldDocNos,
 } from '@/app/lib/quotationStore';
 
+// The nightly cron also purges expired alert snoozes. Mocked so no DB is
+// touched; what it deletes is asserted in __tests__/lib/crmStore.test.ts.
+vi.mock('@/app/lib/crmStore', () => ({ purgeExpiredAlertSnoozes: vi.fn() }));
+import { purgeExpiredAlertSnoozes } from '@/app/lib/crmStore';
+
 // Drive the REAL requireAuth/withRoute by controlling getSession (null = anon).
 vi.mock('@/app/lib/session', () => ({ getSession: vi.fn() }));
 import { getSession } from '@/app/lib/session';
@@ -291,13 +296,62 @@ describe('Quotations API', () => {
 
     it('purges quotations but NEVER touches billing documents (invoices/receipts are permanent records)', async () => {
       vi.mocked(purgeExpiredQuotations).mockResolvedValue(3);
+      vi.mocked(purgeExpiredAlertSnoozes).mockResolvedValue(2);
       const res = await cleanupGET(cleanupReq('Bearer cron-test-secret'));
       expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ ok: true, deleted: 3, billingDeleted: 0, docNosPurged: 0 });
+      expect(await res.json()).toEqual({
+        ok: true, deleted: 3, billingDeleted: 0, docNosPurged: 0, snoozesPurged: 2,
+      });
       // Retention widened 30 -> 730 days (2 years): this business's sales cycle
       // runs for months, so the old window purged quotations right when the
       // customer decided to buy.
       expect(purgeExpiredQuotations).toHaveBeenCalledWith(730);
+    });
+
+    // ── Expired alert snoozes ──────────────────────────────────────────────
+    it('purges expired alert snoozes in the same nightly run', async () => {
+      vi.mocked(purgeExpiredQuotations).mockResolvedValue(0);
+      vi.mocked(purgeExpiredAlertSnoozes).mockResolvedValue(7);
+      const res = await cleanupGET(cleanupReq('Bearer cron-test-secret'));
+      expect(res.status).toBe(200);
+      expect((await res.json()).snoozesPurged).toBe(7);
+      // No argument: the store defaults to today in Bangkok, and the boundary
+      // rule lives with the SQL rather than being restated by every caller.
+      expect(purgeExpiredAlertSnoozes).toHaveBeenCalledWith();
+    });
+
+    it('does not purge snoozes for an unauthorised caller', async () => {
+      const res = await cleanupGET(cleanupReq('Bearer wrong-secret'));
+      expect(res.status).toBe(401);
+      expect(purgeExpiredAlertSnoozes).not.toHaveBeenCalled();
+    });
+
+    it('reports the snooze count on the greppable success line, in English like the rest', async () => {
+      vi.mocked(purgeExpiredQuotations).mockResolvedValue(1);
+      vi.mocked(purgeExpiredAlertSnoozes).mockResolvedValue(5);
+      const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      try {
+        await cleanupGET(cleanupReq('Bearer cron-test-secret'));
+        const line = String(spy.mock.calls.at(-1)![0]);
+        expect(line).toContain('[cron:quotations-cleanup] ok');
+        expect(line).toContain('snoozesPurged=5');
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it('fails the whole run when the snooze purge throws, instead of losing it silently', async () => {
+      vi.mocked(purgeExpiredQuotations).mockResolvedValue(0);
+      vi.mocked(purgeExpiredAlertSnoozes).mockRejectedValue(new Error('db down'));
+      const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      try {
+        const res = await cleanupGET(cleanupReq('Bearer cron-test-secret'));
+        // 500 → Vercel marks the cron run FAILED.
+        expect(res.status).toBe(500);
+        expect(spy.mock.calls.some((c) => String(c[0]).includes('[cron:quotations-cleanup] FAILED'))).toBe(true);
+      } finally {
+        spy.mockRestore();
+      }
     });
   });
 });

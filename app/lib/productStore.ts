@@ -153,6 +153,17 @@ function rowToProduct(row: RowDataPacket): ProductData {
   };
 }
 
+// Do these two supplier-id lists hold the same suppliers? Order-insensitive on
+// purpose (see the call site in updateProduct): both sides are sorted copies —
+// the inputs are never mutated — and duplicates still have to line up one for
+// one, so this is set equality on a multiset, not just "same members".
+function sameSupplierSet(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  const sortedA = [...a].sort();
+  const sortedB = [...b].sort();
+  return sortedA.every((id, i) => id === sortedB[i]);
+}
+
 export async function addProduct(product: ProductData): Promise<ProductData> {
   const isPublished = product.isPublished !== false;
   // Sanitize rich-text descriptions on write so stored HTML is always safe to
@@ -279,38 +290,105 @@ export async function updateProduct(
   // Build a partial UPDATE that only touches the columns actually supplied, so
   // two concurrent edits to different fields don't clobber each other via a
   // read-modify-write of the whole row. Descriptions are re-sanitized on write.
+  //
+  // ── NO CHANGE, NO SNAPSHOT ────────────────────────────────────────────────
+  // `changed` is the third argument to set(): does this column's NEW value
+  // differ from what the row already holds? It decides ONE thing — whether a
+  // revision is written. The SET list, and therefore the UPDATE and the row it
+  // produces, is built exactly as it was before.
+  //
+  // Which fields were SUPPLIED used to stand in for which fields changed, and
+  // the two are not the same thing: the edit form posts every field on every
+  // save, so `sets.length > 0` was true even for opening a product and pressing
+  // save without touching it. Each of those spent one of the
+  // REVISION_KEEP.product = 20 slots this product's history has on a copy of a
+  // value that was never overwritten — and 20 such saves leave a history in
+  // which every surviving entry restores what is already there.
+  //
+  // Every comparison is against the value the UPDATE WILL WRITE (post
+  // sanitizeRichText, post substring), never the raw `updates` field. Compare
+  // the raw field and a save whose only difference was markup the sanitizer
+  // strips — or text past the cap — still looks like an edit and snapshots a
+  // value identical to the live row.
   const sets: string[] = [];
   const values: unknown[] = [];
-  const set = (col: string, val: unknown) => {
+  let changed = false;
+  const set = (col: string, val: unknown, differs: boolean) => {
     sets.push(`${col} = ?`);
     values.push(val);
+    if (differs) changed = true;
+  };
+  // Sanitize + truncate FIRST, compare the result. `current` is the value
+  // rowToProduct read back for this column, i.e. what a previous write of it
+  // left behind — with its NULL already normalised to "" (rowToProduct does
+  // `?? ""`), so writing "" over a stored NULL is not counted as an edit:
+  // nothing that reads this row can tell the two apart.
+  const setText = (col: string, raw: string, cap: number, current: string) => {
+    const value = sanitizeRichText(raw).substring(0, cap);
+    set(col, value, value !== current);
   };
 
-  if (updates.categoryId !== undefined) set("categoryId", updates.categoryId);
-  if (updates.image !== undefined) set("image", updates.image);
-  if (updates.title_th !== undefined) set("title_th", sanitizeRichText(updates.title_th).substring(0, 255));
-  if (updates.title_en !== undefined) set("title_en", sanitizeRichText(updates.title_en).substring(0, 255));
-  if (updates.title_zh !== undefined) set("title_zh", sanitizeRichText(updates.title_zh).substring(0, 255));
-  if (updates.desc_th !== undefined) set("desc_th", sanitizeRichText(updates.desc_th).substring(0, 10000));
-  if (updates.desc_en !== undefined) set("desc_en", sanitizeRichText(updates.desc_en).substring(0, 10000));
-  if (updates.desc_zh !== undefined) set("desc_zh", sanitizeRichText(updates.desc_zh).substring(0, 10000));
-  
+  if (updates.categoryId !== undefined) set("categoryId", updates.categoryId, updates.categoryId !== existing.categoryId);
+  if (updates.image !== undefined) set("image", updates.image, updates.image !== existing.image);
+  if (updates.title_th !== undefined) setText("title_th", updates.title_th, 255, existing.title_th);
+  if (updates.title_en !== undefined) setText("title_en", updates.title_en, 255, existing.title_en);
+  if (updates.title_zh !== undefined) setText("title_zh", updates.title_zh, 255, existing.title_zh);
+  if (updates.desc_th !== undefined) setText("desc_th", updates.desc_th, 10000, existing.desc_th);
+  if (updates.desc_en !== undefined) setText("desc_en", updates.desc_en, 10000, existing.desc_en);
+  if (updates.desc_zh !== undefined) setText("desc_zh", updates.desc_zh, 10000, existing.desc_zh);
+
   if (updates.bestSellerRank !== undefined) {
-    set("bestSellerRank", updates.bestSellerRank);
+    // Written raw, so compared raw. rowToProduct already normalises a stored
+    // NULL to null, so "not a best seller" saved over "not a best seller" is
+    // not an edit.
+    set(
+      "bestSellerRank",
+      updates.bestSellerRank,
+      (updates.bestSellerRank ?? null) !== (existing.bestSellerRank ?? null)
+    );
   }
   if (updates.showBestSellerBadge !== undefined) {
-    set("showBestSellerBadge", updates.showBestSellerBadge !== false);
+    // Compare the coerced boolean that is written, not the incoming value —
+    // any truthy-but-not-`false` input writes the same `true`.
+    const showBadge = updates.showBestSellerBadge !== false;
+    set("showBestSellerBadge", showBadge, showBadge !== (existing.showBestSellerBadge !== false));
   }
-  
+
   if (updates.isPublished !== undefined) {
-    set("isPublished", updates.isPublished !== false);
+    const isPublished = updates.isPublished !== false;
+    set("isPublished", isPublished, isPublished !== (existing.isPublished !== false));
     // If they explicitly publish it again, clear the pending delete status.
     if (updates.isPublished === true) {
-      set("pendingDeleteAt", null);
+      // …which only changes the row when a delete was actually pending.
+      // Re-publishing an already-published product writes NULL over NULL.
+      set("pendingDeleteAt", null, (existing.pendingDeleteAt ?? null) !== null);
     }
   }
   if (updates.pendingDeleteAt !== undefined) {
-    set("pendingDeleteAt", updates.pendingDeleteAt);
+    set(
+      "pendingDeleteAt",
+      updates.pendingDeleteAt,
+      (updates.pendingDeleteAt ?? null) !== (existing.pendingDeleteAt ?? null)
+    );
+  }
+
+  // `supplierIds` is not a column of `products` and so writes no SET — but it
+  // IS part of every product snapshot (getProduct attaches it) and a restore
+  // re-applies it (`updateProduct(rev.entityId, data)` in the restore route),
+  // and the edit form posts it alongside every column. Before this change, a
+  // save that touched ONLY the supplier list still wrote a revision, because
+  // the same form also posted the columns and `sets.length > 0` held. It has
+  // to keep writing one: silently dropping history for a real edit is the
+  // failure this whole change must not introduce.
+  //
+  // Compared as a SET, not as a list: `product_suppliers` has no ordering
+  // column and getProduct reads it back with no ORDER BY, so the order of the
+  // array carries no meaning and must not be mistaken for a change.
+  if (
+    updates.supplierIds !== undefined &&
+    !sameSupplierSet(updates.supplierIds, existing.supplierIds ?? [])
+  ) {
+    changed = true;
   }
 
   await withTransaction(async (conn) => {
@@ -334,7 +412,15 @@ export async function updateProduct(
       // (a failed snapshot aborts before we touch the row). Runs through this
       // transaction's own connection so a retry (withTransaction retries the
       // whole callback on a transient error) can't leave a duplicate snapshot.
-      await saveRevision("product", id, existing, conn);
+      //
+      // Only when something the save writes actually differs — a snapshot of a
+      // row nothing overwrote could restore nothing, and would cost a slot in
+      // a 20-deep history. `changed` is computed before the transaction opens
+      // from values nothing in here mutates, so all of withTransaction's
+      // up-to-3 attempts decide the same way and the callback stays idempotent.
+      if (changed) {
+        await saveRevision("product", id, existing, conn);
+      }
       await conn.query(
         `UPDATE products SET ${sets.join(", ")} WHERE id = ?`,
         [...values, id]

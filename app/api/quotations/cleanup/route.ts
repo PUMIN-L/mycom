@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withRoute } from "../../../lib/apiHelpers";
 import { purgeExpiredQuotations } from "../../../lib/quotationStore";
+import { purgeExpiredAlertSnoozes } from "../../../lib/crmStore";
 
 // GET /api/quotations/cleanup — invoked daily by Vercel Cron (see vercel.json)
 // to delete quotations past their retention window (RETENTION_DAYS below) plus
@@ -71,11 +72,24 @@ export const GET = withRoute(
       // with anything parsing this cron's JSON output.
       const billingDeleted = 0;
       const docNosPurged = 0; // Legacy: docNos are no longer purged to preserve conversion rate analytics.
+      // Expired alert snoozes. A snoozed alert whose snooze has run out is
+      // already being shown again by every query in crmStore — the row is dead
+      // data nothing reads, and nothing has ever deleted one. The purge is
+      // strictly conservative (see purgeExpiredAlertSnoozes): it only removes
+      // rows the alert queries have already stopped honouring, so no alert
+      // changes state because of this line.
+      //
+      // Deliberately NOT purged here, and not by accident:
+      //   • `service_logs` — real service history, the record that a technician
+      //     visited a customer. Never auto-deleted.
+      //   • `used_docnos` — kept forever on purpose for conversion-rate
+      //     analytics (see the NOTE at the top of this file).
+      const snoozesPurged = await purgeExpiredAlertSnoozes();
       // Structured success line so a MISSING nightly run is detectable in logs.
       console.log(
-        `[cron:quotations-cleanup] ok deleted=${deleted} billingDeleted=${billingDeleted} docNosPurged=${docNosPurged}`
+        `[cron:quotations-cleanup] ok deleted=${deleted} billingDeleted=${billingDeleted} docNosPurged=${docNosPurged} snoozesPurged=${snoozesPurged}`
       );
-      return NextResponse.json({ ok: true, deleted, billingDeleted, docNosPurged });
+      return NextResponse.json({ ok: true, deleted, billingDeleted, docNosPurged, snoozesPurged });
     } catch (err) {
       // Log then rethrow so withRoute returns 500 → Vercel marks the cron run
       // FAILED instead of the failure disappearing silently. (Note: withRoute

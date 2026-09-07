@@ -597,6 +597,192 @@ describe('productStore', () => {
     });
   });
 
+  // A revision is only worth writing when the value it snapshots differs from
+  // the value about to be written over it. The edit form posts EVERY field on
+  // every save, so `sets.length > 0` — the old condition — was true even for a
+  // save that changed nothing, and each of those spent one of the
+  // REVISION_KEEP.product = 20 slots this product's history has.
+  describe('updateProduct — no change, no snapshot', () => {
+    // getProduct reads the row and then its suppliers; withTransaction hands
+    // the callback a conn whose rank check finds no other holder.
+    const stubProduct = (row: Record<string, unknown>, supplierIds: string[] = []) => {
+      vi.mocked(query).mockImplementation(async (sql: string) => {
+        if (sql.includes('SELECT * FROM products')) return [[row]] as any;
+        if (sql.includes('SELECT supplierId')) return [supplierIds.map((supplierId) => ({ supplierId }))] as any;
+        return [] as any;
+      });
+      const conn = {
+        query: vi.fn().mockImplementation(async (sql: string) => {
+          if (sql.includes('WHERE bestSellerRank = ?')) return [[]] as any;
+          return [{ affectedRows: 1 }] as any;
+        }),
+      };
+      vi.mocked(withTransaction).mockImplementation(async (fn: any) => fn(conn));
+      return conn;
+    };
+
+    const updateSql = (conn: { query: ReturnType<typeof vi.fn> }) =>
+      conn.query.mock.calls.find((c) => (c[0] as string).startsWith('UPDATE products'));
+
+    // What "opened the product and pressed save without touching it" posts —
+    // makeRow()'s values, plus the defaults rowToProduct derives for the
+    // columns that row leaves out (bestSellerRank null, badge on, published).
+    const unchangedPayload: Partial<ProductData> = {
+      categoryId: 2,
+      image: '/img/p1.png',
+      title_th: 'ชื่อ',
+      title_en: 'Name',
+      title_zh: '名字',
+      desc_th: 'desc th',
+      desc_en: 'desc en',
+      desc_zh: 'desc zh',
+      isPublished: true,
+      bestSellerRank: null,
+      showBestSellerBadge: true,
+      supplierIds: [],
+    };
+
+    it('writes NO revision when every posted field already matches the row', async () => {
+      const conn = stubProduct(makeRow());
+
+      await updateProduct('p1', unchangedPayload);
+
+      expect(saveRevision).not.toHaveBeenCalled();
+      // Only history is skipped — the UPDATE is built exactly as before,
+      // including the pendingDeleteAt = NULL that re-publishing appends.
+      const update = updateSql(conn)!;
+      expect(update[0]).toBe(
+        'UPDATE products SET categoryId = ?, image = ?, title_th = ?, title_en = ?, title_zh = ?, ' +
+          'desc_th = ?, desc_en = ?, desc_zh = ?, bestSellerRank = ?, showBestSellerBadge = ?, ' +
+          'isPublished = ?, pendingDeleteAt = ? WHERE id = ?'
+      );
+      expect(update[1]).toEqual([2, '/img/p1.png', 'ชื่อ', 'Name', '名字', 'desc th', 'desc en', 'desc zh', null, true, true, null, 'p1']);
+    });
+
+    const realChanges: Array<[string, Partial<ProductData>]> = [
+      ['categoryId', { categoryId: 9 }],
+      ['image', { image: '/img/other.png' }],
+      ['title_th', { title_th: 'ชื่อใหม่' }],
+      ['title_en', { title_en: 'Renamed' }],
+      ['title_zh', { title_zh: '新名字' }],
+      ['desc_th', { desc_th: 'คำอธิบายใหม่' }],
+      ['desc_en', { desc_en: 'new english description' }],
+      ['desc_zh', { desc_zh: '新的说明' }],
+      ['isPublished', { isPublished: false }],
+      ['bestSellerRank', { bestSellerRank: 3 }],
+      ['showBestSellerBadge', { showBestSellerBadge: false }],
+      ['pendingDeleteAt', { pendingDeleteAt: '2026-09-01T00:00:00.000Z' }],
+      // Not a column of `products`, but part of every snapshot and re-applied
+      // by a restore — a save that changed only this is a real edit and must
+      // keep its history.
+      ['supplierIds', { supplierIds: ['s-1'] }],
+    ];
+
+    it.each(realChanges)(
+      'writes exactly ONE revision when %s genuinely changes',
+      async (_label, patch) => {
+        const conn = stubProduct(makeRow());
+
+        await updateProduct('p1', { ...unchangedPayload, ...patch });
+
+        expect(saveRevision).toHaveBeenCalledTimes(1);
+        // Snapshot of the PREVIOUS value, through the transaction's own
+        // connection so a retried attempt can't leave a duplicate.
+        expect(saveRevision).toHaveBeenCalledWith(
+          'product',
+          'p1',
+          expect.objectContaining({ title_en: 'Name', desc_th: 'desc th' }),
+          conn
+        );
+        expect(updateSql(conn)).toBeDefined();
+      }
+    );
+
+    it('writes NO revision when the only difference is markup the sanitizer strips', async () => {
+      const conn = stubProduct(makeRow());
+
+      await updateProduct('p1', {
+        ...unchangedPayload,
+        desc_th: 'desc th<script>evil()</script>',
+        title_en: 'Name<script>evil()</script>',
+      });
+
+      // What the UPDATE writes is identical to what is stored, so a snapshot
+      // of it could restore nothing.
+      expect(saveRevision).not.toHaveBeenCalled();
+      const update = updateSql(conn)!;
+      expect(update[1][5]).toBe('desc th');
+      expect(update[1][3]).toBe('Name');
+    });
+
+    it('treats a stored NULL description and an incoming empty string as the same value', async () => {
+      const conn = stubProduct(makeRow({ desc_th: null, desc_en: null, desc_zh: null }));
+
+      await updateProduct('p1', { ...unchangedPayload, desc_th: '', desc_en: '', desc_zh: '' });
+
+      // rowToProduct reads a NULL description back as "", so writing "" over
+      // it changes nothing any reader of this row can see.
+      expect(saveRevision).not.toHaveBeenCalled();
+      expect(updateSql(conn)).toBeDefined();
+    });
+
+    it('writes NO revision when the supplier list is only reordered', async () => {
+      const conn = stubProduct(makeRow(), ['s-1', 's-2']);
+
+      await updateProduct('p1', { ...unchangedPayload, supplierIds: ['s-2', 's-1'] });
+
+      // product_suppliers has no ordering column and getProduct reads it back
+      // unordered, so the order of this array is not a value.
+      expect(saveRevision).not.toHaveBeenCalled();
+      expect(updateSql(conn)).toBeDefined();
+    });
+
+    it('writes NO revision when re-publishing a product that has no delete pending', async () => {
+      const conn = stubProduct(makeRow({ pendingDeleteAt: null }));
+
+      await updateProduct('p1', { ...unchangedPayload, isPublished: true });
+
+      // The appended `pendingDeleteAt = NULL` writes NULL over NULL.
+      expect(saveRevision).not.toHaveBeenCalled();
+      expect(updateSql(conn)![0]).toContain('pendingDeleteAt = ?');
+    });
+
+    it('writes ONE revision when re-publishing DOES clear a pending delete', async () => {
+      const conn = stubProduct(makeRow({ isPublished: 1, pendingDeleteAt: '2026-08-01T00:00:00.000Z' }));
+
+      await updateProduct('p1', { ...unchangedPayload, isPublished: true });
+
+      expect(saveRevision).toHaveBeenCalledTimes(1);
+      expect(saveRevision).toHaveBeenCalledWith(
+        'product',
+        'p1',
+        expect.objectContaining({ pendingDeleteAt: '2026-08-01T00:00:00.000Z' }),
+        conn
+      );
+    });
+
+    it('still runs the bestSellerRank collision check, and rejects before any snapshot', async () => {
+      vi.mocked(query).mockImplementation(async (sql: string) => {
+        if (sql.includes('SELECT * FROM products')) return [[makeRow({ bestSellerRank: null })]] as any;
+        if (sql.includes('SELECT supplierId')) return [[]] as any;
+        return [] as any;
+      });
+      const conn = {
+        query: vi.fn().mockImplementation(async (sql: string) => {
+          if (sql.includes('WHERE bestSellerRank = ?')) return [[{ id: 'other-product' }]] as any;
+          return [{ affectedRows: 1 }] as any;
+        }),
+      };
+      vi.mocked(withTransaction).mockImplementation(async (fn: any) => fn(conn));
+
+      await expect(updateProduct('p1', { ...unchangedPayload, bestSellerRank: 1 })).rejects.toThrow(
+        BestSellerRankConflictError
+      );
+      expect(saveRevision).not.toHaveBeenCalled();
+      expect(conn.query.mock.calls.some((c) => (c[0] as string).startsWith('UPDATE products'))).toBe(false);
+    });
+  });
+
   describe('reorderProducts', () => {
     it('updates sortOrder using a single CASE WHEN query against the products table', async () => {
       vi.mocked(query).mockResolvedValue(undefined as any);

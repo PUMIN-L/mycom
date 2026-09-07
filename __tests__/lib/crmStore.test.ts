@@ -21,6 +21,7 @@ import {
   completeScheduleWithLog,
   ScheduleNotPendingError,
   snoozeAlert,
+  purgeExpiredAlertSnoozes,
   addEquipment,
   updateEquipment,
   addSchedule,
@@ -1842,6 +1843,67 @@ describe('snoozeAlert', () => {
       const [, params] = topQuery.mock.calls.at(-1)!;
       expect(params[0]).toBe(type);
     }
+  });
+});
+
+// ── The dead rows nobody cleared ─────────────────────────────────────────────
+//
+// An `alert_snoozes` row whose `snoozeUntil` has passed is data nothing reads:
+// every alert query in crmStore already ignores it, and re-snoozing the same
+// alert UPDATEs the row rather than adding one. Nothing had ever deleted them.
+describe('purgeExpiredAlertSnoozes', () => {
+  it('deletes only rows whose snooze is already spent, and reports how many', async () => {
+    topQuery.mockResolvedValue([{ affectedRows: 4 }]);
+    const deleted = await purgeExpiredAlertSnoozes('2026-09-07');
+
+    expect(deleted).toBe(4);
+    expect(topQuery).toHaveBeenCalledTimes(1);
+    const [sql, params] = topQuery.mock.calls[0];
+    expect(String(sql).replace(/\s+/g, ' ')).toBe(
+      'DELETE FROM alert_snoozes WHERE snoozeUntil < ?'
+    );
+    expect(params).toEqual(['2026-09-07']);
+  });
+
+  it("uses `<`, not `<=`, so a snooze the alert queries still honour survives", async () => {
+    // The alert queries treat a snooze as spent at `snoozeUntil <= today`,
+    // comparing a full ISO timestamp against a bare Bangkok date as TEXT — so
+    // "2026-09-07T05:00:00.000Z" is NOT <= "2026-09-07" (the longer string
+    // sorts after) and that snooze is still suppressing its alert all day.
+    // `<` deletes a strict subset of what the alert queries already ignore;
+    // `<=` would purge a live snooze and the alert would reappear a day early.
+    topQuery.mockResolvedValue([{ affectedRows: 0 }]);
+    await purgeExpiredAlertSnoozes('2026-09-07');
+    const sql = String(topQuery.mock.calls[0][0]);
+    expect(sql).toContain('snoozeUntil < ?');
+    expect(sql).not.toContain('snoozeUntil <= ?');
+
+    // Concretely, over the rows the cron would meet on 2026-09-07:
+    const today = '2026-09-07';
+    const expired = (u: string) => u < today;
+    expect(expired('2026-09-06T23:00:00.000Z')).toBe(true);  // yesterday — spent
+    expect(expired('2026-09-07T05:00:00.000Z')).toBe(false); // today — still live
+    expect(expired('2026-12-01T00:00:00.000Z')).toBe(false); // future — untouched
+  });
+
+  it('defaults to today in Bangkok when no date is passed', async () => {
+    topQuery.mockResolvedValue([{ affectedRows: 0 }]);
+    await purgeExpiredAlertSnoozes();
+    expect(topQuery.mock.calls[0][1][0]).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it('reports 0 rather than throwing when the driver returns no affectedRows', async () => {
+    topQuery.mockResolvedValue([{}]);
+    expect(await purgeExpiredAlertSnoozes('2026-09-07')).toBe(0);
+  });
+
+  it('touches ONLY alert_snoozes — never service history or the docNo ledger', async () => {
+    topQuery.mockResolvedValue([{ affectedRows: 1 }]);
+    await purgeExpiredAlertSnoozes('2026-09-07');
+    const sql = String(topQuery.mock.calls[0][0]);
+    // service_logs is a record that a technician actually visited a customer;
+    // used_docnos is kept forever for conversion-rate analytics.
+    expect(sql).not.toMatch(/service_logs|used_docnos/);
   });
 });
 

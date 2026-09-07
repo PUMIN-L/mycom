@@ -37,6 +37,53 @@ function sanitizeBlocks(blocks: ContentBlock[]): ContentBlock[] {
   });
 }
 
+// ── Comparing two block lists ─────────────────────────────────────────────
+//
+// Used by updateContent to answer ONE question: would the UPDATE it is about
+// to run actually change `contents.blocks`? That cannot be answered by
+// comparing the string we are about to write with the string in the row:
+//
+//   • the stored side may arrive from the driver already parsed (see
+//     parseBlocks below) rather than as the bytes that were written, and a
+//     JSON column does not promise to hand back the key order it was given;
+//   • `===` on the parsed arrays compares object identity, and the editor
+//     rebuilds every block object on every keystroke, so it is never equal;
+//   • a hand-rolled deep-equal is one missed branch away from reporting "no
+//     change" for a real edit, which is the one failure this must not have.
+//
+// So BOTH sides go through the SAME pipeline — sanitizeBlocks(), then this
+// serializer — and the two strings are compared. Sorting object keys at every
+// level is what makes the result independent of the order each side happens
+// to carry (one comes from the request body, the other from the database):
+// two blocks holding the same fields in a different order are the same block
+// to every reader of this data, which only ever accesses properties by name.
+// Array order is NOT sorted and never can be — it is the order the blocks
+// render in on the page. Keys whose value is `undefined` are dropped by
+// JSON.stringify on both sides alike, and an undefined-valued key is
+// indistinguishable from an absent one once stored.
+//
+// This canonical form is for COMPARISON ONLY. The value written to the column
+// is still a plain JSON.stringify(blocks), byte for byte what it always was.
+function canonicalize(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (value !== null && typeof value === "object") {
+    const src = value as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
+    for (const key of Object.keys(src).sort()) out[key] = canonicalize(src[key]);
+    return out;
+  }
+  return value;
+}
+
+// Takes blocks that have ALREADY been through sanitizeBlocks(), so that each
+// side of a comparison gets exactly ONE sanitize pass over its own source —
+// never one side sanitized twice and the other once, which would report a
+// difference for a value that is not different (and cost a second sanitize of
+// a document that can run to hundreds of KB).
+function canonicalBlocksJson(sanitized: ContentBlock[]): string {
+  return JSON.stringify(canonicalize(sanitized));
+}
+
 // `blocks` is stored as a JSON column. mysql2 may hand it back already parsed
 // (object) or as a raw string depending on driver/column config, so handle both.
 // A corrupt/truncated value degrades to an empty block list (logged) rather than
@@ -188,16 +235,59 @@ export async function updateContent(
 
   // Only SET the columns actually supplied, so concurrent edits to different
   // fields don't clobber each other via a full-row write.
+  //
+  // ── NO CHANGE, NO SNAPSHOT ────────────────────────────────────────────────
+  // `changed` is the third argument to set(): does this column's NEW value
+  // differ from what the row already holds? It decides ONE thing — whether a
+  // revision is written. The SET list, and therefore the UPDATE and the row it
+  // produces, is built exactly as it was before.
+  //
+  // Which fields were SUPPLIED used to stand in for which fields changed, and
+  // the two are not the same thing: the edit form posts every field on every
+  // save, so `sets.length > 0` was true even for opening a content and pressing
+  // save without touching it. Every one of those wrote a full copy of
+  // `contents.blocks` — the rich-text document, HTML and images and tables, the
+  // largest rows in `revisions`. Worse than the bytes: REVISION_KEEP.content is
+  // 5, so five no-op saves push every genuinely older version out and leave a
+  // history of five identical copies — an undo that can undo nothing.
+  //
+  // Every comparison below is against the value the UPDATE WILL WRITE (post
+  // sanitize, post truncation), never the raw request field. Compare the raw
+  // field and a save whose only difference was markup the sanitizer strips
+  // still looks like an edit, and snapshots a value identical to the live row.
   const sets: string[] = [];
   const values: unknown[] = [];
-  const set = (col: string, val: unknown) => {
+  let changed = false;
+  const set = (col: string, val: unknown, differs: boolean) => {
     sets.push(`${col} = ?`);
     values.push(val);
+    if (differs) changed = true;
   };
-  if (updatedContent.title !== undefined) set("title", title);
-  if (updatedContent.blocks !== undefined) set("blocks", JSON.stringify(blocks));
-  if (updatedContent.createdAt !== undefined) set("createdAt", createdAt);
-  if ("productId" in updatedContent) set("productId", productId);
+  if (updatedContent.title !== undefined) {
+    // `title` here is already sanitizeRichText(...).substring(0, 255) —
+    // compared against the stored string, which is what a previous write of
+    // this same column left behind.
+    set("title", title, title !== existing.title);
+  }
+  if (updatedContent.blocks !== undefined) {
+    set(
+      "blocks",
+      JSON.stringify(blocks),
+      // `blocks` is already sanitizeBlocks(updatedContent.blocks); the stored
+      // side gets the same single pass over ITS source. Both are then
+      // canonicalized the same way — see canonicalize() for why that is a
+      // sound "same value?" test for this column.
+      canonicalBlocksJson(blocks) !== canonicalBlocksJson(sanitizeBlocks(existing.blocks))
+    );
+  }
+  if (updatedContent.createdAt !== undefined) {
+    set("createdAt", createdAt, createdAt !== existing.createdAt);
+  }
+  if ("productId" in updatedContent) {
+    // rowToContent already normalises a stored NULL to null, so an unlink of
+    // an already-unlinked content is not an edit.
+    set("productId", productId, productId !== (existing.productId ?? null));
+  }
 
   if (sets.length > 0) {
     if (productId && productId !== existing.productId) {
@@ -219,14 +309,32 @@ export async function updateContent(
         // through this transaction's own connection so a retry (withTransaction
         // retries the whole callback on a transient error) can't leave a
         // duplicate snapshot.
-        await saveRevision("content", id, existing, conn);
+        //
+        // `changed` is decided BEFORE the transaction opens, from values that
+        // nothing in here mutates, so every one of withTransaction's up-to-3
+        // attempts makes the same decision — the callback stays idempotent.
+        // On THIS path it is necessarily true: the branch is only taken when
+        // `productId !== existing.productId`, which in turn can only happen
+        // when "productId" is in the partial, and that is exactly the case
+        // where set("productId", …) was passed differs = true. A genuine
+        // re-link always snapshots; the guard is here so the rule reads the
+        // same on both paths rather than because this one can skip.
+        if (changed) {
+          await saveRevision("content", id, existing, conn);
+        }
         await conn.query(
           `UPDATE contents SET ${sets.join(", ")} WHERE id = ?`,
           [...values, id]
         );
       });
     } else {
-      await saveRevision("content", id, existing);
+      // No revision when nothing the UPDATE writes would differ from the row
+      // it writes over — such a snapshot could only ever restore the value
+      // already there, while costing one of the 5 slots this content's real
+      // history has. The UPDATE itself still runs, exactly as before.
+      if (changed) {
+        await saveRevision("content", id, existing);
+      }
       await query(
         `UPDATE contents SET ${sets.join(", ")} WHERE id = ?`,
         [...values, id]
