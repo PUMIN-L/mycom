@@ -324,9 +324,9 @@ export default function ServiceJobPage() {
         .then((r) => (r.ok ? r.json() : null))
         .then((job) => {
           if (job?.id) adopt(job as ServiceJob);
-          else showToast("ไม่พบใบ Job นี้ — เริ่มใบใหม่แทน", "error");
+          else showToast("ไม่พบใบงานบริการนี้ — เริ่มใบใหม่แทน", "error");
         })
-        .catch(() => showToast("โหลดใบ Job ไม่สำเร็จ", "error"))
+        .catch(() => showToast("โหลดใบงานบริการไม่สำเร็จ", "error"))
         .finally(() => setHydrating(false));
       return;
     }
@@ -569,13 +569,13 @@ export default function ServiceJobPage() {
       if (!res.ok) {
         // The store's Thai validation messages ARE the error text (a machine
         // belonging to another customer, a bad date) — show them as they are.
-        showToast(data?.error || "บันทึกใบ Job ไม่สำเร็จ", "error");
+        showToast(data?.error || "บันทึกใบงานบริการไม่สำเร็จ", "error");
         return null;
       }
       const saved = data as ServiceJob;
       adopt(saved);
       showToast(
-        jobId ? "บันทึกการแก้ไขแล้ว" : `ออกใบ Job เลขที่ ${saved.jobNo || ""} แล้ว`,
+        jobId ? "บันทึกการแก้ไขแล้ว" : `ออกใบงานบริการเลขที่ ${saved.jobNo || ""} แล้ว`,
         "success"
       );
       return saved;
@@ -779,7 +779,7 @@ export default function ServiceJobPage() {
         {confirmSwitchParty && (
           <ConfirmDialog
             title="เปลี่ยนลูกค้าของใบงานนี้?"
-            message={`ใบ Job 1 ใบใช้ได้กับลูกค้ารายเดียว — เครื่อง ${picked.length} เครื่องที่เลือกไว้จะถูกนำออกจากใบนี้ทั้งหมด`}
+            message={`ใบงานบริการ 1 ใบใช้ได้กับลูกค้ารายเดียว — เครื่อง ${picked.length} เครื่องที่เลือกไว้จะถูกนำออกจากใบนี้ทั้งหมด`}
             confirmText="เปลี่ยนและล้างรายการเครื่อง"
             cancelText="ยกเลิก"
             onConfirm={applyPartySwitch}
@@ -792,7 +792,7 @@ export default function ServiceJobPage() {
           <div className="max-w-[1400px] mx-auto px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
             <div className="flex items-baseline gap-3 flex-wrap">
               <h1 className="text-xl font-bold text-gray-900">
-                🔧 {jobId ? "ใบ Job" : "สร้างใบ Job"}
+                🔧 {jobId ? "ใบงานบริการ" : "สร้างใบงานบริการ"}
               </h1>
               {jobNo && (
                 <span className="px-2.5 py-1 rounded-lg bg-gray-100 border border-gray-200 text-gray-700 text-sm font-bold font-mono">
@@ -824,7 +824,7 @@ export default function ServiceJobPage() {
                 onClick={() => guardedNavigate("/service-job/saved")}
                 className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition"
               >
-                📄 ใบ Job ที่ออกแล้ว
+                📄 ใบงานบริการที่ออกแล้ว
               </button>
               {!locked && (
                 <button
@@ -882,7 +882,7 @@ export default function ServiceJobPage() {
               >
                 {scheduleGone ? (
                   <>
-                    📅 นัดหมายที่ผูกไว้กับใบนี้ถูกลบไปแล้ว — ใบ Job ยังอยู่ครบและพิมพ์ได้ตามปกติ
+                    📅 นัดหมายที่ผูกไว้กับใบนี้ถูกลบไปแล้ว — ใบงานบริการยังอยู่ครบและพิมพ์ได้ตามปกติ
                   </>
                 ) : (
                   <>📅 ใบนี้ผูกกับนัดหมายเดิม — เมื่อกดปิดงาน นัดหมายนั้นจะถูกปิดตามให้ด้วย</>
@@ -1101,16 +1101,25 @@ export default function ServiceJobPage() {
                     </div>
                   </div>
                   <div className="text-right shrink-0">
-                    <div className="text-2xl font-bold tracking-wide">ใบ Job</div>
+                    <div className="text-2xl font-bold tracking-wide">ใบบันทึกงานบริการ</div>
                     <div className="text-[11px] text-gray-500 tracking-widest">
-                      SERVICE JOB SHEET
+                      SERVICE REPORT
                     </div>
-                    <div className="mt-2 inline-block border-2 border-gray-800 rounded px-3 py-1 text-right">
-                      <div className="text-[9.5px] text-gray-500 tracking-wider">
-                        เลขที่ใบงาน / JOB NO.
+                    <div
+                      className="mt-2 inline-block rounded-lg overflow-hidden text-right"
+                      style={{ minWidth: "50mm" }}
+                    >
+                      <div
+                        className="bg-gray-800 text-white text-[9px] tracking-wider px-3 py-0.5 text-center font-semibold"
+                      >
+                        เลขที่เอกสาร / DOC NO.
                       </div>
-                      <div className="text-xl font-bold tracking-wider leading-tight">
-                        {jobNo || "— ออกเลขที่เมื่อบันทึก —"}
+                      <div
+                        className="border-2 border-gray-800 border-t-0 rounded-b-lg px-3 py-1.5 text-center"
+                      >
+                        <div className="text-2xl font-black tracking-widest leading-tight text-gray-900">
+                          {jobNo || "—"}
+                        </div>
                       </div>
                     </div>
                     <div id="job-page-number" className="text-[11px] text-gray-500 mt-2 font-bold" />
@@ -1227,7 +1236,7 @@ export default function ServiceJobPage() {
 
       <LeaveGuardModal
         show={showModal}
-        documentLabel="ใบ Job"
+        documentLabel="ใบงานบริการ"
         saving={saving}
         saveDisabled={locked || validationError() !== null}
         onSave={async () => {
