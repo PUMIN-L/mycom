@@ -217,9 +217,10 @@ describe("การค้นหา", () => {
     for (const url of urls) {
       expect(url).toContain("/api/customers/note-search");
     }
-    // All are GETs: no init object at all, so no method, no body.
+    // All are GETs: either no init, or an init with only a signal. No body.
     for (const call of fetchMock.mock.calls) {
-      expect(call[1]).toBeUndefined();
+      expect(call[1]?.method ?? "GET").toBe("GET");
+      expect(call[1]?.body).toBeUndefined();
     }
     expect(replaceCalls(fetchMock)).toHaveLength(0);
   });
