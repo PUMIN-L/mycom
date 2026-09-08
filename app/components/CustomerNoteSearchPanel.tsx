@@ -588,26 +588,6 @@ export default function CustomerNoteSearchPanel({
       className="mb-6 rounded-2xl border border-gray-200 bg-white shadow-sm"
       aria-label="ค้นหาคำในบันทึกลูกค้า"
     >
-      <header className="flex items-start justify-between gap-4 px-6 py-5 border-b border-gray-100">
-        <div className="min-w-0">
-          <h3 className="text-lg font-bold text-gray-900">🔎 ค้นหาคำใน “บันทึกลูกค้า”</h3>
-          <p className="mt-1 text-sm text-gray-500">
-            ค้นทีเดียวทั่วบันทึกของลูกค้าทุกราย เห็นข้อความรอบๆ คำที่เจอ แล้วจะแทนที่เฉพาะรายหรือทั้งหมดก็ได้
-            <span className="block">
-              (คนละช่องกับช่องค้นหา “ชื่อลูกค้า / ชื่อบริษัท” ด้านล่าง ซึ่งยังทำงานเหมือนเดิม)
-            </span>
-          </p>
-        </div>
-        {onClose && (
-          <button
-            type="button"
-            onClick={onClose}
-            className="shrink-0 px-3 py-1.5 rounded-lg border border-gray-200 text-sm font-semibold text-gray-500 hover:bg-gray-50 transition"
-          >
-            ปิด
-          </button>
-        )}
-      </header>
 
       <div className="px-6 py-5">
         <form onSubmit={handleSubmitSearch} className="flex flex-wrap items-center gap-2">
@@ -620,27 +600,6 @@ export default function CustomerNoteSearchPanel({
             placeholder="พิมพ์คำที่ต้องการหาในบันทึกลูกค้า เช่น เวอร์เนีย"
             className="flex-1 min-w-[16rem] bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 focus:bg-white focus:ring-2 focus:ring-orange-500 outline-none transition-all"
           />
-          {/* Exactly two toggles. See rule 2 at the top of this file for why
-              there is no third one. */}
-          <ToggleButton
-            label="Aa"
-            title="ตรงตามตัวพิมพ์ใหญ่-เล็ก"
-            pressed={matchCase}
-            onClick={() => setMatchCase((v) => !v)}
-          />
-          <ToggleButton
-            label=".*"
-            title="Regular Expression"
-            pressed={useRegex}
-            onClick={() => setUseRegex((v) => !v)}
-          />
-          <button
-            type="submit"
-            disabled={isSearching}
-            className="px-5 py-2.5 rounded-xl bg-orange-500 hover:bg-orange-600 text-white font-semibold transition disabled:opacity-60"
-          >
-            {isSearching ? "กำลังค้นหา..." : "ค้นหาในบันทึก"}
-          </button>
         </form>
 
         {useRegex && (

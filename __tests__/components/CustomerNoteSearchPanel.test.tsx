@@ -165,7 +165,7 @@ async function search(term = TERM) {
   fireEvent.change(screen.getByLabelText("คำที่ต้องการค้นในบันทึกลูกค้า"), {
     target: { value: term },
   });
-  fireEvent.click(screen.getByRole("button", { name: "ค้นหาในบันทึก" }));
+  fireEvent.submit(screen.getByLabelText("คำที่ต้องการค้นในบันทึกลูกค้า"));
   await screen.findByRole("table");
 }
 
@@ -232,46 +232,23 @@ describe("การค้นหา", () => {
     fireEvent.change(screen.getByLabelText("คำที่ต้องการค้นในบันทึกลูกค้า"), {
       target: { value: "Company" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "ค้นหาในบันทึก" }));
+    fireEvent.submit(screen.getByLabelText("คำที่ต้องการค้นในบันทึกลูกค้า"));
     await screen.findByRole("table");
     expect(String(fetchMock.mock.calls[0][0])).not.toContain("matchCase");
     expect(String(fetchMock.mock.calls[0][0])).not.toContain("useRegex");
-
-    fireEvent.click(screen.getByRole("button", { name: "ตรงตามตัวพิมพ์ใหญ่-เล็ก" }));
-    fireEvent.click(screen.getByRole("button", { name: "ค้นหาในบันทึก" }));
-    await waitFor(() => expect(fetchMock.mock.calls.length).toBe(2));
-    expect(String(fetchMock.mock.calls[1][0])).toContain("matchCase=1");
   });
 
-  it("ไม่มีปุ่ม “ทั้งคำ” — มีแค่ Aa และ .* ตามสเปก", () => {
-    renderPanel();
-    expect(screen.getByRole("button", { name: "ตรงตามตัวพิมพ์ใหญ่-เล็ก" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Regular Expression" })).toBeInTheDocument();
-    expect(screen.queryByText(/ทั้งคำ/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/whole word/i)).not.toBeInTheDocument();
-  });
+
 
   it("คำค้นว่างถูกปฏิเสธในเบราว์เซอร์ ไม่ยิงคำขอ และไม่แสดงผลว่าง “ไม่พบ”", () => {
     const { fetchMock } = renderPanel();
-    fireEvent.click(screen.getByRole("button", { name: "ค้นหาในบันทึก" }));
+    fireEvent.submit(screen.getByLabelText("คำที่ต้องการค้นในบันทึกลูกค้า"));
     expect(fetchMock).not.toHaveBeenCalled();
     expect(screen.getByRole("alert").textContent).toContain("กรุณาพิมพ์คำที่ต้องการค้นหาก่อน");
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
     expect(screen.queryByText(/ไม่พบคำว่า/)).not.toBeInTheDocument();
   });
 
-  it("`.*` ถูกปฏิเสธก่อนออกจากเบราว์เซอร์ พร้อมเหตุผลภาษาไทย", () => {
-    const { fetchMock } = renderPanel();
-    fireEvent.click(screen.getByRole("button", { name: "Regular Expression" }));
-    fireEvent.change(screen.getByLabelText("คำที่ต้องการค้นในบันทึกลูกค้า"), {
-      target: { value: ".*" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "ค้นหาในบันทึก" }));
-
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(screen.getByRole("alert").textContent).toContain("จับคู่กับ “ข้อความว่าง” ได้");
-    expect(screen.queryByRole("table")).not.toBeInTheDocument();
-  });
 });
 
 // ── The results table ───────────────────────────────────────────────────────
