@@ -200,7 +200,7 @@ function CustomersInner() {
   // customers tab is a list, and a search-and-replace panel that is always
   // expanded above it would push that list off the screen for the many visits
   // that have nothing to do with notes.
-  const [isNoteSearchOpen, setIsNoteSearchOpen] = useState(false);
+
   const [searchCompanyName, setSearchCompanyName] = useState("");
   const [searchProvince, setSearchProvince] = useState("");
   const [searchDistrict, setSearchDistrict] = useState("");
@@ -716,10 +716,8 @@ function CustomersInner() {
                   note instead of filtering this list by name. It is collapsed
                   until asked for, and the ชื่อลูกค้า/ชื่อบริษัท box below is
                   untouched by it. */}
-              {isNoteSearchOpen ? (
                 <CustomerNoteSearchPanel
                   onToast={showToast}
-                  onClose={() => setIsNoteSearchOpen(false)}
                   onOpenCustomer={(customerId) => {
                     const target = customers.find((c) => c.id === customerId);
                     if (target) setViewingCustomer(target);
@@ -730,25 +728,6 @@ function CustomersInner() {
                   onReplaced={fetchData}
                   onUnauthorized={() => router.replace("/login")}
                 />
-              ) : (
-                <div className="mb-6">
-                  <button
-                    type="button"
-                    onClick={() => setIsNoteSearchOpen(true)}
-                    className="w-full flex items-center justify-between gap-4 text-left px-5 py-4 rounded-2xl border border-gray-200 bg-gray-50 hover:bg-white hover:border-orange-200 transition-all"
-                  >
-                    <span className="min-w-0">
-                      <span className="block font-bold text-gray-900">🔎 ค้นหาคำใน “บันทึกลูกค้า”</span>
-                      <span className="block text-sm text-gray-500 mt-0.5">
-                        ค้นทีเดียวทั่วบันทึกของลูกค้าทุกราย ดูข้อความรอบๆ คำที่เจอ แล้วแทนที่ได้ทั้งรายเดียวและทั้งหมด
-                      </span>
-                    </span>
-                    <span className="shrink-0 px-4 py-2 bg-orange-500 text-white text-sm font-semibold rounded-xl">
-                      เปิดการค้นหา
-                    </span>
-                  </button>
-                </div>
-              )}
 
               {/* Search Filters for Customers */}
               <div className="mb-6">

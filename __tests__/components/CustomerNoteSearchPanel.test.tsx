@@ -613,17 +613,5 @@ describe("หน้ารายชื่อลูกค้า", () => {
     expect(screen.getByText("สมหญิง รักดี")).toBeInTheDocument();
   });
 
-  it("บล็อกค้นหาบันทึกปิดอยู่ตอนเปิดหน้า และเปิดได้โดยไม่แตะช่องค้นเดิม", async () => {
-    render(<Customers />);
-    await waitFor(() => expect(screen.getByText("สมชาย ใจดี")).toBeInTheDocument());
 
-    expect(screen.queryByLabelText("ค้นหาคำในบันทึกลูกค้า")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /เปิดการค้นหา/ }));
-
-    expect(screen.getByLabelText("ค้นหาคำในบันทึกลูกค้า")).toBeInTheDocument();
-    // The original box is still there, still holding its own state.
-    expect(
-      screen.getByPlaceholderText("ค้นหาชื่อลูกค้า หรือ ชื่อบริษัท...")
-    ).toBeInTheDocument();
-  });
 });

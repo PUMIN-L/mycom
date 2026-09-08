@@ -267,8 +267,6 @@ interface CustomerNoteSearchPanelProps {
    *  customer list rather than trusting a report. */
   onReplaced: () => void;
   onUnauthorized: () => void;
-  /** Closes the block. Optional so the panel still stands alone in tests. */
-  onClose?: () => void;
 }
 
 export default function CustomerNoteSearchPanel({
@@ -276,7 +274,6 @@ export default function CustomerNoteSearchPanel({
   onOpenCustomer,
   onReplaced,
   onUnauthorized,
-  onClose,
 }: CustomerNoteSearchPanelProps) {
   // ── The search control ────────────────────────────────────────────────────
   const [term, setTerm] = useState("");
@@ -304,7 +301,7 @@ export default function CustomerNoteSearchPanel({
       searchTerm: string,
       wantCase: boolean,
       wantRegex: boolean,
-      options?: { keepReport?: boolean }
+      options?: { keepReport?: boolean; signal?: AbortSignal }
     ) => {
       // The SAME validator both routes run. A refused pattern issues NO request
       // at all — and an empty term never falls through to an empty result set,
@@ -317,6 +314,8 @@ export default function CustomerNoteSearchPanel({
       });
       if (!built.ok) {
         setFormError(built.reason);
+        setResult(null);
+        setReport(null);
         return;
       }
       setFormError(null);
@@ -326,7 +325,9 @@ export default function CustomerNoteSearchPanel({
         if (wantCase) params.set("matchCase", "1");
         if (wantRegex) params.set("useRegex", "1");
         // GET. There is no write on this path, in this component or behind it.
-        const res = await fetch(`/api/customers/note-search?${params.toString()}`);
+        const res = await fetch(`/api/customers/note-search?${params.toString()}`, {
+          signal: options?.signal,
+        });
         if (res.status === 401) {
           onUnauthorized();
           return;
@@ -347,6 +348,7 @@ export default function CustomerNoteSearchPanel({
         // would leave the admin believing everything went through.
         if (!options?.keepReport) setReport(null);
       } catch (err) {
+        if (err instanceof Error && err.name === "AbortError") return;
         const message =
           err instanceof Error ? err.message : "ค้นหาคำในบันทึกลูกค้าไม่สำเร็จ";
         setFormError(message);
@@ -371,15 +373,23 @@ export default function CustomerNoteSearchPanel({
   // so pressing the button is no longer required. The timer is cancelled on
   // every keystroke and on unmount, and skipped when the term is empty or
   // whitespace-only (an empty search is refused by buildMatcher anyway).
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    if (term.trim() === "") return;
-    debounceRef.current = setTimeout(() => {
-      runSearch(term, matchCase, useRegex);
+    const controller = new AbortController();
+
+    if (term.trim() === "") {
+      setResult(null);
+      setFormError(null);
+      setReport(null);
+      return;
+    }
+
+    const timeoutId = setTimeout(() => {
+      runSearch(term, matchCase, useRegex, { signal: controller.signal });
     }, 200);
+
     return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
+      clearTimeout(timeoutId);
+      controller.abort();
     };
   }, [term, matchCase, useRegex, runSearch]);
 
