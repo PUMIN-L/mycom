@@ -32,6 +32,7 @@ import {
   syncCostItems,
   ProductCostIsPerLineError,
   ProductCostNotAttributableError,
+  SaleScalarsNotAttributableError,
 } from '@/app/lib/salesDashboardStore';
 
 beforeEach(() => {
@@ -191,30 +192,110 @@ describe('salesDashboardStore', () => {
       expect(lineUpdate![1]).toEqual(['p-1', 'Scale A Updated', 1, 3, 500, 1500, 'sri-1']);
     });
 
-    it('leaves a MULTI-line bill\'s items untouched — scalars cannot describe it', async () => {
-      const existing = {
-        id: 'rec-1', salespersonId: '', customerId: '', companyId: '',
-        productId: 'p-1', productName: 'Scale A', categoryId: 1, qty: 3,
-        unitPrice: 500, totalAmount: 1500, costAmount: 0, saleDate: '2026-08-22',
-        quotationRef: '', equipmentId: null, note: '', createdAt: '2026-08-22T00:00:00.000Z',
-      };
-      vi.mocked(query)
-        .mockResolvedValueOnce([[existing]] as any)
-        .mockResolvedValueOnce([[]] as any)
-        .mockResolvedValueOnce([[existing]] as any)
-        .mockResolvedValueOnce([[]] as any);
-      conn.query.mockImplementation(async (sql: string) =>
-        sql.includes('FROM sales_record_items')
-          ? [[{ id: 'sri-1' }, { id: 'sri-2' }]]
-          : [[]]
-      );
+    /**
+     * The quotation-driven bill from the report: 2 lines (฿30,000 + ฿50,000),
+     * so the sale row carries qty 2 / unitPrice 50,000 (the MAIN line) and
+     * totalAmount 80,000 — a row whose own qty × unitPrice has never equalled
+     * its total, because the scalar columns only ever restated the lines.
+     */
+    const MULTI_LINE_SALE = {
+      id: 'rec-multi', salespersonId: 'sp-1', customerId: 'c-1', companyId: 'co-1',
+      productId: 'p-b', productName: 'Scale B', categoryId: 1, qty: 2,
+      unitPrice: 50000, totalAmount: 80000, costAmount: 0, saleDate: '2026-08-22',
+      quotationRef: 'QT-9', poRef: 'PO-9', invoiceRef: '', equipmentId: null, note: '',
+      createdAt: '2026-08-22T00:00:00.000Z',
+    };
 
-      await updateSalesRecord('rec-1', { qty: 4 });
+    /** Two line ids, then whatever `recalcSaleTotalsTx` asks for. */
+    function installMultiLineConn(lineSum = 80000, lineQty = 2) {
+      conn.query.mockImplementation(async (sql: string) => {
+        const text = String(sql);
+        if (text.includes('SELECT id FROM sales_record_items')) {
+          return [[{ id: 'sri-1' }, { id: 'sri-2' }]];
+        }
+        if (text.includes('COUNT(*) AS lineCount')) {
+          return [[{ lineCount: 2, totalAmount: lineSum, qty: lineQty }]];
+        }
+        if (text.includes('AS total')) return [[{ total: 0 }]];
+        return [[]];
+      });
+    }
+
+    it('REFUSES a scalar money edit on a MULTI-line bill, and writes nothing', async () => {
+      // The exact scenario from the report: the admin opens the 2-line bill to
+      // add the invoice number and "corrects" จำนวน 2 → 3, so the form recomputes
+      // totalAmount = 3 × 50,000 = 150,000. Accepting that used to leave the
+      // overview cards on ฿150,000 and the product/category reports on ฿80,000
+      // for the same sale, permanently.
+      vi.mocked(query)
+        .mockResolvedValueOnce([[MULTI_LINE_SALE]] as any) // existing record
+        .mockResolvedValueOnce([[]] as any); // equipments
+      installMultiLineConn();
+
+      await expect(
+        updateSalesRecord('rec-multi', { qty: 3, totalAmount: 150000, invoiceRef: 'INV-1' })
+      ).rejects.toThrow(SaleScalarsNotAttributableError);
 
       const sqls = conn.query.mock.calls.map((c) => String(c[0]));
+      // Nothing at all was written — not the row, not the lines.
+      expect(sqls.some((s) => s.includes('UPDATE sales_records'))).toBe(false);
       expect(sqls.some((s) => s.includes('UPDATE sales_record_items'))).toBe(false);
       expect(sqls.some((s) => s.includes('INSERT INTO sales_record_items'))).toBe(false);
       expect(sqls.some((s) => s.includes('DELETE'))).toBe(false);
+    });
+
+    it('names the refused fields, the line count and where to go — in Thai', async () => {
+      vi.mocked(query)
+        .mockResolvedValueOnce([[MULTI_LINE_SALE]] as any)
+        .mockResolvedValueOnce([[]] as any);
+      installMultiLineConn();
+
+      let caught: unknown;
+      try {
+        await updateSalesRecord('rec-multi', { qty: 3, totalAmount: 150000 });
+      } catch (e) {
+        caught = e;
+      }
+
+      expect(caught).toBeInstanceOf(SaleScalarsNotAttributableError);
+      const err = caught as SaleScalarsNotAttributableError;
+      expect(err.lineCount).toBe(2);
+      expect(err.fields).toEqual(['จำนวน', 'ยอดรวม']);
+      expect(err.message).toContain('มีสินค้า 2 รายการ');
+      expect(err.message).toContain('จำนวน / ยอดรวม');
+      // A refusal the admin cannot act on is barely better than a wrong number.
+      expect(err.message).toContain('รายการขาย');
+      expect(err.message).toContain('ใบเสนอราคา');
+      // Thai prose throughout — the only Latin left is the document names the
+      // admin reads on the form itself (PO / Invoice).
+      expect(err.message.replace(/PO|Invoice/g, '')).not.toMatch(/[a-z]{3}/i);
+    });
+
+    it('ALLOWS a non-money edit on a MULTI-line bill and re-derives the totals from the lines', async () => {
+      // The same bill, already DRIFTED by the old behaviour: the row says
+      // ฿150,000 while its two lines still add up to ฿80,000. Adding the invoice
+      // number touches nothing the lines own, so it is allowed — and the repair
+      // rides along, because nothing else in the app ever re-derives this row.
+      const drifted = { ...MULTI_LINE_SALE, qty: 3, totalAmount: 150000 };
+      vi.mocked(query)
+        .mockResolvedValueOnce([[drifted]] as any) // existing record
+        .mockResolvedValueOnce([[]] as any) // equipments
+        .mockResolvedValueOnce([[{ ...drifted, invoiceRef: 'INV-1' }]] as any) // reload
+        .mockResolvedValueOnce([[]] as any);
+      installMultiLineConn();
+
+      await updateSalesRecord('rec-multi', { invoiceRef: 'INV-1' });
+
+      const sqls = conn.query.mock.calls.map((c) => String(c[0]));
+      // The lines are authoritative: a scalar edit never rewrites them.
+      expect(sqls.some((s) => s.includes('UPDATE sales_record_items'))).toBe(false);
+      expect(sqls.some((s) => s.includes('INSERT INTO sales_record_items'))).toBe(false);
+      // ...and the cached scalars are pulled back onto SUM(line items).
+      const recalc = conn.query.mock.calls.find((c) =>
+        String(c[0]).includes('UPDATE sales_records SET totalAmount = ?, qty = ?, costAmount = ?')
+      );
+      expect(recalc).toBeDefined();
+      expect(recalc![1]).toEqual([80000, 2, 0, 'rec-multi']);
     });
 
     it('a re-save of a fully discounted sale keeps ฿0 — it is not healed back to qty × unitPrice', async () => {
@@ -616,7 +697,10 @@ describe('salesDashboardStore', () => {
 
       const [sql, params] = vi.mocked(query).mock.calls[0];
       expect(sql).toContain('sr.saleDate >= ?');
-      expect(sql).toContain('sr.saleDate <= ?');
+      // HALF-OPEN, like the ยอดขายรวม card: `<` on the caller's exclusive end,
+      // never `<=`, or a sale on the boundary day lands in two periods at once.
+      expect(sql).toContain('sr.saleDate < ?');
+      expect(sql).not.toContain('sr.saleDate <= ?');
       expect(params).toEqual(['2026-01-01', '2026-12-31']);
     });
 
@@ -876,9 +960,11 @@ function installReportQueries(lines: FakeLine[]) {
       const from = String(params[p++]);
       rows = rows.filter((l) => l.saleDate >= from);
     }
-    if (text.includes('sr.saleDate <= ?')) {
-      const to = String(params[p++]);
-      rows = rows.filter((l) => l.saleDate <= to);
+    if (text.includes('sr.saleDate < ?')) {
+      // EXCLUSIVE: `curEnd` is the 1st of the next period, so a sale dated on
+      // it belongs to that next period and to that one only.
+      const toExclusive = String(params[p++]);
+      rows = rows.filter((l) => l.saleDate < toExclusive);
     }
     if (text.includes('sri.productId AS id')) {
       const limit = Number(params[params.length - 1]);
@@ -1223,12 +1309,12 @@ describe('salesDashboardStore — schema v33 line items', () => {
       );
     }
 
-    const inMarch = (s: FakeSale) => s.saleDate >= '2026-03-01' && s.saleDate <= '2026-03-31';
+    const inMarch = (s: FakeSale) => s.saleDate >= '2026-03-01' && s.saleDate < '2026-04-01';
 
     it('getTopProducts over backfilled line items equals the old sale-level numbers', async () => {
       installReportQueries(backfillLineItems(HISTORICAL));
 
-      const after = await getTopProducts(10, '2026-03-01', '2026-03-31');
+      const after = await getTopProducts(10, '2026-03-01', '2026-04-01');
 
       expect(after).toEqual(legacyTopProducts(HISTORICAL.filter(inMarch)));
       // Spot-check the actual figures so a bug in BOTH sides can't cancel out.
@@ -1243,7 +1329,7 @@ describe('salesDashboardStore — schema v33 line items', () => {
     it('getRevenueByCategory over backfilled line items equals the old sale-level numbers', async () => {
       installReportQueries(backfillLineItems(HISTORICAL));
 
-      const after = await getRevenueByCategory('2026-03-01', '2026-03-31');
+      const after = await getRevenueByCategory('2026-03-01', '2026-04-01');
 
       expect(after).toEqual(legacyRevenueByCategory(HISTORICAL.filter(inMarch)));
       expect(after.map((r) => [r.id, r.name, r.revenue, r.deals])).toEqual([
@@ -1256,7 +1342,7 @@ describe('salesDashboardStore — schema v33 line items', () => {
     it('still filters on the PARENT sale saleDate, so February stays out of March', async () => {
       installReportQueries(backfillLineItems(HISTORICAL));
 
-      const march = await getTopProducts(10, '2026-03-01', '2026-03-31');
+      const march = await getTopProducts(10, '2026-03-01', '2026-04-01');
       const marchRevenue = march.reduce((s, r) => s + r.revenue, 0);
       expect(marchRevenue).toBe(
         HISTORICAL.filter(inMarch).reduce((s, r) => s + r.totalAmount, 0)
@@ -1265,7 +1351,7 @@ describe('salesDashboardStore — schema v33 line items', () => {
       const [sql, params] = vi.mocked(query).mock.calls[0] as [string, unknown[]];
       expect(sql).toContain('LEFT JOIN sales_records sr ON sri.salesRecordId = sr.id');
       expect(sql).toContain('sr.saleDate >= ?');
-      expect(params.slice(0, 2)).toEqual(['2026-03-01', '2026-03-31']);
+      expect(params.slice(0, 2)).toEqual(['2026-03-01', '2026-04-01']);
     });
   });
 
@@ -1280,7 +1366,7 @@ describe('salesDashboardStore — schema v33 line items', () => {
     it('credits every category its own share instead of the first one taking the bill', async () => {
       installReportQueries(BILL);
 
-      const categories = await getRevenueByCategory('2026-03-01', '2026-03-31');
+      const categories = await getRevenueByCategory('2026-03-01', '2026-04-01');
 
       expect(categories).toHaveLength(3);
       expect(categories.map((c) => [c.id, c.revenue])).toEqual([
@@ -1301,7 +1387,7 @@ describe('salesDashboardStore — schema v33 line items', () => {
     it('credits every product its own share, with the right qty', async () => {
       installReportQueries(BILL);
 
-      const products = await getTopProducts(10, '2026-03-01', '2026-03-31');
+      const products = await getTopProducts(10, '2026-03-01', '2026-04-01');
 
       expect(products.map((p) => [p.id, p.revenue, p.qty, p.deals])).toEqual([
         ['p-1', 120000, 1, 1],
@@ -1330,7 +1416,7 @@ describe('salesDashboardStore — schema v33 line items', () => {
     it('keeps them in the "ไม่ระบุสินค้า" bucket and the report total still equals period revenue', async () => {
       installReportQueries(LINES);
 
-      const products = await getTopProducts(10, '2026-03-01', '2026-03-31');
+      const products = await getTopProducts(10, '2026-03-01', '2026-04-01');
 
       const unspecified = products.find((p) => p.id === 'unspecified');
       expect(unspecified).toMatchObject({ name: 'ไม่ระบุสินค้า', revenue: 50000, qty: 1, deals: 1 });
@@ -1342,7 +1428,7 @@ describe('salesDashboardStore — schema v33 line items', () => {
     it('keeps them in the "ไม่ระบุหมวด" bucket and the report total still equals period revenue', async () => {
       installReportQueries(LINES);
 
-      const categories = await getRevenueByCategory('2026-03-01', '2026-03-31');
+      const categories = await getRevenueByCategory('2026-03-01', '2026-04-01');
 
       const unknown = categories.find((c) => c.id === 'unknown');
       // Both uncategorised lines land here — 50,000 + 30,000 across two bills.
@@ -1964,5 +2050,193 @@ describe('salesDashboardStore — schema v33 line items', () => {
       expect(sale.totalAmount).toBe(7200);
       expect(sale.costAmount).toBe(1900);
     });
+  });
+});
+
+
+/**
+ * ONE MONTH, FIVE NUMBERS THAT MUST AGREE.
+ *
+ * `getDashboardOverview` reads `saleDate >= curStart AND saleDate < curEnd`.
+ * The four breakdowns go through `buildSaleDateRangeWhere`, which used to emit
+ * `<= curEnd` — and `curEnd` is the FIRST DAY OF THE NEXT PERIOD, so a sale
+ * dated exactly on it was counted in September AND in October by every
+ * breakdown, while the ยอดขายรวม card counted it once. The two disagreed by
+ * that sale's amount and nothing on the screen said so.
+ */
+describe('period boundaries — the card and the breakdowns must agree', () => {
+  interface BoundarySale {
+    id: string;
+    saleDate: string;
+    companyId: string;
+    companyName: string;
+    salespersonId: string;
+    salespersonName: string;
+    qty: number;
+    totalAmount: number;
+    costAmount: number;
+    lines: { productId: string; productName: string; categoryId: number | null; qty: number; totalAmount: number }[];
+  }
+
+  const SALES: BoundarySale[] = [
+    {
+      id: 'sale-sep-a', saleDate: '2026-09-05', companyId: 'co-1', companyName: 'บริษัท เอ',
+      salespersonId: 'sp-1', salespersonName: 'Alice', qty: 1, totalAmount: 120000, costAmount: 0,
+      lines: [{ productId: 'p-1', productName: 'เครื่องชั่ง XA-220', categoryId: 1, qty: 1, totalAmount: 120000 }],
+    },
+    {
+      // A real two-line bill, so the line-item reports and the sale-level ones
+      // are genuinely computing different things over the same window.
+      id: 'sale-sep-b', saleDate: '2026-09-20', companyId: 'co-2', companyName: 'บริษัท บี',
+      salespersonId: 'sp-2', salespersonName: 'Bob', qty: 2, totalAmount: 80000, costAmount: 0,
+      lines: [
+        { productId: 'p-2', productName: 'ชุดอะไหล่ K-12', categoryId: 1, qty: 1, totalAmount: 30000 },
+        { productId: 'p-3', productName: 'ตู้อบ OV-50', categoryId: 2, qty: 1, totalAmount: 50000 },
+      ],
+    },
+    {
+      // THE BOUNDARY SALE: 1 October, i.e. exactly `curEnd` for September.
+      id: 'sale-oct-boundary', saleDate: '2026-10-01', companyId: 'co-1', companyName: 'บริษัท เอ',
+      salespersonId: 'sp-1', salespersonName: 'Alice', qty: 1, totalAmount: 100000, costAmount: 0,
+      lines: [{ productId: 'p-1', productName: 'เครื่องชั่ง XA-220', categoryId: 1, qty: 1, totalAmount: 100000 }],
+    },
+  ];
+
+  const SEPTEMBER_REVENUE = 200000;
+  const OCTOBER_REVENUE = 100000;
+
+  function group<T>(items: T[], keyOf: (t: T) => string, idOf: (t: T) => unknown, nameOf: (t: T) => unknown, revenueOf: (t: T) => number, qtyOf: (t: T) => number, dealOf: (t: T) => string) {
+    const groups = new Map<string, { id: unknown; name: unknown; revenue: number; qty: number; deals: Set<string> }>();
+    for (const item of items) {
+      const key = keyOf(item);
+      const g = groups.get(key) ?? { id: idOf(item), name: nameOf(item), revenue: 0, qty: 0, deals: new Set<string>() };
+      g.revenue += revenueOf(item);
+      g.qty += qtyOf(item);
+      g.deals.add(dealOf(item));
+      groups.set(key, g);
+    }
+    return [...groups.values()]
+      .map((g) => ({ id: g.id, name: g.name, revenue: g.revenue, qty: g.qty, deals: g.deals.size }))
+      .sort((a, b) => b.revenue - a.revenue);
+  }
+
+  /** Answers the overview's queries AND all four breakdowns from one dataset. */
+  function installPeriodQueries(sales: BoundarySale[]) {
+    vi.mocked(query).mockImplementation((async (sql: unknown, params: unknown[] = []) => {
+      const text = String(sql);
+
+      // ── getDashboardOverview: half-open by construction ──
+      if (text.includes('FROM sales_records WHERE saleDate >= ? AND saleDate < ?')) {
+        const [from, to] = [String(params[0]), String(params[1])];
+        const rows = sales.filter((s) => s.saleDate >= from && s.saleDate < to);
+        return [[
+          {
+            revenue: rows.reduce((t, s) => t + s.totalAmount, 0),
+            deals: rows.length,
+            cost: rows.reduce((t, s) => t + s.costAmount, 0),
+          },
+        ]];
+      }
+      if (text.includes('FROM expenses')) return [[{ expenses: 0 }]];
+      if (text.includes('FROM customers')) return [[{ cnt: 0 }]];
+      if (text.includes('FROM used_docnos')) return [[{ cnt: 0 }]];
+      if (text.includes('FROM customer_equipments')) return [[{ cnt: 0 }]];
+
+      // ── the four breakdowns, all through `buildSaleDateRangeWhere` ──
+      let p = 0;
+      let from: string | null = null;
+      let toExclusive: string | null = null;
+      if (text.includes('sr.saleDate >= ?')) from = String(params[p++]);
+      if (text.includes('sr.saleDate <= ?')) {
+        throw new Error('a breakdown used an INCLUSIVE end — that double-counts the boundary day');
+      }
+      if (text.includes('sr.saleDate < ?')) toExclusive = String(params[p++]);
+      const rows = sales.filter(
+        (s) => (!from || s.saleDate >= from) && (!toExclusive || s.saleDate < toExclusive)
+      );
+      const lines = rows.flatMap((s) => s.lines.map((l) => ({ ...l, salesRecordId: s.id })));
+
+      if (text.includes('sri.categoryId AS id')) {
+        return [group(lines, (l) => String(l.categoryId ?? ''), (l) => l.categoryId, () => 'หมวด', (l) => l.totalAmount, (l) => l.qty, (l) => l.salesRecordId)];
+      }
+      if (text.includes('sri.productId AS id')) {
+        const limit = Number(params[params.length - 1]);
+        return [group(lines, (l) => l.productId, (l) => l.productId, (l) => l.productName, (l) => l.totalAmount, (l) => l.qty, (l) => l.salesRecordId).slice(0, limit)];
+      }
+      if (text.includes('sr.companyId AS id')) {
+        const limit = Number(params[params.length - 1]);
+        return [group(rows, (s) => s.companyId, (s) => s.companyId, (s) => s.companyName, (s) => s.totalAmount, (s) => s.qty, (s) => s.id).slice(0, limit)];
+      }
+      if (text.includes('sr.salespersonId AS id')) {
+        return [group(rows, (s) => s.salespersonId, (s) => s.salespersonId, (s) => s.salespersonName, (s) => s.totalAmount, (s) => s.qty, (s) => s.id)];
+      }
+      throw new Error(`period test: unhandled SQL: ${text}`);
+    }) as never);
+  }
+
+  const sum = (rows: { revenue: number }[]) => rows.reduce((t, r) => t + r.revenue, 0);
+
+  /** Exactly what `GET /api/admin/dashboard` asks the store for one month. */
+  async function reportsFor(periodValue: string) {
+    const { curStart, curEnd, prevStart, prevEnd } = getPeriodDateRange('month', periodValue);
+    const overview = await getDashboardOverview(curStart, curEnd, prevStart, prevEnd);
+    return {
+      overview,
+      categories: await getRevenueByCategory(curStart, curEnd),
+      products: await getTopProducts(10, curStart, curEnd),
+      customers: await getTopCustomers(10, curStart, curEnd),
+      sellers: await getSalespersonLeaderboard(curStart, curEnd),
+    };
+  }
+
+  afterEach(() => {
+    vi.mocked(query).mockReset();
+  });
+
+  it('counts a sale dated on the boundary day in exactly ONE period', async () => {
+    installPeriodQueries(SALES);
+
+    const september = await reportsFor('2026-09');
+    const october = await reportsFor('2026-10');
+
+    // ฿100,000 dated 2026-10-01 belongs to October and to October only.
+    expect(sum(september.products)).toBe(SEPTEMBER_REVENUE);
+    expect(sum(october.products)).toBe(OCTOBER_REVENUE);
+    expect(september.products.find((r) => r.id === 'p-1')?.revenue).toBe(120000);
+    expect(october.products.find((r) => r.id === 'p-1')?.revenue).toBe(100000);
+    // Nothing is counted twice and nothing is lost: the two months add up to
+    // every baht in the dataset.
+    expect(sum(september.products) + sum(october.products)).toBe(
+      SALES.reduce((t, s) => t + s.totalAmount, 0)
+    );
+  });
+
+  it('overview ยอดขายรวม equals all FOUR breakdown totals, for both months', async () => {
+    installPeriodQueries(SALES);
+
+    for (const [periodValue, expected] of [
+      ['2026-09', SEPTEMBER_REVENUE],
+      ['2026-10', OCTOBER_REVENUE],
+    ] as const) {
+      const r = await reportsFor(periodValue);
+      expect(r.overview.currentPeriod.revenue).toBe(expected);
+      expect(sum(r.categories)).toBe(expected);
+      expect(sum(r.products)).toBe(expected);
+      expect(sum(r.customers)).toBe(expected);
+      expect(sum(r.sellers)).toBe(expected);
+    }
+  });
+
+  it('the boundary sale is in the NEXT period for the card too, not just the breakdowns', async () => {
+    installPeriodQueries(SALES);
+
+    const september = await reportsFor('2026-09');
+    const october = await reportsFor('2026-10');
+
+    expect(september.overview.currentPeriod.deals).toBe(2);
+    expect(october.overview.currentPeriod.deals).toBe(1);
+    // October's "previous period" is September — the same two deals, counted
+    // from the same half-open window.
+    expect(october.overview.previousPeriod.revenue).toBe(SEPTEMBER_REVENUE);
   });
 });

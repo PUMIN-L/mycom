@@ -80,6 +80,19 @@ export default function DashboardPage() {
   const [form, setForm] = useState(emptyForm);
   const [isSaving, setIsSaving] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  /**
+   * How many line items ONE record has, tagged with the id it was counted for.
+   * The flat fields below describe ONE product, so a bill that holds several is
+   * shown with them LOCKED: the server refuses such an edit outright
+   * (`SaleScalarsNotAttributableError`, HTTP 400), and locking the boxes is
+   * what stops the admin carefully typing a number that is about to be
+   * rejected — while every other field on the form stays editable.
+   *
+   * The id is stored WITH the count so switching records (or leaving edit mode)
+   * falls back to 0 by comparison instead of by a reset write, which would be a
+   * synchronous setState inside an effect and an extra render for every open.
+   */
+  const [lineCountFor, setLineCountFor] = useState<{ id: string; count: number } | null>(null);
   const [viewingRecord, setViewingRecord] = useState<SalesRecord | null>(null);
   const [showRecords, setShowRecords] = useState(true);
   const [recordSearch, setRecordSearch] = useState("");
@@ -118,6 +131,37 @@ export default function DashboardPage() {
   const quotationPicked = quotationEnabled && !!quotationId;
   /** True only when a picked quotation actually produced product lines. */
   const linesActive = quotationEnabled && lines.length > 0;
+
+  // Keyed on `editingId` alone, so EVERY way into edit mode counts the lines —
+  // the form has a dozen of them. A failed or slow lookup deliberately leaves
+  // the fields editable: this is a hint, and the PUT is the authority.
+  useEffect(() => {
+    if (!editingId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/admin/sales/${encodeURIComponent(editingId)}/items`);
+        if (!res.ok) return;
+        const body = await res.json();
+        if (!cancelled) {
+          setLineCountFor({
+            id: editingId,
+            count: Array.isArray(body?.items) ? body.items.length : 0,
+          });
+        }
+      } catch {
+        /* leave it editable; the PUT still refuses an edit it cannot express */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [editingId]);
+  /** 0 unless the count on hand belongs to the record currently being edited. */
+  const editingLineCount =
+    lineCountFor && editingId && lineCountFor.id === editingId ? lineCountFor.count : 0;
+  /** This bill has several products, so the one-product fields cannot describe it. */
+  const multiLineBill = editingLineCount > 1;
 
   const resetQuotationState = useCallback(() => {
     setQuotationId("");
@@ -1484,9 +1528,27 @@ export default function DashboardPage() {
                 />
               )}
 
+              {multiLineBill && (
+                <div className="rounded-xl border border-amber-300 bg-amber-50 p-3.5 text-sm text-amber-900">
+                  <p className="font-bold">ใบขายนี้มีสินค้า {editingLineCount} รายการ</p>
+                  <p className="mt-1 leading-relaxed">
+                    ช่องสินค้า จำนวน ราคาต่อหน่วย และยอดรวม จึงถูกล็อกไว้ — ฟอร์มนี้แก้ได้ครั้งละ 1 สินค้า
+                    ถ้าแก้จากที่นี่ ยอดขายรวมจะไม่ตรงกับรายการสินค้าในบิล
+                    กดลูกศร ▸ หน้าแถวในตาราง &quot;รายการขาย&quot; เพื่อดูรายการสินค้าทั้งหมดของบิลนี้
+                    ถ้าต้องแก้จำนวน ราคา หรือตัวสินค้า ให้ลบใบขายนี้แล้วสร้างใหม่จากใบเสนอราคาเดิม
+                    ส่วนวันที่ขาย ลูกค้า เลขที่ PO / Invoice / ใบส่งของ / ใบเสร็จ การรับประกัน และหมายเหตุ แก้ได้ตามปกติ
+                  </p>
+                </div>
+              )}
+
               {/* The flat single-product fields. They stay exactly as they were
-                  and drive the save whenever no quotation line is in play. */}
+                  and drive the save whenever no quotation line is in play —
+                  except on a multi-line bill, where they are locked (see
+                  `multiLineBill`). `<fieldset disabled>` is how this project
+                  disables a SearchableDropdown, and it carries to the plain
+                  inputs in the same block for free. */}
               {!linesActive && (
+              <fieldset disabled={multiLineBill} className="contents">
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-1.5">สินค้าจากระบบ</label>
                 <SearchableDropdown
@@ -1499,9 +1561,11 @@ export default function DashboardPage() {
                   placeholder="เลือกสินค้าจากแคตตาล็อก (หรือพิมพ์ชื่อด้านล่าง)..."
                 />
               </div>
+              </fieldset>
               )}
 
               {!linesActive && (
+              <fieldset disabled={multiLineBill} className="contents">
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-1.5">ชื่อสินค้าที่แสดง <span className="text-red-500">*</span></label>
                 <input
@@ -1510,9 +1574,10 @@ export default function DashboardPage() {
                   value={form.productName}
                   onChange={(e) => { const v = e.target.value; setForm(prev => ({ ...prev, productName: v })); }}
                   placeholder="ชื่อเครื่อง / สินค้า / บริการ"
-                  className={`w-full px-3 py-2.5 border rounded-xl text-sm focus:ring-2 outline-none ${formErrors.productName ? "border-red-500 bg-red-50 focus:border-red-500 focus:ring-red-200 error-border" : "border-gray-200 focus:ring-indigo-200 focus:border-indigo-400"}`}
+                  className={`w-full px-3 py-2.5 border rounded-xl text-sm focus:ring-2 outline-none disabled:bg-gray-100 disabled:text-gray-500 ${formErrors.productName ? "border-red-500 bg-red-50 focus:border-red-500 focus:ring-red-200 error-border" : "border-gray-200 focus:ring-indigo-200 focus:border-indigo-400"}`}
                 />
               </div>
+              </fieldset>
               )}
 
               {!quotationEnabled && (
@@ -1537,6 +1602,7 @@ export default function DashboardPage() {
               )}
 
               {!linesActive && (
+              <fieldset disabled={multiLineBill} className="contents">
               <div className="grid grid-cols-3 gap-4">
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1.5">จำนวน <span className="text-red-500">*</span></label>
@@ -1552,7 +1618,7 @@ export default function DashboardPage() {
                     }}
                     onWheel={(e) => e.currentTarget.blur()}
                     placeholder="1"
-                    className={`w-full px-3 py-2.5 border rounded-xl text-sm focus:ring-2 outline-none ${formErrors.qty ? "border-red-500 bg-red-50 focus:border-red-500 focus:ring-red-200 error-border" : "border-gray-200 focus:ring-indigo-200 focus:border-indigo-400"}`}
+                    className={`w-full px-3 py-2.5 border rounded-xl text-sm focus:ring-2 outline-none disabled:bg-gray-100 disabled:text-gray-500 ${formErrors.qty ? "border-red-500 bg-red-50 focus:border-red-500 focus:ring-red-200 error-border" : "border-gray-200 focus:ring-indigo-200 focus:border-indigo-400"}`}
                   />
                 </div>
                 <div>
@@ -1564,7 +1630,7 @@ export default function DashboardPage() {
                       setForm(prev => ({ ...prev, unitPrice: p, totalAmount: (prev.qty || 1) * p }));
                     }}
                     placeholder="0"
-                    className={`w-full px-3 py-2.5 border rounded-xl text-sm focus:ring-2 outline-none font-medium text-gray-800 ${formErrors.unitPrice ? "border-red-500 bg-red-50 focus:border-red-500 focus:ring-red-200 error-border" : "border-gray-200 focus:ring-indigo-200 focus:border-indigo-400"}`}
+                    className={`w-full px-3 py-2.5 border rounded-xl text-sm focus:ring-2 outline-none font-medium text-gray-800 disabled:bg-gray-100 disabled:text-gray-500 ${formErrors.unitPrice ? "border-red-500 bg-red-50 focus:border-red-500 focus:ring-red-200 error-border" : "border-gray-200 focus:ring-indigo-200 focus:border-indigo-400"}`}
                   />
                 </div>
                 <div>
@@ -1575,10 +1641,11 @@ export default function DashboardPage() {
                       setForm(prev => ({ ...prev, totalAmount: val }));
                     }}
                     placeholder="0"
-                    className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none bg-gray-50 font-semibold text-gray-800"
+                    className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none bg-gray-50 font-semibold text-gray-800 disabled:text-gray-500"
                   />
                 </div>
               </div>
+              </fieldset>
               )}
 
               {/* ── Cost Calculator ──────────────────────────────────── */}

@@ -2,20 +2,30 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
 
-vi.mock('@/app/lib/salesDashboardStore', () => ({
-  listSalesRecords: vi.fn(),
-  addSalesRecord: vi.fn(),
-  createSaleWithLineItems: vi.fn(),
-  getSalesRecord: vi.fn(),
-  updateSalesRecord: vi.fn(),
-  deleteSalesRecord: vi.fn(),
-}));
+// The store is stubbed, EXCEPT for its refusal classes: the route matches them
+// with `instanceof`, and a hand-rolled copy here could drift from the real
+// message the admin is shown without a single test noticing.
+vi.mock('@/app/lib/salesDashboardStore', async () => {
+  const actual = await vi.importActual<typeof import('@/app/lib/salesDashboardStore')>(
+    '@/app/lib/salesDashboardStore'
+  );
+  return {
+    listSalesRecords: vi.fn(),
+    addSalesRecord: vi.fn(),
+    createSaleWithLineItems: vi.fn(),
+    getSalesRecord: vi.fn(),
+    updateSalesRecord: vi.fn(),
+    deleteSalesRecord: vi.fn(),
+    SaleScalarsNotAttributableError: actual.SaleScalarsNotAttributableError,
+  };
+});
 import {
   listSalesRecords,
   createSaleWithLineItems,
   getSalesRecord,
   updateSalesRecord,
   deleteSalesRecord,
+  SaleScalarsNotAttributableError,
 } from '@/app/lib/salesDashboardStore';
 
 // The [id] route touches equipment sync/cleanup; stubbed so no DB work leaks
@@ -546,6 +556,45 @@ describe('Admin Sales API', () => {
       );
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual(updated);
+    });
+
+    /**
+     * A bill with several line items cannot be described by this payload (one
+     * qty, one unitPrice, one totalAmount), so the store refuses the edit
+     * rather than leaving the sale total and SUM(line items) disagreeing
+     * forever. The route has to surface that as a client error carrying the
+     * store's own Thai text — a 500 with "แก้ไขรายการขายไม่สำเร็จ" would tell
+     * the admin nothing about what to do instead.
+     */
+    it('turns the multi-line refusal into a 400 with its Thai message, and syncs nothing', async () => {
+      vi.mocked(getSession).mockResolvedValue(admin);
+      vi.mocked(updateSalesRecord).mockRejectedValueOnce(
+        new SaleScalarsNotAttributableError(2, ['จำนวน', 'ยอดรวม'])
+      );
+
+      const res = await updateSale(
+        new NextRequest('http://localhost:3000/api/admin/sales/1', {
+          method: 'PUT',
+          body: JSON.stringify({
+            saleType: 'equipment',
+            qty: 3,
+            unitPrice: 50000,
+            totalAmount: 150000,
+            invoiceRef: 'INV-1',
+            serialNumbers: ['SN-1'],
+          }),
+        }),
+        { params: Promise.resolve({ id: '1' }) }
+      );
+
+      expect(res.status).toBe(400);
+      const json = await res.json();
+      expect(json.error).toMatch(THAI);
+      expect(json.error).toContain('มีสินค้า 2 รายการ');
+      expect(json.error).toContain('จำนวน / ยอดรวม');
+      // Nothing was written, so nothing downstream may run either.
+      expect(syncEquipmentRowsForSalesRecord).not.toHaveBeenCalled();
+      expect(cleanupEquipmentsForSalesRecord).not.toHaveBeenCalled();
     });
 
     /**

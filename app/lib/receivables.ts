@@ -73,7 +73,10 @@ export function docNoVersion(docNo: string): number {
 export type ReceivableTerminal =
   /** ยกเลิกแล้ว — keeps its payment history and its reserved docNo. */
   | "cancelled"
-  /** A newer version of this document exists ("แก้ไข (New Ver.)"). */
+  /** A newer version of this document exists ("แก้ไข (New Ver.)") AND THAT
+   *  VERSION IS STILL ALIVE. A newer version that was itself cancelled carries
+   *  nothing, so it cannot be what makes this row terminal — see
+   *  `supersededByCancelled`. */
   | "superseded"
   /** Not an invoice, or explicitly excluded with receivableOverride = 0. */
   | "not_debt_carrier"
@@ -115,6 +118,14 @@ export const TERMINAL_LABELS: Record<ReceivableTerminal, string> = {
   zero_total: "ไม่มียอด",
 };
 
+/**
+ * Shown on a row that WOULD have been "ถูกแทนที่" if the newer version had
+ * survived. The debt is real again and it is counted again, but silently
+ * putting it back would ambush an admin who believes he cancelled it — so the
+ * row says why it is here.
+ */
+export const REVIVED_SUPERSEDE_LABEL = "เวอร์ชันใหม่ถูกยกเลิก — กลับมาเป็นลูกหนี้";
+
 export const PAYMENT_STATE_LABELS: Record<ReceivablePaymentState, string> = {
   unpaid: "ยังไม่ชำระ",
   partial: "ชำระบางส่วน",
@@ -132,6 +143,19 @@ export interface ReceivableStatusInput {
   dueDate?: string | null;
   cancelledAt?: string | null;
   supersededById?: string | null;
+  /**
+   * TRUE when the row named by `supersededById` is itself ยกเลิกแล้ว.
+   *
+   * "ถูกแทนที่" has to mean REPLACED BY A ROW THAT IS STILL ALIVE. A cancelled
+   * newer version carries no debt and no credit, so if it were still allowed to
+   * make the original terminal, BOTH rows would be terminal and a real debt
+   * would be absent from `entries`, from `totalOutstanding`, from every ageing
+   * bucket and from the overdue headline — with nothing at all on screen to say
+   * so. Resolving this needs sight of the OTHER row, which only
+   * `buildReceivablesLedger` has; a caller that cannot see it leaves this
+   * undefined and keeps the conservative reading (still superseded).
+   */
+  supersededByCancelled?: boolean;
   /** Tri-state: null = default rule for this docType, 1 = in, 0 = out. */
   receivableOverride?: number | null;
 }
@@ -153,6 +177,14 @@ export interface ReceivableStatus {
   /** True only when this row belongs in the ledger and the alert feed: no
    *  terminal flag AND money is still owed. */
   isOpen: boolean;
+  /** This row is back in the ledger only because the newer version that
+   *  replaced it was cancelled. Rendered as REVIVED_SUPERSEDE_LABEL so the
+   *  debt's return is stated rather than merely happening.
+   *
+   *  OPTIONAL only so that the few places which hand-build a `ReceivableStatus`
+   *  to sample a label (ReceivablesGuidePanel) need not restate it;
+   *  `resolveReceivableStatus` always sets it. */
+  revivedFromCancelledSuccessor?: boolean;
 }
 
 /**
@@ -190,9 +222,14 @@ export function resolveReceivableStatus(
   const total = Number(input.totalAmount) || 0;
   const paid = Number(input.paidAmount) || 0;
 
+  // A newer version only makes this row terminal while that version is ALIVE.
+  const revivedFromCancelledSuccessor = Boolean(
+    input.supersededById && input.supersededByCancelled
+  );
+
   let terminal: ReceivableTerminal | null = null;
   if (input.cancelledAt) terminal = "cancelled";
-  else if (input.supersededById) terminal = "superseded";
+  else if (input.supersededById && !revivedFromCancelledSuccessor) terminal = "superseded";
   else if (!isDebtCarrier(input)) terminal = "not_debt_carrier";
   else if (total <= 0) terminal = "zero_total";
 
@@ -222,6 +259,7 @@ export function resolveReceivableStatus(
     overpaidBy,
     daysOverdue,
     isOpen: terminal === null && outstanding > SATANG_TOLERANCE,
+    revivedFromCancelledSuccessor,
   };
 }
 
@@ -280,8 +318,11 @@ export interface ReceivableRow {
 export interface ReceivableEntry extends ReceivableRow {
   status: ReceivableStatus;
   bucket: AgeingBucketId;
-  /** The docNo of the version that replaced this one, when the row predates the
-   *  `supersededById` column and was only detected by the base-docNo fallback. */
+  /** The docNo of the version that replaced this one — whether it was found by
+   *  the `supersededById` column or, for rows that predate that column, by the
+   *  base-docNo fallback. Also filled when that newer version was CANCELLED, so
+   *  a revived row can name the version whose cancellation brought it back
+   *  (`status.revivedFromCancelledSuccessor`). */
   supersededByDocNo: string | null;
 }
 
@@ -317,21 +358,50 @@ export interface ReceivablesLedger {
   customers: CustomerReceivableGroup[];
   /** ใบวางบิลที่ยังไม่มีใบแจ้งหนี้ — a nudge list, never an automatic inclusion. */
   unlinkedBillingNotes: ReceivableEntry[];
+  /** Rows that are back in `entries` ONLY because the newer version that had
+   *  replaced them was cancelled. They ARE counted in every total — the debt is
+   *  real — and they are listed here as well so the screen can say so out loud
+   *  instead of a cancelled correction quietly re-billing a customer. */
+  revivedSupersededDocs: ReceivableEntry[];
   /** Invoices with no lines/amount: usually an unfinished document, so they get
    *  a "ตรวจสอบ" nudge instead of silently vanishing. */
   zeroTotalInvoices: ReceivableEntry[];
 }
 
-/** Is this row an invoice that would satisfy an ใบวางบิล's debt? */
-function isEligibleInvoice(row: ReceivableRow): boolean {
+/** Is this row an invoice that would satisfy an ใบวางบิล's debt? `supersededBy`
+ *  is the LIVE replacement resolved below — a row whose newer version was
+ *  cancelled is an eligible invoice again, exactly as it is a receivable again. */
+function isEligibleInvoice(row: ReceivableRow, liveSuccessorId: string | null): boolean {
   return (
     row.docType === "invoice" &&
     !row.cancelledAt &&
-    !row.supersededById &&
+    !liveSuccessorId &&
     row.receivableOverride !== 0 &&
     Number(row.totalAmount) > 0
   );
 }
+
+/**
+ * Which row (if any) has REPLACED this one, and whether that row is still alive.
+ *
+ * Two ways a replacement is known, and both are needed: the `supersededById`
+ * column the clone flow stamps going forward, and — for rows already in
+ * production when that column arrived — the base-docNo fallback that
+ * /billing/saved's "(เวอร์ชันเก่า)" badge also performs.
+ */
+interface Supersession {
+  /** The replacement, live or cancelled. Null when nothing replaced this row. */
+  successorId: string | null;
+  successorDocNo: string | null;
+  /** True when that replacement is itself ยกเลิกแล้ว — so it replaces nothing. */
+  successorCancelled: boolean;
+}
+
+const NO_SUPERSESSION: Supersession = {
+  successorId: null,
+  successorDocNo: null,
+  successorCancelled: false,
+};
 
 /**
  * Turn the raw rows into everything the ledger screen needs, in ONE pass.
@@ -346,57 +416,119 @@ export function buildReceivablesLedger(
   rows: ReceivableRow[],
   today: string
 ): ReceivablesLedger {
+  const byId = new Map(rows.map((row) => [String(row.id), row] as const));
+
   // Highest version per base docNo, so an older version can be recognised even
-  // when nothing stamped it.
-  const latestByBase = new Map<string, { id: string; docNo: string; version: number }>();
+  // when nothing stamped it. TWO maps, because a CANCELLED newer version must
+  // not be what hides the older one: `latestLive` is what supersedes, while
+  // `latestAny` is only used to NAME the cancelled version that did not.
+  type VersionRef = { id: string; docNo: string; version: number };
+  const latestLiveByBase = new Map<string, VersionRef>();
+  const latestAnyByBase = new Map<string, VersionRef>();
   for (const row of rows) {
     if (!row.docNo) continue;
     const base = baseDocNo(row.docNo);
-    const version = docNoVersion(row.docNo);
-    const current = latestByBase.get(base);
-    if (!current || version > current.version) {
-      latestByBase.set(base, { id: row.id, docNo: row.docNo, version });
-    }
+    const ref: VersionRef = { id: String(row.id), docNo: row.docNo, version: docNoVersion(row.docNo) };
+    const currentAny = latestAnyByBase.get(base);
+    if (!currentAny || ref.version > currentAny.version) latestAnyByBase.set(base, ref);
+    if (row.cancelledAt) continue;
+    const currentLive = latestLiveByBase.get(base);
+    if (!currentLive || ref.version > currentLive.version) latestLiveByBase.set(base, ref);
   }
+
+  function supersessionOf(row: ReceivableRow): Supersession {
+    // A row that names ITSELF supersedes nothing — the save path refuses to
+    // write that, and a row from before it did must not vanish over it.
+    const stamped =
+      row.supersededById && String(row.supersededById) !== String(row.id)
+        ? String(row.supersededById)
+        : null;
+    const successor = stamped ? byId.get(stamped) : undefined;
+    if (stamped && !successor) {
+      // The stamp names a row this page of results cannot see (LIMIT 2000), so
+      // its state cannot be judged. Assume it is alive: over-stating that a row
+      // is superseded is visible on the newer version, while wrongly reviving a
+      // debt that IS covered elsewhere would double-bill the customer.
+      return { successorId: stamped, successorDocNo: null, successorCancelled: false };
+    }
+    if (successor && !successor.cancelledAt) {
+      return {
+        successorId: String(successor.id),
+        successorDocNo: successor.docNo || null,
+        successorCancelled: false,
+      };
+    }
+
+    const version = docNoVersion(row.docNo);
+    const base = row.docNo ? baseDocNo(row.docNo) : null;
+    const live = base ? latestLiveByBase.get(base) : undefined;
+    if (live && live.id !== String(row.id) && live.version > version) {
+      return { successorId: live.id, successorDocNo: live.docNo, successorCancelled: false };
+    }
+
+    // Nothing alive replaced this row. Name whatever did, so the ledger can
+    // explain why the debt is back.
+    if (successor) {
+      return {
+        successorId: String(successor.id),
+        successorDocNo: successor.docNo || null,
+        successorCancelled: true,
+      };
+    }
+    const any = base ? latestAnyByBase.get(base) : undefined;
+    if (any && any.id !== String(row.id) && any.version > version) {
+      return { successorId: any.id, successorDocNo: any.docNo, successorCancelled: true };
+    }
+    return NO_SUPERSESSION;
+  }
+
+  const supersessions = new Map<string, Supersession>(
+    rows.map((row) => [String(row.id), supersessionOf(row)] as const)
+  );
+  const liveSuccessorOf = (row: ReceivableRow): string | null => {
+    const sup = supersessions.get(String(row.id)) ?? NO_SUPERSESSION;
+    return sup.successorCancelled ? null : sup.successorId;
+  };
 
   const entries: ReceivableEntry[] = [];
   const zeroTotalInvoices: ReceivableEntry[] = [];
   const unlinkedBillingNotes: ReceivableEntry[] = [];
+  const revivedSupersededDocs: ReceivableEntry[] = [];
 
   // Which quotations already have an invoice that carries their debt — the test
   // the ใบวางบิล nudge list uses, so the override is never offered for a BN
   // whose invoice already exists.
   const invoicedQuotationIds = new Set<string>();
   for (const row of rows) {
-    if (isEligibleInvoice(row) && row.linkedQuotationId) {
+    if (isEligibleInvoice(row, liveSuccessorOf(row)) && row.linkedQuotationId) {
       invoicedQuotationIds.add(String(row.linkedQuotationId));
     }
   }
 
   for (const row of rows) {
-    const latest = row.docNo ? latestByBase.get(baseDocNo(row.docNo)) : undefined;
-    const supersededByDocNo =
-      latest && latest.id !== row.id && latest.version > docNoVersion(row.docNo)
-        ? latest.docNo
-        : null;
+    const sup = supersessions.get(String(row.id)) ?? NO_SUPERSESSION;
 
     const effective: ReceivableRow = {
       ...row,
       totalAmount: Number(row.totalAmount) || 0,
       paidAmount: Number(row.paidAmount) || 0,
-      supersededById: row.supersededById ?? (supersededByDocNo ? latest!.id : null),
+      supersededById: sup.successorId,
     };
 
-    const status = resolveReceivableStatus(effective, today);
+    const status = resolveReceivableStatus(
+      { ...effective, supersededByCancelled: sup.successorCancelled },
+      today
+    );
     const entry: ReceivableEntry = {
       ...effective,
       status,
       bucket: receivableAgeingBucket(status),
-      supersededByDocNo,
+      supersededByDocNo: sup.successorDocNo,
     };
 
     if (status.isOpen) {
       entries.push(entry);
+      if (status.revivedFromCancelledSuccessor) revivedSupersededDocs.push(entry);
       continue;
     }
 
@@ -415,7 +547,7 @@ export function buildReceivablesLedger(
       effective.docType === "billing_note" &&
       effective.receivableOverride == null &&
       !effective.cancelledAt &&
-      !effective.supersededById &&
+      !liveSuccessorOf(effective) &&
       effective.totalAmount > 0 &&
       (!effective.linkedQuotationId ||
         !invoicedQuotationIds.has(String(effective.linkedQuotationId)))
@@ -499,6 +631,7 @@ export function buildReceivablesLedger(
     buckets,
     customers,
     unlinkedBillingNotes,
+    revivedSupersededDocs,
     zeroTotalInvoices,
   };
 }

@@ -27,6 +27,42 @@ import type { PoolConnection } from "mysql2/promise";
  * that has live payments — the payments table has no FOREIGN KEY (house rule:
  * this app hard-deletes documents), so that ban is what stops financial records
  * being orphaned.
+ *
+ * ── THE STATE MACHINE. READ THIS BEFORE TOUCHING `voidedAt` ─────────────────
+ * A payment row minted by an ใบเสร็จรับเงิน (its id IS the receipt's id) is
+ * pushed around by THREE INDEPENDENT LIFECYCLES, and treating them as one is
+ * what credited invoices twice and resurrected voided money:
+ *
+ *   1. THE DOCUMENT'S CONTENT — saving the receipt (syncReceiptPayment). Note
+ *      that /billing re-saves a document on EVERY ดาวน์โหลด PDF, by anyone
+ *      merely LOOKING at it. A re-save is therefore NOT a decision.
+ *   2. A HUMAN — ยกเลิกรายการ in the payment history (voidBillingPayment),
+ *      with a reason he typed.
+ *   3. THE DOCUMENT'S LIFECYCLE — ยกเลิกเอกสาร (syncCancelledReceiptPayment)
+ *      and แก้ไข (New Ver.) (voidSupersededReceiptPayment), which replace the
+ *      receipt with a newer one that mints its OWN payment.
+ *
+ * WHO MAY SET voidedAt: all three. First void wins — an already-voided row is
+ * never re-stamped with a second reason, because the reason is what says who
+ * may take it back.
+ *
+ * WHO MAY CLEAR voidedAt: ONLY the exact inverse of the machine-written void
+ * that set it, and NOTHING ELSE:
+ *   • RECEIPT_CANCELLED_VOID_REASON  → cleared by un-cancelling THAT receipt
+ *     (and only while no live newer version has taken its place).
+ *   • RECEIPT_UNLINKED_VOID_REASON   → cleared by a save that names an invoice
+ *     again, because re-pointing ชำระให้ใบแจ้งหนี้ is itself the human edit.
+ *   • RECEIPT_SUPERSEDED_VOID_REASON → cleared by NOTHING. The newer version
+ *     carries the money now; if that version is cancelled the debt reappears on
+ *     the invoice, which is the visible, actionable direction to be wrong in.
+ *   • a HUMAN void (any other reason) → cleared by NOTHING. A void performed by
+ *     a person is a decision and must survive anything that is not an equally
+ *     explicit decision to reverse it. Pressing ดาวน์โหลด PDF is not that. The
+ *     correction path is to ADD a corrected payment, never to un-void.
+ *
+ * Which is why the receipt upsert below does NOT list `voidedAt` in its
+ * ON DUPLICATE KEY UPDATE: the SQL is deliberately incapable of resurrecting a
+ * payment, and the one legitimate un-void is a separate, explicit statement.
  */
 
 export interface BillingPaymentRecord {
@@ -74,6 +110,12 @@ type Queryable = Pick<PoolConnection, "query">;
  */
 export const RECEIPT_UNLINKED_VOID_REASON = "ยกเลิกการผูกใบเสร็จกับใบแจ้งหนี้";
 export const RECEIPT_CANCELLED_VOID_REASON = "ยกเลิกใบเสร็จรับเงิน";
+export const RECEIPT_SUPERSEDED_VOID_REASON = "ถูกแทนที่ด้วยใบเสร็จเวอร์ชันใหม่";
+
+/** A void whose reason is NOT one of the three above was written by a HUMAN
+ *  from the payment history, and nothing in this module may ever clear it —
+ *  see THE STATE MACHINE at the top of the file. Every un-void below therefore
+ *  matches on the ONE reason it is the inverse of, never on "is it voided". */
 
 /**
  * Re-sum a document's LIVE payments and write the result to its cached
@@ -192,10 +234,14 @@ export async function listBillingPayments(
   return rows.map(rowToPayment);
 }
 
-/** How many LIVE payments a document carries. Used by the delete ban and by the
- *  "ประวัติการรับชำระ (N)" disclosure, which only appears past 1 — the second
- *  payment is what reveals the ledger, so the one-payment case never pays for
- *  the two-payment case. */
+/** How many LIVE payments a document carries — the delete ban's test, and the
+ *  (N) in the "ประวัติการรับชำระ (N)" disclosure.
+ *
+ *  That disclosure used to be HIDDEN until a document had two live payments, on
+ *  the theory that one payment is not a ledger worth reading. It now opens on
+ *  the first payment of any kind, because it holds the only ยกเลิกรายการ button
+ *  in the app: hiding it left the commonest mistake of all — one payment typed
+ *  with an extra zero — with no correction path at all. */
 export async function countLiveBillingPayments(
   billingDocumentId: string
 ): Promise<number> {
@@ -214,21 +260,24 @@ export async function countLiveBillingPayments(
  *
  * The payment row's id IS the receipt's id. That makes the whole thing
  * idempotent: re-saving the same receipt rewrites the same row instead of
- * minting a second payment for money that only arrived once.
+ * minting a second payment for money that only arrived once — and a replayed
+ * `withTransaction` attempt converges on exactly the same row and the same sum.
  *
- * Three cases, all of which the data can really produce:
+ * Cases, all of which the data can really produce:
  *  - receipt now names an invoice           → upsert the payment onto it;
  *  - receipt was re-pointed at another one  → the row moves, and BOTH the old
  *    and the new invoice are re-summed (missing the old one would leave it
  *    permanently over-credited);
  *  - the link was cleared                   → the payment is VOIDED, never
- *    deleted, because it may be the only record that the money arrived.
+ *    deleted, because it may be the only record that the money arrived;
+ *  - the receipt is CANCELLED or SUPERSEDED → the same void path, under its own
+ *    reason. Neither state settles anything any more, and /billing re-saves the
+ *    document on every PDF download, so both have to be read back from the row
+ *    rather than trusted from the request.
  *
- * A CANCELLED receipt (`receipt.cancelled`) takes the same void path as a
- * cleared link, under RECEIPT_CANCELLED_VOID_REASON. Without that, re-saving a
- * cancelled receipt — which /billing does on every PDF download — would walk
- * straight into the `voidedAt = NULL` below and silently re-credit the invoice
- * from a document the admin had already withdrawn.
+ * WHAT THIS FUNCTION MAY NOT DO is clear a void it did not write. See THE STATE
+ * MACHINE at the top of this file: the upsert lists no `voidedAt`, and the ONE
+ * un-void below is the exact inverse of the unlink that wrote it.
  */
 export async function syncReceiptPayment(
   conn: Queryable,
@@ -242,35 +291,59 @@ export async function syncReceiptPayment(
     createdAt: string;
     /** The receipt row carries `cancelledAt`: it settles nothing any more. */
     cancelled?: boolean;
+    /** A LIVE newer version has replaced this receipt ("แก้ไข (New Ver.)").
+     *  That version mints its own payment, so this one must not also credit. */
+    superseded?: boolean;
   }
 ): Promise<void> {
   const [existingRows] = await conn.query<RowDataPacket[]>(
-    "SELECT billingDocumentId, voidedAt FROM billing_payments WHERE id = ?",
+    "SELECT billingDocumentId, voidedAt, voidReason FROM billing_payments WHERE id = ?",
     [receipt.id]
   );
-  const previousDocId: string | null = existingRows.length
-    ? String(existingRows[0].billingDocumentId)
+  const existing = existingRows[0] ?? null;
+  const previousDocId: string | null = existing
+    ? String(existing.billingDocumentId)
     : null;
+  const existingVoidedAt = existing?.voidedAt ?? null;
+  const existingVoidReason = existing?.voidReason ?? null;
 
-  if (!receipt.settlesDocId || receipt.cancelled) {
-    // Nothing to settle. Void any payment this receipt used to imply rather
-    // than dropping it, then correct the invoice it was credited against.
-    if (previousDocId && !existingRows[0].voidedAt) {
+  // Why this receipt settles nothing, if it doesn't. Superseded is checked
+  // FIRST: it is the state no action in this app reverses, so it must not be
+  // overwritten by a reason (cancelled/unlinked) that un-cancelling or
+  // re-linking would later take back — that is how the money gets credited
+  // twice again.
+  const settlesDocId = receipt.settlesDocId;
+  const withdrawnReason = receipt.superseded
+    ? RECEIPT_SUPERSEDED_VOID_REASON
+    : receipt.cancelled
+      ? RECEIPT_CANCELLED_VOID_REASON
+      : !settlesDocId
+        ? RECEIPT_UNLINKED_VOID_REASON
+        : null;
+
+  if (withdrawnReason) {
+    // Void any payment this receipt used to imply rather than dropping it, then
+    // correct the invoice it was credited against. An already-voided row is
+    // left exactly as it is: first void wins, and its reason is what decides
+    // who is allowed to take it back.
+    if (previousDocId && !existingVoidedAt) {
       await conn.query(
         "UPDATE billing_payments SET voidedAt = ?, voidReason = ? WHERE id = ?",
-        [
-          receipt.createdAt,
-          receipt.cancelled
-            ? RECEIPT_CANCELLED_VOID_REASON
-            : RECEIPT_UNLINKED_VOID_REASON,
-          receipt.id,
-        ]
+        [receipt.createdAt, withdrawnReason, receipt.id]
       );
       await recomputePaidAmount(conn, previousDocId);
     }
     return;
   }
+  // The unlinked case is already handled above; this restates it for the
+  // compiler, which cannot see the narrowing through that ternary.
+  if (!settlesDocId) return;
 
+  // NOTE the columns this statement does NOT touch: `voidedAt` and
+  // `voidReason`. A re-save — which anyone pressing ดาวน์โหลด PDF performs —
+  // may correct the money on the row, but it may never bring a voided payment
+  // back to life. That single `voidedAt = NULL` re-credited invoices from
+  // payments an admin had deliberately voided, with nothing on screen to say so.
   await conn.query(
     `INSERT INTO billing_payments
        (id, billingDocumentId, amount, paidDate, method, ref, note, receiptDocId, voidedAt, voidReason, createdAt)
@@ -281,12 +354,10 @@ export async function syncReceiptPayment(
        paidDate = VALUES(paidDate),
        method = VALUES(method),
        ref = VALUES(ref),
-       receiptDocId = VALUES(receiptDocId),
-       voidedAt = NULL,
-       voidReason = NULL`,
+       receiptDocId = VALUES(receiptDocId)`,
     [
       receipt.id,
-      receipt.settlesDocId,
+      settlesDocId,
       receipt.amount,
       receipt.paidDate,
       receipt.method,
@@ -296,10 +367,58 @@ export async function syncReceiptPayment(
     ]
   );
 
-  if (previousDocId && previousDocId !== receipt.settlesDocId) {
+  // THE ONE UN-VOID A SAVE MAY PERFORM. The row was voided because the receipt
+  // named no invoice; this save names one again, which is the admin editing
+  // ชำระให้ใบแจ้งหนี้ — the exact inverse of the unlink that wrote the void.
+  // Every other reason (a human's, a cancel's, a supersede's) is left alone.
+  if (existingVoidedAt && existingVoidReason === RECEIPT_UNLINKED_VOID_REASON) {
+    await conn.query(
+      "UPDATE billing_payments SET voidedAt = NULL, voidReason = NULL WHERE id = ?",
+      [receipt.id]
+    );
+  }
+
+  if (previousDocId && previousDocId !== settlesDocId) {
     await recomputePaidAmount(conn, previousDocId);
   }
-  await recomputePaidAmount(conn, receipt.settlesDocId);
+  await recomputePaidAmount(conn, settlesDocId);
+}
+
+/**
+ * "แก้ไข (New Ver.)" on an ใบเสร็จรับเงิน — void the payment the SUPERSEDED
+ * receipt minted, in the same transaction that saves the new version.
+ *
+ * The clone keeps `settlesDocId`, so its own save mints a payment for the same
+ * money under a new id. Without this, BOTH rows stayed live, `recomputePaidAmount`
+ * summed them, and an invoice for ฿100,000 read "ชำระเกิน ฿100,000" with ฿0
+ * owed — twice over — from money that arrived once. The old receipt could not
+ * even be deleted to undo it, because a document with a live payment is
+ * undeletable by design.
+ *
+ * `supersededDocId` is the payment's own id (syncReceiptPayment mints them
+ * equal), so this is a primary-key lookup that finds nothing for any other kind
+ * of document. Superseding an INVOICE is therefore a no-op here — an invoice's
+ * own payments (a deposit) belong to the invoice, not to a receipt, and are
+ * never touched by this.
+ *
+ * An already-voided row is left alone, whoever voided it: a human's void
+ * outlives this, and a second supersede has nothing left to take out.
+ */
+export async function voidSupersededReceiptPayment(
+  conn: Queryable,
+  supersededDocId: string,
+  voidedAt: string
+): Promise<void> {
+  const [rows] = await conn.query<RowDataPacket[]>(
+    "SELECT billingDocumentId, voidedAt FROM billing_payments WHERE id = ?",
+    [supersededDocId]
+  );
+  if (!rows?.length || rows[0].voidedAt) return;
+  await conn.query(
+    "UPDATE billing_payments SET voidedAt = ?, voidReason = ? WHERE id = ?",
+    [voidedAt, RECEIPT_SUPERSEDED_VOID_REASON, supersededDocId]
+  );
+  await recomputePaidAmount(conn, String(rows[0].billingDocumentId));
 }
 
 /**
@@ -322,6 +441,9 @@ export async function syncReceiptPayment(
  * this is a primary-key lookup that finds nothing for any other document type.
  * Calling it for an invoice is therefore a cheap no-op rather than a special
  * case the caller has to remember.
+ *
+ * CANCELLING A RECEIPT THAT A NEWER VERSION ALREADY REPLACED changes nothing:
+ * its payment is already voided as ถูกแทนที่ and the first void wins.
  */
 export async function syncCancelledReceiptPayment(
   conn: Queryable,
@@ -343,8 +465,23 @@ export async function syncCancelledReceiptPayment(
       [cancelledAt, RECEIPT_CANCELLED_VOID_REASON, receiptId]
     );
   } else {
-    // Restore ONLY a void this cancel wrote.
+    // Restore ONLY a void this cancel wrote. A human's void, an unlink's and a
+    // supersede's all stay exactly where they are.
     if (!voidedAt || rows[0].voidReason !== RECEIPT_CANCELLED_VOID_REASON) return;
+    // ...AND ONLY WHILE NOTHING LIVE HAS TAKEN THIS RECEIPT'S PLACE. Un-cancelling
+    // a receipt that a newer version has replaced would put the money back
+    // alongside the payment that version already minted — the same double credit,
+    // by the other door. "Superseded" means superseded BY A ROW THAT IS STILL
+    // ALIVE, exactly as the receivables ledger reads it: if the newer version
+    // was itself cancelled it carries nothing, and this restore is correct.
+    const [docRows] = await conn.query<RowDataPacket[]>(
+      `SELECT newer.id AS liveSuccessorId
+         FROM billing_documents doc
+         JOIN billing_documents newer ON newer.id = doc.supersededById
+        WHERE doc.id = ? AND newer.cancelledAt IS NULL`,
+      [receiptId]
+    );
+    if (docRows.length > 0) return;
     await conn.query(
       "UPDATE billing_payments SET voidedAt = NULL, voidReason = NULL WHERE id = ?",
       [receiptId]

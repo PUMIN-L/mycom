@@ -192,6 +192,14 @@ describe('saveBillingDocumentAtomic — derived receivables columns', () => {
   });
 
   it('stamps supersededById on the row a new version REPLACES — or a corrected invoice is billed twice', async () => {
+    // The supersede now also has to reach into billing_payments (a receipt's
+    // clone would otherwise credit its invoice twice), so the lookup that does
+    // it is scripted here: this document has no payment row of its own.
+    conn.query.mockImplementation((sql: string) =>
+      String(sql).includes('SELECT billingDocumentId')
+        ? Promise.resolve([[]])
+        : Promise.resolve([{ affectedRows: 1 }])
+    );
     await saveBillingDocumentAtomic({
       ...rec,
       id: 'v2',

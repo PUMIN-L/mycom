@@ -295,21 +295,135 @@ export async function getSalesRecord(id: string): Promise<SalesRecord | null> {
   return record;
 }
 
+/**
+ * Refuses a scalar edit that a bill with SEVERAL line items cannot express.
+ *
+ * Same shape, and the same reason, as `ProductCostNotAttributableError`: the
+ * legacy edit form has ONE จำนวน and ONE ราคา/หน่วย for a bill that holds
+ * several different products, and there is no defensible way to split a new
+ * quantity or price across them. Accepting the edit and quietly leaving the
+ * lines alone is what used to leave the overview cards and the product /
+ * category reports quoting two different revenue figures for the same sale —
+ * permanently, with nothing to flag the divergence.
+ *
+ * The message names the fields that were refused AND where the change belongs:
+ * a refusal the admin cannot act on is barely better than the wrong number.
+ */
+export class SaleScalarsNotAttributableError extends Error {
+  /** Thai labels of the fields this edit tried to change. */
+  readonly fields: string[];
+  /** How many line items the bill actually has. */
+  readonly lineCount: number;
+  constructor(lineCount: number, fields: string[]) {
+    super(
+      `ใบขายนี้มีสินค้า ${lineCount} รายการ แต่ฟอร์มนี้แก้ได้ครั้งละ 1 สินค้า ` +
+        `จึงแก้ ${fields.join(" / ")} จากหน้านี้ไม่ได้ ` +
+        `(ยอดขายรวมจะไม่ตรงกับรายการสินค้าในบิล) — ` +
+        `กดลูกศร ▸ หน้าแถวในตาราง "รายการขาย" เพื่อดูรายการสินค้าทั้งหมดของบิลนี้ ` +
+        `ถ้าต้องแก้จำนวน ราคา หรือตัวสินค้า ให้ลบใบขายนี้แล้วสร้างใหม่จากใบเสนอราคาเดิม ` +
+        `ส่วนวันที่ขาย ลูกค้า เซลล์ เลขที่ PO / Invoice / ใบส่งของ / ใบเสร็จ ` +
+        `การรับประกัน และหมายเหตุ แก้จากหน้านี้ได้ตามปกติ`
+    );
+    this.name = "SaleScalarsNotAttributableError";
+    this.fields = fields;
+    this.lineCount = lineCount;
+  }
+}
+
+/**
+ * The `sales_records` columns that merely RESTATE the sale's line items, with
+ * the Thai label of the field that edits each one. Changing one of these on a
+ * multi-line bill is exactly what broke
+ * `sales_records.totalAmount = SUM(items.totalAmount)`.
+ */
+const LINE_DERIVED_SCALARS = [
+  ["productId", "สินค้าจากระบบ"],
+  ["productName", "ชื่อสินค้า"],
+  ["categoryId", "หมวดหมู่สินค้า"],
+  ["qty", "จำนวน"],
+  ["unitPrice", "ราคาต่อหน่วย"],
+] as const;
+
+/**
+ * The total a write would store for this input — ONE rule, used by the row and
+ * by the line item, so the two can never disagree by a rounding step.
+ */
+function effectiveTotalAmount(v: ReturnType<typeof cleanInput>): number {
+  return round2(v.totalAmountProvided ? v.totalAmount : v.qty * v.unitPrice);
+}
+
+/**
+ * Which line-derived scalars this edit actually CHANGES, in Thai.
+ *
+ * BOTH sides go through `cleanInput` first, so a cleaned value is never
+ * compared against a raw DB one: mysql2 hands DECIMAL back as a string, and
+ * comparing `"80000.00"` against `80000` would refuse every save that merely
+ * re-posts the record it loaded — which is what both edit forms do on EVERY
+ * save, including a pure "fill in the invoice number" one.
+ */
+function changedLineDerivedScalars(
+  before: ReturnType<typeof cleanInput>,
+  after: ReturnType<typeof cleanInput>
+): string[] {
+  const changed: string[] = LINE_DERIVED_SCALARS.filter(
+    ([field]) => before[field] !== after[field]
+  ).map(([, label]) => label);
+  if (effectiveTotalAmount(before) !== effectiveTotalAmount(after)) {
+    changed.push("ยอดรวม");
+  }
+  return changed;
+}
+
+const SELECT_LINE_IDS_SQL = `SELECT id FROM sales_record_items WHERE salesRecordId = ?
+     ORDER BY sortOrder ASC, createdAt ASC`;
+
+/** The sale's line-item ids in display order, on the caller's connection. */
+async function readLineItemIds(
+  conn: TxConnection,
+  salesRecordId: string
+): Promise<string[]> {
+  const [rows] = (await conn.query(SELECT_LINE_IDS_SQL, [salesRecordId])) as [
+    RowDataPacket[],
+    unknown,
+  ];
+  return (Array.isArray(rows) ? rows : []).map((r) => String(r.id));
+}
+
 export async function updateSalesRecord(
   id: string,
   data: SalesRecordInput
 ): Promise<SalesRecord | null> {
   const existing = await getSalesRecord(id);
   if (!existing) return null;
+  /** The stored sale, cleaned — the baseline every "did this change?" test uses. */
+  const before = cleanInput(existing);
   const v = cleanInput({ ...existing, ...data });
   // The merge means "provided" is true whenever the STORED sale has a total, so
   // a plain re-save of a discounted sale keeps its ฿0/net figure instead of
   // being healed back up to qty × unitPrice.
-  const totalAmount = v.totalAmountProvided ? v.totalAmount : v.qty * v.unitPrice;
+  const totalAmount = effectiveTotalAmount(v);
   await withTransaction(async (conn) => {
     // Same lock as every other write that touches this sale's totals, so a
-    // concurrent recalc cannot interleave between the row and its line item.
+    // concurrent recalc cannot interleave between the row and its line items.
     await conn.query(LOCK_SALE_SQL, [id]);
+    // Read the lines INSIDE the attempt, under that lock: what this edit is
+    // allowed to do depends on them, and a `withTransaction` retry must
+    // re-decide from the current rows rather than replay a decision taken
+    // against a pre-race snapshot.
+    const lineIds = await readLineItemIds(conn, id);
+
+    if (lineIds.length > 1) {
+      // A multi-line bill. The lines are authoritative (see
+      // `createSaleWithLineItems`: revenue attribution is never read from the
+      // scalar columns again) and the scalars only restate them, so an edit
+      // that would restate them WRONGLY is refused outright — nothing is
+      // written, and the admin is told where the change belongs.
+      const changed = changedLineDerivedScalars(before, v);
+      if (changed.length > 0) {
+        throw new SaleScalarsNotAttributableError(lineIds.length, changed);
+      }
+    }
+
     await conn.query(
       `UPDATE sales_records SET
          salespersonId = ?, customerId = ?, companyId = ?, productId = ?,
@@ -326,7 +440,18 @@ export async function updateSalesRecord(
         v.equipmentId, v.note, v.quotationId, id,
       ]
     );
-    await syncSingleLineItemToScalars(conn, id, v, totalAmount);
+
+    if (lineIds.length > 1) {
+      // THE REPAIR PATH. The scalars just written are the ones that were
+      // already stored (anything else was refused above), so re-deriving them
+      // from the lines is a no-op on a healthy sale — and the fix on a sale an
+      // OLDER build already drifted, which nothing else in the app re-derives.
+      // Every allowed edit of a multi-line bill therefore leaves
+      // `totalAmount = SUM(items.totalAmount)` true, whatever it was before.
+      await recalcSaleTotalsTx(conn, id);
+    } else {
+      await syncSingleLineItemToScalars(conn, id, v, totalAmount, lineIds);
+    }
   });
   return getSalesRecord(id);
 }
@@ -341,10 +466,11 @@ export async function updateSalesRecord(
  * flag the divergence. The invariant that must hold is
  * `SUM(items.totalAmount) = sales_records.totalAmount` for the same sale.
  *
- * Only a sale with AT MOST ONE line item is touched — the shape every legacy
- * and backfilled sale has. The scalar columns cannot describe a multi-line
- * bill at all, so collapsing one into a single line here would destroy per-line
- * data; those sales are edited through a line-level payload instead.
+ * `lineIds` is read by the CALLER, which is what decides whether this runs at
+ * all: a sale with several lines cannot be described by the scalar columns, so
+ * `updateSalesRecord` refuses that edit outright (see
+ * `SaleScalarsNotAttributableError`) instead of arriving here and returning.
+ * The guard below stays as a precondition check for any future caller.
  *
  * `costAmount` deliberately stays put: product cost is owned by the line item
  * and the cost-item endpoints recompute the sale total from it. The one
@@ -357,17 +483,12 @@ async function syncSingleLineItemToScalars(
   conn: TxConnection,
   salesRecordId: string,
   v: ReturnType<typeof cleanInput>,
-  totalAmount: number
+  totalAmount: number,
+  lineIds: string[]
 ): Promise<void> {
-  const [rows] = (await conn.query(
-    `SELECT id FROM sales_record_items WHERE salesRecordId = ?
-     ORDER BY sortOrder ASC, createdAt ASC`,
-    [salesRecordId]
-  )) as [RowDataPacket[], unknown];
-  const items = Array.isArray(rows) ? rows : [];
-  if (items.length > 1) return;
+  if (lineIds.length > 1) return;
 
-  if (items.length === 1) {
+  if (lineIds.length === 1) {
     await conn.query(
       `UPDATE sales_record_items
           SET productId = ?, productName = ?, categoryId = ?, qty = ?,
@@ -380,7 +501,7 @@ async function syncSingleLineItemToScalars(
         v.qty,
         v.unitPrice,
         round2(totalAmount),
-        String(items[0].id),
+        lineIds[0],
       ]
     );
     return;
@@ -497,6 +618,13 @@ function cleanLineItem(item: Partial<SaleLineItem>, index: number): LineSummary 
  *
  * Returns null (and writes NOTHING) when the sale has no line items, so an
  * empty read can never zero out a real sale's revenue.
+ *
+ * Two callers, both inside the transaction that could otherwise break the
+ * invariant: `createSaleWithLineItems` (derive the cached scalars from what was
+ * actually persisted) and `updateSalesRecord` on a multi-line bill (re-derive
+ * them after an allowed edit, which also repairs a row an older build drifted).
+ * There is deliberately NO exported stand-alone version: an exported repair
+ * function nobody calls reads as "the invariant heals itself" when it does not.
  */
 async function recalcSaleTotalsTx(
   conn: TxConnection,
@@ -528,17 +656,6 @@ async function recalcSaleTotalsTx(
     [totals.totalAmount, totals.qty, totals.costAmount, salesRecordId]
   );
   return totals;
-}
-
-/**
- * Public entry point for the same recompute — call it whenever a sale's line
- * items change outside `createSaleWithLineItems`.
- */
-export async function recalcSaleTotals(
-  salesRecordId: string
-): Promise<{ totalAmount: number; qty: number; costAmount: number } | null> {
-  if (!salesRecordId) return null;
-  return withTransaction((conn) => recalcSaleTotalsTx(conn, salesRecordId));
 }
 
 export interface CreateSaleWithLineItemsInput {
@@ -958,21 +1075,30 @@ function percentageOf(value: number, total: number): number {
 }
 
 /**
- * WHERE clause + params for an optional [dateFromRaw, dateToRaw] range on
- * `dateColumn` — callers pass the exact column reference (aliased or not) so
- * the generated SQL text is unchanged from before this was extracted.
+ * WHERE clause + params for an optional HALF-OPEN range
+ * `[dateFromRaw, dateToExclusiveRaw)` on `dateColumn` — callers pass the exact
+ * column reference (aliased or not).
+ *
+ * THE UPPER BOUND IS EXCLUSIVE, and it has to be: every caller is handed
+ * `curEnd` from `getPeriodDateRange`, which is the FIRST DAY OF THE NEXT
+ * period, and `getDashboardOverview` already reads it that way
+ * (`saleDate < curEnd`). This helper used to emit `<= dateTo`, so a sale dated
+ * exactly on that boundary — 2026-10-01 for "เดือน ก.ย. 2026" — was counted in
+ * September AND in October by all four breakdowns while the ยอดขายรวม card
+ * counted it once, in October only. The breakdown totals then exceeded the
+ * card by that sale's amount, with nothing on screen to say why.
  */
 function buildSaleDateRangeWhere(
   dateColumn: string,
   dateFromRaw?: string,
-  dateToRaw?: string
+  dateToExclusiveRaw?: string
 ): { clause: string; params: unknown[] } {
   const where: string[] = [];
   const params: unknown[] = [];
   const dateFrom = cleanDate(dateFromRaw);
-  const dateTo = cleanDate(dateToRaw);
+  const dateToExclusive = cleanDate(dateToExclusiveRaw);
   if (dateFrom) { where.push(`${dateColumn} >= ?`); params.push(dateFrom); }
-  if (dateTo) { where.push(`${dateColumn} <= ?`); params.push(dateTo); }
+  if (dateToExclusive) { where.push(`${dateColumn} < ?`); params.push(dateToExclusive); }
   return { clause: where.length > 0 ? `WHERE ${where.join(" AND ")}` : "", params };
 }
 
@@ -984,8 +1110,9 @@ function buildSaleDateRangeWhere(
  * Every join is a LEFT JOIN and the bucket fallbacks are unchanged
  * (`id` "unknown" / `name` "ไม่ระบุหมวด"): a line with no category, or one
  * pointing at a deleted category, must still be counted, or the report total
- * stops matching SUM(sales_records.totalAmount) for the same window. The date filter
- * stays on the PARENT sale's saleDate, exactly as before.
+ * stops matching SUM(sales_records.totalAmount) for the same window. The date
+ * filter stays on the PARENT sale's saleDate, over the same HALF-OPEN window
+ * the ยอดขายรวม card uses — `[dateFrom, dateToExclusive)`.
  *
  * After the v33 backfill each historical sale has exactly one line item
  * carrying its own scalar values, so every historical figure here is
@@ -995,9 +1122,9 @@ function buildSaleDateRangeWhere(
  */
 export async function getRevenueByCategory(
   dateFromRaw?: string,
-  dateToRaw?: string
+  dateToExclusiveRaw?: string
 ): Promise<TopItem[]> {
-  const { clause, params } = buildSaleDateRangeWhere("sr.saleDate", dateFromRaw, dateToRaw);
+  const { clause, params } = buildSaleDateRangeWhere("sr.saleDate", dateFromRaw, dateToExclusiveRaw);
   const [rows] = await query<RowDataPacket[]>(
     `SELECT sri.categoryId AS id,
             COALESCE(pc.name_th, 'ไม่ระบุหมวด') AS name,
@@ -1034,10 +1161,10 @@ export async function getRevenueByCategory(
 export async function getTopProducts(
   limit = 10,
   dateFromRaw?: string,
-  dateToRaw?: string
+  dateToExclusiveRaw?: string
 ): Promise<TopItem[]> {
   const safeLimit = Math.max(1, Math.min(100, Math.round(Number(limit) || 10)));
-  const { clause, params } = buildSaleDateRangeWhere("sr.saleDate", dateFromRaw, dateToRaw);
+  const { clause, params } = buildSaleDateRangeWhere("sr.saleDate", dateFromRaw, dateToExclusiveRaw);
   const [rows] = await query<RowDataPacket[]>(
     `SELECT sri.productId AS id, sri.productName AS name,
             COALESCE(SUM(sri.totalAmount), 0) AS revenue,
@@ -1064,10 +1191,10 @@ export async function getTopProducts(
 export async function getTopCustomers(
   limit = 10,
   dateFromRaw?: string,
-  dateToRaw?: string
+  dateToExclusiveRaw?: string
 ): Promise<TopItem[]> {
   const safeLimit = Math.max(1, Math.min(100, Math.round(Number(limit) || 10)));
-  const { clause, params } = buildSaleDateRangeWhere("sr.saleDate", dateFromRaw, dateToRaw);
+  const { clause, params } = buildSaleDateRangeWhere("sr.saleDate", dateFromRaw, dateToExclusiveRaw);
   const [rows] = await query<RowDataPacket[]>(
     `SELECT sr.companyId AS id,
             COALESCE(co.name, 'ไม่ระบุ') AS name,
@@ -1094,9 +1221,9 @@ export async function getTopCustomers(
 
 export async function getSalespersonLeaderboard(
   dateFromRaw?: string,
-  dateToRaw?: string
+  dateToExclusiveRaw?: string
 ): Promise<SalespersonStats[]> {
-  const { clause, params } = buildSaleDateRangeWhere("sr.saleDate", dateFromRaw, dateToRaw);
+  const { clause, params } = buildSaleDateRangeWhere("sr.saleDate", dateFromRaw, dateToExclusiveRaw);
   const [rows] = await query<RowDataPacket[]>(
     `SELECT sr.salespersonId AS id,
             COALESCE(sp.name, sr.salespersonId) AS name,
@@ -1437,7 +1564,9 @@ async function writeProductCost(
     const totalAmount = sale.totalAmountProvided
       ? sale.totalAmount
       : sale.qty * sale.unitPrice;
-    await syncSingleLineItemToScalars(conn, salesRecordId, sale, totalAmount);
+    // `lines` is empty here — that is the branch condition — so the sync takes
+    // its INSERT path and mints the one line this sale should have had.
+    await syncSingleLineItemToScalars(conn, salesRecordId, sale, totalAmount, []);
     lines = await readLines(conn, salesRecordId);
     if (lines.length !== 1) throw new ProductCostNotAttributableError();
   }

@@ -17,9 +17,13 @@ import {
   voidBillingPayment,
   recomputePaidAmount,
   syncReceiptPayment,
+  voidSupersededReceiptPayment,
   countLiveBillingPayments,
   listBillingPayments,
   BillingPaymentNotVoidableError,
+  RECEIPT_UNLINKED_VOID_REASON,
+  RECEIPT_CANCELLED_VOID_REASON,
+  RECEIPT_SUPERSEDED_VOID_REASON,
 } from '@/app/lib/billingPayments';
 
 beforeEach(() => {
@@ -234,5 +238,151 @@ describe('reads', () => {
     // DECIMAL strings must arrive as numbers so no caller adds them as text.
     expect(rows[0].amount).toBe(30000);
     expect(rows[1].voidReason).toBe('พิมพ์ผิด');
+  });
+});
+
+// ── WHO MAY CLEAR `voidedAt` ────────────────────────────────────────────────
+// A void performed BY A HUMAN is a decision, and a re-save is not: /billing
+// re-POSTs a document on every ดาวน์โหลด PDF, by anyone merely looking at it.
+// The upsert therefore cannot un-void anything, and the ONE legitimate un-void
+// is written out on its own, matched to the reason it is the inverse of.
+describe('syncReceiptPayment — a re-save may correct the money, never the void', () => {
+  const receipt = {
+    id: 'rc-1',
+    settlesDocId: 'inv-1',
+    amount: 107000,
+    paidDate: '2026-09-06',
+    method: 'โอนเงิน',
+    ref: 'TRF-1',
+    createdAt: '2026-09-06T03:00:00.000Z',
+  };
+
+  const existing = (voidedAt: string | null, voidReason: string | null) =>
+    conn.query
+      .mockResolvedValueOnce([[{ billingDocumentId: 'inv-1', voidedAt, voidReason }]])
+      .mockResolvedValueOnce([{ affectedRows: 1 }]) // upsert
+      .mockResolvedValueOnce([{ affectedRows: 1 }]) // (any un-void)
+      .mockResolvedValue([[{ paid: '107000.00' }]]);
+
+  const unvoided = () =>
+    calls().filter(([sql]) => /SET voidedAt = NULL/.test(String(sql)));
+
+  /** Nothing this save issued can bring the row back: neither a separate
+   *  un-void, NOR the upsert's own ON DUPLICATE KEY UPDATE list — which is
+   *  where the resurrection used to hide. */
+  const expectVoidSurvives = () => {
+    expect(unvoided()).toHaveLength(0);
+    const upsert = calls().find(([sql]) => /INSERT INTO billing_payments/.test(String(sql)));
+    expect(upsert).toBeTruthy();
+    expect(sqlOf(upsert!)).not.toMatch(/ON DUPLICATE KEY UPDATE[\s\S]*voidedAt/);
+  };
+
+  it('the ON DUPLICATE KEY UPDATE list does not mention voidedAt at all', async () => {
+    conn.query
+      .mockResolvedValueOnce([[]])
+      .mockResolvedValueOnce([{ affectedRows: 1 }])
+      .mockResolvedValue([[{ paid: '107000.00' }]]);
+
+    await syncReceiptPayment(conn as never, receipt);
+
+    const upsert = sqlOf(calls()[1]);
+    // `voidedAt = NULL` in this clause is the whole of the defect: it made the
+    // statement itself capable of re-crediting an invoice.
+    expect(upsert).not.toMatch(/ON DUPLICATE KEY UPDATE[\s\S]*voidedAt/);
+    expect(upsert).not.toMatch(/ON DUPLICATE KEY UPDATE[\s\S]*voidReason/);
+  });
+
+  it('leaves a payment a HUMAN voided voided, and re-sums WITHOUT it', async () => {
+    existing('2026-09-06T09:00:00.000Z', 'พิมพ์ยอดผิด');
+    await syncReceiptPayment(conn as never, receipt);
+    expectVoidSurvives();
+  });
+
+  it('leaves a void the CANCEL wrote alone — only un-cancelling may take that back', async () => {
+    existing('2026-09-07T00:00:00.000Z', RECEIPT_CANCELLED_VOID_REASON);
+    await syncReceiptPayment(conn as never, receipt);
+    expectVoidSurvives();
+  });
+
+  it('leaves a void the SUPERSEDE wrote alone — the newer version carries the money now', async () => {
+    existing('2026-09-07T00:00:00.000Z', RECEIPT_SUPERSEDED_VOID_REASON);
+    await syncReceiptPayment(conn as never, receipt);
+    expectVoidSurvives();
+  });
+
+  it('DOES un-void when the receipt is pointed back at an invoice — the inverse of the unlink', async () => {
+    existing('2026-09-06T09:00:00.000Z', RECEIPT_UNLINKED_VOID_REASON);
+    await syncReceiptPayment(conn as never, receipt);
+    const undo = unvoided();
+    expect(undo).toHaveLength(1);
+    expect(undo[0][1]).toEqual(['rc-1']);
+  });
+
+  it('voids under ถูกแทนที่ when a live newer version has replaced the receipt, and writes no payment', async () => {
+    conn.query
+      .mockResolvedValueOnce([[{ billingDocumentId: 'inv-1', voidedAt: null, voidReason: null }]])
+      .mockResolvedValueOnce([{ affectedRows: 1 }])
+      .mockResolvedValue([[{ paid: '0.00' }]]);
+
+    await syncReceiptPayment(conn as never, { ...receipt, superseded: true });
+
+    expect(calls().some(([sql]) => /INSERT INTO billing_payments/.test(String(sql)))).toBe(false);
+    expect(calls()[1][1]).toEqual([
+      receipt.createdAt,
+      RECEIPT_SUPERSEDED_VOID_REASON,
+      'rc-1',
+    ]);
+  });
+
+  it('ถูกแทนที่ beats ยกเลิก, because only the cancel has an undo that could take the void back', async () => {
+    conn.query
+      .mockResolvedValueOnce([[{ billingDocumentId: 'inv-1', voidedAt: null, voidReason: null }]])
+      .mockResolvedValueOnce([{ affectedRows: 1 }])
+      .mockResolvedValue([[{ paid: '0.00' }]]);
+
+    await syncReceiptPayment(conn as never, {
+      ...receipt,
+      superseded: true,
+      cancelled: true,
+    });
+
+    expect((calls()[1][1] as unknown[])[1]).toBe(RECEIPT_SUPERSEDED_VOID_REASON);
+  });
+});
+
+describe('voidSupersededReceiptPayment — แก้ไข (New Ver.) takes the old credit out', () => {
+  it('voids the superseded receipt\'s payment and re-sums the invoice it credited', async () => {
+    conn.query
+      .mockResolvedValueOnce([[{ billingDocumentId: 'inv-1', voidedAt: null }]])
+      .mockResolvedValueOnce([{ affectedRows: 1 }])
+      .mockResolvedValueOnce([[{ paid: '0.00' }]])
+      .mockResolvedValueOnce([{ affectedRows: 1 }]);
+
+    await voidSupersededReceiptPayment(conn as never, 'rc-1', '2026-09-07T02:00:00.000Z');
+
+    expect(sqlOf(calls()[1])).toBe(
+      'UPDATE billing_payments SET voidedAt = ?, voidReason = ? WHERE id = ?'
+    );
+    expect(calls()[1][1]).toEqual([
+      '2026-09-07T02:00:00.000Z',
+      RECEIPT_SUPERSEDED_VOID_REASON,
+      'rc-1',
+    ]);
+    expect(calls()[3][1]).toEqual([0, 'inv-1']);
+    expect(calls().some(([sql]) => /DELETE/i.test(String(sql)))).toBe(false);
+  });
+
+  it('is a no-op for a document that minted no payment — an invoice never loses its deposit here', async () => {
+    conn.query.mockResolvedValueOnce([[]]);
+    await voidSupersededReceiptPayment(conn as never, 'inv-old', 'now');
+    expect(conn.query).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves an already-voided payment exactly as it is — first void wins, reason and all', async () => {
+    conn.query.mockResolvedValueOnce([
+      [{ billingDocumentId: 'inv-1', voidedAt: '2026-09-06T09:00:00.000Z' }],
+    ]);
+    await voidSupersededReceiptPayment(conn as never, 'rc-1', 'now');
+    expect(conn.query).toHaveBeenCalledTimes(1);
   });
 });

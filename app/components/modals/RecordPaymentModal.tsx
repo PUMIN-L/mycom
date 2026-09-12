@@ -18,12 +18,19 @@ import { SATANG_TOLERANCE } from "../../lib/receivables";
  * with what is left. The word "งวด" never appears, and the admin never operates
  * a ledger.
  *
- * The payment HISTORY only appears once a document carries more than one live
- * payment — the second payment is what reveals the ledger, so the one-payment
- * case never pays for the two-payment case.
+ * The payment HISTORY appears as soon as the document carries ANY payment, live
+ * or voided. It used to wait for a SECOND live payment, on the theory that one
+ * payment is not a ledger worth reading — but this disclosure holds the only
+ * ยกเลิกรายการ button in the entire app (/api/billing/payments/[paymentId]/void
+ * has no other caller), so hiding it left the most common mistake of all with
+ * no correction path: typing 500000 for 50000, confirming the overpay dialog,
+ * and then finding the row unreachable because it is the only one. The ledger
+ * showed "ชำระเกิน ฿450,000" for good, and the only escape was inventing a
+ * second bogus payment or editing the database by hand.
  *
  * Overpayment is CONFIRMED, not blocked: a customer really can transfer too
- * much, and blocking would force the admin to record a false amount.
+ * much, and blocking would force the admin to record a false amount. That is
+ * exactly why the void has to stay one click away from it.
  */
 
 export interface PaymentTargetDoc {
@@ -93,7 +100,8 @@ export default function RecordPaymentModal({
     loadHistory();
   }, [loadHistory]);
 
-  const livePayments = (history ?? []).filter((p) => !p.voidedAt);
+  const payments = history ?? [];
+  const livePayments = payments.filter((p) => !p.voidedAt);
   const overpayBy = amount - outstanding;
   const isOverpay = overpayBy > SATANG_TOLERANCE;
 
@@ -247,8 +255,10 @@ export default function RecordPaymentModal({
               />
             </div>
 
-            {/* The ledger only appears once there IS a ledger to look at. */}
-            {livePayments.length > 1 && (
+            {/* ONE payment is enough to need correcting — this is the only
+                ยกเลิกรายการ there is. Voided rows keep it visible afterwards,
+                struck through, so the correction can be read back. */}
+            {payments.length > 0 && (
               <div className="border border-gray-100 rounded-xl overflow-hidden">
                 <button
                   type="button"
@@ -256,11 +266,16 @@ export default function RecordPaymentModal({
                   className="w-full px-3 py-2 text-left text-sm font-semibold text-gray-700 bg-gray-50 hover:bg-gray-100 transition flex items-center justify-between"
                 >
                   <span>ประวัติการรับชำระ ({livePayments.length})</span>
+                  {livePayments.length < payments.length && (
+                    <span className="text-[11px] text-gray-400 font-normal">
+                      ยกเลิกแล้ว {payments.length - livePayments.length} รายการ
+                    </span>
+                  )}
                   <span className="text-xs text-gray-400">{historyOpen ? "▲" : "▼"}</span>
                 </button>
                 {historyOpen && (
                   <ul className="divide-y divide-gray-100">
-                    {(history ?? []).map((p) => (
+                    {payments.map((p) => (
                       <li
                         key={p.id}
                         className={`px-3 py-2 text-xs flex items-center justify-between gap-2 ${

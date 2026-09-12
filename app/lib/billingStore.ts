@@ -6,6 +6,7 @@ import { isValidDateString, addDaysToDateString } from "./dateFormat";
 import {
   syncReceiptPayment,
   syncCancelledReceiptPayment,
+  voidSupersededReceiptPayment,
 } from "./billingPayments";
 import type { ReceivableRow } from "./receivables";
 
@@ -244,29 +245,58 @@ export async function saveBillingDocumentAtomic(
     // source here is what closes that — the clone already knows the id it came
     // from. Self-reference is refused so a mis-sent id cannot make a document
     // supersede itself and vanish from the ledger.
+    //
+    // ── AND THE MONEY HAS TO MOVE WITH IT ─────────────────────────────────
+    // แก้ไข (New Ver.) is offered for ใบเสร็จรับเงิน too, and the clone carries
+    // `settlesDocId` forward — so its own save (below) mints a SECOND payment
+    // for money that arrived once. Stamping `supersededById` hid the old
+    // DOCUMENT from the ledger but left its PAYMENT live, and both were summed:
+    // a ฿100,000 invoice read "ชำระเกิน ฿100,000" with ฿0 owed, and the old
+    // receipt could not even be deleted to undo it (a document with a live
+    // payment is undeletable by design). The void travels in the SAME
+    // transaction as the stamp, under ถูกแทนที่ด้วยใบเสร็จเวอร์ชันใหม่, and it
+    // is a primary-key no-op for every document type that is not a receipt.
     if (rec.supersedesId && rec.supersedesId !== rec.id) {
       await conn.query(
         "UPDATE billing_documents SET supersededById = ? WHERE id = ?",
         [rec.id, rec.supersedesId]
       );
+      await voidSupersededReceiptPayment(conn, rec.supersedesId, rec.createdAt);
     }
 
     // An ใบเสร็จรับเงิน that names the invoice it settles records the payment in
     // the SAME transaction, so issuing a receipt stays one action.
     if (rec.docType === "receipt") {
-      // The save never writes `cancelledAt` (see above), so a receipt the admin
-      // has already cancelled comes through this path unchanged — and /billing
-      // re-saves on every PDF download. Read the flag back inside the same
-      // transaction: without it the upsert's `voidedAt = NULL` would re-credit
-      // the invoice from a receipt that had been withdrawn.
+      // The save never writes `cancelledAt` or `supersededById` (see above), so
+      // a receipt the admin has already cancelled — or that a newer version has
+      // already replaced — comes through this path unchanged, and /billing
+      // re-saves on every PDF download. BOTH flags are therefore read back
+      // inside the same transaction: without them a mere download would put a
+      // withdrawn receipt's credit back on the invoice.
       const [stateRows] = await conn.query<RowDataPacket[]>(
-        "SELECT cancelledAt FROM billing_documents WHERE id = ?",
+        "SELECT cancelledAt, supersededById FROM billing_documents WHERE id = ?",
         [rec.id]
       );
+      const supersededById = stateRows?.[0]?.supersededById ?? null;
+      // "Superseded" means SUPERSEDED BY A ROW THAT IS STILL ALIVE — the same
+      // definition the receivables ledger uses. A newer version that was itself
+      // cancelled carries nothing, so it cannot silence this receipt. A
+      // successor that cannot be found is treated as alive: that is the
+      // direction that under-credits rather than over-credits.
+      let supersededByLiveRow = false;
+      if (supersededById) {
+        const [successorRows] = await conn.query<RowDataPacket[]>(
+          "SELECT cancelledAt FROM billing_documents WHERE id = ?",
+          [supersededById]
+        );
+        supersededByLiveRow =
+          successorRows.length === 0 || !successorRows[0].cancelledAt;
+      }
       await syncReceiptPayment(conn, {
         id: rec.id,
         settlesDocId,
         cancelled: Boolean(stateRows?.[0]?.cancelledAt),
+        superseded: supersededByLiveRow,
         amount: derived.totalAmount,
         paidDate:
           rec.paymentDate && isValidDateString(String(rec.paymentDate))
@@ -464,7 +494,12 @@ export async function listReceivableRows(): Promise<ReceivableRow[]> {
 }
 
 /** Open invoices for the receipt builder's "ชำระให้ใบแจ้งหนี้" dropdown, and
- *  for the nudge that links an unattached receipt to the debt it discharges. */
+ *  for the nudge that links an unattached receipt to the debt it discharges.
+ *
+ *  "ถูกแทนที่" means REPLACED BY A ROW THAT IS STILL ALIVE — the same rule
+ *  `buildReceivablesLedger` applies. A `supersededById IS NULL` test made an
+ *  invoice whose newer version was later CANCELLED unpickable forever, so the
+ *  debt was still real but no receipt could ever be pointed at it. */
 export async function listOpenInvoices(): Promise<
   { id: string; docNo: string; customerName: string; dueDate: string | null; outstanding: number }[]
 > {
@@ -472,7 +507,11 @@ export async function listOpenInvoices(): Promise<
     `SELECT id, docNo, customerName, dueDate, totalAmount, paidAmount
        FROM billing_documents
       WHERE cancelledAt IS NULL
-        AND supersededById IS NULL
+        AND NOT EXISTS (
+              SELECT 1 FROM billing_documents newer
+               WHERE newer.id = billing_documents.supersededById
+                 AND newer.cancelledAt IS NULL
+            )
         AND (receivableOverride = 1 OR (receivableOverride IS NULL AND docType = 'invoice'))
         AND totalAmount - paidAmount > 0.005
       ORDER BY dueDate IS NULL, dueDate ASC
@@ -527,7 +566,11 @@ export async function listUndatedReceivables(): Promise<
       WHERE dueDate IS NULL
         AND docDate IS NOT NULL
         AND cancelledAt IS NULL
-        AND supersededById IS NULL
+        AND NOT EXISTS (
+              SELECT 1 FROM billing_documents newer
+               WHERE newer.id = billing_documents.supersededById
+                 AND newer.cancelledAt IS NULL
+            )
         AND (receivableOverride = 1 OR (receivableOverride IS NULL AND docType = 'invoice'))
         AND totalAmount > 0
         AND totalAmount - paidAmount > 0.005
@@ -542,25 +585,40 @@ export async function listUndatedReceivables(): Promise<
   }));
 }
 
+/**
+ * Returns HOW MANY ROWS WERE ACTUALLY WRITTEN, not how many were attempted.
+ *
+ * The UPDATE carries `AND dueDate IS NULL` precisely because another admin (or
+ * the ledger's per-row "ตั้งวันครบกำหนด") can stamp a date between the read and
+ * the write; when that happens the statement matches ZERO rows on purpose. The
+ * count was being incremented regardless, so two admins pressing
+ * "ตั้งให้ทุกใบที่ยังไม่กำหนด" at the same moment both saw "อัปเดต 40 ใบ" while
+ * the second changed nothing — a toast that reports work that did not happen.
+ *
+ * The counter lives INSIDE the transaction callback, never outside it:
+ * `withTransaction` replays its callback on a transient connection loss, and a
+ * counter captured outside would keep the rolled-back attempt's tally and
+ * report double.
+ */
 export async function setDueDatesForUndatedReceivables(
   termDays: number
 ): Promise<number> {
   const targets = await listUndatedReceivables();
   if (targets.length === 0) return 0;
   const term = Math.max(0, Math.trunc(termDays));
-  let updated = 0;
-  await withTransaction(async (conn) => {
+  return withTransaction(async (conn) => {
+    let updated = 0;
     for (const target of targets) {
       const dueDate = addDaysToDateString(target.docDate, term);
       if (!isValidDateString(dueDate)) continue;
-      await conn.query(
+      const [res] = await conn.query<ResultSetHeader>(
         "UPDATE billing_documents SET dueDate = ? WHERE id = ? AND dueDate IS NULL",
         [dueDate, target.id]
       );
-      updated += 1;
+      if ((res?.affectedRows ?? 0) > 0) updated += 1;
     }
+    return updated;
   });
-  return updated;
 }
 
 /**

@@ -95,6 +95,17 @@ export default function SalesRecordEditModal({
   const [products, setProducts] = useState<any[]>(initialProducts || []);
   const [salespeople, setSalespeople] = useState<any[]>(initialSalespeople || []);
   const [isLoading, setIsLoading] = useState(true);
+  /**
+   * How many line items the record being edited actually has (0 = new record,
+   * or not known). This form has ONE จำนวน and ONE ราคา/หน่วย, so a bill that
+   * holds several products cannot be described by it: the server refuses such
+   * an edit outright (`SaleScalarsNotAttributableError`, HTTP 400) rather than
+   * letting the sale total drift away from SUM(line items), and these boxes are
+   * locked so nobody types a figure that is about to be rejected. Every other
+   * field — refs, dates, customer, warranty, note — stays editable.
+   */
+  const [lineCount, setLineCount] = useState(0);
+  const multiLineBill = lineCount > 1;
 
   useEffect(() => {
     async function loadData() {
@@ -114,6 +125,14 @@ export default function SalesRecordEditModal({
 
           const costsRes = await fetch(`/api/admin/sales/${editingId}/costs`);
           const costsData = costsRes.ok ? await costsRes.json() : { items: [] };
+
+          // Always assigned, so re-opening on another record can never inherit
+          // the previous one's count. A failed lookup falls back to 0, i.e.
+          // leaves the fields editable: this is a hint, and the PUT is the
+          // authority that refuses what it cannot express.
+          const itemsRes = await fetch(`/api/admin/sales/${editingId}/items`);
+          const itemsData = itemsRes.ok ? await itemsRes.json() : null;
+          setLineCount(Array.isArray(itemsData?.items) ? itemsData.items.length : 0);
 
           setForm({
             saleType: fullRec.saleType || "equipment",
@@ -319,6 +338,23 @@ export default function SalesRecordEditModal({
               </div>
             </div>
 
+            {multiLineBill && (
+              <div className="rounded-xl border border-amber-300 bg-amber-50 p-3.5 text-sm text-amber-900">
+                <p className="font-bold">ใบขายนี้มีสินค้า {lineCount} รายการ</p>
+                <p className="mt-1 leading-relaxed">
+                  ช่องชื่อสินค้า จำนวน ราคาต่อหน่วย และยอดรวม จึงถูกล็อกไว้ — ฟอร์มนี้แก้ได้ครั้งละ 1 สินค้า
+                  ถ้าแก้จากที่นี่ ยอดขายรวมจะไม่ตรงกับรายการสินค้าในบิล
+                  ดูรายการสินค้าทั้งหมดได้ที่ลูกศร ▸ หน้าแถวในตาราง &quot;รายการขาย&quot; ในหน้า Dashboard
+                  ถ้าต้องแก้จำนวน ราคา หรือตัวสินค้า ให้ลบใบขายนี้แล้วสร้างใหม่จากใบเสนอราคาเดิม
+                  ส่วนวันที่ขาย ลูกค้า เลขที่ PO / Invoice / ใบส่งของ / ใบเสร็จ การรับประกัน และหมายเหตุ แก้ได้ตามปกติ
+                </p>
+              </div>
+            )}
+
+            {/* `<fieldset disabled>` is how this project disables a field group
+                (it is also the only way to disable a SearchableDropdown), and
+                `display: contents` keeps the surrounding layout untouched. */}
+            <fieldset disabled={multiLineBill} className="contents">
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-1.5">ชื่อสินค้าที่แสดง <span className="text-red-500">*</span></label>
               <input
@@ -327,9 +363,10 @@ export default function SalesRecordEditModal({
                 value={form.productName}
                 onChange={(e) => { const v = e.target.value; setForm(prev => ({ ...prev, productName: v })); }}
                 placeholder="ชื่อเครื่อง / สินค้า / บริการ"
-                className={`w-full px-3 py-2.5 border rounded-xl text-sm focus:ring-2 outline-none ${formErrors.productName ? "border-red-500 bg-red-50 focus:border-red-500 focus:ring-red-200" : "border-gray-200 focus:ring-indigo-200 focus:border-indigo-400"}`}
+                className={`w-full px-3 py-2.5 border rounded-xl text-sm focus:ring-2 outline-none disabled:bg-gray-100 disabled:text-gray-500 ${formErrors.productName ? "border-red-500 bg-red-50 focus:border-red-500 focus:ring-red-200" : "border-gray-200 focus:ring-indigo-200 focus:border-indigo-400"}`}
               />
             </div>
+            </fieldset>
             
             <div className="grid grid-cols-2 gap-4">
               <div>
@@ -350,6 +387,7 @@ export default function SalesRecordEditModal({
               </div>
             </div>
 
+            <fieldset disabled={multiLineBill} className="contents">
             <div className="grid grid-cols-3 gap-4">
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-1.5">จำนวน <span className="text-red-500">*</span></label>
@@ -365,7 +403,7 @@ export default function SalesRecordEditModal({
                   }}
                   onWheel={(e) => e.currentTarget.blur()}
                   placeholder="1"
-                  className={`w-full px-3 py-2.5 border rounded-xl text-sm focus:ring-2 outline-none ${formErrors.qty ? "border-red-500 bg-red-50 focus:border-red-500 focus:ring-red-200" : "border-gray-200 focus:ring-indigo-200 focus:border-indigo-400"}`}
+                  className={`w-full px-3 py-2.5 border rounded-xl text-sm focus:ring-2 outline-none disabled:bg-gray-100 disabled:text-gray-500 ${formErrors.qty ? "border-red-500 bg-red-50 focus:border-red-500 focus:ring-red-200" : "border-gray-200 focus:ring-indigo-200 focus:border-indigo-400"}`}
                 />
               </div>
               <div>
@@ -376,7 +414,7 @@ export default function SalesRecordEditModal({
                     setForm(prev => ({ ...prev, unitPrice: val, totalAmount: (prev.qty || 1) * val }));
                   }}
                   placeholder="0"
-                  className={`w-full px-3 py-2.5 border rounded-xl text-sm focus:ring-2 outline-none font-medium text-gray-800 ${formErrors.unitPrice ? "border-red-500 bg-red-50 focus:border-red-500 focus:ring-red-200" : "border-gray-200 focus:ring-indigo-200 focus:border-indigo-400"}`}
+                  className={`w-full px-3 py-2.5 border rounded-xl text-sm focus:ring-2 outline-none font-medium text-gray-800 disabled:bg-gray-100 disabled:text-gray-500 ${formErrors.unitPrice ? "border-red-500 bg-red-50 focus:border-red-500 focus:ring-red-200" : "border-gray-200 focus:ring-indigo-200 focus:border-indigo-400"}`}
                 />
               </div>
               <div>
@@ -385,10 +423,11 @@ export default function SalesRecordEditModal({
                   value={form.totalAmount || 0}
                   onChange={(val) => setForm(prev => ({ ...prev, totalAmount: val }))}
                   placeholder="0"
-                  className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none bg-gray-50 font-semibold text-gray-800"
+                  className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none bg-gray-50 font-semibold text-gray-800 disabled:text-gray-500"
                 />
               </div>
             </div>
+            </fieldset>
 
             {/* Cost Calculator Section */}
             <div className="border border-dashed border-emerald-300 rounded-xl bg-emerald-50/50 p-4 relative z-50">

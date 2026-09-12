@@ -18,6 +18,7 @@ import {
   baseDocNo,
   docNoVersion,
   SATANG_TOLERANCE,
+  REVIVED_SUPERSEDE_LABEL,
   type ReceivableRow,
 } from '@/app/lib/receivables';
 import { computeQuoteTotals, round2 } from '@/app/lib/quotationTotals';
@@ -82,6 +83,35 @@ describe('resolveReceivableStatus — terminal flags', () => {
   it('ถูกแทนที่ — a superseded row is not a receivable, so a corrected invoice is not billed twice', () => {
     const s = status({ supersededById: 'v2-id', dueDate: '2020-01-01' });
     expect(s.terminal).toBe('superseded');
+    expect(s.isOpen).toBe(false);
+  });
+
+  it('ถูกแทนที่ needs a LIVE replacement — a cancelled newer version terminates nothing', () => {
+    // Otherwise BOTH rows are terminal and the debt is in no list, no bucket
+    // and no headline, with nothing on screen to say where it went.
+    const s = status({
+      supersededById: 'v2-id',
+      supersededByCancelled: true,
+      dueDate: '2020-01-01',
+    });
+    expect(s.terminal).toBeNull();
+    expect(s.isOpen).toBe(true);
+    expect(s.revivedFromCancelledSuccessor).toBe(true);
+  });
+
+  it('still reads a supersede as terminal when the caller cannot see the other row', () => {
+    const s = status({ supersededById: 'v2-id', supersededByCancelled: false });
+    expect(s.terminal).toBe('superseded');
+    expect(status({ supersededById: 'v2-id' }).terminal).toBe('superseded');
+  });
+
+  it('ยกเลิก on the row ITSELF still wins, even when its replacement was cancelled too', () => {
+    const s = status({
+      cancelledAt: '2026-09-01T00:00:00.000Z',
+      supersededById: 'v2-id',
+      supersededByCancelled: true,
+    });
+    expect(s.terminal).toBe('cancelled');
     expect(s.isOpen).toBe(false);
   });
 
@@ -425,6 +455,168 @@ describe('buildReceivablesLedger', () => {
     );
     expect(ledger.entries).toHaveLength(0);
     expect(ledger.totalOutstanding).toBe(0);
+  });
+
+  // ── WHEN THE CORRECTION IS ITSELF CANCELLED ───────────────────────────────
+  // The original resolved terminal "superseded" BEFORE anything checked whether
+  // the row that superseded it was still alive, so ฿80,000 of real debt was
+  // absent from entries, totalOutstanding, every bucket and the overdue
+  // headline — and nothing surfaced it.
+  describe('a cancelled newer version', () => {
+    it('gives the debt back to the original instead of making it permanently terminal', () => {
+      const ledger = buildReceivablesLedger(
+        [
+          row({ id: 'v1', docNo: 'INV050926-22', totalAmount: 80000, supersededById: 'v2' }),
+          row({
+            id: 'v2',
+            docNo: 'INV050926-22v1',
+            totalAmount: 80000,
+            cancelledAt: '2026-09-05T00:00:00.000Z',
+          }),
+        ],
+        TODAY
+      );
+      expect(ledger.entries.map((e) => e.id)).toEqual(['v1']);
+      expect(ledger.totalOutstanding).toBe(80000);
+      expect(ledger.buckets.find((b) => b.id === 'd1_30')!.amount).toBe(80000);
+      expect(ledger.overdueOutstanding).toBe(80000);
+    });
+
+    it('SAYS SO on the row — the debt is back, and an admin who cancelled v1 is told why', () => {
+      const ledger = buildReceivablesLedger(
+        [
+          row({ id: 'v1', docNo: 'INV050926-22', supersededById: 'v2' }),
+          row({ id: 'v2', docNo: 'INV050926-22v1', cancelledAt: '2026-09-05T00:00:00.000Z' }),
+        ],
+        TODAY
+      );
+      const entry = ledger.entries[0];
+      expect(entry.status.revivedFromCancelledSuccessor).toBe(true);
+      expect(entry.supersededByDocNo).toBe('INV050926-22v1');
+      expect(ledger.revivedSupersededDocs.map((e) => e.id)).toEqual(['v1']);
+      expect(REVIVED_SUPERSEDE_LABEL).toContain('เวอร์ชันใหม่');
+    });
+
+    it('does the same for rows that predate supersededById, detected by the docNo alone', () => {
+      const ledger = buildReceivablesLedger(
+        [
+          row({ id: 'v1', docNo: 'INV050926-22' }),
+          row({ id: 'v2', docNo: 'INV050926-22v1', cancelledAt: '2026-09-05T00:00:00.000Z' }),
+        ],
+        TODAY
+      );
+      expect(ledger.entries.map((e) => e.id)).toEqual(['v1']);
+      expect(ledger.entries[0].status.revivedFromCancelledSuccessor).toBe(true);
+      expect(ledger.entries[0].supersededByDocNo).toBe('INV050926-22v1');
+    });
+
+    it('never revives a row that a LATER, LIVE version still replaces — that would bill it twice', () => {
+      const ledger = buildReceivablesLedger(
+        [
+          row({ id: 'v1', docNo: 'INV050926-22' }),
+          row({ id: 'v2', docNo: 'INV050926-22v1', cancelledAt: '2026-09-05T00:00:00.000Z' }),
+          row({ id: 'v3', docNo: 'INV050926-22v2' }),
+        ],
+        TODAY
+      );
+      expect(ledger.entries.map((e) => e.id)).toEqual(['v3']);
+      expect(ledger.totalOutstanding).toBe(100000);
+      expect(ledger.revivedSupersededDocs).toHaveLength(0);
+    });
+
+    it('hands the debt to the surviving MIDDLE version, not back to the original', () => {
+      // v2 replaced v1 and is alive; v3 replaced v2 and was cancelled. Exactly
+      // one row may carry the debt, and it is v2.
+      const ledger = buildReceivablesLedger(
+        [
+          row({ id: 'v1', docNo: 'INV050926-22', supersededById: 'v2' }),
+          row({ id: 'v2', docNo: 'INV050926-22v1', supersededById: 'v3' }),
+          row({
+            id: 'v3',
+            docNo: 'INV050926-22v2',
+            cancelledAt: '2026-09-05T00:00:00.000Z',
+          }),
+        ],
+        TODAY
+      );
+      expect(ledger.entries.map((e) => e.id)).toEqual(['v2']);
+      expect(ledger.totalOutstanding).toBe(100000);
+    });
+
+    it('does the same by docNo alone: the middle version survives, and nothing is billed twice', () => {
+      // The un-stamped path has to pick the highest LIVE version, not the
+      // highest version: reading v2 as the replacement of both older rows would
+      // revive BOTH of them and bill the customer twice.
+      const ledger = buildReceivablesLedger(
+        [
+          row({ id: 'v1', docNo: 'INV050926-22' }),
+          row({ id: 'v2', docNo: 'INV050926-22v1' }),
+          row({
+            id: 'v3',
+            docNo: 'INV050926-22v2',
+            cancelledAt: '2026-09-05T00:00:00.000Z',
+          }),
+        ],
+        TODAY
+      );
+      expect(ledger.entries.map((e) => e.id)).toEqual(['v2']);
+      expect(ledger.totalOutstanding).toBe(100000);
+      expect(ledger.revivedSupersededDocs.map((e) => e.id)).toEqual(['v2']);
+    });
+
+    it('cancelling the ORIGINAL instead leaves the live newer version carrying the debt, once', () => {
+      const ledger = buildReceivablesLedger(
+        [
+          row({
+            id: 'v1',
+            docNo: 'INV050926-22',
+            supersededById: 'v2',
+            cancelledAt: '2026-09-05T00:00:00.000Z',
+          }),
+          row({ id: 'v2', docNo: 'INV050926-22v1' }),
+        ],
+        TODAY
+      );
+      expect(ledger.entries.map((e) => e.id)).toEqual(['v2']);
+      expect(ledger.totalOutstanding).toBe(100000);
+    });
+
+    it('keeps a stamped supersede terminal when the newer row is not in this page of results', () => {
+      // LIMIT 2000: a row we cannot see cannot be judged, and wrongly reviving a
+      // debt that IS covered elsewhere would bill the customer twice.
+      const ledger = buildReceivablesLedger(
+        [row({ id: 'v1', docNo: 'INV050926-22', supersededById: 'somewhere-else' })],
+        TODAY
+      );
+      expect(ledger.entries).toHaveLength(0);
+      expect(ledger.revivedSupersededDocs).toHaveLength(0);
+    });
+
+    it('never lets a row supersede ITSELF out of the ledger', () => {
+      const ledger = buildReceivablesLedger(
+        [row({ id: 'same', docNo: 'INV050926-22', supersededById: 'same' })],
+        TODAY
+      );
+      expect(ledger.entries.map((e) => e.id)).toEqual(['same']);
+    });
+
+    it('makes the revived invoice count as covering its quotation again (no duplicate ใบวางบิล nudge)', () => {
+      const ledger = buildReceivablesLedger(
+        [
+          row({ id: 'v1', docNo: 'INV050926-22', linkedQuotationId: 'q1', supersededById: 'v2' }),
+          row({
+            id: 'v2',
+            docNo: 'INV050926-22v1',
+            linkedQuotationId: 'q1',
+            cancelledAt: '2026-09-05T00:00:00.000Z',
+          }),
+          row({ id: 'bn', docType: 'billing_note', docNo: 'BN050926-22', linkedQuotationId: 'q1' }),
+        ],
+        TODAY
+      );
+      expect(ledger.entries.map((e) => e.id)).toEqual(['v1']);
+      expect(ledger.unlinkedBillingNotes).toHaveLength(0);
+    });
   });
 
   it('falls back to the docNo when a row has no customer name, so no row is ever anonymous', () => {

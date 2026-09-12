@@ -4,6 +4,7 @@ import {
   getSalesRecord,
   updateSalesRecord,
   deleteSalesRecord,
+  SaleScalarsNotAttributableError,
 } from "../../../../lib/salesDashboardStore";
 import {
   syncEquipmentRowsForSalesRecord,
@@ -87,7 +88,22 @@ export const PUT = withRoute(
         );
       }
     }
-    const updated = await updateSalesRecord(id, body);
+    // This payload describes ONE product (qty / unitPrice / totalAmount), so a
+    // bill that holds several refuses any edit that would restate its money or
+    // its product — the store throws rather than writing a sale total its own
+    // line items no longer add up to. Surface that as a 400 carrying the
+    // store's Thai message (which names the fields AND where to change them),
+    // never a 500: nothing was written, the form still holds what was typed,
+    // and no equipment sync has run yet.
+    let updated;
+    try {
+      updated = await updateSalesRecord(id, body);
+    } catch (error) {
+      if (error instanceof SaleScalarsNotAttributableError) {
+        return NextResponse.json({ error: error.message }, { status: 400 });
+      }
+      throw error;
+    }
     if (!updated) {
       return NextResponse.json({ error: "ไม่พบรายการ" }, { status: 404 });
     }

@@ -20,6 +20,7 @@ import {
   deriveBillingColumns,
   BillingDocumentHasPaymentsError,
 } from '@/app/lib/billingStore';
+import { withTransaction } from '@/app/lib/db';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -128,6 +129,7 @@ describe('cancelBillingDocument — the non-destructive alternative', () => {
       .mockResolvedValueOnce([
         [{ billingDocumentId: 'inv-1', voidedAt: 'x', voidReason: 'ยกเลิกใบเสร็จรับเงิน' }],
       ])
+      .mockResolvedValueOnce([[]]) // no LIVE newer version has taken its place
       .mockResolvedValueOnce([{ affectedRows: 1 }])
       .mockResolvedValueOnce([[{ paid: '107000.00' }]])
       .mockResolvedValueOnce([{ affectedRows: 1 }]);
@@ -228,7 +230,13 @@ describe('listOpenInvoices', () => {
     await listOpenInvoices();
     const text = sql(topQuery.mock.calls[0]);
     expect(text).toContain('cancelledAt IS NULL');
-    expect(text).toContain('supersededById IS NULL');
+    // "ถูกแทนที่" has to mean replaced by a row that is STILL ALIVE: a plain
+    // `supersededById IS NULL` made an invoice whose newer version was later
+    // cancelled impossible to pick, while the debt was still real.
+    expect(text).toContain('NOT EXISTS');
+    expect(text).toContain('newer.id = billing_documents.supersededById');
+    expect(text).toContain('newer.cancelledAt IS NULL');
+    expect(text).not.toContain('AND supersededById IS NULL');
     expect(text).toContain(
       "(receivableOverride = 1 OR (receivableOverride IS NULL AND docType = 'invoice'))"
     );
@@ -273,6 +281,58 @@ describe('setDueDatesForUndatedReceivables', () => {
     // The guard matters: a due date set by hand between the read and the write
     // must survive.
     expect(sql(conn.query.mock.calls[0])).toContain('AND dueDate IS NULL');
+  });
+
+  // THE DEFECT THIS CLOSES: the count was incremented per ATTEMPT, so two
+  // admins pressing the button at the same moment both saw "อัปเดต 40 ใบ" while
+  // the second one's UPDATE matched zero rows and changed nothing.
+  it('reports only the rows it ACTUALLY wrote, not the ones it tried', async () => {
+    topQuery.mockResolvedValueOnce([
+      [
+        { id: 'a', docNo: 'INV1', customerName: 'ก', docDate: '2026-08-01' },
+        { id: 'b', docNo: 'INV2', customerName: 'ข', docDate: '2026-08-15' },
+      ],
+    ]);
+    // Someone else stamped both of these between the read and the write, so the
+    // `AND dueDate IS NULL` guard matches nothing.
+    conn.query.mockResolvedValue([{ affectedRows: 0 }]);
+
+    expect(await setDueDatesForUndatedReceivables(30)).toBe(0);
+    expect(conn.query).toHaveBeenCalledTimes(2);
+  });
+
+  it('counts the rows that were written when only some of them were still undated', async () => {
+    topQuery.mockResolvedValueOnce([
+      [
+        { id: 'a', docNo: 'INV1', customerName: 'ก', docDate: '2026-08-01' },
+        { id: 'b', docNo: 'INV2', customerName: 'ข', docDate: '2026-08-15' },
+        { id: 'c', docNo: 'INV3', customerName: 'ค', docDate: '2026-08-20' },
+      ],
+    ]);
+    conn.query
+      .mockResolvedValueOnce([{ affectedRows: 1 }])
+      .mockResolvedValueOnce([{ affectedRows: 0 }])
+      .mockResolvedValueOnce([{ affectedRows: 1 }]);
+
+    expect(await setDueDatesForUndatedReceivables(30)).toBe(2);
+  });
+
+  // withTransaction retries its callback after a transient connection loss, so
+  // a counter that lives OUTSIDE the callback keeps the abandoned attempt's
+  // tally and reports double.
+  it('does not double its count when the transaction is replayed', async () => {
+    topQuery.mockResolvedValueOnce([
+      [{ id: 'a', docNo: 'INV1', customerName: 'ก', docDate: '2026-08-01' }],
+    ]);
+    conn.query.mockResolvedValue([{ affectedRows: 1 }]);
+    vi.mocked(withTransaction).mockImplementationOnce((async (
+      fn: (c: typeof conn) => Promise<number>
+    ) => {
+      await fn(conn);
+      return fn(conn);
+    }) as never);
+
+    expect(await setDueDatesForUndatedReceivables(30)).toBe(1);
   });
 
   it('only targets rows that actually carry debt, and skips ones with no docDate', async () => {
