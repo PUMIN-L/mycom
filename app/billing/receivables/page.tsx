@@ -12,6 +12,7 @@ import RecordPaymentModal, {
 import ReceivablesGuidePanel from "../../components/ReceivablesGuidePanel";
 import {
   PAYMENT_STATE_LABELS,
+  REVIVED_SUPERSEDE_LABEL,
   dueStateLabel,
   type AgeingBucketId,
   type ReceivableEntry,
@@ -53,6 +54,11 @@ interface LedgerPayload {
   buckets: AgeingBucketTotal[];
   customers: CustomerReceivableGroup[];
   unlinkedBillingNotes: ReceivableEntry[];
+  /** Rows that are in `entries` — and in ยอดค้างทั้งหมด — ONLY because the
+   *  version that had replaced them was cancelled. The ledger ships them
+   *  separately so this screen can say a debt came back and why; without that
+   *  the admin sees a total that grew with nothing on screen to explain it. */
+  revivedSupersededDocs: ReceivableEntry[];
   zeroTotalInvoices: ReceivableEntry[];
   undatedTargets: { id: string; docNo: string; customerName: string; docDate: string }[];
 }
@@ -89,6 +95,11 @@ export default function ReceivablesPage() {
   const [savingDueDate, setSavingDueDate] = useState(false);
   const [confirmBulkDueDates, setConfirmBulkDueDates] = useState(false);
   const [bulkSaving, setBulkSaving] = useState(false);
+  /** The revived row the admin is about to rule out of the ledger. Behind a
+   *  ConfirmDialog because it is the one action on this screen that REMOVES
+   *  money from ยอดค้างทั้งหมด, and nothing on this screen puts it back. */
+  const [dismissRevivedTarget, setDismissRevivedTarget] = useState<ReceivableEntry | null>(null);
+  const [dismissingRevived, setDismissingRevived] = useState(false);
   /** คู่มือการใช้งาน — a plain boolean, like /crm/alerts and the PDF editor: no
    *  route, no query string, so opening it never disturbs the bucket tile, the
    *  customer filter or the ยังไม่กำหนด tick the admin was reading. */
@@ -216,6 +227,22 @@ export default function ReceivablesPage() {
       setBulkSaving(false);
       setConfirmBulkDueDates(false);
     }
+  }
+
+  /** "ไม่นับเป็นลูกหนี้" on a revived row — the same explicit, one-click admin
+   *  decision the ใบวางบิล nudge offers, for the opposite direction: the debt
+   *  came back and the admin says it should not have. The code still never
+   *  guesses; it only ever asks. */
+  async function handleDismissRevived() {
+    if (!dismissRevivedTarget) return;
+    setDismissingRevived(true);
+    await patchReceivable(
+      dismissRevivedTarget.id,
+      { receivableOverride: 0 },
+      "ไม่นับใบนี้เป็นลูกหนี้แล้ว"
+    );
+    setDismissingRevived(false);
+    setDismissRevivedTarget(null);
   }
 
   if (authLoading || !isLoggedIn) {
@@ -420,7 +447,26 @@ export default function ReceivablesPage() {
                                   {PAYMENT_STATE_LABELS.partial}
                                 </span>
                               )}
+                              {entry.status.revivedFromCancelledSuccessor && (
+                                <span className="text-[10px] font-bold bg-rose-100 text-rose-700 px-2 py-0.5 rounded-full">
+                                  ↩️ {REVIVED_SUPERSEDE_LABEL}
+                                </span>
+                              )}
                             </div>
+                            {/* The debt is real and it IS counted — but an
+                                admin who believes he cancelled this invoice
+                                meets it here first, so the row says why it is
+                                back before he wonders whether the total is
+                                wrong. */}
+                            {entry.status.revivedFromCancelledSuccessor && (
+                              <p className="text-xs text-rose-600 mt-1 wrap-break-word">
+                                เคยถูกแทนที่ด้วย
+                                {entry.supersededByDocNo
+                                  ? ` ${entry.supersededByDocNo} `
+                                  : "เวอร์ชันใหม่ "}
+                                แต่เวอร์ชันนั้นถูกยกเลิก หนี้ก้อนนี้จึงกลับมาอยู่ในยอดค้าง
+                              </p>
+                            )}
                             <p className="text-xs text-gray-500 mt-1">
                               ครบกำหนด{" "}
                               {entry.dueDate ? formatDisplayDate(entry.dueDate) : "ยังไม่กำหนด"}
@@ -495,6 +541,66 @@ export default function ReceivablesPage() {
                     </ul>
                   </div>
                 ))}
+              </div>
+            )}
+
+            {/* ── Nudge: กลับมาเป็นลูกหนี้ ──
+                A debt that RE-ENTERS the total is the one change to this page
+                the admin cannot otherwise account for: he cancelled the new
+                version believing that closed the matter, and the old invoice
+                came back with it. The row badge explains it where he meets the
+                row — but the row can be filtered away by a bucket tile or by
+                the ยังไม่กำหนด tick, while the money is in the headline either
+                way. This list is NOT filtered, so the total can never grow with
+                nothing on screen to say why. Placed first among the nudges for
+                the same reason: it is the only one that moves ยอดค้าง. */}
+            {(data.revivedSupersededDocs ?? []).length > 0 && (
+              <div className="bg-white rounded-2xl shadow-sm p-5 border-l-4 border-rose-400">
+                <h2 className="font-bold text-gray-900">
+                  ↩️ กลับมาเป็นลูกหนี้: เวอร์ชันใหม่ถูกยกเลิก ({data.revivedSupersededDocs.length})
+                </h2>
+                <p className="text-xs text-gray-500 mt-1 wrap-break-word">
+                  ใบเหล่านี้เคยถูกแทนที่ด้วยเวอร์ชันใหม่ จึงเคยหายไปจากยอดค้าง
+                  แต่เวอร์ชันที่มาแทนถูกยกเลิก หนี้ก้อนเดิมจึง
+                  <strong>กลับมาอยู่ในยอดค้างทั้งหมดและช่วงอายุหนี้อีกครั้ง</strong> —
+                  ถ้ายังต้องเก็บเงินก้อนนี้จริง ไม่ต้องทำอะไร ถ้าตั้งใจให้จบไปแล้ว ให้กด
+                  &quot;ไม่นับเป็นลูกหนี้&quot; หรือเปิดเอกสารแล้วกด &quot;ยกเลิกเอกสาร&quot;
+                </p>
+                <ul className="divide-y divide-gray-100 mt-3">
+                  {data.revivedSupersededDocs.map((rev) => (
+                    <li
+                      key={rev.id}
+                      className="py-3 flex items-center justify-between gap-3 flex-wrap"
+                    >
+                      <div className="min-w-0">
+                        <p className="font-mono text-sm font-semibold text-gray-800">
+                          {rev.docNo || "-"}
+                        </p>
+                        <p className="text-xs text-gray-500 line-clamp-1">
+                          {rev.customerName} · ค้าง ฿{fmt(rev.status.outstanding)}
+                        </p>
+                        <p className="text-xs text-rose-600 wrap-break-word">
+                          เวอร์ชันที่ถูกยกเลิก:{" "}
+                          {rev.supersededByDocNo || "ไม่พบเลขที่ของเวอร์ชันนั้น"}
+                        </p>
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => setDismissRevivedTarget(rev)}
+                          className="px-3 py-1.5 rounded-lg border border-gray-300 text-gray-600 text-xs font-semibold hover:bg-gray-50 transition"
+                        >
+                          ไม่นับเป็นลูกหนี้
+                        </button>
+                        <Link
+                          href={`/billing?id=${encodeURIComponent(rev.id)}&view=1`}
+                          className="px-3 py-1.5 rounded-lg border border-gray-300 text-gray-600 text-xs font-semibold hover:bg-gray-50 transition"
+                        >
+                          เปิดเอกสาร
+                        </Link>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
               </div>
             )}
 
@@ -650,6 +756,20 @@ export default function ReceivablesPage() {
           onConfirm={handleBulkDueDates}
           onCancel={() => setConfirmBulkDueDates(false)}
           loading={bulkSaving}
+        />
+      )}
+
+      {dismissRevivedTarget && (
+        <ConfirmDialog
+          title="ไม่นับใบนี้เป็นลูกหนี้"
+          message={`${dismissRevivedTarget.docNo || "-"} · ${dismissRevivedTarget.customerName}\nยอดค้าง ฿${fmt(
+            dismissRevivedTarget.status.outstanding
+          )} จะหายออกจากยอดค้างทั้งหมดทันที\nเอกสารและประวัติการรับชำระยังอยู่ครบ ไม่มีอะไรถูกลบ\n\nหน้านี้ยังไม่มีปุ่มกดให้กลับมานับใหม่ ถ้าไม่แน่ใจ ปล่อยไว้ก่อนดีกว่า`}
+          confirmText="ไม่นับเป็นลูกหนี้"
+          loadingText="กำลังบันทึก..."
+          onConfirm={handleDismissRevived}
+          onCancel={() => setDismissRevivedTarget(null)}
+          loading={dismissingRevived}
         />
       )}
 

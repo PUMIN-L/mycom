@@ -123,6 +123,12 @@ export const TERMINAL_LABELS: Record<ReceivableTerminal, string> = {
  * survived. The debt is real again and it is counted again, but silently
  * putting it back would ambush an admin who believes he cancelled it — so the
  * row says why it is here.
+ *
+ * Rendered as the rose badge on each revived row of /billing/receivables. A
+ * badge can be filtered off the screen by a bucket tile while the money stays
+ * in the headline, so `revivedSupersededDocs` below is rendered UNFILTERED
+ * beside it; the two together are what stop a debt re-entering ยอดค้าง with
+ * nothing on screen to explain it.
  */
 export const REVIVED_SUPERSEDE_LABEL = "เวอร์ชันใหม่ถูกยกเลิก — กลับมาเป็นลูกหนี้";
 
@@ -178,8 +184,9 @@ export interface ReceivableStatus {
    *  terminal flag AND money is still owed. */
   isOpen: boolean;
   /** This row is back in the ledger only because the newer version that
-   *  replaced it was cancelled. Rendered as REVIVED_SUPERSEDE_LABEL so the
-   *  debt's return is stated rather than merely happening.
+   *  replaced it was cancelled. Rendered as REVIVED_SUPERSEDE_LABEL on the row
+   *  in /billing/receivables, so the debt's return is stated rather than
+   *  merely happening.
    *
    *  OPTIONAL only so that the few places which hand-build a `ReceivableStatus`
    *  to sample a label (ReceivablesGuidePanel) need not restate it;
@@ -361,7 +368,14 @@ export interface ReceivablesLedger {
   /** Rows that are back in `entries` ONLY because the newer version that had
    *  replaced them was cancelled. They ARE counted in every total — the debt is
    *  real — and they are listed here as well so the screen can say so out loud
-   *  instead of a cancelled correction quietly re-billing a customer. */
+   *  instead of a cancelled correction quietly re-billing a customer.
+   *
+   *  Rendered as the "↩️ กลับมาเป็นลูกหนี้: เวอร์ชันใหม่ถูกยกเลิก" panel on
+   *  /billing/receivables, alongside the ใบวางบิล and ยังไม่มียอด nudges, with
+   *  a confirmed "ไม่นับเป็นลูกหนี้" for the admin who meant the cancellation
+   *  to close the matter. It is deliberately NOT subject to the bucket or
+   *  customer filters: the money it explains is in the headline regardless of
+   *  them. */
   revivedSupersededDocs: ReceivableEntry[];
   /** Invoices with no lines/amount: usually an unfinished document, so they get
    *  a "ตรวจสอบ" nudge instead of silently vanishing. */

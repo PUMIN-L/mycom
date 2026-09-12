@@ -140,7 +140,16 @@ describe('searchDatedAlerts — the search ignores every window the feed uses', 
 
     // A withdrawn document's due date no longer means anything.
     expect(sql).toContain('b.cancelledAt IS NULL');
-    expect(sql).toContain('b.supersededById IS NULL');
+    // "ถูกแทนที่" = replaced by a row that is STILL ALIVE, the same rule the
+    // ledger screen, the feed and listOpenInvoices apply. Raise a correction,
+    // cancel the correction, and a plain `b.supersededById IS NULL` erased the
+    // original invoice from the very day it fell due — while /billing/receivables
+    // was still counting that debt and badging it "เวอร์ชันใหม่ถูกยกเลิก".
+    // Bites: the old clause fails the negative assertion below.
+    expect(sql).toContain('NOT EXISTS');
+    expect(sql).toContain('newer.id = b.supersededById');
+    expect(sql).toContain('newer.cancelledAt IS NULL');
+    expect(sql).not.toContain('b.supersededById IS NULL');
     // Same debtCarrier rule as the feed.
     expect(sql).toContain('b.receivableOverride = 1');
     expect(sql).toContain("b.docType = 'invoice'");

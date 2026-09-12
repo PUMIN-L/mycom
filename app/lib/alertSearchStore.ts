@@ -84,11 +84,23 @@ const EQUIPMENT_SEARCH_FROM = `
 // anything. There is deliberately NO outstanding-balance clause: a document
 // that has been paid in full still genuinely fell due on that day, and the
 // point of searching a past date is to review what was supposed to happen.
+//
+// "ถูกแทนที่" MEANS REPLACED BY A ROW THAT IS STILL ALIVE, exactly as in
+// `getAlerts`, `listOpenInvoices` and `buildReceivablesLedger`. A plain
+// `supersededById IS NULL` withdraws a document that nothing replaces any
+// more: raise a correction, cancel the correction, and the original invoice
+// disappears from the day it fell due while the ledger screen is still
+// counting it. Searching a past date is how the owner reconstructs that day,
+// so it has to show the same debts the day's ledger did.
 const RECEIVABLE_SEARCH_WHERE = `
   WHERE b.dueDate IS NOT NULL
     AND b.dueDate BETWEEN ? AND ?
     AND b.cancelledAt IS NULL
-    AND b.supersededById IS NULL
+    AND NOT EXISTS (
+          SELECT 1 FROM billing_documents newer
+           WHERE newer.id = b.supersededById
+             AND newer.cancelledAt IS NULL
+        )
     AND (b.receivableOverride = 1
          OR (b.receivableOverride IS NULL AND b.docType = 'invoice'))`;
 

@@ -718,13 +718,30 @@ function AnnotationBody({
           // PDF angles run counter-clockwise, CSS clockwise.
           transform: angleDeg ? `rotate(${-angleDeg}deg)` : undefined,
           transformOrigin: "left bottom",
-          justifyContent:
-            align === "center" ? "center" : align === "right" ? "flex-end" : "flex-start",
         }}
       >
         <span
-          className="leading-tight whitespace-pre-wrap"
+          className="w-full leading-tight whitespace-pre-wrap"
           style={{
+            // ALIGNMENT IS PER LINE, INSIDE THE FULL RECTANGLE — `text-align`
+            // on a full-width span, never `justify-content` on the parent.
+            // The export (`drawTextAnnotation` in app/lib/pdfApplyEdits.ts)
+            // offsets EVERY line on its own: `dx = frame.width - lineWidth` for
+            // right, half of that for centre. A shrink-to-fit span justified by
+            // the flex parent instead centres the BLOCK and leaves the lines
+            // left-aligned and ragged inside it, so a two-line centred
+            // annotation sat in a visibly different place on screen than in the
+            // downloaded PDF (measured in Chrome: on a 200px box, "aaaa\nbb"
+            // centred put the second line at 82.2px on screen and at 91.1px in
+            // the PDF). Full width + text-align reproduces the export's
+            // arithmetic exactly, for left, centre and right.
+            //
+            // Whitespace behaves the same on both sides under this markup:
+            // `pre-wrap` counts leading spaces and the trailing spaces of a
+            // line ended by a newline or by the end of the text toward the
+            // alignment, which is what `wrapThai` keeps, and HANGS the space a
+            // soft wrap lands on, which is what `wrapThai` strips.
+            textAlign: align,
             fontFamily: "Sarabun, sans-serif",
             fontWeight: bold ? 700 : 400,
             // Points and CSS px coincide only at 100% zoom; this is a preview

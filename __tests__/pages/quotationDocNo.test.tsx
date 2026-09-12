@@ -191,6 +191,88 @@ describe('quotation builder — minting the running number', () => {
       expect(screen.getByText(/ยังยืนยันไม่ได้ว่าเลขที่นี้ว่าง/)).toBeInTheDocument()
     );
   });
+
+  // ── A FAILED read is not a read ────────────────────────────────────────────
+  // The failure resolves to `{docs: [], failed: true}`, so "the ledger arrived"
+  // (`docs !== null`) is true for it too. Treating that as ready let the
+  // allocator run over `knownDocNos`, which on a failed read is nothing but the
+  // 7-DAY WINDOW — the one source that cannot see last year's numbers under
+  // this very prefix, and precisely what the unwindowed lookup replaced.
+  it('issues NOTHING from the 7-day window when the unwindowed read fails', async () => {
+    baseLookupFails = true;
+    // The window can see today's numbers under this prefix …
+    recentWindow = [
+      { docNo: 'QT251026-23', quotationId: 'w1' },
+      { docNo: 'QT251026-24', quotationId: 'w2' },
+      { docNo: 'QT251026-25', quotationId: 'w3' },
+    ];
+    // … and cannot see these, issued on 26 Oct 2025 under the legacy shape.
+    // They are unreachable in this test because the base lookup is down — which
+    // is the whole point: nobody knows they are there.
+    ledgerByBase[CURRENT_PREFIX] = lastYearsNumbers(26, 27);
+
+    await openOn25Oct2026();
+    await waitFor(() =>
+      expect(screen.getByText(/ยังยืนยันไม่ได้ว่าเลขที่นี้ว่าง/)).toBeInTheDocument()
+    );
+
+    // Before this fix the box read QT251026-26 — "free" according to the window,
+    // owned since 2025 according to used_docnos, and refused at save time.
+    await waitFor(() => expect(docNoInput().value).toBe('QT251026-22'), { timeout: 2000 });
+    expect(docNoInput().value).not.toBe('QT251026-26');
+    // What is left is the day's OPENING number: no allocation happened, and the
+    // number was still re-seated onto the date the document now carries instead
+    // of keeping the prefix of the date the page opened on.
+    expect(docNoInput().value).toBe('QT251026-22');
+    // Warned, not blocked: used_docnos' PRIMARY KEY and the 409 path are the
+    // enforcement, and the admin may still save.
+    expect(saveButton()).not.toBeDisabled();
+  });
+
+  // The failed state has to be escapable without reloading the page, because
+  // until the unwindowed ledger is read no number can be issued at all.
+  it('issues the number from the unwindowed ledger once the retry succeeds', async () => {
+    baseLookupFails = true;
+    ledgerByBase[CURRENT_PREFIX] = lastYearsNumbers(22, 23, 24);
+
+    await openOn25Oct2026();
+    await waitFor(() => expect(docNoInput().value).toBe('QT251026-22'));
+
+    baseLookupFails = false; // the DB is back
+    fireEvent.click(screen.getByRole('button', { name: /ลองตรวจสอบเลขที่อีกครั้ง/ }));
+
+    // Now — and only now — the day's sequence continues past last year's
+    // numbers, and the warning goes away.
+    await waitFor(() => expect(docNoInput().value).toBe('QT251026-25'));
+    expect(screen.queryByText(/ยังยืนยันไม่ได้ว่าเลขที่นี้ว่าง/)).not.toBeInTheDocument();
+  });
+
+  // The 409 path re-reads the ledger and moves the document forward. If that
+  // re-read also fails, the number it advanced onto must STAY: dragging it back
+  // to the day's opening number would hand back a number the server just
+  // refused, which is the "same rejected number forever" bug all over again.
+  it('never drags a 409-advanced number back to the opening number', async () => {
+    ledgerByBase[CURRENT_PREFIX] = [];
+    await openOn25Oct2026();
+    await waitFor(() => expect(docNoInput().value).toBe('QT251026-22'));
+
+    // Another admin takes -22, and by the time the 409 comes back the ledger
+    // itself is down — so the re-read inside the recovery path fails too.
+    ledgerByBase[CURRENT_PREFIX] = [{ docNo: 'QT251026-22', quotationId: 'other' }];
+    baseLookupFails = true;
+    saveResponses = [{ status: 409, body: { error: 'เลขที่นี้ถูกใช้แล้ว' } }];
+    fireEvent.click(saveButton());
+
+    // It still moves FORWARD off the refused number …
+    await waitFor(() => expect(docNoInput().value).toBe('QT251026-23'));
+    // … and the now-failed ledger, which the mint effect sees next, must not
+    // pull it back to the opening number the server has just refused.
+    await waitFor(() =>
+      expect(screen.getByText(/ยังยืนยันไม่ได้ว่าเลขที่นี้ว่าง/)).toBeInTheDocument()
+    );
+    await new Promise((r) => setTimeout(r, 60));
+    expect(docNoInput().value).toBe('QT251026-23');
+  });
 });
 
 describe('quotation builder — a number the server refuses', () => {

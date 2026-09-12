@@ -1226,14 +1226,28 @@ export async function getAlerts(
   //
   // The eligibility clause is the debtCarrier rule from receivables.ts, in SQL:
   // an invoice by default, plus anything the admin explicitly overrode IN,
-  // minus anything overridden OUT. Cancelled and superseded rows never alert.
-  // Every column read here is denormalised, so the JSON blob is never touched.
+  // minus anything overridden OUT. Every column read here is denormalised, so
+  // the JSON blob is never touched.
+  //
+  // "ถูกแทนที่" MEANS REPLACED BY A ROW THAT IS STILL ALIVE — the NOT EXISTS,
+  // never a plain `supersededById IS NULL`. When a correction is raised and
+  // then CANCELLED, nothing replaces the original any more: the debt is real
+  // again, `buildReceivablesLedger` puts it back in ยอดค้างทั้งหมด with a
+  // "เวอร์ชันใหม่ถูกยกเลิก" badge, and `listOpenInvoices` lets a receipt be
+  // pointed at it. This clause is the SAME rule, or the bell is the one place
+  // that can never mention a debt the ledger screen is showing — an invoice
+  // months overdue that no alert will ever raise, because the version that
+  // briefly replaced it was withdrawn.
   const dueCutoff = bangkokDateString(
     new Date(Date.now() + RECEIVABLE_ALERT_LEAD_DAYS * 86400000)
   );
   const RECEIVABLE_WHERE = `
      WHERE b.cancelledAt IS NULL
-       AND b.supersededById IS NULL
+       AND NOT EXISTS (
+             SELECT 1 FROM billing_documents newer
+              WHERE newer.id = b.supersededById
+                AND newer.cancelledAt IS NULL
+           )
        AND (b.receivableOverride = 1
             OR (b.receivableOverride IS NULL AND b.docType = 'invoice'))
        AND b.dueDate IS NOT NULL

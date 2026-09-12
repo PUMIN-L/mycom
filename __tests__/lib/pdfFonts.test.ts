@@ -16,6 +16,17 @@ import {
   THAI_FONT_URLS,
   type TextMeasurer,
 } from "@/app/lib/pdfFonts";
+import { createElement } from "react";
+import { render, cleanup } from "@testing-library/react";
+import PageOverlay from "@/app/tools/pdf-editor/PageOverlay";
+
+/** PageOverlay only imports `pdfCoords`, but react-pdf sits in its module graph
+ *  via the editor's types; stubbing it keeps jsdom from meeting pdfjs. */
+vi.mock("react-pdf", () => ({
+  Document: () => null,
+  Page: () => null,
+  pdfjs: { GlobalWorkerOptions: {} },
+}));
 
 const PUBLIC_DIR = path.resolve(__dirname, "../../public");
 
@@ -396,5 +407,219 @@ describe("wrapThai", () => {
     expect(wrapThai("aaa bbb ccc", ruler, 1, 7)).toEqual(["aaa bbb", "ccc"]);
     expect(wrapThai("aaa bbb ccc", ruler, 1, 3)).toEqual(["aaa", "bbb", "ccc"]);
     expect(wrapThai("abcdefgh", ruler, 1, 3)).toEqual(["abc", "def", "gh"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Preview vs export: the same text must land in the same place on screen and
+// in the downloaded PDF, for left, centre and right.
+//
+// A reviewer put it to us that `white-space: pre-wrap` HANGS trailing spaces
+// instead of counting them toward alignment, which would make the trailing
+// space `wrapThai` deliberately keeps a preview/PDF divergence. It does not, in
+// this markup. Measured in headless Chromium against the overlay's real CSS
+// (a `pre-wrap` span in a 200px box, 16px sans-serif, one space = 4.45px):
+//
+//   "abc   " right-aligned   line box [160.86, 200]   glyphs end at 186.66
+//   "ab  \ncd" centred       line 1 [86.66, 113.34] — the 2 spaces are inside
+//   "aaaa bbbb" right, 60px  "aaaa" ends at 60, the WRAP space hangs to 64.45
+//
+// So the browser counts a trailing space that a newline or the end of the text
+// ends, and hangs only the one a soft wrap lands on — exactly the split
+// `wrapParagraph` implements. What did NOT line up was alignment of a wrapped
+// block, and that was the preview's fault: see the PageOverlay test below.
+// ---------------------------------------------------------------------------
+
+/** The export's own arithmetic, from `drawTextAnnotation` in pdfApplyEdits.ts. */
+function lineOffset(
+  lineWidth: number,
+  frameWidth: number,
+  align: "left" | "center" | "right"
+): number {
+  if (align === "center") return (frameWidth - lineWidth) / 2;
+  if (align === "right") return frameWidth - lineWidth;
+  return 0;
+}
+
+describe("wrapThai — what the export then does with the lines", () => {
+  let font: Awaited<ReturnType<typeof loadThaiFont>>;
+
+  beforeEach(async () => {
+    const doc = await PDFDocument.create();
+    font = await loadThaiFont(doc, "regular");
+  });
+
+  const SIZE = 12;
+  const FRAME = 300;
+  const w = (s: string) => font.widthOfTextAtSize(s, SIZE);
+
+  it("lets a trailing space shift a centred and a right-aligned line, exactly as the preview does", () => {
+    const typed = "รายการ  ";
+    const [line] = wrapThai(typed, font, SIZE, FRAME);
+    expect(line).toBe(typed);
+
+    const spaces = w(typed) - w("รายการ");
+    expect(spaces).toBeGreaterThan(0);
+
+    // Where the last GLYPH ends: offset of the line + width of its visible part.
+    const glyphEnd = (align: "left" | "center" | "right") =>
+      lineOffset(w(line), FRAME, align) + w("รายการ");
+
+    expect(glyphEnd("left")).toBeCloseTo(w("รายการ"), 5);
+    // Right: the text stops one trailing space short of the right edge — which
+    // is where the browser puts it too, because the space is inside the line
+    // box that `text-align: right` pushes flush.
+    expect(glyphEnd("right")).toBeCloseTo(FRAME - spaces, 5);
+    // Centre: half a space short of centre.
+    expect(glyphEnd("center")).toBeCloseTo((FRAME + w("รายการ")) / 2 - spaces / 2, 5);
+
+    // This is the bite: stripping the trailing space (what `.trim()` used to do,
+    // and what the reviewer's reading would have us restore) moves the glyphs.
+    expect(glyphEnd("right")).toBeLessThan(
+      lineOffset(w("รายการ"), FRAME, "right") + w("รายการ")
+    );
+  });
+
+  it("does not let the space a WRAP lands on push a line off its alignment", () => {
+    // 10pt per character: "aaa bbb" at width 5 breaks after "aaa".
+    const ruler: TextMeasurer = { widthOfTextAtSize: (t, size) => t.length * size };
+    const lines = wrapThai("aaa bbb", ruler, 1, 5);
+    expect(lines).toEqual(["aaa", "bbb"]);
+
+    for (const align of ["left", "center", "right"] as const) {
+      for (const line of lines) {
+        const width = ruler.widthOfTextAtSize(line, 1);
+        const end = lineOffset(width, 10, align) + width;
+        // Flush against the edge the alignment picks, with no phantom space —
+        // the browser hangs that space outside the line box, so it must not be
+        // measured here either.
+        expect(end).toBeCloseTo(align === "left" ? 3 : align === "center" ? 6.5 : 10, 5);
+      }
+    }
+  });
+
+  it("keeps a right-aligned line flush right even when the admin indented it", () => {
+    const lines = wrapThai("    รายการ", font, SIZE, FRAME);
+    expect(lines).toEqual(["    รายการ"]);
+    // The indent is inside the line, so the text still ends at the right edge
+    // and the gap shows up on the left — same as `text-align: right` on a
+    // `pre-wrap` span, which never hangs LEADING space.
+    expect(lineOffset(w(lines[0]), FRAME, "right") + w(lines[0])).toBeCloseTo(FRAME, 5);
+    expect(lineOffset(w(lines[0]), FRAME, "left")).toBe(0);
+  });
+
+  it("gives a whitespace-only paragraph no offset to carry", () => {
+    const lines = wrapThai("ก\n   \nข", font, SIZE, FRAME);
+    expect(lines).toEqual(["ก", "", "ข"]);
+    // "" is skipped by the export; were the spaces kept, a centred block would
+    // have a blank line sticking out to the left of the two real ones.
+    expect(w(lines[1])).toBe(0);
+  });
+
+  it("aligns EVERY line on its own, so a ragged wrapped block is not a block", () => {
+    const ruler: TextMeasurer = { widthOfTextAtSize: (t, size) => t.length * size };
+    const lines = wrapThai("aaaa\nbb", ruler, 1, 10);
+    expect(lines).toEqual(["aaaa", "bb"]);
+
+    const dx = (line: string, align: "left" | "center" | "right") =>
+      lineOffset(ruler.widthOfTextAtSize(line, 1), 10, align);
+
+    expect([dx(lines[0], "center"), dx(lines[1], "center")]).toEqual([3, 4]);
+    expect([dx(lines[0], "right"), dx(lines[1], "right")]).toEqual([6, 8]);
+    // The short line is NOT left-aligned under the long one. The preview used
+    // to draw it that way; PageOverlay now matches this.
+    expect(dx(lines[1], "center")).not.toBe(dx(lines[0], "center"));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The preview half of the same contract. It lives here, next to the arithmetic
+// it has to agree with, because this pair of assertions IS the fix: the export
+// offsets each line inside the whole rectangle, so the overlay has to align
+// each line inside the whole rectangle too — a shrink-to-fit span justified by
+// its flex parent centres the BLOCK and leaves the lines ragged-left inside it.
+// jsdom does no layout, so what is checked is the markup that produces the
+// layout: a full-width span carrying `text-align`, not a parent carrying
+// `justify-content`.
+// ---------------------------------------------------------------------------
+
+describe("PageOverlay — a text annotation's preview markup", () => {
+  const ALIGNS = ["left", "center", "right"] as const;
+
+  /** jsdom measures every element as 0x0, and a zero-size box makes the overlay
+   *  render no annotations at all (`ready` is false). This is that measurement. */
+  let rectSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    rectSpy = vi.spyOn(Element.prototype, "getBoundingClientRect").mockReturnValue({
+      left: 0,
+      top: 0,
+      right: 600,
+      bottom: 600,
+      width: 600,
+      height: 600,
+      x: 0,
+      y: 0,
+      toJSON: () => {},
+    } as DOMRect);
+  });
+  afterEach(() => {
+    cleanup();
+    rectSpy.mockRestore();
+  });
+
+  function renderText(align: (typeof ALIGNS)[number]) {
+    const ann = {
+      kind: "text" as const,
+      id: `txt_${align}`,
+      pageId: "pg_1",
+      rect: { x: 40, y: 40, width: 200, height: 80 },
+      text: "  บรรทัดที่หนึ่ง\nสอง  ",
+      sizePt: 14,
+      color: { r: 0, g: 0, b: 0 },
+      bold: false,
+      align,
+      angleDeg: 0,
+    };
+    const { container } = render(
+      createElement(PageOverlay, {
+        pageId: "pg_1",
+        widthPt: 600,
+        heightPt: 600,
+        rotation: 0,
+        annotations: [ann],
+        assetUrls: {},
+        tool: "select",
+        selectedAnnotationId: null,
+        pageProxy: null,
+        onSelectAnnotation: () => {},
+        onCreateRect: () => {},
+        onCommitRect: () => {},
+      })
+    );
+    const span = Array.from(container.querySelectorAll("span")).find(
+      (el) => el.textContent === ann.text
+    );
+    expect(span, "the annotation's text span is not in the overlay").toBeTruthy();
+    return { span: span as HTMLSpanElement, parent: (span as HTMLSpanElement).parentElement! };
+  }
+
+  for (const align of ALIGNS) {
+    it(`aligns each line inside the full rectangle when align is "${align}"`, () => {
+      const { span, parent } = renderText(align);
+
+      // Per-line alignment, over the rectangle's whole width.
+      expect(span.style.textAlign).toBe(align);
+      expect(span.className).toContain("w-full");
+      // ...and NOT block alignment, which is what put a wrapped centred
+      // annotation in a different place on screen than in the PDF.
+      expect(parent.style.justifyContent).toBe("");
+      // Still the whitespace mode the wrapper's leading/trailing rules assume.
+      expect(span.className).toContain("whitespace-pre-wrap");
+    });
+  }
+
+  it("renders the admin's leading and trailing spaces verbatim", () => {
+    const { span } = renderText("center");
+    expect(span.textContent).toBe("  บรรทัดที่หนึ่ง\nสอง  ");
   });
 });

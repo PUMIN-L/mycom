@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { withRoute, requireAuth } from "../../../lib/apiHelpers";
+import { withRoute, requireAuth, ApiError } from "../../../lib/apiHelpers";
 import { sanitizePlainText } from "../../../lib/sanitizeHtml";
 import {
   listDocNosByBase,
@@ -29,6 +29,30 @@ import {
 // `base` may be repeated — `?base=QT251026-&base=QT261025-` — because a day has
 // TWO legitimate prefixes (current DDMMYY + legacy YYMMDD) and the mint must
 // see both in one answer. The lists are merged and de-duplicated by docNo.
+
+/**
+ * How many `base` params one request may carry.
+ *
+ * Every distinct base is its own `LIKE 'base%'` scan, and they all run at once
+ * under Promise.all — against the single shared TiDB instance the whole
+ * business runs on, and `used_docnos` is never purged so that scan only ever
+ * gets longer. Before `base` could repeat, this route ran exactly ONE query;
+ * unbounded, one authenticated tab can turn a single request into two hundred
+ * concurrent non-indexable scans.
+ *
+ * Two is all any real caller needs (the day's two prefixes, or one whole number
+ * for the version picker); four leaves headroom without being a fan-out.
+ *
+ * Over the bound the request is REFUSED, never trimmed to the first four:
+ * answering about fewer bases than were asked for would hand the mint a ledger
+ * missing exactly the prefix it could not see, which is the bug this whole
+ * `?base=` path exists to prevent.
+ *
+ * Deliberately NOT exported: Next validates a route module's exports, and a
+ * route file may only export its HTTP methods and the framework's own config.
+ */
+const MAX_DOCNO_BASES = 4;
+
 export const GET = withRoute(
   "โหลดเลขที่ที่ใช้แล้วไม่สำเร็จ",
   async (request?: NextRequest) => {
@@ -39,6 +63,14 @@ export const GET = withRoute(
 
     if (bases.length === 0) {
       return NextResponse.json(await listRecentDocNos());
+    }
+    // Counted BEFORE de-duplication, on purpose: the bound is on what the
+    // request asked for, and no caller of this app asks about five bases.
+    if (bases.length > MAX_DOCNO_BASES) {
+      throw new ApiError(
+        400,
+        `ขอเลขที่ได้สูงสุด ${MAX_DOCNO_BASES} ชุดต่อหนึ่งคำขอ กรุณาแยกคำขอ`
+      );
     }
 
     // De-duplicate the bases first: the two prefixes coincide on the dates

@@ -16,9 +16,16 @@ import { bangkokDateString } from "../../../lib/dateFormat";
  *
  * ONE query returns the rows without their `data` blob and JS does the
  * classification, the ageing and the per-customer subtotals
- * (`buildReceivablesLedger`) — the same pure function the row badge and the
- * alert card use, so the tiles and the badges can never disagree. This mirrors
- * how getAlerts() already lets the query select and the caller classify.
+ * (`buildReceivablesLedger`) — one pure function behind the tiles, the buckets
+ * and the row badges, so they can never disagree. This mirrors how getAlerts()
+ * already lets the query select and the caller classify.
+ *
+ * getAlerts() itself does NOT call this function: the bell filters in SQL, for
+ * its own snooze join and its own lead-time window. The two therefore have to
+ * be kept saying the same thing BY HAND — in particular what "ถูกแทนที่" means
+ * (replaced by a row that is STILL ALIVE, so a cancelled correction revives the
+ * original debt). When they drifted, the ledger screen counted a revived debt
+ * that the bell could never raise.
  *
  * It also carries the lazy backfill of the derived columns. That lives here and
  * NOT in bootstrapSchemaOnce because the bootstrap is DDL-only and returns

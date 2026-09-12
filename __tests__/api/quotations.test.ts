@@ -256,6 +256,48 @@ describe('Quotations API', () => {
       expect(listRecentDocNos).not.toHaveBeenCalled();
     });
 
+    // ── The fan-out bound ────────────────────────────────────────────────
+    // Every distinct base is its own LIKE scan and they all run at once, so an
+    // unbounded `base` list turns one authenticated request into as many
+    // concurrent non-indexable scans against the shared TiDB instance as the
+    // caller cares to name. Two is all any real caller needs.
+    it('refuses a base list longer than the bound instead of scanning for all of it', async () => {
+      vi.mocked(getSession).mockResolvedValue(adminSession);
+      const many = Array.from({ length: 200 }, (_, i) => `base=QT2510${i}-`).join('&');
+      const res = await docnosGET(
+        new NextRequest(`http://localhost/api/quotations/docnos?${many}`)
+      );
+      expect(res.status).toBe(400);
+      // Thai, like every other message this admin UI shows.
+      expect((await res.json()).error).toMatch(/ขอเลขที่ได้สูงสุด 4 ชุดต่อหนึ่งคำขอ/);
+      // Not one scan issued — refused before the fan-out, not trimmed to four.
+      expect(listDocNosByBase).not.toHaveBeenCalled();
+      // And NOT quietly answered from the 7-day window either: an answer about
+      // a different question is exactly what the mint must never receive.
+      expect(listRecentDocNos).not.toHaveBeenCalled();
+    });
+
+    // Five is a refusal even when they would de-duplicate down to one: the
+    // bound is on what the request asked for, and no caller of this app asks
+    // about five bases.
+    it('refuses five bases, and answers four', async () => {
+      vi.mocked(getSession).mockResolvedValue(adminSession);
+      vi.mocked(listDocNosByBase).mockResolvedValue([]);
+      const url = (n: number) =>
+        `http://localhost/api/quotations/docnos?${Array.from(
+          { length: n },
+          (_, i) => `base=QT26010${i}-`
+        ).join('&')}`;
+
+      const five = await docnosGET(new NextRequest(url(5)));
+      expect(five.status).toBe(400);
+      expect(listDocNosByBase).not.toHaveBeenCalled();
+
+      const four = await docnosGET(new NextRequest(url(4)));
+      expect(four.status).toBe(200);
+      expect(listDocNosByBase).toHaveBeenCalledTimes(4);
+    });
+
     it('still rejects anonymous callers when a base is supplied', async () => {
       const res = await docnosGET(
         new NextRequest('http://localhost/api/quotations/docnos?base=QT260719-23')

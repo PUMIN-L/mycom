@@ -1774,7 +1774,36 @@ describe('getAlerts — "today" must be Bangkok (UTC+7) time, not server UTC', (
       "(b.receivableOverride = 1 OR (b.receivableOverride IS NULL AND b.docType = 'invoice'))"
     );
     expect(sql).toContain('b.cancelledAt IS NULL');
-    expect(sql).toContain('b.supersededById IS NULL');
+  });
+
+  // ── The bell has to mean what the ledger screen means by "ถูกแทนที่" ───────
+  // `buildReceivablesLedger` revives an invoice whose replacement was later
+  // CANCELLED — it is back in ยอดค้างทั้งหมด, badged, and listed in the
+  // "กลับมาเป็นลูกหนี้" panel — and `listOpenInvoices` lets a receipt be
+  // pointed at it. A plain `b.supersededById IS NULL` here left the BELL as
+  // the one place that could never raise it: an invoice months overdue, on
+  // screen in the ledger, with no alert behind it, forever.
+  //
+  // This bites: against `AND b.supersededById IS NULL` the NOT EXISTS is
+  // absent and the negative assertion fails outright.
+  it('revives a receivable whose replacement was cancelled — "ถูกแทนที่" means replaced by a LIVE row', async () => {
+    await getAlerts();
+    const calls = topQuery.mock.calls.filter(([s]) =>
+      String(s).includes('FROM billing_documents b')
+    );
+    // The list AND its unbounded COUNT twin: fixing one and not the other is
+    // how the badge and the list end up describing different questions.
+    expect(calls.length).toBe(2);
+    for (const [raw] of calls) {
+      const sql = String(raw).replace(/\s+/g, ' ');
+      expect(sql).toContain('NOT EXISTS');
+      expect(sql).toContain('SELECT 1 FROM billing_documents newer');
+      expect(sql).toContain('newer.id = b.supersededById');
+      // The clause that makes a CANCELLED successor stop counting as a
+      // replacement. Without it this is just `supersededById IS NULL` again.
+      expect(sql).toContain('newer.cancelledAt IS NULL');
+      expect(sql).not.toContain('b.supersededById IS NULL');
+    }
   });
 
   it('compares the balance with a satang tolerance, never float equality', async () => {

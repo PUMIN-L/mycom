@@ -282,6 +282,10 @@ export default function QuotationPage() {
   const [dayLedger, setDayLedger] = useState<
     { forDate: string; docs: { id: string; docNo: string }[]; failed: boolean } | null
   >(null);
+  // Bumped by the "ลองใหม่" button under the number field: reading the day's
+  // ledger is the ONLY thing that lets the page issue a number (see the mint
+  // effect), so a failed read has to be retryable without reloading the page.
+  const [docNoLedgerAttempt, setDocNoLedgerAttempt] = useState(0);
   const [uploadingItemId, setUploadingItemId] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false); // building the PDF
   const [savePrompt, setSavePrompt] = useState(false); // "keep 30d or delete now?" after download
@@ -537,17 +541,27 @@ export default function QuotationPage() {
     return () => {
       cancelled = true;
     };
-  }, [isLoggedIn, q.docDate, loadDayDocNos]);
+  }, [isLoggedIn, q.docDate, loadDayDocNos, docNoLedgerAttempt]);
 
   // The day ledger ONLY when it was read for the date currently on the
   // document; a ledger fetched for another date is not an answer about this one.
-  const dayDocs =
-    dayLedger !== null && dayLedger.forDate === q.docDate ? dayLedger.docs : null;
-  /** The unwindowed ledger for this date has been read (successfully or not). */
-  const docNoLedgerReady = dayDocs !== null;
-  /** …and reading it FAILED, so nothing here can promise the number is free. */
-  const docNoLedgerFailed =
-    dayLedger !== null && dayLedger.forDate === q.docDate && dayLedger.failed;
+  const dayLedgerIsForThisDate =
+    dayLedger !== null && dayLedger.forDate === q.docDate;
+  const dayDocs = dayLedgerIsForThisDate ? dayLedger.docs : null;
+  /** The read for this date came back, and it FAILED — `docs` is `[]` because
+   *  nobody could ask, NOT because the day is empty. */
+  const docNoLedgerFailed = dayLedgerIsForThisDate && dayLedger.failed;
+  /**
+   * The unwindowed ledger for this date has been read AND answered.
+   *
+   * `dayDocs !== null` alone is not that test: a failed read resolves to
+   * `{docs: [], failed: true}`, so it is non-null too, and taking it for
+   * "ready" is taking "I could not ask" for "the day is empty" — which let the
+   * mint fall straight through onto the 7-day window, the one source that
+   * cannot see last year's numbers under this very prefix. The failure was
+   * already tracked correctly right above; it just was not part of this test.
+   */
+  const docNoLedgerReady = dayDocs !== null && !docNoLedgerFailed;
 
   // ONE list behind BOTH the mint and the duplicate warning. They used to read
   // different sources, so the admin could be warned about one number and
@@ -562,30 +576,55 @@ export default function QuotationPage() {
 
   // Once the ledger is loaded or date changes, bump a fresh quote's docNo
   // to the next free trailing number.
+  //
+  // ── What happens when the ledger cannot be read ───────────────────────────
+  // NOTHING IS ISSUED. Not from the 7-day window, not from an empty list. A
+  // failed read hands back `{docs: [], failed: true}`, and running the
+  // allocator over that would allocate off `knownDocNos`, i.e. the window —
+  // the one list that cannot contain last year's numbers under this very
+  // prefix (QT251026- is also 26 Oct 2025's legacy prefix), and therefore the
+  // exact source that handed back QT251026-22 while used_docnos had owned it
+  // since 2025. "I could not ask" is not "the day is empty", so the page says
+  // nothing about what is free.
+  //
+  // The one thing it still does on a failed read is keep the number on the DAY
+  // the document is dated: if the admin moved the date while the ledger was
+  // unreadable, the number is re-seeded to that day's OPENING number
+  // (DOCNO_START — the business's convention for a day's first number, not a
+  // claim that it is free) instead of being left carrying another date. A
+  // number that already carries one of this day's prefixes is left EXACTLY as
+  // it is, so a number the 409 path has just advanced onto is never dragged
+  // back to -22 by a later failed read.
+  //
+  // The admin is told, in Thai, under the field, that the check did not run,
+  // and can retry it there; used_docnos' PRIMARY KEY and the 409 path remain
+  // the enforcement.
   useEffect(() => {
     if (!isFreshRef.current || !q.docDate) return;
-    // Never mint from a ledger we have not read for THIS date. A list that does
-    // not contain a number is not a statement that the number is free, and
-    // minting off the 7-day window is what handed back QT251026-22 while
-    // used_docnos had owned it since 26 Oct 2025.
-    if (!docNoLedgerReady) return;
+    if (!docNoLedgerReady && !docNoLedgerFailed) return; // still reading — wait
     // BOTH shapes of the day's numbers are scanned, so the running number keeps
     // climbing across the DDMMYY switchover instead of restarting at 22 next to
     // a legacy QT<YYMMDD>-NN that is already out with a customer (task 5a).
     const prefixes = quotationDocNoPrefixes(q.docDate);
     const prefix = prefixes[0];
-    const next = nextDocNo(prefixes, knownDocNos.map((u) => u.docNo));
+    const opening = `${prefix}${pad2(DOCNO_START)}`;
     setQ((prev) => {
-      if (
-        prev.docNo === `${prefix}${pad2(DOCNO_START)}` ||
-        prev.docNo === lastAutoDocNoRef.current
-      ) {
-        lastAutoDocNoRef.current = next;
-        return next === prev.docNo ? prev : { ...prev, docNo: next };
+      // Only ever touch a number this effect put there (or the untouched
+      // opening one); anything else the admin typed himself.
+      if (prev.docNo !== opening && prev.docNo !== lastAutoDocNoRef.current) {
+        return prev;
       }
-      return prev; // user edited it manually
+      if (!docNoLedgerReady) {
+        // Failed read: re-seat onto this day, never re-number within it.
+        if (prefixes.some((p) => prev.docNo.startsWith(p))) return prev;
+        lastAutoDocNoRef.current = opening;
+        return opening === prev.docNo ? prev : { ...prev, docNo: opening };
+      }
+      const next = nextDocNo(prefixes, knownDocNos.map((u) => u.docNo));
+      lastAutoDocNoRef.current = next;
+      return next === prev.docNo ? prev : { ...prev, docNo: next };
     });
-  }, [q.docDate, knownDocNos, docNoLedgerReady]);
+  }, [q.docDate, knownDocNos, docNoLedgerReady, docNoLedgerFailed]);
 
   // ── Unsaved-changes guard ──
   // Serialize only the user-editable fields (skip volatile ids/timestamps).
@@ -1372,15 +1411,30 @@ export default function QuotationPage() {
                     ⚠ เลขที่นี้ซ้ำกับใบที่บันทึกไว้ — กรุณาเปลี่ยน
                   </p>
                 )}
-                {/* The ledger could not be read, so "ไม่ซ้ำ" would be a claim we
-                    cannot make. Said out loud rather than blocking บันทึก: the
-                    used_docnos PRIMARY KEY still refuses a real duplicate, and
-                    the 409 path then moves the document onto a free number. */}
-                {!docNoDup && docNoLedgerFailed && (
-                  <p className="mt-1 text-xs text-amber-600 font-semibold">
-                    ⚠ ตรวจสอบเลขที่ที่ใช้ไปแล้วไม่สำเร็จ — ยังยืนยันไม่ได้ว่าเลขที่นี้ว่าง
-                    กรุณารีเฟรชหน้าก่อนบันทึก
-                  </p>
+                {/* The ledger could not be read, so the page issued NO number
+                    (see the mint effect): what is in the box is this day's
+                    opening number, and "ไม่ซ้ำ" would be a claim we cannot make.
+                    Said out loud, with a retry, rather than blocking บันทึก:
+                    the used_docnos PRIMARY KEY still refuses a real duplicate,
+                    and the 409 path then moves the document onto a free one.
+                    Shown ALONGSIDE the duplicate warning when both apply: they
+                    answer different questions ("this number is taken" vs "the
+                    check did not run"), and hiding this one behind !docNoDup
+                    would hide the retry exactly when the admin needs it. */}
+                {docNoLedgerFailed && (
+                  <div className="mt-1 text-xs text-amber-600 font-semibold">
+                    <p>
+                      ⚠ ตรวจสอบเลขที่ที่ใช้ไปแล้วไม่สำเร็จ — ระบบจึงยังไม่ออกเลขที่ให้
+                      และยังยืนยันไม่ได้ว่าเลขที่นี้ว่าง
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setDocNoLedgerAttempt((n) => n + 1)}
+                      className="mt-1 px-2 py-1 rounded border border-amber-400 text-amber-700 hover:bg-amber-50 transition"
+                    >
+                      🔄 ลองตรวจสอบเลขที่อีกครั้ง
+                    </button>
+                  </div>
                 )}
               </div>
               <div>
