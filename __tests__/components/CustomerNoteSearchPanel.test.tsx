@@ -22,8 +22,9 @@
  *   • the page's own ชื่อลูกค้า/ชื่อบริษัท box still filters exactly as before.
  */
 
-import { render, screen, fireEvent, waitFor, within, cleanup } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within, cleanup, act } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { useState } from "react";
 import CustomerNoteSearchPanel, {
   buildChangeExcerpt,
 } from "@/app/components/CustomerNoteSearchPanel";
@@ -615,4 +616,159 @@ describe("หน้ารายชื่อลูกค้า", () => {
   });
 
 
+});
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// The panel under the props the REAL page passes
+//
+// `renderPanel` above hands the component four `vi.fn()`s, which are stable for
+// the life of the test — and stable props are exactly what hid this bug.
+// `app/customers/page.tsx` passes `onToast={showToast}`, a plain function
+// re-declared on every render, and `onUnauthorized={() => router.replace(…)}`,
+// an inline arrow. Those were in `runSearch`'s dependency list, so ANY parent
+// re-render produced a new `runSearch`, which tore down the debounce effect and
+// re-fired the search — WITHOUT `keepReport`, and aborting anything in flight.
+// ════════════════════════════════════════════════════════════════════════════
+
+/** The prop shapes `app/customers/page.tsx` really uses: nothing memoised, a
+ *  toast that re-renders the parent, and an `onReplaced` that kicks off the
+ *  customer-list re-read (another parent state change). */
+function UnstableParent() {
+  const [toast, setToast] = useState<string | null>(null);
+  const [listVersion, setListVersion] = useState(0);
+  return (
+    <div>
+      {toast && <p data-testid="page-toast">{toast}</p>}
+      <span data-testid="list-version">{listVersion}</span>
+      <CustomerNoteSearchPanel
+        onToast={(message) => setToast(message)}
+        onOpenCustomer={(customerId) => setToast(customerId)}
+        onReplaced={() => setListVersion((v) => v + 1)}
+        onUnauthorized={() => setToast("unauthorized")}
+      />
+    </div>
+  );
+}
+
+/** A batch like the one in the finding: most replaced, a few refused, and the
+ *  refusals are named only in the report. */
+const PARTIAL_REPORT = {
+  replacedCount: 1,
+  unchangedCount: 0,
+  refusedCount: 1,
+  results: [
+    {
+      customerId: "c1",
+      customerName: "สมชาย ใจดี",
+      status: "replaced",
+      matchCount: 1,
+      resultLength: 40,
+      code: null,
+      reason: "",
+    },
+    {
+      customerId: "c2",
+      customerName: "สมหญิง รักดี",
+      status: "refused",
+      matchCount: 2,
+      resultLength: 0,
+      code: "stale",
+      reason:
+        "บันทึกของลูกค้ารายนี้ถูกแก้ไขไปแล้วหลังจากที่หน้าจอค้นหามา ระบบจึงไม่เขียนทับให้",
+    },
+  ],
+};
+
+/** Long enough for the 200ms debounce to fire twice over if anything
+ *  re-scheduled it. Real timers: the component's own fetches are promises and
+ *  mixing them with a fake clock would prove less than it looks. */
+async function letTheDebounceRun(ms = 500) {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+  });
+}
+
+describe("หน้าแม่เรนเดอร์ใหม่ ผลการแทนที่ต้องไม่หาย", () => {
+  function stubFetch() {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.startsWith("/api/customers/note-search")) {
+        return jsonResponse(searchResponse([ROW_A, ROW_B]));
+      }
+      if (url.startsWith("/api/customers/note-replace")) {
+        return jsonResponse(PARTIAL_REPORT);
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  /** Type, let the debounce search run, replace, confirm. */
+  async function replaceEverything() {
+    fireEvent.change(screen.getByLabelText("คำที่ต้องการค้นในบันทึกลูกค้า"), {
+      target: { value: TERM },
+    });
+    await screen.findByRole("table");
+    fireEvent.click(screen.getByRole("button", { name: "แทนที่ทั้งหมด (2 ราย)" }));
+    fireEvent.click(screen.getByRole("button", { name: "แทนที่ 2 ราย" }));
+    await screen.findByText("ผลการแทนที่");
+  }
+
+  it("รายชื่อรายที่ทำไม่ได้ยังอยู่บนจอ หลังโทสต์ทำให้หน้าแม่เรนเดอร์ใหม่", async () => {
+    stubFetch();
+    render(<UnstableParent />);
+    await replaceEverything();
+
+    // The toast fired, so the parent has already re-rendered with brand-new
+    // prop identities — and `onReplaced` bumped its list state as well.
+    expect(screen.getByTestId("page-toast").textContent).toContain("ทำไม่ได้ 1 ราย");
+    expect(screen.getByTestId("list-version").textContent).toBe("1");
+
+    await letTheDebounceRun();
+
+    // THE ASSERTION. Before the fix, a fresh `runSearch` re-fired the debounce
+    // effect without `keepReport` about 200ms after the toast, `setReport(null)`
+    // ran, and this list — the only place the refused customers are named —
+    // vanished, leaving "ทำไม่ได้ 1 ราย" as the last thing the admin was told.
+    const report = screen.getByText("ผลการแทนที่").parentElement as HTMLElement;
+    expect(normalised(report)).toContain("สมหญิง รักดี");
+    expect(normalised(report)).toContain("ถูกแก้ไขไปแล้ว");
+    expect(normalised(report)).toContain("แทนที่สำเร็จ 1 ราย");
+  });
+
+  it("ไม่ยิงค้นหาซ้ำเพิ่มเพราะหน้าแม่เรนเดอร์ใหม่", async () => {
+    const fetchMock = stubFetch();
+    render(<UnstableParent />);
+    await replaceEverything();
+    await letTheDebounceRun();
+
+    const searches = fetchMock.mock.calls.filter((c) =>
+      String(c[0]).startsWith("/api/customers/note-search")
+    );
+    // Exactly two, and both are wanted: the debounce search the admin asked
+    // for, and the `keepReport` re-read that refreshes every row's
+    // `expectedNote` after a successful write. A third would be the parent's
+    // re-render leaking into this component — which is also what aborted a
+    // request the admin was still waiting on.
+    expect(searches).toHaveLength(2);
+    expect(replaceCalls(fetchMock)).toHaveLength(1);
+  });
+
+  it("พิมพ์คำใหม่ยังล้างรายงานเดิมตามเดิม", async () => {
+    // The fix must not turn into "the report never clears". A report describes
+    // the rows of the search that produced it; a NEW search has to drop it, or
+    // it reads as a report about whatever is on screen now.
+    stubFetch();
+    render(<UnstableParent />);
+    await replaceEverything();
+    await letTheDebounceRun();
+    expect(screen.queryByText("ผลการแทนที่")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("คำที่ต้องการค้นในบันทึกลูกค้า"), {
+      target: { value: "ใบเสนอราคา" },
+    });
+    await waitFor(() => expect(screen.queryByText("ผลการแทนที่")).not.toBeInTheDocument());
+  });
 });

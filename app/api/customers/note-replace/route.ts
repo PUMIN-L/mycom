@@ -8,8 +8,9 @@ import {
 import type { NoteReplaceItem } from "../../../lib/customerNoteSearchStore";
 import {
   NOTE_SEARCH_MAX_INPUT_LENGTH,
-  NOTE_SEARCH_TERM_MAX_LENGTH,
+  boundIncomingTerm,
   buildMatcher,
+  readIdentityToken,
   validateReplaceItemCount,
   validateReplacement,
 } from "../../../lib/noteSearch";
@@ -52,9 +53,12 @@ export const POST = withRoute(
     }
     const payload = (body ?? {}) as Record<string, unknown>;
 
-    const term = sanitizePlainText(
-      String(payload.term ?? "").slice(0, NOTE_SEARCH_TERM_MAX_LENGTH + 1)
-    );
+    // NOT sanitised — length-bounded. The term is the needle the store will
+    // run and the word the screen already showed the admin; escaping it here
+    // made the server replace something other than what was previewed. The
+    // reasoning is written out in "Values that cross a boundary" in
+    // `app/lib/noteSearch.ts`.
+    const term = boundIncomingTerm(payload.term);
     const matchCase = payload.matchCase === true;
     const useRegex = payload.useRegex === true;
 
@@ -81,19 +85,25 @@ export const POST = withRoute(
     const countError = validateReplaceItemCount(rawItems.length);
     if (countError) return jsonError(countError, 400);
 
-    // Sanitised at the boundary, and again in the store beside the statements
-    // that use them — `sanitizePlainText` decodes entities before re-encoding,
-    // so it is idempotent and running it twice changes nothing. `expectedNote`
-    // is sliced first so a hand-built request cannot make the sanitiser chew
-    // through megabytes; a value that was cut simply fails the equality check
-    // in the store and is refused as stale rather than written.
+    // READ VERBATIM, NOT SANITISED. `customerId` is a row key and
+    // `expectedNote` is a concurrency token; both end their journey in an
+    // equality test against a value read straight out of `customers`, and
+    // encoding only the left-hand side of that test is what made every note
+    // carrying a raw `&`, `<` or `>` — every note the coming import will write
+    // — refuse for ever as "stale" while nobody had edited it. The store
+    // re-reads under `FOR UPDATE` and compares there, so a genuine concurrent
+    // edit is still caught. See "Values that cross a boundary" in
+    // `app/lib/noteSearch.ts`.
+    //
+    // No slice either: an `expectedNote` past `NOTE_SEARCH_MAX_INPUT_LENGTH`
+    // cannot equal any note the search path hands out (`searchNotes` skips
+    // those), so it is refused by the comparison rather than quietly reshaped
+    // into something that looks stale for a different reason.
     const items: NoteReplaceItem[] = rawItems.map((raw) => {
       const item = (raw ?? {}) as Record<string, unknown>;
       return {
-        customerId: sanitizePlainText(String(item.customerId ?? "")).trim(),
-        expectedNote: sanitizePlainText(
-          String(item.expectedNote ?? "").slice(0, NOTE_SEARCH_MAX_INPUT_LENGTH)
-        ),
+        customerId: readIdentityToken(item.customerId).trim(),
+        expectedNote: readIdentityToken(item.expectedNote),
       };
     });
 

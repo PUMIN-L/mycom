@@ -20,7 +20,10 @@ import { getSession } from '@/app/lib/session';
 
 import { GET as searchGET } from '@/app/api/customers/note-search/route';
 import { POST as replacePOST } from '@/app/api/customers/note-replace/route';
-import { NOTE_REPLACE_MAX_ITEMS } from '@/app/lib/noteSearch';
+import {
+  NOTE_REPLACE_MAX_ITEMS,
+  NOTE_SEARCH_TERM_MAX_LENGTH,
+} from '@/app/lib/noteSearch';
 
 const admin = { userId: '1', username: 'admin', expiresAt: new Date() } as never;
 
@@ -145,11 +148,79 @@ describe('GET /api/customers/note-search', () => {
     expect(topQuery).not.toHaveBeenCalled();
   });
 
-  it('a term made only of markup sanitises to nothing and is refused, not searched', async () => {
-    // `sanitizePlainText` strips tags, so "<b>" becomes "" — which must read as
-    // "you have not searched yet", never as "no customer mentions this".
-    const res = await searchGET(searchReq('?term=' + encodeURIComponent('<b></b>')));
+  // ── THE TERM IS A NEEDLE, NOT STORED TEXT ────────────────────────────────
+  //
+  // This route used to run the term through `sanitizePlainText`, which DELETES
+  // tag-like substrings. The screen validated one term with `buildMatcher` and
+  // the route then searched for — and ECHOED BACK — a different one, which
+  // "แทนที่ทั้งหมด" was built on. Every case below is a term that used to be
+  // silently rewritten or wrongly refused.
+
+  it('searches for `a<b` VERBATIM and echoes it back unchanged', async () => {
+    const term = 'a<b';
+    topQuery.mockResolvedValueOnce([
+      [
+        { id: 'c1', name: 'สมชาย', companyName: '', note: 'สูตร a<b ที่ลูกค้าถาม' },
+        // The row that made this dangerous: it holds `a` but not `a<b`. When
+        // the term was sanitised to `a`, this customer matched, and pressing
+        // แทนที่ทั้งหมด rewrote every letter `a` in his call log.
+        { id: 'c2', name: 'สมหญิง', companyName: '', note: 'ราคา a b c' },
+      ],
+    ]);
+    const res = await searchGET(searchReq('?term=' + encodeURIComponent(term)));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    // The echo IS the term the replace will be built from, so it has to be the
+    // needle that ran and not a cleaned-up cousin of it.
+    expect(body.term).toBe(term);
+    expect(body.total).toBe(1);
+    expect(body.rows[0].customerId).toBe('c1');
+    expect(body.rows[0].matchCount).toBe(1);
+  });
+
+  it('a term made only of markup is SEARCHED as text, not refused as empty', async () => {
+    // `sanitizePlainText('<test')` is '', so the route answered "กรุณาพิมพ์คำ
+    // ที่ต้องการค้นหาก่อน" while the search box plainly contained text.
+    topQuery.mockResolvedValueOnce([
+      [{ id: 'c1', name: 'สมชาย', companyName: '', note: 'ลูกค้าเขียนมาว่า <test ในอีเมล' }],
+    ]);
+    const res = await searchGET(searchReq('?term=' + encodeURIComponent('<test')));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.term).toBe('<test');
+    expect(body.total).toBe(1);
+    expect(writes()).toEqual([]);
+  });
+
+  it('a 200-character term of ampersands is searched, not refused as too long', async () => {
+    // `sanitizePlainText` turns each `&` into `&amp;`, so a term exactly at the
+    // cap arrived five times over it: the screen accepted it and the server
+    // answered "คำค้นยาวเกินไป" about a term of the documented maximum length.
+    const amps = '&'.repeat(NOTE_SEARCH_TERM_MAX_LENGTH);
+    topQuery.mockResolvedValueOnce([[{ id: 'c1', name: 'a', companyName: '', note: amps }]]);
+    const res = await searchGET(searchReq('?term=' + encodeURIComponent(amps)));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.term).toBe(amps);
+    expect(body.total).toBe(1);
+  });
+
+  it('refuses a term carrying a newline, with the control-character reason', async () => {
+    // Refused, never stripped: the confirm dialog quotes the term inside a
+    // line-oriented message, so an embedded newline reads there as a different
+    // sentence from the one that would run.
+    const res = await searchGET(searchReq('?term=' + encodeURIComponent('เวอร์เนีย\nดิจิตอล')));
     expect(res.status).toBe(400);
+    expect((await res.json()).error).toContain('อักขระควบคุม');
+    expect(topQuery).not.toHaveBeenCalled();
+  });
+
+  it('a term past the cap is still refused, never trimmed and run', async () => {
+    const res = await searchGET(
+      searchReq('?term=' + encodeURIComponent('ก'.repeat(NOTE_SEARCH_TERM_MAX_LENGTH + 5)))
+    );
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toContain('ยาวเกินไป');
     expect(topQuery).not.toHaveBeenCalled();
   });
 });
@@ -360,5 +431,180 @@ describe('POST /api/customers/note-replace — a request built by hand, bypassin
     expect(body.refusedCount).toBe(1);
     expect(body.results.map((r: { customerId: string }) => r.customerId)).toEqual(['c1', 'c2']);
     expect(updates()).toHaveLength(1);
+  });
+});
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// The two values that used to be TRANSFORMED at one boundary and COMPARED at
+// another
+//
+// `sanitizePlainText` guards STORED TEXT that will be rendered as markup. The
+// search TERM is a needle and `expectedNote` is a concurrency token; running
+// either through it made the server act on a value the screen never saw. Both
+// blocks below fail against the old code.
+// ════════════════════════════════════════════════════════════════════════════
+
+describe('POST /api/customers/note-replace — the term is the needle the screen showed', () => {
+  it('replaces `a<b` and leaves every OTHER letter `a` in the call log alone', async () => {
+    const note = '6/9/26 สูตร a<b ที่ลูกค้าถาม a b c';
+    conn.query.mockImplementation((sql: string) =>
+      /^\s*SELECT/i.test(sql)
+        ? Promise.resolve([[customerRow('c1', note)]])
+        : Promise.resolve([{ affectedRows: 1 }])
+    );
+
+    const res = await replacePOST(
+      replaceReq({ term: 'a<b', replacement: 'สูตรใหม่', items: [{ customerId: 'c1', expectedNote: note }] })
+    );
+
+    expect(res.status).toBe(200);
+    expect((await res.json()).replacedCount).toBe(1);
+
+    // The written value is the proof. Sanitised to `a`, the term matched five
+    // times in this one note and the stored result was unrecognisable.
+    const update = conn.query.mock.calls.find((c) => /^UPDATE\b/i.test(sqlOf(c)))!;
+    expect(update[1][0]).toBe('6/9/26 สูตร สูตรใหม่ ที่ลูกค้าถาม a b c');
+    expect(update[1][2]).toBe(note);
+  });
+
+  it('refuses a term with a control character before opening a transaction', async () => {
+    const res = await replacePOST(
+      replaceReq({
+        term: 'เวอร์เนีย\nดิจิตอล',
+        replacement: 'x',
+        items: [{ customerId: 'c1', expectedNote: 'เวอร์เนีย' }],
+      })
+    );
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toContain('อักขระควบคุม');
+    expect(writes()).toEqual([]);
+    expect(runTransaction).not.toHaveBeenCalled();
+  });
+});
+
+describe('POST /api/customers/note-replace — expectedNote is an identity check, not text', () => {
+  /** A note carrying a RAW `&` — exactly what the coming 6,000-customer import
+   *  will write, and what `substring(0, 2000)` produces when it cuts a note
+   *  after `sanitizePlainText` has already expanded its entities. Nobody has
+   *  edited it; it is simply not a fixed point of the sanitiser. */
+  const RAW_AMP_NOTE = '6/9/26 ส่งของให้ บริษัท A & B จำกัด เรื่องเวอร์เนีย';
+
+  it('replaces in a note holding a raw `&` — it is NOT "somebody else edited this"', async () => {
+    conn.query.mockImplementation((sql: string) =>
+      /^\s*SELECT/i.test(sql)
+        ? Promise.resolve([[customerRow('c1', RAW_AMP_NOTE)]])
+        : Promise.resolve([{ affectedRows: 1 }])
+    );
+
+    const res = await replacePOST(
+      replaceReq({
+        term: 'เวอร์เนีย',
+        replacement: 'คาลิปเปอร์',
+        // Byte for byte what `searchNotes` handed the screen.
+        items: [{ customerId: 'c1', expectedNote: RAW_AMP_NOTE }],
+      })
+    );
+
+    // Under the old code `sanitizePlainText(expectedNote)` was
+    // "…A &amp; B…" while `current` stayed "…A & B…", so this customer was
+    // refused as `stale` for ever — re-searching and retrying reproduced it
+    // every time, and the admin was told about a concurrent edit that never
+    // happened.
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.replacedCount).toBe(1);
+    expect(body.results[0].status).toBe('replaced');
+    expect(body.results[0].code).toBeNull();
+
+    const update = conn.query.mock.calls.find((c) => /^UPDATE\b/i.test(sqlOf(c)))!;
+    // The `&` survives untouched — the replace rewrote the term and nothing
+    // else, and did not quietly entity-encode the rest of the call log.
+    expect(update[1][0]).toBe('6/9/26 ส่งของให้ บริษัท A & B จำกัด เรื่องคาลิปเปอร์');
+    expect(update[1][2]).toBe(RAW_AMP_NOTE);
+  });
+
+  it('still REFUSES a note that really was edited between the search and the replace', async () => {
+    // The guard has to stay a guard. A comparison that always passes would let
+    // a bulk replace swallow somebody else's work — worse than the bug above.
+    conn.query.mockImplementation((sql: string) =>
+      /^\s*SELECT/i.test(sql)
+        ? Promise.resolve([[customerRow('c1', RAW_AMP_NOTE + '\n7/9/26 มีคนพิมพ์บรรทัดนี้เพิ่มเมื่อกี้')]])
+        : Promise.resolve([{ affectedRows: 1 }])
+    );
+    const res = await replacePOST(
+      replaceReq({
+        term: 'เวอร์เนีย',
+        replacement: 'คาลิปเปอร์',
+        items: [{ customerId: 'c1', expectedNote: RAW_AMP_NOTE }],
+      })
+    );
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.results[0].code).toBe('stale');
+    expect(body.results[0].reason).toContain('ถูกแก้ไขไปแล้ว');
+    expect(updates()).toEqual([]);
+  });
+
+  it('a replaced note can be re-searched and replaced AGAIN — no permanent stale', async () => {
+    // `replaceInNotes` writes `next` without re-sanitising it, so the row it
+    // leaves behind is no more a fixed point of the sanitiser than the one it
+    // read. Under the old code the second pass over its own output was refused.
+    conn.query.mockImplementation((sql: string) =>
+      /^\s*SELECT/i.test(sql)
+        ? Promise.resolve([[customerRow('c1', RAW_AMP_NOTE)]])
+        : Promise.resolve([{ affectedRows: 1 }])
+    );
+    await replacePOST(
+      replaceReq({
+        term: 'เวอร์เนีย',
+        replacement: 'คาลิปเปอร์',
+        items: [{ customerId: 'c1', expectedNote: RAW_AMP_NOTE }],
+      })
+    );
+    const firstUpdate = conn.query.mock.calls.find((c) => /^UPDATE\b/i.test(sqlOf(c)))!;
+    const stored = String(firstUpdate[1][0]);
+
+    // Round two, against what round one actually stored.
+    vi.clearAllMocks();
+    vi.mocked(getSession).mockResolvedValue(admin);
+    runTransaction.mockImplementation(async (fn: (c: typeof conn) => Promise<unknown>) => fn(conn));
+    conn.query.mockImplementation((sql: string) =>
+      /^\s*SELECT/i.test(sql)
+        ? Promise.resolve([[customerRow('c1', stored)]])
+        : Promise.resolve([{ affectedRows: 1 }])
+    );
+
+    const res = await replacePOST(
+      replaceReq({
+        term: 'คาลิปเปอร์',
+        replacement: 'คาลิปเปอร์ดิจิตอล',
+        items: [{ customerId: 'c1', expectedNote: stored }],
+      })
+    );
+    expect(res.status).toBe(200);
+    expect((await res.json()).replacedCount).toBe(1);
+    const secondUpdate = conn.query.mock.calls.find((c) => /^UPDATE\b/i.test(sqlOf(c)))!;
+    expect(secondUpdate[1][0]).toBe(
+      '6/9/26 ส่งของให้ บริษัท A & B จำกัด เรื่องคาลิปเปอร์ดิจิตอล'
+    );
+  });
+
+  it('a customerId is matched verbatim too, so an id is never reshaped into not_found', async () => {
+    conn.query.mockImplementation((sql: string) =>
+      /^\s*SELECT/i.test(sql)
+        ? Promise.resolve([[customerRow('c&1', 'เวอร์เนีย')]])
+        : Promise.resolve([{ affectedRows: 1 }])
+    );
+    const res = await replacePOST(
+      replaceReq({ term: 'เวอร์เนีย', replacement: 'x', items: [{ customerId: 'c&1', expectedNote: 'เวอร์เนีย' }] })
+    );
+    expect(res.status).toBe(200);
+    // The id reaches the locking SELECT exactly as sent — `sanitizePlainText`
+    // would have turned it into "c&amp;1" and the row would have come back
+    // "ไม่พบลูกค้ารายนี้แล้ว".
+    const select = conn.query.mock.calls.find((c) => /FOR UPDATE/i.test(sqlOf(c)))!;
+    expect(select[1]).toEqual(['c&1']);
+    expect((await res.json()).replacedCount).toBe(1);
   });
 });

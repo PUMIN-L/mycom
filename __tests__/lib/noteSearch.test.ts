@@ -13,11 +13,13 @@ import {
   NOTE_SEARCH_TERM_MAX_LENGTH,
   NoteScanBudgetError,
   applyReplace,
+  boundIncomingTerm,
   buildMatcher,
   countMatches,
   createScanBudget,
   findMatches,
   noteLengthRefusal,
+  readIdentityToken,
   validateReplaceItemCount,
   validateReplacement,
 } from '@/app/lib/noteSearch';
@@ -262,6 +264,109 @@ describe('buildMatcher — the other refusals', () => {
     // match in each one.
     expect(countMatches('โทรหา QC', m)).toBe(1);
     expect(countMatches('โทรหา QC', m)).toBe(1);
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// Values that cross a boundary
+//
+// A term used to be run through `sanitizePlainText` on its way into both
+// routes. That helper DELETES tag-like substrings, so the browser validated one
+// needle and the server searched for another — and echoed the shortened one
+// back for "แทนที่ทั้งหมด" to be built on. These tests pin down that the term is
+// now a needle and nothing more.
+// ════════════════════════════════════════════════════════════════════════════
+
+describe('buildMatcher — markup characters are ordinary characters in a needle', () => {
+  it('searches for `a<b` as typed, and does NOT collapse it to `a`', () => {
+    const m = matcher('a<b');
+    expect(m.term).toBe('a<b');
+    // The bug this replaces: `sanitizePlainText("a<b") === "a"`, which made a
+    // replace intended for `a<b` rewrite every letter `a` in the batch.
+    expect(countMatches('ราคา a<b ต่อชิ้น', m)).toBe(1);
+    expect(countMatches('ราคา a b ต่อชิ้น', m)).toBe(0);
+    // And the needle finds nothing extra in a note full of `a`s.
+    expect(countMatches('aaaa bbbb', m)).toBe(0);
+  });
+
+  it('accepts a term that is ONLY markup characters, instead of refusing it as empty', () => {
+    // `sanitizePlainText("<test")` and `sanitizePlainText("<div")` are both "",
+    // which came back as "กรุณาพิมพ์คำที่ต้องการค้นหาก่อน" while the box plainly
+    // held text. Notes are typed by hand for years; these strings end up in one.
+    for (const term of ['<test', '<div', '<b></b>', '<script>']) {
+      const built = buildMatcher({ term });
+      expect(built.ok).toBe(true);
+      expect(built.matcher!.term).toBe(term);
+    }
+    expect(countMatches('ลูกค้าส่งมาว่า <script>alert(1)</script>', matcher('<script>'))).toBe(1);
+  });
+
+  it('searches for `&`, `<` and `>` without entity-encoding them', () => {
+    expect(countMatches('บริษัท A & B จำกัด', matcher('A & B'))).toBe(1);
+    // The encoded form is NOT what was asked for, so it must not match.
+    expect(countMatches('บริษัท A &amp; B จำกัด', matcher('A & B'))).toBe(0);
+    expect(countMatches('3 < 5 > 2', matcher('< 5 >'))).toBe(1);
+  });
+
+  it('a 200-character term of ampersands is accepted, not rejected as too long', () => {
+    // `sanitizePlainText` expands every `&` to `&amp;`, so this term arrived at
+    // the length check five times its real size: the screen accepted it and the
+    // server answered "คำค้นยาวเกินไป" about a term that is exactly at the cap.
+    const amps = '&'.repeat(NOTE_SEARCH_TERM_MAX_LENGTH);
+    expect(amps.length).toBe(NOTE_SEARCH_TERM_MAX_LENGTH);
+    const built = buildMatcher({ term: amps });
+    expect(built.ok).toBe(true);
+    expect(built.matcher!.term).toBe(amps);
+    // One over is still refused — the cap itself did not move.
+    expect(refusal('&'.repeat(NOTE_SEARCH_TERM_MAX_LENGTH + 1)).code).toBe('term_too_long');
+  });
+
+  it('REFUSES a term carrying an invisible control character — never strips it', () => {
+    // Stripping is the very shape of bug being fixed. A refusal is computed
+    // identically in the browser and in both routes, so they cannot disagree.
+    for (const term of ['เวอร์เนีย\nดิจิตอล', 'a\tb', 'a\u0000b', 'a\rb', 'a\u007Fb']) {
+      const built = refusal(term);
+      expect(built.code).toBe('control_characters');
+      expect(built.reason).toContain('อักขระควบคุม');
+    }
+  });
+
+  it('refuses the control character in regex mode too, but keeps the `\\n` ESCAPE usable', () => {
+    expect(refusal('ก\nข', { useRegex: true }).code).toBe('control_characters');
+    // Two ordinary characters, backslash and n — the documented way to search
+    // across the lines of a call log, and it still works.
+    const m = matcher('ก\\nข', { useRegex: true });
+    expect(countMatches('ก\nข', m)).toBe(1);
+  });
+});
+
+describe('boundIncomingTerm / readIdentityToken', () => {
+  it('bounds a term to ONE character over the cap, so an over-long term still refuses', () => {
+    const huge = 'ก'.repeat(50_000);
+    const bounded = boundIncomingTerm(huge);
+    expect(bounded.length).toBe(NOTE_SEARCH_TERM_MAX_LENGTH + 1);
+    // The point of the extra character: a refusal, not a silently trimmed
+    // search of the first 200 characters.
+    expect(buildMatcher({ term: bounded }).ok).toBe(false);
+    expect(refusal(bounded).code).toBe('term_too_long');
+  });
+
+  it('leaves every legal term byte for byte alone', () => {
+    for (const term of ['เวอร์เนีย', 'a<b', '&'.repeat(NOTE_SEARCH_TERM_MAX_LENGTH), '  ก  ']) {
+      expect(boundIncomingTerm(term)).toBe(term);
+    }
+    expect(boundIncomingTerm(null)).toBe('');
+    expect(boundIncomingTerm(undefined)).toBe('');
+  });
+
+  it('reads an identity token verbatim — no escaping, no trimming, no truncation', () => {
+    // It is one side of an equality test whose other side is the raw column.
+    // Anything done to it here is done to only one side.
+    const raw = 'บริษัท A & B <ยกเลิก> ' + 'ก'.repeat(NOTE_SEARCH_MAX_INPUT_LENGTH);
+    expect(readIdentityToken(raw)).toBe(raw);
+    expect(readIdentityToken('  spaced  ')).toBe('  spaced  ');
+    expect(readIdentityToken(null)).toBe('');
+    expect(readIdentityToken(undefined)).toBe('');
   });
 });
 

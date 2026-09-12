@@ -36,7 +36,10 @@ import type { NoteMatch, NoteMatcher } from "../lib/noteSearch";
  *    JavaScript's `\b` is defined on the edges of `[A-Za-z0-9_]`; Thai has no
  *    spaces between words and no Thai character is in that set, so
  *    `\bเวอร์เนีย\b` can never match. A button whose answer is always "ไม่พบ"
- *    is worse than no button. There are exactly two toggles: `Aa` and `.*`.
+ *    is worse than no button. The spec allows exactly two toggles — `Aa` and
+ *    `.*` — and commit cd25fa9 took both off the screen by hand; the flags are
+ *    still carried everywhere and are simply always false. See the note under
+ *    "Small pieces" at the end of this file.
  *
  * 3. EVERY SNIPPET IS RENDERED AS TEXT. A customer note is a years-long call
  *    log typed by hand; it may well contain `<`, `>` or something that reads as
@@ -75,8 +78,12 @@ export interface CustomerNoteSearchRow {
 }
 
 export interface CustomerNoteSearchResponse {
-  /** Echoed by the route AFTER sanitising, so the matcher built here is the one
-   *  the server actually used — and the one it will use to replace. */
+  /** The term the route actually searched with, echoed back byte for byte, so
+   *  the matcher built here is the one the server used — and the one it will
+   *  use to replace. It is NOT reshaped on the way through: the route stopped
+   *  running the term through `sanitizePlainText`, which deleted tag-like
+   *  substrings and could turn a search for `a<b` into a replace of every `a`.
+   */
   term: string;
   matchCase: boolean;
   useRegex: boolean;
@@ -277,8 +284,15 @@ export default function CustomerNoteSearchPanel({
 }: CustomerNoteSearchPanelProps) {
   // ── The search control ────────────────────────────────────────────────────
   const [term, setTerm] = useState("");
-  const [matchCase, setMatchCase] = useState(false);
-  const [useRegex, setUseRegex] = useState(false);
+  // `Aa` and `.*` are still wired end to end — through `buildMatcher`, the two
+  // routes and the store — but the two toggle buttons that set them were taken
+  // off this screen in cd25fa9 ("Simplify customer note search panel by
+  // removing header and buttons"), so from here they are read-only and both
+  // stay off. Kept as state rather than folded into constants so restoring the
+  // buttons is putting two `<ToggleButton>`s back, not re-threading the flags.
+  // See the note at the end of this file.
+  const [matchCase] = useState(false);
+  const [useRegex] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
   // ── Results ───────────────────────────────────────────────────────────────
@@ -295,6 +309,30 @@ export default function CustomerNoteSearchPanel({
   const [report, setReport] = useState<CustomerNoteReplaceReport | null>(null);
 
   // ── Search ────────────────────────────────────────────────────────────────
+
+  // THE PROPS ARE HELD IN REFS, AND THE REASON IS THE DEBOUNCE EFFECT BELOW.
+  // `app/customers/page.tsx` passes `onToast={showToast}` — a plain function
+  // re-declared on every render — and `onUnauthorized={() => …}`, an inline
+  // arrow. With those in `runSearch`'s dependency list, `runSearch` was a new
+  // function after ANY parent re-render, the auto-search effect tore itself
+  // down and re-ran, and it re-ran WITHOUT `keepReport`. So the chain
+  // "replace → setReport → onToast → parent re-render" ended in `setReport(null)`
+  // about 200ms later: the ผลการแทนที่ list naming the refused customers and
+  // their Thai reasons appeared and then vanished, leaving a toast saying three
+  // failed and no way to learn which three. The same tear-down aborted a search
+  // that was still in flight, so the parent's 3-second toast dismissal could
+  // cancel a request the admin was waiting on.
+  //
+  // The refs are updated in an effect with no dependency array, so they are
+  // current for every later call while `runSearch` itself stays stable for the
+  // life of the component. A ref, not `useEffectEvent`: these are called from
+  // an async function after an await, which is outside a render pass.
+  const onToastRef = useRef(onToast);
+  const onUnauthorizedRef = useRef(onUnauthorized);
+  useEffect(() => {
+    onToastRef.current = onToast;
+    onUnauthorizedRef.current = onUnauthorized;
+  });
 
   const runSearch = useCallback(
     async (
@@ -329,7 +367,7 @@ export default function CustomerNoteSearchPanel({
           signal: options?.signal,
         });
         if (res.status === 401) {
-          onUnauthorized();
+          onUnauthorizedRef.current();
           return;
         }
         const data = await res.json().catch(() => null);
@@ -353,12 +391,17 @@ export default function CustomerNoteSearchPanel({
           err instanceof Error ? err.message : "ค้นหาคำในบันทึกลูกค้าไม่สำเร็จ";
         setFormError(message);
         setResult(null);
-        onToast(message, "error");
+        onToastRef.current(message, "error");
       } finally {
         setIsSearching(false);
       }
     },
-    [onToast, onUnauthorized]
+    // EMPTY ON PURPOSE, and it must stay that way: the only two values this
+    // closure took from props are now read through refs. A prop added back into
+    // this list re-creates `runSearch`, which re-fires the debounce effect on
+    // every parent render and wipes the replace report — see the comment above
+    // the refs.
+    []
   );
 
   const handleSubmitSearch = (event: React.FormEvent) => {
@@ -803,34 +846,22 @@ export default function CustomerNoteSearchPanel({
 
 // ── Small pieces ─────────────────────────────────────────────────────────────
 
-function ToggleButton({
-  label,
-  title,
-  pressed,
-  onClick,
-}: {
-  label: string;
-  title: string;
-  pressed: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={pressed}
-      aria-label={title}
-      title={title}
-      className={`px-3 py-2.5 rounded-xl border font-mono text-sm font-bold transition-all ${
-        pressed
-          ? "bg-orange-500 border-orange-500 text-white shadow-sm"
-          : "bg-white border-gray-200 text-gray-500 hover:bg-gray-50"
-      }`}
-    >
-      {label}
-    </button>
-  );
-}
+/*
+ * THE `Aa` AND `.*` BUTTONS ARE NOT ON THIS SCREEN, AND THAT IS A DECISION
+ * SOMEBODY MADE, NOT A THING THAT ROTTED AWAY. The spec for this change
+ * (openspec/changes/add-customer-note-search) describes both, and the
+ * `ToggleButton` that drew them lived here until commit cd25fa9, "UI: Simplify
+ * customer note search panel by removing header and buttons", which took them
+ * — and the ค้นหา submit button, and the header — off the panel by hand. Its
+ * dead remains are removed here rather than left to be read as a feature that
+ * fell out by accident.
+ *
+ * NOTHING BEHIND THE BUTTONS WAS REMOVED. `matchCase` and `useRegex` are still
+ * carried by `buildMatcher`, by both API routes, by the store and by the
+ * response this screen reads; they are simply always false from here. Bringing
+ * the buttons back is re-adding two `<ToggleButton>`s next to the input and
+ * restoring the two `useState` setters — no other file needs to change.
+ */
 
 /**
  * One context window, as TEXT.

@@ -1,11 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withRoute, requireAuth, jsonError } from "../../../lib/apiHelpers";
-import { sanitizePlainText } from "../../../lib/sanitizeHtml";
 import { searchNotes } from "../../../lib/customerNoteSearchStore";
-import {
-  NOTE_SEARCH_TERM_MAX_LENGTH,
-  buildMatcher,
-} from "../../../lib/noteSearch";
+import { boundIncomingTerm, buildMatcher } from "../../../lib/noteSearch";
 
 /**
  * GET /api/customers/note-search?term=…&matchCase=1&useRegex=1
@@ -28,12 +24,17 @@ export const GET = withRoute(
     await requireAuth();
 
     const url = new URL(request.url);
-    // Sliced before sanitising so an absurd query string costs nothing; one
-    // character over the cap is enough for `buildMatcher` to still refuse it
-    // with the right reason rather than silently searching a trimmed term.
-    const term = sanitizePlainText(
-      (url.searchParams.get("term") || "").slice(0, NOTE_SEARCH_TERM_MAX_LENGTH + 1)
-    );
+    // THE TERM IS NOT SANITISED, AND THAT IS THE POINT. It is a NEEDLE, not
+    // stored text: it goes into a JSON body, a React text child and the
+    // matcher, and nothing on this path renders it as markup. It used to run
+    // through `sanitizePlainText`, which DELETES tag-like substrings — typing
+    // `a<b` searched for `a` and echoed `term: "a"` back, so "แทนที่ทั้งหมด"
+    // built on that answer would rewrite every letter `a` in a hundred call
+    // logs. `boundIncomingTerm` does the one thing the term genuinely needs: a
+    // length bound, deliberately one character over the cap so `buildMatcher`
+    // refuses an over-long term instead of searching a trimmed one. See
+    // "Values that cross a boundary" in `app/lib/noteSearch.ts`.
+    const term = boundIncomingTerm(url.searchParams.get("term"));
     const matchCase = isOn(url.searchParams.get("matchCase"));
     const useRegex = isOn(url.searchParams.get("useRegex"));
 
@@ -46,7 +47,16 @@ export const GET = withRoute(
     if (!built.ok) return jsonError(built.reason, 400);
 
     const result = await searchNotes(built.matcher);
-    return NextResponse.json({ term, matchCase, useRegex, ...result });
+    // The term ECHOED is the matcher's own — byte for byte the needle that was
+    // run. The screen sends this value straight back as the term of a replace,
+    // so it has to be the thing that was searched for and not a cleaned-up
+    // cousin of it.
+    return NextResponse.json({
+      term: built.matcher.term,
+      matchCase,
+      useRegex,
+      ...result,
+    });
   }
 );
 

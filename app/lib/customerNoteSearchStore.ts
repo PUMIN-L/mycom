@@ -11,6 +11,7 @@ import {
   createScanBudget,
   findMatches,
   noteLengthRefusal,
+  readIdentityToken,
   validateReplaceItemCount,
 } from "./noteSearch";
 import type {
@@ -335,21 +336,25 @@ export async function replaceInNotes(
 ): Promise<NoteReplaceReport> {
   const matcher = input.matcher;
 
-  // Project convention: every incoming string is sanitised before use, even
-  // though each one below travels as a bound parameter. `sanitizePlainText` is
-  // idempotent (it decodes entities before re-encoding), so a note that was
-  // written through the customer routes — which sanitise on the way in — comes
-  // back out of it unchanged.
+  // The replacement is the one value here that really is TEXT ON ITS WAY INTO
+  // STORAGE, so it keeps the project's sanitiser. The screen says so in words
+  // before the confirm dialog opens ("คำแทนที่มีอักขระ < > หรือ &…"), because
+  // this is the one place on this path where what is stored can differ from
+  // what was previewed.
   const replacement = sanitizePlainText(input.replacement ?? "");
 
+  // THE TOKENS ARE READ VERBATIM. `customerId` is a row key and `expectedNote`
+  // is a concurrency token — they are compared, never rendered — and running
+  // either through `sanitizePlainText` encodes ONE SIDE of an equality test
+  // whose other side is the raw column. Any note that is not already a fixed
+  // point of the sanitiser (one imported straight into `customers.note`, one
+  // truncated by `substring(0, 2000)` after its entities were encoded, one this
+  // very function wrote) then failed the check for ever and was reported as
+  // "somebody else edited this" when nobody had. See "Values that cross a
+  // boundary" in `noteSearch.ts`.
   const items: NoteReplaceItem[] = (input.items ?? []).map((item) => ({
-    customerId: sanitizePlainText(String(item?.customerId ?? "")).trim(),
-    // Sliced before sanitising so a hand-built request cannot make the
-    // sanitiser chew through megabytes. A truncated value simply fails the
-    // equality check below and is refused as stale — it is never written.
-    expectedNote: sanitizePlainText(
-      String(item?.expectedNote ?? "").slice(0, NOTE_SEARCH_MAX_INPUT_LENGTH)
-    ),
+    customerId: readIdentityToken(item?.customerId).trim(),
+    expectedNote: readIdentityToken(item?.expectedNote),
   }));
 
   // The cap is enforced HERE, beside the statements it protects, as well as in
@@ -420,6 +425,13 @@ export async function replaceInNotes(
       //    makes the same id listed twice in one request refuse the second
       //    time instead of being replaced twice: `row.note` is updated after
       //    every successful write below.
+      //
+      //    BOTH SIDES ARE RAW. `current` is `customers.note` exactly as stored
+      //    and `item.expectedNote` is exactly what the screen was sent, so this
+      //    compares the note to itself and answers the question actually being
+      //    asked. Never reintroduce a transform on one side of it: doing that
+      //    does not make the check stricter, it makes it answer a different
+      //    question and refuse rows nobody touched.
       if (current !== item.expectedNote) {
         results.push(
           refused(

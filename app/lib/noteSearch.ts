@@ -174,6 +174,9 @@ export const NOTE_SEARCH_REFUSAL_CODES = [
   "term_too_long",
   /** Regular-expression mode, and `new RegExp()` threw. */
   "invalid_regex",
+  /** The term carries an invisible control character (a newline, a tab, a NUL).
+   *  Refused rather than stripped — see `NOTE_SEARCH_REFUSAL_REASONS`. */
+  "control_characters",
   /** The pattern matches an empty string — `.*`, `a?`, `(?:)`, `\b`, `(?=x)`.
    *  These match at EVERY position of EVERY note. */
   "matches_empty",
@@ -219,6 +222,11 @@ export const NOTE_SEARCH_REFUSAL_REASONS = {
   emptyTerm:
     "กรุณาพิมพ์คำที่ต้องการค้นหาก่อน ระบบไม่ค้นหาด้วยคำว่าง " +
     "เพราะผลลัพธ์ว่างเปล่าจะทำให้เข้าใจผิดว่าค้นแล้วไม่เจอ",
+  controlCharacters:
+    "คำค้นมีอักขระควบคุมที่มองไม่เห็นปนมาด้วย (เช่น ตัวขึ้นบรรทัด แท็บ หรืออักขระว่างพิเศษ) " +
+    "ระบบจึงยังไม่ค้นหาให้ เพราะคำค้นแบบนี้จะแสดงบนหน้ายืนยันไม่ตรงกับของจริง " +
+    "ทำให้อ่านผิดว่ากำลังจะแทนที่คำไหน กรุณาลบอักขระเหล่านั้นออก " +
+    "(ถ้าต้องการหาตัวขึ้นบรรทัดจริงๆ ให้เปิดโหมด .* แล้วพิมพ์ \\n)",
   termTooLong:
     `คำค้นยาวเกินไป ใช้ได้ไม่เกิน ${NOTE_SEARCH_TERM_MAX_LENGTH} ตัวอักษร ` +
     "ลองตัดให้เหลือเฉพาะคำที่ต้องการหาจริงๆ",
@@ -264,6 +272,80 @@ function refuse(
 ): BuildMatcherResult {
   return { ok: false, matcher: null, code, reason };
 }
+
+// ── Values that cross a boundary ─────────────────────────────────────────────
+//
+// THE RULE THIS SECTION EXISTS TO ENFORCE. A value that is TRANSFORMED at one
+// boundary and then COMPARED or EXECUTED at another is a silent bug waiting to
+// happen: the two boundaries disagree, and the screen goes on showing the value
+// the user typed while the system works with a different one. Two values on
+// this path had exactly that shape, and both were routed through
+// `sanitizePlainText` because it was the helper nearest to hand:
+//
+//   • THE SEARCH TERM. `sanitizePlainText` DELETES tag-like substrings — "a<b"
+//     became "a", "<test" became "" — so the browser validated one needle and
+//     the server searched for another, then echoed the shortened one back for
+//     the replace to be built on. A needle is never rendered as markup; it goes
+//     into a bound parameter, a JSON body and a React text child. It needs a
+//     LENGTH BOUND and a refusal for anything that would misrepresent itself on
+//     the confirm screen. It does not need escaping, and escaping it was the
+//     bug.
+//   • THE CONCURRENCY TOKEN (`expectedNote`) AND THE ROW KEY (`customerId`).
+//     These are not text, they are identity checks. Encoding one side of an
+//     equality test and not the other means any stored note that is not already
+//     a fixed point of the sanitiser — a note imported straight into the
+//     column, or one truncated after its entities were encoded — is refused as
+//     "stale" for ever, telling the admin about a concurrent edit that never
+//     happened. They must travel VERBATIM to the comparison.
+//
+// Neither relaxation weakens anything. `buildMatcher` still refuses the term,
+// and the store still compares `expectedNote` against the note it re-read under
+// `FOR UPDATE`, so a real concurrent edit is still refused.
+
+/**
+ * A search term as it arrives from an untrusted request.
+ *
+ * The ONE thing done to it is a COST BOUND, not a clean-up: an absurd query
+ * string is cut so nothing downstream has to walk megabytes. It is cut to ONE
+ * CHARACTER OVER the cap on purpose, so `buildMatcher` still sees an over-long
+ * term and refuses it with `termTooLong` rather than silently searching a
+ * trimmed one. Every term short enough to be legal comes out of here byte for
+ * byte as it was typed.
+ */
+export function boundIncomingTerm(value: unknown): string {
+  return String(value ?? "").slice(0, NOTE_SEARCH_TERM_MAX_LENGTH + 1);
+}
+
+/**
+ * An identity token — `expectedNote`, `customerId` — read from an untrusted
+ * request and destined for an EQUALITY TEST against a value read out of the
+ * database.
+ *
+ * It is coerced to a string and NOTHING ELSE. Not sanitised, not trimmed here,
+ * not truncated: every one of those transforms the left-hand side of a
+ * comparison whose right-hand side is raw, which turns "is this still the row
+ * the screen saw?" into "is this row already shaped the way our sanitiser would
+ * shape it?" — a question nobody asked and one that some perfectly untouched
+ * rows answer "no" to for ever.
+ *
+ * Safe to leave unbounded: an over-long value cannot equal a note the search
+ * path would ever hand out (`searchNotes` skips anything past
+ * `NOTE_SEARCH_MAX_INPUT_LENGTH`), so it is REFUSED by the comparison rather
+ * than written, and a JavaScript string comparison checks length first.
+ */
+export function readIdentityToken(value: unknown): string {
+  return typeof value === "string" ? value : String(value ?? "");
+}
+
+/**
+ * Control characters: C0, DEL and C1. A note may well contain newlines — it is
+ * a line-per-call log — but a TERM carrying one is refused rather than stripped,
+ * because the confirm dialog states the term inside a line-oriented message
+ * (`คำค้น: “…”`), so an embedded newline there reads as a different sentence
+ * from the one that will actually be run. Regular-expression mode still offers
+ * `\n`, `\t` and `\r` as escapes, which are ordinary characters in the source.
+ */
+const TERM_CONTROL_CHARACTERS = /[\u0000-\u001F\u007F-\u009F]/;
 
 // ── Building the matcher ─────────────────────────────────────────────────────
 
@@ -611,6 +693,15 @@ export function buildMatcher(input: BuildMatcherInput): BuildMatcherResult {
 
   if (term.length > NOTE_SEARCH_TERM_MAX_LENGTH) {
     return refuse("term_too_long", NOTE_SEARCH_REFUSAL_REASONS.termTooLong);
+  }
+
+  // REFUSED, NOT STRIPPED. Stripping is the very shape of bug this whole path
+  // just stopped doing: the browser would validate one term, the server would
+  // run another, and the confirm dialog would quote a third. A refusal is
+  // computed identically by the browser and both routes — they all call this
+  // one function — so the screen and the server can never disagree about it.
+  if (TERM_CONTROL_CHARACTERS.test(term)) {
+    return refuse("control_characters", NOTE_SEARCH_REFUSAL_REASONS.controlCharacters);
   }
 
   const source = useRegex ? term : escapeRegExp(term);

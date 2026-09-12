@@ -510,3 +510,155 @@ describe('replaceInNotes — line structure, deletion, and the retry', () => {
     expect(seen[0]).not.toBe(seen[1]);
   });
 });
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// expectedNote is a CONCURRENCY TOKEN, not text
+//
+// It used to be run through `sanitizePlainText` while `current` stayed the raw
+// `customers.note`, so only one side of the equality test was encoded. Any
+// stored note that was not already a fixed point of the sanitiser was refused
+// as "stale" for ever, and the admin was told about a concurrent edit that
+// never happened. Every test in this block fails against that code.
+// ════════════════════════════════════════════════════════════════════════════
+
+describe('replaceInNotes — the staleness guard compares the note to itself', () => {
+  /** Raw `&`, `<` and `>` in the column. Three ways a row gets here and none
+   *  of them is an edit: the coming 6,000-customer import writing straight into
+   *  `customers`, a row that predates the write routes, and `replaceInNotes`
+   *  itself, which writes `next` without re-sanitising it. */
+  const RAW_MARKUP_NOTE = '6/9/26 ส่งของให้ A & B <ด่วน> เรื่องเวอร์เนีย';
+
+  it('replaces a note containing a raw `&` that NOBODY has edited', async () => {
+    scriptTx([customer({ id: 'c1', note: RAW_MARKUP_NOTE })]);
+    const report = await replaceInNotes({
+      matcher: matcher('เวอร์เนีย'),
+      replacement: 'คาลิปเปอร์',
+      items: [{ customerId: 'c1', expectedNote: RAW_MARKUP_NOTE }],
+    });
+
+    expect(report.replacedCount).toBe(1);
+    expect(report.results[0].status).toBe('replaced');
+    expect(report.results[0].code).toBeNull();
+
+    const update = conn.query.mock.calls.find((c) => /^UPDATE\b/i.test(sqlOf(c)))!;
+    // Only the term moved. The `&` and the `<ด่วน>` are copied through byte for
+    // byte — the replace does not quietly entity-encode the rest of the log.
+    expect(update[1][0]).toBe('6/9/26 ส่งของให้ A & B <ด่วน> เรื่องคาลิปเปอร์');
+    expect(update[1][2]).toBe(RAW_MARKUP_NOTE);
+  });
+
+  it('reproduces the exact note the PUT route leaves behind, and replaces it', async () => {
+    // `PUT /api/customers/[id]` stores `sanitizePlainText(note).substring(0,
+    // 2000)`. The truncation runs AFTER the entity encoding, so it can cut an
+    // entity in half: a raw note of 1999 characters ending in `&` sanitises to
+    // 2003 and is stored ending in `&a`. That value is not a fixed point of the
+    // sanitiser and never can be, so it used to be unreplaceable for ever.
+    const head = `${'ก'.repeat(1989)}เวอร์เนีย`;
+    const typed = `${head}&`; // 1999 characters, comfortably under the cap
+    expect(typed.length).toBe(1999);
+    const encoded = `${head}&amp;`; // what sanitizePlainText makes of it: 2003
+    const stored = encoded.substring(0, CUSTOMER_NOTE_MAX_LENGTH);
+    // The cut landed INSIDE the entity. No amount of re-sanitising ever turns
+    // this back into itself, so the old guard refused this customer every time.
+    expect(stored.endsWith('&a')).toBe(true);
+    expect(stored.length).toBe(CUSTOMER_NOTE_MAX_LENGTH);
+    scriptTx([customer({ id: 'c1', note: stored })]);
+
+    const report = await replaceInNotes({
+      matcher: matcher('เวอร์เนีย'),
+      // Shorter than the term, so the 2000-character ceiling is not what is
+      // under test here — only the staleness guard is.
+      replacement: 'ดิจิตอล',
+      items: [{ customerId: 'c1', expectedNote: stored }],
+    });
+    expect(report.results[0].code).toBeNull();
+    expect(report.results[0].status).toBe('replaced');
+    // The half-entity at the end is carried through untouched.
+    const update = conn.query.mock.calls.find((c) => /^UPDATE\b/i.test(sqlOf(c)))!;
+    expect(String(update[1][0]).endsWith('&a')).toBe(true);
+  });
+
+  it('STILL refuses a note that really did change — the guard is still a guard', async () => {
+    // This is the assertion that keeps the fix honest. A comparison that always
+    // passed would let a bulk replace overwrite somebody else's work, which is
+    // worse than refusing a row nobody touched.
+    scriptTx([customer({ id: 'c1', note: `${RAW_MARKUP_NOTE}\n7/9/26 มีคนพิมพ์เพิ่มเมื่อกี้` })]);
+    const report = await replaceInNotes({
+      matcher: matcher('เวอร์เนีย'),
+      replacement: 'คาลิปเปอร์',
+      items: [{ customerId: 'c1', expectedNote: RAW_MARKUP_NOTE }],
+    });
+    expect(report.results[0].status).toBe('refused');
+    expect(report.results[0].code).toBe('stale');
+    expect(updates()).toEqual([]);
+    expect(revisionInserts()).toHaveLength(0);
+  });
+
+  it('refuses a note that differs ONLY by the sanitiser\'s own encoding', async () => {
+    // The two strings sanitise to the same thing, so the old code called them
+    // equal and overwrote. They are NOT the same note: one of them is what
+    // somebody typed after the search ran.
+    scriptTx([customer({ id: 'c1', note: 'A &amp; B เวอร์เนีย' })]);
+    const report = await replaceInNotes({
+      matcher: matcher('เวอร์เนีย'),
+      replacement: 'คาลิปเปอร์',
+      items: [{ customerId: 'c1', expectedNote: 'A & B เวอร์เนีย' }],
+    });
+    expect(report.results[0].status).toBe('refused');
+    expect(report.results[0].code).toBe('stale');
+    expect(updates()).toEqual([]);
+  });
+
+  it('a replace can be re-searched and replaced again — never a permanent stale', async () => {
+    scriptTx([customer({ id: 'c1', note: RAW_MARKUP_NOTE })]);
+    await replaceInNotes({
+      matcher: matcher('เวอร์เนีย'),
+      replacement: 'คาลิปเปอร์',
+      items: [{ customerId: 'c1', expectedNote: RAW_MARKUP_NOTE }],
+    });
+    const stored = String(
+      conn.query.mock.calls.find((c) => /^UPDATE\b/i.test(sqlOf(c)))![1][0]
+    );
+
+    // Round two, against what round one actually wrote. `searchNotes` hands
+    // this row back verbatim, so this is exactly what the screen would send.
+    scriptTx([customer({ id: 'c1', note: stored })]);
+    const again = await replaceInNotes({
+      matcher: matcher('คาลิปเปอร์'),
+      replacement: 'คาลิปเปอร์ดิจิตอล',
+      items: [{ customerId: 'c1', expectedNote: stored }],
+    });
+    expect(again.replacedCount).toBe(1);
+    expect(
+      conn.query.mock.calls.find((c) => /^UPDATE\b/i.test(sqlOf(c)))![1][0]
+    ).toBe('6/9/26 ส่งของให้ A & B <ด่วน> เรื่องคาลิปเปอร์ดิจิตอล');
+  });
+
+  it('matches a customerId verbatim, so an id is never reshaped into not_found', async () => {
+    scriptTx([customer({ id: 'c&1', note: 'เวอร์เนีย' })]);
+    const report = await replaceInNotes({
+      matcher: matcher('เวอร์เนีย'),
+      replacement: 'x',
+      items: [{ customerId: 'c&1', expectedNote: 'เวอร์เนีย' }],
+    });
+    // The id reaches the locking SELECT as sent; sanitised it became "c&amp;1"
+    // and the customer came back "ไม่พบลูกค้ารายนี้แล้ว".
+    expect(conn.query.mock.calls[0][1]).toEqual(['c&1']);
+    expect(report.replacedCount).toBe(1);
+  });
+
+  it('an oversized expectedNote is REFUSED as stale, never written', async () => {
+    // It is not truncated to fit — truncating would make one side of the
+    // comparison a different string for a second reason. Nothing can legally
+    // reach this size anyway: `searchNotes` skips notes past the scan cap.
+    scriptTx([customer({ id: 'c1', note: 'เวอร์เนีย' })]);
+    const report = await replaceInNotes({
+      matcher: matcher('เวอร์เนีย'),
+      replacement: 'x',
+      items: [{ customerId: 'c1', expectedNote: 'ก'.repeat(NOTE_SEARCH_MAX_INPUT_LENGTH + 10) }],
+    });
+    expect(report.results[0].code).toBe('stale');
+    expect(updates()).toEqual([]);
+  });
+});
