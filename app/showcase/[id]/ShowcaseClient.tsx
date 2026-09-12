@@ -391,9 +391,13 @@ export default function ShowcaseClient({
   // ── Delete single block ────────────────────────────────────────────────────
   async function handleDeleteBlock(block: ContentBlock) {
     setIsDeletingBlock(true);
+    // Snapshot for the rollback below: the removal is applied optimistically,
+    // and a failed save must not leave the block missing from the screen while
+    // it is still in the database.
+    const blocksBeforeDelete = editBlocksRef.current;
     try {
       // Remove from edit blocks immediately (from the latest list)
-      const newBlocks = editBlocksRef.current.filter((b) => b.id !== block.id);
+      const newBlocks = blocksBeforeDelete.filter((b) => b.id !== block.id);
       setEditBlocks(newBlocks);
 
       // Collect images for confirmation dialog instead of auto-deleting
@@ -416,8 +420,14 @@ export default function ShowcaseClient({
       } else {
         showToast("ลบข้อความแล้ว", "success");
       }
-    } catch {
-      showToast("เกิดข้อผิดพลาดในการลบบล็อก", "error");
+    } catch (err) {
+      setEditBlocks(blocksBeforeDelete);
+      showToast(
+        err instanceof Error && err.message
+          ? `ลบบล็อกไม่สำเร็จ: ${err.message}`
+          : "เกิดข้อผิดพลาดในการลบบล็อก",
+        "error"
+      );
     } finally {
       setIsDeletingBlock(false);
       setPendingDeleteBlock(null);
@@ -425,6 +435,13 @@ export default function ShowcaseClient({
   }
 
   // ── Save (PUT) ─────────────────────────────────────────────────────────────
+  // THROWS on any non-OK response. Every caller (delete, reorder, image
+  // replace, add image, gallery upload) awaits this inside a try/catch that
+  // shows a Thai error toast, and then shows a SUCCESS toast on the next line —
+  // so swallowing a non-OK response here reported a failed save as a save that
+  // worked. The expired-session case is the one that bites: requireAuth()
+  // answers 401, the screen says the block moved/was deleted, and the change is
+  // gone on the next reload with nothing to tell the admin it never happened.
   async function saveBlocks(blocks: ContentBlock[]) {
     if (!content) return;
     const res = await fetch(`/api/contents/${content.id}`, {
@@ -432,14 +449,25 @@ export default function ShowcaseClient({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ title: editTitle, blocks }),
     });
-    if (res.ok) {
-      // Image/gallery/block operations auto-persist immediately. Keep the
-      // `content` baseline in sync with what was just saved so that Cancel
-      // (which resets editTitle/editBlocks from `content`) can't make the UI
-      // "revert" a change that already lives in the DB — otherwise the view and
-      // the database diverge.
-      setContent((prev) => ({ ...prev, title: editTitle, blocks }));
+    if (!res.ok) {
+      // 401 first: requireAuth() answers the English "Unauthorized", and the
+      // admin reading this toast reads Thai. Every other status carries the
+      // route's own Thai fallback message in `error`.
+      const body = await res.json().catch(() => null);
+      const reason =
+        res.status === 401
+          ? "เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่แล้วลองอีกครั้ง"
+          : body && typeof body.error === "string" && body.error
+            ? body.error
+            : "บันทึกไม่สำเร็จ";
+      throw new Error(reason);
     }
+    // Image/gallery/block operations auto-persist immediately. Keep the
+    // `content` baseline in sync with what was just saved so that Cancel
+    // (which resets editTitle/editBlocks from `content`) can't make the UI
+    // "revert" a change that already lives in the DB — otherwise the view and
+    // the database diverge.
+    setContent((prev) => ({ ...prev, title: editTitle, blocks }));
   }
 
   async function handleSaveEdit() {
@@ -493,20 +521,34 @@ export default function ShowcaseClient({
       const { url } = await uploadRes.json();
 
       // Merge into the LATEST blocks (so text typed during the upload isn't
-      // lost), then persist that same version.
-      const newBlocks = editBlocksRef.current.map((b) =>
+      // lost), then persist that same version. The snapshot is taken here, one
+      // line before the optimistic write, so a failed save can put the old
+      // picture back instead of leaving a new one on screen that the database
+      // never accepted.
+      const blocksBeforeReplace = editBlocksRef.current;
+      const newBlocks = blocksBeforeReplace.map((b) =>
         b.id === blockId ? { ...b, imageUrl: url } : b
       );
       setEditBlocks(newBlocks);
-      await saveBlocks(newBlocks);
+      try {
+        await saveBlocks(newBlocks);
+      } catch (err) {
+        setEditBlocks(blocksBeforeReplace);
+        throw err;
+      }
       showToast("เปลี่ยนรูปสำเร็จ", "success");
 
       // Show confirmation dialog for old image
       if (oldImageUrl && oldImageUrl.includes("cloudinary.com")) {
         setOrphanedImages([{ url: oldImageUrl, reason: "เปลี่ยนรูปในบล็อก" }]);
       }
-    } catch {
-      showToast("เกิดข้อผิดพลาดในการเปลี่ยนรูป", "error");
+    } catch (err) {
+      showToast(
+        err instanceof Error && err.message
+          ? `เปลี่ยนรูปไม่สำเร็จ: ${err.message}`
+          : "เกิดข้อผิดพลาดในการเปลี่ยนรูป",
+        "error"
+      );
     } finally {
       setUploadingBlockId(null);
       setReplacingBlockId(null);
@@ -535,8 +577,17 @@ export default function ShowcaseClient({
     setEditBlocks(newBlocks);
     try {
       await saveBlocks(newBlocks);
-    } catch {
-      showToast("เกิดข้อผิดพลาดในการเรียงลำดับบล็อก", "error");
+    } catch (err) {
+      // Put the order back. The swap was applied optimistically, so leaving it
+      // on screen after a failed save shows an order the database does not
+      // have — the admin would only find out on the next reload.
+      setEditBlocks(prev);
+      showToast(
+        err instanceof Error && err.message
+          ? `เรียงลำดับบล็อกไม่สำเร็จ: ${err.message}`
+          : "เกิดข้อผิดพลาดในการเรียงลำดับบล็อก",
+        "error"
+      );
     }
   }
 
@@ -595,13 +646,27 @@ export default function ShowcaseClient({
         type: "image",
         imageUrl: url,
       };
-      const newBlocks = [...editBlocksRef.current, newBlock];
+      // Snapshot before the optimistic append, so a save the server refused
+      // takes the block back off the screen rather than leaving a picture the
+      // admin would only discover was missing on his next reload.
+      const blocksBeforeAdd = editBlocksRef.current;
+      const newBlocks = [...blocksBeforeAdd, newBlock];
       setEditBlocks(newBlocks);
-      await saveBlocks(newBlocks);
+      try {
+        await saveBlocks(newBlocks);
+      } catch (err) {
+        setEditBlocks(blocksBeforeAdd);
+        throw err;
+      }
       scrollToBlock(newBlock.id);
       showToast("เพิ่มรูปภาพสำเร็จ", "success");
-    } catch {
-      showToast("เกิดข้อผิดพลาดในการเพิ่มรูป", "error");
+    } catch (err) {
+      showToast(
+        err instanceof Error && err.message
+          ? `เพิ่มรูปไม่สำเร็จ: ${err.message}`
+          : "เกิดข้อผิดพลาดในการเพิ่มรูป",
+        "error"
+      );
     } finally {
       setAddingImage(false);
     }
@@ -636,14 +701,28 @@ export default function ShowcaseClient({
 
       const uploadedUrls = await Promise.all(uploadPromises);
 
-      const newBlocks = editBlocksRef.current.map(b =>
+      // Same snapshot-then-restore as the other optimistic writes on this
+      // screen: a gallery that shows six pictures while the database holds
+      // four is the divergence this whole change exists to stop.
+      const blocksBeforeGallery = editBlocksRef.current;
+      const newBlocks = blocksBeforeGallery.map(b =>
         b.id === galleryUploadingId ? { ...b, imageUrls: [...(b.imageUrls || []), ...uploadedUrls] } : b
       );
       setEditBlocks(newBlocks);
-      await saveBlocks(newBlocks);
+      try {
+        await saveBlocks(newBlocks);
+      } catch (err) {
+        setEditBlocks(blocksBeforeGallery);
+        throw err;
+      }
       showToast("เพิ่มรูปลงแกลลอรี่สำเร็จ", "success");
-    } catch {
-      showToast("เกิดข้อผิดพลาดในการอัปโหลดรูปภาพ", "error");
+    } catch (err) {
+      showToast(
+        err instanceof Error && err.message
+          ? `เพิ่มรูปลงแกลลอรี่ไม่สำเร็จ: ${err.message}`
+          : "เกิดข้อผิดพลาดในการอัปโหลดรูปภาพ",
+        "error"
+      );
     } finally {
       setUploadingBlockId(null);
       setGalleryUploadingId(null);

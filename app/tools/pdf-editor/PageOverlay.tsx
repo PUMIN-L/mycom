@@ -120,6 +120,11 @@ function rectFromPoints(ax: number, ay: number, bx: number, by: number): CssRect
   };
 }
 
+/**
+ * Keep a rectangle the admin is SIZING inside the page. Trimming width/height
+ * is the right answer here: for draw and resize the gesture IS the size, so a
+ * corner dragged off the page should stop at the edge.
+ */
 function clampToBox(r: CssRect, w: number, h: number): CssRect {
   const x = Math.max(0, Math.min(r.x, w));
   const y = Math.max(0, Math.min(r.y, h));
@@ -128,6 +133,27 @@ function clampToBox(r: CssRect, w: number, h: number): CssRect {
     y,
     width: Math.max(0, Math.min(r.width, w - x)),
     height: Math.max(0, Math.min(r.height, h - y)),
+  };
+}
+
+/**
+ * Keep a rectangle the admin is MOVING inside the page — by stopping it, never
+ * by resizing it. A move carries no size information, so trimming width/height
+ * against the right or bottom edge would silently squash a signature and
+ * destroy its aspect ratio for good (the PDF draws the rect's width/height
+ * directly, and only undo could get it back). Against the left and top edges
+ * the origin has always simply clamped with the size intact; this is the same
+ * rule on all four sides.
+ *
+ * A rectangle bigger than the page cannot fit either way, so it pins to 0 — the
+ * same thing that already happened on the left and top.
+ */
+function clampOriginToBox(r: CssRect, w: number, h: number): CssRect {
+  return {
+    x: Math.max(0, Math.min(r.x, w - r.width)),
+    y: Math.max(0, Math.min(r.y, h - r.height)),
+    width: r.width,
+    height: r.height,
   };
 }
 
@@ -364,7 +390,8 @@ export default function PageOverlay({
     const dx = drag.curX - drag.startX;
     const dy = drag.curY - drag.startY;
     if (drag.mode === "move") {
-      return clampToBox(
+      // A translation, and nothing but a translation — see clampOriginToBox.
+      return clampOriginToBox(
         { ...drag.base, x: drag.base.x + dx, y: drag.base.y + dy },
         box.width,
         box.height,

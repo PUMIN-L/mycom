@@ -421,6 +421,18 @@ export interface SaleLineDraft {
   /** True when the quotation named a product that no longer exists in the
    * catalog: the link is dropped, the NAME is kept, and the form warns. */
   productMissing: boolean;
+  /**
+   * True when the CATALOG ITSELF is unknown (see `catalogIsKnown`) while this
+   * line carries a real productId — so nothing here can be trusted to say
+   * whether that product exists or what category it belongs to.
+   *
+   * It is NOT `productMissing`: the link is kept exactly as the quotation wrote
+   * it. What it does is make `validateLineDrafts` REFUSE the bill, because
+   * `sales_record_items.categoryId` is a STORED column — a null written now is
+   * read by รายได้ตามหมวดหมู่ forever as «ไม่ระบุหมวด», and a later successful
+   * catalog load does not repair it.
+   */
+  catalogUnavailable: boolean;
   /** Qty as quoted — reference for the "ขายเกินที่เสนอ" warning. */
   quotedQty: number;
   /** How many of this line were already recorded as sold (advisory). */
@@ -470,9 +482,16 @@ export interface BuildLineDraftsInput {
   items: readonly QuotationLine[] | null | undefined;
   /** `items` from `GET /api/quotations/[id]/sold`. Omit → nothing sold yet. */
   sold?: readonly SoldQuotationLine[] | null;
-  /** The catalog. Omit and no line gets a `categoryId` — a category is never
-   * guessed from a name, and a link is never validated against a list we
-   * were not given. */
+  /**
+   * The catalog. A category is never guessed from a name, and a link is never
+   * validated against a list we were not given.
+   *
+   * ⚠️ Omitting it — or handing in `[]`, which is what a failed
+   * `GET /api/products` leaves in the caller's state — is "I do not know",
+   * NOT "this product was deleted". Those lines keep the quotation's own
+   * productId and come back flagged `catalogUnavailable`, and
+   * `validateLineDrafts` then refuses the bill in Thai. See `catalogIsKnown`.
+   */
   products?: readonly CatalogProduct[] | null;
   /**
    * ส่วนลดท้ายใบ — `data.discount` / `data.discountType` of the quotation blob,
@@ -514,28 +533,83 @@ function soldQtyByItem(
 }
 
 /**
- * Resolve the catalog link of one quotation line. Three distinct outcomes:
- *   • no catalog given  → trust the quotation's id, but claim no category
- *   • id found          → link it and take ITS category
- *   • id not found      → drop the link, keep the name, flag `productMissing`
+ * Can this catalog answer "does product X exist, and in which category"?
+ *
+ * `null`/`undefined` plainly cannot — AND NEITHER CAN `[]`. Every caller starts
+ * its catalog state as an empty array and only replaces it if `GET /api/products`
+ * answered (app/dashboard/page.tsx), so `[]` is precisely what a FAILED catalog
+ * load looks like from in here, and it is indistinguishable from a catalog that
+ * is genuinely empty. Reading it as "the catalog says this product is gone" is
+ * what used to strip the link and the category off EVERY line of a real bill
+ * whenever /api/products hiccuped.
+ *
+ * An empty list is therefore treated as "I do not know", never as "no". The
+ * cost of being wrong is asymmetric and that is the whole argument: if the
+ * catalog really is empty, the admin is asked to refresh or to unlink the line
+ * by hand — an inconvenience he can see and act on. If it merely failed to
+ * load, the other reading silently books a real bill's revenue under
+ * «ไม่ระบุสินค้า» / «ไม่ระบุหมวด» and leaves its machines unlinked, which
+ * nobody ever finds out about.
+ */
+function catalogIsKnown(
+  products: readonly CatalogProduct[] | null | undefined
+): products is readonly CatalogProduct[] {
+  return Array.isArray(products) && products.length > 0;
+}
+
+/**
+ * Resolve the catalog link of one quotation line. FOUR distinct outcomes:
+ *   • nothing to resolve  → "" (no id, or the explicit `_custom`)
+ *   • catalog unknown     → keep the quotation's id verbatim, claim no
+ *                           category, and flag `catalogUnavailable` so the bill
+ *                           is refused instead of being booked as «ไม่ระบุ…»
+ *   • id found            → link it and take ITS category
+ *   • id not found        → drop the link, keep the name, flag `productMissing`
+ *
+ * The middle two are the ones that must never be confused: "the catalog was not
+ * given to me" is not the same statement as "the catalog says this is gone".
  */
 function resolveCatalogLink(
   rawProductId: unknown,
   products: readonly CatalogProduct[] | null | undefined
-): { productId: string; categoryId: number | null; productMissing: boolean } {
+): {
+  productId: string;
+  categoryId: number | null;
+  productMissing: boolean;
+  catalogUnavailable: boolean;
+} {
   const productId = String(rawProductId ?? "").trim();
   if (!productId || productId === CUSTOM_PRODUCT_SENTINEL) {
-    return { productId: "", categoryId: null, productMissing: false };
+    // Nothing was linked in the first place, so no catalog is needed to say so.
+    return {
+      productId: "",
+      categoryId: null,
+      productMissing: false,
+      catalogUnavailable: false,
+    };
   }
-  if (!Array.isArray(products)) {
-    return { productId, categoryId: null, productMissing: false };
+  if (!catalogIsKnown(products)) {
+    return {
+      productId,
+      categoryId: null,
+      productMissing: false,
+      catalogUnavailable: true,
+    };
   }
   const hit = products.find((p) => String(p?.id ?? "") === productId);
-  if (!hit) return { productId: "", categoryId: null, productMissing: true };
+  if (!hit) {
+    return {
+      productId: "",
+      categoryId: null,
+      productMissing: true,
+      catalogUnavailable: false,
+    };
+  }
   return {
     productId,
     categoryId: toCategoryId(hit.categoryId),
     productMissing: false,
+    catalogUnavailable: false,
   };
 }
 
@@ -772,6 +846,7 @@ export function buildLineDrafts(input: BuildLineDraftsInput): SaleLineDraft[] {
       productId: link.productId,
       categoryId: link.categoryId,
       productMissing: link.productMissing,
+      catalogUnavailable: link.catalogUnavailable,
       quotedQty,
       soldQty,
       qty: quotedQty,
@@ -877,20 +952,27 @@ export function applyProductSelection(
 ): SaleLineDraft {
   const id = String(productId ?? "").trim();
   if (!id || id === CUSTOM_PRODUCT_SENTINEL) {
+    // «ไม่ผูกสินค้าในระบบ» typed by a human is a DECISION, not a gap: it clears
+    // `catalogUnavailable` too, which is the admin's way past the refusal when
+    // the catalog really cannot be loaded.
     return {
       ...line,
       productId: id === CUSTOM_PRODUCT_SENTINEL ? CUSTOM_PRODUCT_SENTINEL : "",
       categoryId: null,
       productMissing: false,
+      catalogUnavailable: false,
     };
   }
-  const hit = Array.isArray(products)
+  const hit = catalogIsKnown(products)
     ? products.find((p) => String(p?.id ?? "") === id)
     : undefined;
   return {
     ...line,
     productId: id,
     categoryId: hit ? toCategoryId(hit.categoryId) : null,
+    // Picking a real product out of a catalog we could not load says nothing
+    // about its category, so the refusal stands until the catalog is back.
+    catalogUnavailable: !catalogIsKnown(products),
     productMissing: false,
   };
 }
@@ -1358,6 +1440,12 @@ export function findOverQuotedLines(
  * of as a 400. Everything else (already sold, over-quoted, duplicate serial, no
  * bill-level cost) is a confirmable warning and must NOT appear in this list.
  *
+ * ONE RULE HERE IS ABOUT THE CATALOG, NOT THE TYPING: a ticked line whose
+ * `catalogUnavailable` is set is refused outright. See that field on
+ * `SaleLineDraft` — it means the product list never loaded, so the line's
+ * category cannot be resolved, and `sales_record_items.categoryId` is written
+ * once and read forever.
+ *
  * TWO PER-MACHINE FIELDS ARE OPTIONAL and are deliberately absent from here:
  *   • ประกัน (type + dates) — always was.
  *   • Serial Number — since report 7. A blank serial saves; the machine is then
@@ -1378,6 +1466,17 @@ export function validateLineDrafts(
   chosen.forEach((line, index) => {
     const at = `รายการที่ ${index + 1}`;
     const label = line.productName ? `${at} (${line.productName})` : at;
+    // A HARD blocker, never a warning: the catalog could not be read, so the
+    // category of the product this line is linked to is unknown. Saving anyway
+    // writes NULL into `sales_record_items.categoryId`, and รายได้ตามหมวดหมู่
+    // reads that stored NULL as «ไม่ระบุหมวด» for the rest of the bill's life —
+    // a real bill's revenue attributed to nothing, on a screen that looks fine.
+    // The admin has two ways out and both are named here.
+    if (line.catalogUnavailable) {
+      errors.push(
+        `${label}: โหลดรายการสินค้าในระบบไม่สำเร็จ จึงยืนยันสินค้าและหมวดหมู่ที่ใบเสนอราคาผูกไว้ไม่ได้ — กรุณารีเฟรชหน้าแล้วเลือกใบเสนอราคาใหม่อีกครั้ง หรือเลือก «ไม่ผูกสินค้าในระบบ» ให้รายการนี้`
+      );
+    }
     const qty = Number(line.qty);
     if (!Number.isFinite(qty) || !Number.isInteger(qty) || qty < 1) {
       errors.push(`${label}: จำนวนที่ขายจริงต้องเป็นจำนวนเต็มตั้งแต่ 1 ขึ้นไป`);

@@ -105,12 +105,24 @@ export interface ServiceJobInput {
   technicianName?: string;
   scheduleId?: string | null;
   workSummary?: string | null;
-  /** Client-suggested job number. Used as-is when provided; otherwise the
-   *  server mints one from the shared `used_docnos` ledger. */
-  jobNo?: string;
   /** In printed order. The first is line 1 on the paper. */
   equipmentIds?: string[];
-  /** Manually typed equipment not registered in the system. */
+  /** Manually typed equipment not registered in the system.
+   *
+   *  ⚠️ `undefined` and `[]` mean DIFFERENT things here. `undefined` is "this
+   *  caller does not know about the column" and leaves it exactly as it is on
+   *  an edit; `[]` is "there are no typed machines on this sheet" and clears
+   *  it. The job-sheet page has no UI for typed machines and therefore sends
+   *  neither key — if `undefined` were folded into `[]`, every save from that
+   *  page would erase entries written by another caller.
+   *
+   *  There is deliberately NO `jobNo` on this interface. The number is minted
+   *  by `claimJobNo` inside the transaction that writes the row and is never
+   *  taken from a caller: `used_docnos` is one shared, never-purged ledger that
+   *  quotations (`QT…`) and billing (`INV`/`BN`/`RC`) draw from too, so a
+   *  caller-chosen string can burn a number belonging to another document
+   *  family, and a number two browsers can both choose is not a document
+   *  number. */
   customEquipments?: { productName?: string; serialNumber?: string }[];
 }
 
@@ -350,9 +362,10 @@ interface NormalizedInput {
   technicianName: string;
   scheduleId: string | null;
   workSummary: string | null;
-  jobNo: string;
   equipmentIds: string[];
-  customEquipments: CustomEquipment[];
+  /** undefined = the caller said nothing about typed machines (leave the
+   *  column alone on an edit); an array = the full replacement list. */
+  customEquipments: CustomEquipment[] | undefined;
 }
 
 function normalizeInput(input: ServiceJobInput): NormalizedInput {
@@ -379,20 +392,25 @@ function normalizeInput(input: ServiceJobInput): NormalizedInput {
     equipmentIds.push(equipmentId);
   }
 
-  // Parse custom (manually typed) equipment entries
-  const customEquipments: CustomEquipment[] = [];
-  const rawCustom = Array.isArray(input.customEquipments) ? input.customEquipments : [];
-  for (const raw of rawCustom) {
-    const productName = text(raw?.productName, 255);
-    const serialNumber = text(raw?.serialNumber, 255);
-    if (!productName && !serialNumber) continue; // skip fully empty entries
-    customEquipments.push({ productName: productName || "", serialNumber: serialNumber || "" });
+  // Parse custom (manually typed) equipment entries. A caller that sends no
+  // `customEquipments` key at all keeps `undefined` here — see the interface.
+  let customEquipments: CustomEquipment[] | undefined;
+  if (input.customEquipments !== undefined) {
+    const rawCustom = Array.isArray(input.customEquipments) ? input.customEquipments : [];
+    customEquipments = [];
+    for (const raw of rawCustom) {
+      const productName = text(raw?.productName, 255);
+      const serialNumber = text(raw?.serialNumber, 255);
+      if (!productName && !serialNumber) continue; // skip fully empty entries
+      customEquipments.push({ productName: productName || "", serialNumber: serialNumber || "" });
+    }
   }
+  const customCount = customEquipments?.length ?? 0;
 
-  if (equipmentIds.length === 0 && customEquipments.length === 0) {
+  if (equipmentIds.length === 0 && customCount === 0) {
     throw new ServiceJobValidationError("กรุณาเลือกหรือเพิ่มเครื่องอย่างน้อย 1 เครื่อง");
   }
-  if (equipmentIds.length + customEquipments.length > MAX_EQUIPMENTS_PER_JOB) {
+  if (equipmentIds.length + customCount > MAX_EQUIPMENTS_PER_JOB) {
     throw new ServiceJobValidationError(
       `ใบงานบริการหนึ่งใบใส่เครื่องได้ไม่เกิน ${MAX_EQUIPMENTS_PER_JOB} เครื่อง`
     );
@@ -408,7 +426,6 @@ function normalizeInput(input: ServiceJobInput): NormalizedInput {
       input.workSummary === undefined || input.workSummary === null
         ? null
         : text(input.workSummary, 10000),
-    jobNo: text(input.jobNo, 255),
     equipmentIds,
     customEquipments,
   };
@@ -442,6 +459,59 @@ async function assertEquipmentsExist(
 
 // ── Document number ──────────────────────────────────────────────────────────
 
+const LEDGER_SCAN_SQL =
+  "SELECT docNo FROM used_docnos WHERE docNo LIKE ? ESCAPE '\\\\'";
+
+/** The LIKE argument for one prefix, with the wildcards in it escaped. */
+const ledgerLikeArg = (prefix: string) =>
+  `${prefix.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+
+/**
+ * Every number the ledger already owns under this day's job prefixes.
+ *
+ * NOT windowed by date. `used_docnos` is never purged, so it still owns every
+ * number ever issued, and a 7-day window cannot see a number a colliding date
+ * shape parked under this prefix in another year — minting from one hands back
+ * a number the PRIMARY KEY then refuses.
+ *
+ * `run` is the connection to read on: the transaction's own inside claimJobNo,
+ * the pool for the read-only preview.
+ */
+async function readTakenJobNos(
+  run: (sql: string, params: unknown[]) => Promise<[RowDataPacket[], unknown]>,
+  jobDate: string
+): Promise<Set<string>> {
+  const taken = new Set<string>();
+  for (const prefix of serviceJobDocNoPrefixes(jobDate)) {
+    const [rows] = await run(LEDGER_SCAN_SQL, [ledgerLikeArg(prefix)]);
+    for (const row of rows) taken.add(String(row.docNo));
+  }
+  return taken;
+}
+
+/**
+ * The number a sheet issued for `jobDate` WOULD get, for showing on screen
+ * before it is saved.
+ *
+ * ⚠️ THIS RESERVES NOTHING. It is a SELECT on the pool with no transaction
+ * behind it, so between this answer and the save another admin may claim it
+ * and `claimJobNo` will hand this sheet the next one instead. It exists so the
+ * admin can see roughly what number he is about to print, and every caller
+ * must present it as an estimate — never write it onto a document, and never
+ * send it back as the number to use.
+ */
+export async function peekNextJobNo(jobDate: string): Promise<string> {
+  const date = text(jobDate, 20);
+  if (!date || !isValidDateString(date)) {
+    throw new ServiceJobValidationError("กรุณาระบุวันที่ให้ถูกต้อง (YYYY-MM-DD)");
+  }
+  const taken = await readTakenJobNos(
+    (sql, params) => query<RowDataPacket[]>(sql, params),
+    date
+  );
+  return nextServiceJobDocNo(date, Array.from(taken));
+}
+
 /**
  * Claim `JOB<DDMMYY>-NN` from the SHARED `used_docnos` ledger — the same
  * register quotations and billing documents use, so all three document families
@@ -457,6 +527,10 @@ async function assertEquipmentsExist(
  * loser here gets `ER_DUP_ENTRY`, steps PAST that number and tries the next
  * one, and comes away with a number of his own instead of an error telling him
  * to go and invent one himself. Identical reasoning to saveQuotationAtomic.
+ *
+ * THIS IS THE ONLY PLACE A JOB NUMBER IS DECIDED. Nothing off the wire reaches
+ * it: the number a sheet carries is a function of its own jobDate and the
+ * ledger, never of anything a browser typed.
  */
 async function claimJobNo(
   conn: PoolConnection,
@@ -464,20 +538,11 @@ async function claimJobNo(
   jobDate: string,
   now: string
 ): Promise<string> {
-  const prefixes = serviceJobDocNoPrefixes(jobDate);
-  const taken = new Set<string>();
-  for (const prefix of prefixes) {
-    // NOT windowed by date. `used_docnos` is never purged, so it still owns
-    // every number ever issued, and a 7-day window cannot see a number a
-    // colliding date shape parked under this prefix in another year — minting
-    // from one hands back a number the PRIMARY KEY then refuses. Read on the
-    // transaction's own connection (listDocNosByBase runs on the pool).
-    const [rows] = await conn.query<RowDataPacket[]>(
-      "SELECT docNo FROM used_docnos WHERE docNo LIKE ? ESCAPE '\\\\'",
-      [`${prefix.replace(/[\\%_]/g, (c) => `\\${c}`)}%`]
-    );
-    for (const row of rows) taken.add(String(row.docNo));
-  }
+  // Read on the transaction's own connection (the pool is a different session).
+  const taken = await readTakenJobNos(
+    (sql, params) => conn.query<RowDataPacket[]>(sql, params),
+    jobDate
+  );
 
   for (let attempt = 0; attempt < MAX_DOCNO_ATTEMPTS; attempt++) {
     // nextServiceJobDocNo already refuses to return anything in `taken`, so
@@ -543,28 +608,13 @@ export async function createJob(input: ServiceJobInput): Promise<ServiceJob> {
       await assertEquipmentsExist(conn, data.equipmentIds);
     }
 
-    // Use client-provided jobNo if present, otherwise mint one.
-    let jobNo: string;
-    if (data.jobNo) {
-      // Attempt to claim the client-suggested number. If it's already taken,
-      // fall back to the auto-mint logic.
-      try {
-        await conn.query(
-          "INSERT INTO used_docnos (docNo, quotationId, createdAt) VALUES (?, ?, ?)",
-          [data.jobNo, id, now]
-        );
-        jobNo = data.jobNo;
-      } catch (err) {
-        if ((err as { code?: string })?.code === "ER_DUP_ENTRY") {
-          // Client's number is taken — fall back to auto-mint.
-          jobNo = await claimJobNo(conn, id, data.jobDate, now);
-        } else {
-          throw err;
-        }
-      }
-    } else {
-      jobNo = await claimJobNo(conn, id, data.jobDate, now);
-    }
+    // The number is ALWAYS minted here, from the sheet's own jobDate. There is
+    // no caller-supplied alternative, by design: a caller-chosen string is
+    // written into a ledger shared with quotations and billing, under whatever
+    // date prefix the caller felt like, and `used_docnos` is never purged — so
+    // one typo permanently burns a number another document family was going to
+    // need. See the note on ServiceJobInput.
+    const jobNo = await claimJobNo(conn, id, data.jobDate, now);
 
     await conn.query(
       `INSERT INTO service_jobs
@@ -580,7 +630,9 @@ export async function createJob(input: ServiceJobInput): Promise<ServiceJob> {
         data.technicianName,
         data.scheduleId,
         data.workSummary,
-        data.customEquipments.length > 0 ? JSON.stringify(data.customEquipments) : null,
+        data.customEquipments && data.customEquipments.length > 0
+          ? JSON.stringify(data.customEquipments)
+          : null,
         now,
       ]
     );
@@ -628,10 +680,15 @@ export async function updateJob(
       await assertEquipmentsExist(conn, data.equipmentIds);
     }
 
+    // `customEquipments` is only rewritten when the caller actually sent the
+    // key. A caller that knows nothing about typed machines (the job-sheet
+    // page has no UI for them) must not blank the column on every edit —
+    // that is data loss with a 200 on it.
+    const rewriteCustom = data.customEquipments !== undefined;
     await conn.query(
       `UPDATE service_jobs SET
          companyId = ?, customerId = ?, jobDate = ?, technicianName = ?,
-         scheduleId = ?, workSummary = ?, customEquipments = ?
+         scheduleId = ?, workSummary = ?${rewriteCustom ? ", customEquipments = ?" : ""}
        WHERE id = ?`,
       [
         data.companyId,
@@ -640,7 +697,13 @@ export async function updateJob(
         data.technicianName,
         data.scheduleId,
         data.workSummary,
-        data.customEquipments.length > 0 ? JSON.stringify(data.customEquipments) : null,
+        ...(rewriteCustom
+          ? [
+              data.customEquipments!.length > 0
+                ? JSON.stringify(data.customEquipments)
+                : null,
+            ]
+          : []),
         id,
       ]
     );

@@ -30,6 +30,7 @@ import {
   ScheduleCompletionRequiresLogError,
   declineWarrantyRenewal,
 } from '@/app/lib/crmStore';
+import { ALERT_LIST_DISPLAY_LIMIT } from '@/app/lib/alertThresholds';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -1657,7 +1658,87 @@ describe('getAlerts — "today" must be Bangkok (UTC+7) time, not server UTC', (
     expect(calibrationCall![0]).toContain('DATE_ADD(e.calibrationDate, INTERVAL ? MONTH)');
     // 12 (1-year validity) - 2 (alert lead time) = 10 months; compared against
     // Bangkok "today" with no upper bound (see the next test for why).
-    expect(calibrationCall![1]).toEqual([10, '2026-08-05', '2026-08-04T19:00:00.000Z']);
+    // Params: the exact rule (months, today), then the redundant index-usable
+    // bound on the bare column (today, months), then "now" for the snooze.
+    expect(calibrationCall![1]).toEqual([
+      10,
+      '2026-08-05',
+      '2026-08-05',
+      10,
+      '2026-08-04T19:00:00.000Z',
+    ]);
+  });
+
+  it('pairs the exact calibration rule with an index-usable bound on the bare column', async () => {
+    // DATE_ADD() on the column cannot use idx_ce_calibrationDate, so this query
+    // used to full-scan customer_equipments on every poll of every admin page.
+    // The added predicate is a strict SUPERSET of the exact rule (month
+    // arithmetic inverts exactly except where DATE_ADD clamped a day-of-month
+    // to a shorter month, which can only pull the inverse earlier, by at most
+    // 3 days) — so it can only ever help the optimiser, never hide a row.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-04T19:00:00.000Z'));
+
+    await getAlerts();
+
+    const calibrationCall = topQuery.mock.calls.find(([sql]) =>
+      String(sql).includes('calibrationDate')
+    );
+    const sql = String(calibrationCall![0]);
+    // The exact rule is still there — the bound REPLACING it would move the
+    // alert by a day at month-end boundaries.
+    expect(sql).toContain('DATE_ADD(e.calibrationDate, INTERVAL ? MONTH) <= ?');
+    expect(sql).toContain(
+      "e.calibrationDate <= DATE_FORMAT(DATE_SUB(?, INTERVAL ? MONTH) + INTERVAL 3 DAY, '%Y-%m-%d')"
+    );
+  });
+
+  it('caps nearingCalibration at the display limit and reports the true total', async () => {
+    // Nothing closes this category but a NEW calibrationDate, so the backlog
+    // only grows. Uncapped, an admin with a few thousand machines carrying a
+    // stale calibration date got every one of them, fully joined, in EVERY
+    // /api/admin/alerts response — on page load and every 5 minutes after.
+    topQuery.mockImplementation((sql: string) => {
+      const text = String(sql);
+      if (text.includes('SELECT COUNT(*) AS cnt') && text.includes('calibrationDate')) {
+        return Promise.resolve([[{ cnt: 3000 }]]);
+      }
+      if (text.includes('customer_equipments e') && text.includes('DATE_ADD(e.calibrationDate')) {
+        return Promise.resolve([
+          Array.from({ length: ALERT_LIST_DISPLAY_LIMIT }, (_, i) => ({ id: `eq-${i}` })),
+        ]);
+      }
+      return Promise.resolve([[]]);
+    });
+
+    const alerts = await getAlerts();
+
+    expect(alerts.nearingCalibration).toHaveLength(ALERT_LIST_DISPLAY_LIMIT);
+    // The bell counts THIS, not the truncated array — 3000 machines must not
+    // show up as "100 due for calibration".
+    expect(alerts.nearingCalibrationTotal).toBe(3000);
+
+    const listCall = topQuery.mock.calls.find(
+      ([sqlText]) =>
+        String(sqlText).includes('DATE_ADD(e.calibrationDate') &&
+        !String(sqlText).includes('SELECT COUNT(*)')
+    );
+    expect(String(listCall![0])).toContain(`LIMIT ${ALERT_LIST_DISPLAY_LIMIT}`);
+
+    // The counting twin must NOT carry the cap, or it would report 100 too.
+    const countCall = topQuery.mock.calls.find(
+      ([sqlText]) =>
+        String(sqlText).includes('DATE_ADD(e.calibrationDate') &&
+        String(sqlText).includes('SELECT COUNT(*)')
+    );
+    expect(String(countCall![0])).not.toContain('LIMIT');
+    // Same filter on both sides, or the total describes a different question.
+    expect(countCall![1]).toEqual(listCall![1]);
+  });
+
+  it('reports a calibration total of 0 rather than NaN when the count comes back empty', async () => {
+    topQuery.mockResolvedValue([[]]);
+    expect((await getAlerts()).nearingCalibrationTotal).toBe(0);
   });
 
   // ── ลูกหนี้ค้างชำระ ───────────────────────────────────────────────────────
@@ -2386,6 +2467,7 @@ describe('getAlerts — every pre-existing key survives the split', () => {
         'incompleteEquipmentsTotal',
         'missingDocuments',
         'nearingCalibration',
+        'nearingCalibrationTotal',
         'upcomingSchedules',
         // Adding a category must never quietly drop one — that is what this
         // exhaustive assertion is for.

@@ -4,15 +4,60 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAuth } from "../context/AuthContext";
 
+/**
+ * The admin sections of the app. This is an ALLOW-list on purpose: this
+ * component is mounted in app/layout.tsx, which wraps the PUBLIC marketing
+ * site too, and the badge it draws is internal data (overdue receivables,
+ * due tasks). A deny-list of public paths silently leaks that badge onto every
+ * public route added afterwards — which is how it ended up floating over
+ * /showcase/[id] and the catalog while a customer was looking at them.
+ *
+ * The failure mode of this direction is a missing bell on a new admin route,
+ * which an admin notices immediately; the failure mode of the other direction
+ * is invisible to us and visible to a customer. Add new admin sections here.
+ */
+const ADMIN_PATH_PREFIXES = [
+  "/adminpanel",
+  "/billing",
+  "/create-content",
+  "/create-product",
+  "/crm",
+  "/customers",
+  "/dashboard",
+  "/document", // the single-document viewer
+  "/documents", // and the list — a separate route, not a child of the above
+  "/edit-product",
+  "/expenses",
+  "/product-specs",
+  "/quotation",
+  "/service-job",
+  "/settings",
+  "/suppliers",
+  "/tools",
+];
+
+/** True only for a path inside one of the admin sections above. Matches the
+ *  section root ("/billing") and anything under it ("/billing/abc"), but never
+ *  a different segment that merely starts with the same letters
+ *  ("/settings-public"). */
+function isAdminPath(pathname: string | null | undefined): boolean {
+  const path = pathname ?? "";
+  return ADMIN_PATH_PREFIXES.some(
+    (prefix) => path === prefix || path.startsWith(`${prefix}/`)
+  );
+}
+
 export default function GlobalAdminBell() {
   const { isLoggedIn } = useAuth();
   const pathname = usePathname();
   const [alertsCount, setAlertsCount] = useState<number>(0);
   const [isAlertsLoading, setIsAlertsLoading] = useState<boolean>(true);
 
-  // Hide only on the alerts page itself — a bell that deep-links to
-  // /crm/alerts is redundant (and a bit odd) while already viewing that page.
-  const hideBell = pathname?.startsWith("/crm/alerts") ?? false;
+  // Hidden on every public page (it is not theirs to show), and on the alerts
+  // page itself — a bell that deep-links to /crm/alerts is redundant (and a
+  // bit odd) while already viewing that page.
+  const hideBell =
+    !isAdminPath(pathname) || (pathname?.startsWith("/crm/alerts") ?? false);
 
   // Poll alerts on every admin page except the alerts page itself, as long as
   // the admin is logged in.
@@ -33,7 +78,9 @@ export default function GlobalAdminBell() {
           // must count as 0 rather than turn the whole sum into NaN.
           const total =
             (data.expiringWarranties?.length || 0) +
-            (data.nearingCalibration?.length || 0) +
+            // Capped at 100 rows for display like the categories below it:
+            // nothing closes a calibration alert but a NEW calibrationDate.
+            (data.nearingCalibrationTotal ?? data.nearingCalibration?.length ?? 0) +
             (data.upcomingSchedules?.length || 0) +
             (data.incompleteEquipmentsTotal ?? data.incompleteEquipments?.length ?? 0) +
             (data.missingDocuments?.length || 0) +

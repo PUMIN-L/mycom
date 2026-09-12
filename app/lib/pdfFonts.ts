@@ -278,10 +278,20 @@ function wrapParagraph(
   const lines: string[] = [];
   let line = "";
 
+  // A paragraph made only of whitespace is a BLANK LINE, not an indent with
+  // nothing after it — collapse it so a spacer line cannot carry a phantom
+  // offset into a centred or right-aligned block.
+  if (isBlank(paragraph)) return [""];
+
   for (const segment of segmentWords(paragraph)) {
-    // Whitespace that lands at the start of a fresh line is dropped — it is
-    // the break itself, and keeping it would indent every wrapped line.
-    if (line === "" && isBlank(segment)) continue;
+    // Whitespace at the start of a WRAPPED line is the break itself, and
+    // keeping it would indent every continuation line. Whitespace at the start
+    // of the PARAGRAPH is different: it is indentation the admin typed, it is
+    // visible in the preview (which renders `whitespace-pre-wrap`), and
+    // dropping it here is what made the PDF disagree with what was on screen.
+    // `lines.length > 0` is the difference between the two: nothing has been
+    // emitted yet only at the very start of the paragraph.
+    if (line === "" && lines.length > 0 && isBlank(segment)) continue;
 
     const candidate = line + segment;
     if (width(candidate) <= maxWidthPt) {
@@ -305,7 +315,11 @@ function wrapParagraph(
     line = chunks[chunks.length - 1];
   }
 
-  if (line !== "") lines.push(line.replace(/\s+$/, ""));
+  // The LAST line keeps its trailing whitespace: unlike the strip at a wrap
+  // point above (where the space IS the break), trailing space here is text the
+  // admin typed. It is invisible when left-aligned but shifts a centred or
+  // right-aligned line, and the preview already renders it.
+  if (line !== "") lines.push(line);
   return lines.length > 0 ? lines : [""];
 }
 

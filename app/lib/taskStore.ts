@@ -352,25 +352,65 @@ export async function reorderTopics(ids: number[]): Promise<boolean> {
 }
 
 /**
+ * Takes an EXCLUSIVE row lock on a topic and reports whether it still exists.
+ *
+ * This is the whole anti-orphan mechanism for `crm_tasks.topicId`, which is a
+ * soft reference with no foreign key — nothing at the DB level stops a task
+ * from pointing at a topic that has been deleted. Both sides of the race take
+ * this same lock on the same row: the writer (addTask / updateTask) before it
+ * writes the topicId, and deleteTopic before it counts. Whichever gets there
+ * first, the other one blocks and then sees a committed world:
+ *
+ *   • delete first  → the writer wakes to a missing row and refuses, in Thai.
+ *   • write first   → deleteTopic's COUNT sees the new task and throws
+ *                     TopicInUseError.
+ *
+ * FOR UPDATE on both sides rather than a shared lock on the writer: TiDB does
+ * not support LOCK IN SHARE MODE, and serialising task writes per topic costs
+ * nothing on a hand-written board.
+ */
+async function lockTopicForWrite(conn: TxConn, topicId: number): Promise<boolean> {
+  const [rows] = await conn.query("SELECT id FROM task_topics WHERE id = ? FOR UPDATE", [
+    topicId,
+  ]);
+  return (rows as RowDataPacket[]).length > 0;
+}
+
+/** The one Thai message for "you are writing a task under a topic that is no
+ *  longer there", used by both write paths. */
+const TOPIC_GONE_MESSAGE = "ไม่พบหัวข้อที่เลือก กรุณาเลือกหัวข้ออื่น";
+
+/**
  * Deletes a topic ONLY when no task references it — pending or done. Otherwise
  * throws TopicInUseError so the caller can tell the admin to hide it instead:
  * `topicId` is a soft reference with no FK, so deleting a topic still in use
  * would silently orphan those tasks and lose the history behind them.
  * Returns false when the topic does not exist.
+ *
+ * The count and the delete run in ONE transaction behind the topic's own row
+ * lock. Unlocked, a task created in the gap between "COUNT(*) = 0" and the
+ * DELETE was orphaned silently: it rendered under "ไม่ระบุหัวข้อ" and every
+ * subsequent save from TaskFormModal answered 400 "ไม่พบหัวข้อที่เลือก",
+ * leaving the admin with a task he could not edit and no way to see why.
  */
 export async function deleteTopic(id: number): Promise<boolean> {
   const topicId = Number(id);
-  const [countRows] = await query<RowDataPacket[]>(
-    "SELECT COUNT(*) AS cnt FROM crm_tasks WHERE topicId = ?",
-    [topicId]
-  );
-  const taskCount = Number(countRows[0]?.cnt) || 0;
-  if (taskCount > 0) throw new TopicInUseError(topicId, taskCount);
+  return withTransaction(async (conn: TxConn) => {
+    // Re-read INSIDE the attempt: withTransaction retries its callback, and a
+    // retry after a lost commit acknowledgement must reach its verdict from
+    // the database as it is now, not from anything read before it opened.
+    if (!(await lockTopicForWrite(conn, topicId))) return false;
 
-  const [result] = await query<ResultSetHeader>("DELETE FROM task_topics WHERE id = ?", [
-    topicId,
-  ]);
-  return result.affectedRows > 0;
+    const [countRows] = await conn.query(
+      "SELECT COUNT(*) AS cnt FROM crm_tasks WHERE topicId = ?",
+      [topicId]
+    );
+    const taskCount = Number((countRows as RowDataPacket[])[0]?.cnt) || 0;
+    if (taskCount > 0) throw new TopicInUseError(topicId, taskCount);
+
+    const [result] = await conn.query("DELETE FROM task_topics WHERE id = ?", [topicId]);
+    return (result as ResultSetHeader).affectedRows > 0;
+  });
 }
 
 // ── Tasks ────────────────────────────────────────────────────────────────────
@@ -505,6 +545,15 @@ export async function addTask(input: AddTaskInput): Promise<CrmTask> {
     const id = crypto.randomUUID();
     const createdAt = new Date().toISOString();
 
+    // The route already refused a missing or hidden topic, but that check ran
+    // in its own round trip; this one holds the topic's row lock for as long as
+    // the insert takes, so a delete cannot slip in behind it and orphan the
+    // task. Existence only — whether a topic is still OFFERED is the route's
+    // policy, and a hidden topic orphans nothing.
+    if (!(await lockTopicForWrite(conn, topicId))) {
+      throw new TaskValidationError(TOPIC_GONE_MESSAGE);
+    }
+
     await conn.query(
       `INSERT INTO crm_tasks (id, topicId, title, detail, dueDate, status, completedAt, createdAt)
        VALUES (?, ?, ?, ?, ?, 'pending', NULL, ?)`,
@@ -551,9 +600,11 @@ export async function updateTask(id: string, updates: UpdateTaskInput): Promise<
   const sets: string[] = [];
   const params: unknown[] = [];
 
+  let movingToTopicId: number | null = null;
   if (updates?.topicId !== undefined) {
+    movingToTopicId = cleanTopicId(updates.topicId);
     sets.push("topicId = ?");
-    params.push(cleanTopicId(updates.topicId));
+    params.push(movingToTopicId);
   }
   if (updates?.title !== undefined) {
     sets.push("title = ?");
@@ -586,25 +637,33 @@ export async function updateTask(id: string, updates: UpdateTaskInput): Promise<
   const links = updates?.links !== undefined ? cleanLinks(updates.links) : null;
   if (sets.length === 0 && links === null) return getTask(taskId);
 
-  if (links !== null) {
-    // Row + link set change together or not at all.
+  // A transaction is needed when the link set is replaced (row + links land
+  // together or not at all) AND when the task is being moved to another topic
+  // (the move has to hold that topic's row lock, exactly like addTask —
+  // otherwise re-filing a task is a second way to orphan one).
+  if (links !== null || movingToTopicId !== null) {
     await withTransaction(async (conn: TxConn) => {
+      if (movingToTopicId !== null && !(await lockTopicForWrite(conn, movingToTopicId))) {
+        throw new TaskValidationError(TOPIC_GONE_MESSAGE);
+      }
       if (sets.length > 0) {
         await conn.query(`UPDATE crm_tasks SET ${sets.join(", ")} WHERE id = ?`, [
           ...params,
           taskId,
         ]);
       }
-      await conn.query("DELETE FROM task_links WHERE taskId = ?", [taskId]);
-      const createdAt = new Date().toISOString();
-      for (const link of links) {
-        await conn.query(INSERT_LINK_SQL, [
-          taskId,
-          link.targetType,
-          link.targetId,
-          link.label,
-          createdAt,
-        ]);
+      if (links !== null) {
+        await conn.query("DELETE FROM task_links WHERE taskId = ?", [taskId]);
+        const createdAt = new Date().toISOString();
+        for (const link of links) {
+          await conn.query(INSERT_LINK_SQL, [
+            taskId,
+            link.targetType,
+            link.targetId,
+            link.label,
+            createdAt,
+          ]);
+        }
       }
     });
   } else {

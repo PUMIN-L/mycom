@@ -83,10 +83,16 @@ type LinkRow = {
   label: string;
   createdAt: string;
 };
-type TxStore = { tasks: TaskRow[]; links: LinkRow[] };
+/** `missingTopics` are topic ids whose task_topics row is GONE — every task
+ *  write locks its topic row first and must refuse if it is not there. */
+type TxStore = { tasks: TaskRow[]; links: LinkRow[]; missingTopics: number[] };
 
 function newStore(seed: Partial<TxStore> = {}): TxStore {
-  return { tasks: seed.tasks ?? [], links: seed.links ?? [] };
+  return {
+    tasks: seed.tasks ?? [],
+    links: seed.links ?? [],
+    missingTopics: seed.missingTopics ?? [],
+  };
 }
 
 /** A tiny SQL interpreter over `store`. `failOnLinkInsert` makes the Nth
@@ -95,6 +101,14 @@ function storeInterpreter(store: TxStore, opts: { failOnLinkInsert?: number } = 
   let linkInserts = 0;
   return (sql: string, params: unknown[] = []) => {
     const text = String(sql).trim();
+
+    // The topic row lock every task write takes before it writes topicId.
+    if (/^SELECT id FROM task_topics WHERE id = \? FOR UPDATE/i.test(text)) {
+      const topicId = Number((params as unknown[])[0]);
+      return Promise.resolve([
+        store.missingTopics.includes(topicId) ? [] : [{ id: topicId }],
+      ]);
+    }
 
     if (/^INSERT INTO crm_tasks/i.test(text)) {
       const [id, topicId, title, detail, dueDate, createdAt] = params as [
@@ -455,8 +469,14 @@ describe('reorderTopics', () => {
 });
 
 describe('deleteTopic', () => {
-  function mockTaskCount(count: number, deleted = 1) {
-    topQuery.mockImplementation((sql: string) => {
+  /** Scripts the transaction connection: does the topic row still exist, and
+   *  how many tasks point at it. Everything now runs on `conn`, inside ONE
+   *  transaction, behind the topic's own row lock. */
+  function mockTopicWorld(count: number, topicExists = true, deleted = 1) {
+    conn.query.mockImplementation((sql: string) => {
+      if (/SELECT id FROM task_topics WHERE id = \? FOR UPDATE/.test(sql)) {
+        return Promise.resolve([topicExists ? [{ id: 2 }] : []]);
+      }
       if (/SELECT COUNT\(\*\) AS cnt FROM crm_tasks/.test(sql)) {
         return Promise.resolve([[{ cnt: count }]]);
       }
@@ -465,16 +485,17 @@ describe('deleteTopic', () => {
   }
 
   it('refuses while ANY task references the topic — and deletes nothing', async () => {
-    mockTaskCount(3);
+    mockTopicWorld(3);
 
     await expect(deleteTopic(2)).rejects.toBeInstanceOf(TopicInUseError);
     // topicId is a soft reference with no FK: deleting here would silently
     // orphan three tasks and lose the history behind them.
+    expect(connCalls(/DELETE/i)).toHaveLength(0);
     expect(topCalls(/DELETE/i)).toHaveLength(0);
   });
 
   it('carries the topic id and task count on the error so the caller can explain itself', async () => {
-    mockTaskCount(7);
+    mockTopicWorld(7);
 
     const error: unknown = await deleteTopic(2).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(TopicInUseError);
@@ -485,26 +506,72 @@ describe('deleteTopic', () => {
   });
 
   it('counts DONE tasks too, not just pending ones', async () => {
-    mockTaskCount(1);
+    mockTopicWorld(1);
     await expect(deleteTopic(2)).rejects.toBeInstanceOf(TopicInUseError);
 
-    const [sql] = topQuery.mock.calls[0];
-    expect(sql).toContain('SELECT COUNT(*) AS cnt FROM crm_tasks WHERE topicId = ?');
-    expect(sql).not.toContain("status");
+    const countCall = connCalls(/SELECT COUNT\(\*\) AS cnt FROM crm_tasks/)[0];
+    expect(sqlOf(countCall)).toContain('SELECT COUNT(*) AS cnt FROM crm_tasks WHERE topicId = ?');
+    expect(sqlOf(countCall)).not.toContain('status');
   });
 
   it('deletes a topic nothing references', async () => {
-    mockTaskCount(0);
+    mockTopicWorld(0);
 
     expect(await deleteTopic(9)).toBe(true);
-    const deletes = topCalls(/DELETE FROM task_topics WHERE id = \?/);
+    const deletes = connCalls(/DELETE FROM task_topics WHERE id = \?/);
     expect(deletes).toHaveLength(1);
     expect(deletes[0][1]).toEqual([9]);
   });
 
-  it('returns false for a topic that is already gone', async () => {
-    mockTaskCount(0, 0);
+  it('returns false for a topic that is already gone, without counting or deleting', async () => {
+    mockTopicWorld(0, false);
+
     expect(await deleteTopic(9)).toBe(false);
+    expect(connCalls(/SELECT COUNT/)).toHaveLength(0);
+    expect(connCalls(/DELETE/i)).toHaveLength(0);
+  });
+
+  // ── The race the transaction exists to close ──────────────────────────────
+
+  it('runs the count and the delete in ONE transaction, behind the topic row lock', async () => {
+    // Unlocked, a task created between "COUNT(*) = 0" and the DELETE was
+    // silently ORPHANED: it rendered under "ไม่ระบุหัวข้อ" and every save from
+    // TaskFormModal answered 400 "ไม่พบหัวข้อที่เลือก" from then on, with
+    // nothing on screen to say why.
+    mockTopicWorld(0);
+
+    await deleteTopic(9);
+
+    expect(runTransaction).toHaveBeenCalledTimes(1);
+    // Nothing may run outside the transaction — an unlocked read is the bug.
+    expect(topQuery).not.toHaveBeenCalled();
+
+    const order = conn.query.mock.calls.map(sqlOf);
+    const lockAt = order.findIndex((sql) => /FOR UPDATE/.test(sql));
+    const countAt = order.findIndex((sql) => /SELECT COUNT/.test(sql));
+    const deleteAt = order.findIndex((sql) => /DELETE FROM task_topics/.test(sql));
+    expect(lockAt).toBe(0);
+    expect(lockAt).toBeLessThan(countAt);
+    expect(countAt).toBeLessThan(deleteAt);
+  });
+
+  it('sees a task committed by a concurrent writer that got the lock first', async () => {
+    // Tab B's addTask held the topic's row lock and committed; deleteTopic's
+    // count, taken only after the lock is granted, must see that task.
+    let tabBCommitted = false;
+    conn.query.mockImplementation((sql: string) => {
+      if (/FOR UPDATE/.test(sql)) {
+        tabBCommitted = true; // the lock was only granted once tab B finished
+        return Promise.resolve([[{ id: 7 }]]);
+      }
+      if (/SELECT COUNT/.test(sql)) {
+        return Promise.resolve([[{ cnt: tabBCommitted ? 1 : 0 }]]);
+      }
+      return Promise.resolve([{ affectedRows: 1 }]);
+    });
+
+    await expect(deleteTopic(7)).rejects.toBeInstanceOf(TopicInUseError);
+    expect(connCalls(/DELETE FROM task_topics/)).toHaveLength(0);
   });
 });
 
@@ -830,6 +897,108 @@ describe('updateTask', () => {
 
     expect(store.links).toEqual([]);
     expect(store.tasks).toHaveLength(1);
+  });
+});
+
+// ── The other half of the deleteTopic race ──────────────────────────────────
+// `crm_tasks.topicId` has no foreign key, so nothing at the DB level stops a
+// task from being written under a topic that was deleted a moment ago. Both
+// sides take the SAME row lock: whoever gets there second sees a committed
+// world instead of a stale read.
+
+describe('task writes hold the topic row lock', () => {
+  const seedTask = {
+    id: 't1',
+    topicId: 1,
+    title: 'เดิม',
+    detail: null,
+    dueDate: null,
+    status: 'pending',
+    completedAt: null,
+    createdAt: 'c',
+  };
+
+  it('addTask locks the topic row BEFORE inserting the task', async () => {
+    const store = newStore();
+    mountTxStore(store);
+
+    await addTask({ topicId: 4, title: 'งานใหม่' });
+
+    const order = conn.query.mock.calls.map(sqlOf);
+    const lockAt = order.findIndex((sql) => /task_topics WHERE id = \? FOR UPDATE/.test(sql));
+    const insertAt = order.findIndex((sql) => /INSERT INTO crm_tasks/.test(sql));
+    expect(lockAt).toBe(0);
+    expect(lockAt).toBeLessThan(insertAt);
+    expect(conn.query.mock.calls[lockAt][1]).toEqual([4]);
+  });
+
+  it('addTask REFUSES, in Thai, when the topic was deleted in the gap after the route checked it', async () => {
+    // The route's rejectUnusableTopic() passed a moment earlier, in its own
+    // round trip. Without this check the task is inserted anyway, renders under
+    // "ไม่ระบุหัวข้อ", and every later save from TaskFormModal answers 400
+    // "ไม่พบหัวข้อที่เลือก" — an un-editable task with no explanation.
+    const store = newStore({ missingTopics: [7] });
+    mountTxStore(store);
+    mountRollbackTransaction(store);
+
+    await expect(addTask({ topicId: 7, title: 'งานกำพร้า' })).rejects.toBeInstanceOf(
+      TaskValidationError
+    );
+    await expect(addTask({ topicId: 7, title: 'งานกำพร้า' })).rejects.toThrow(
+      'ไม่พบหัวข้อที่เลือก'
+    );
+    // Nothing written: no orphan to clean up later.
+    expect(store.tasks).toEqual([]);
+    expect(connCalls(/INSERT INTO crm_tasks/)).toHaveLength(0);
+  });
+
+  it('addTask still accepts a topic that exists but has been HIDDEN — hiding orphans nothing', async () => {
+    // Whether a topic is still OFFERED is the route's policy. The store only
+    // guards the thing that corrupts data: writing under a topic that is gone.
+    const store = newStore();
+    mountTxStore(store);
+
+    const task = await addTask({ topicId: 3, title: 'งานใต้หัวข้อที่ซ่อนไว้' });
+
+    expect(task.topicId).toBe(3);
+    expect(store.tasks).toHaveLength(1);
+  });
+
+  it('updateTask MOVING a task to another topic takes the same lock', async () => {
+    const store = newStore({ tasks: [{ ...seedTask }] });
+    mountTxStore(store);
+    mountRollbackTransaction(store);
+
+    await updateTask('t1', { topicId: 5 });
+
+    expect(runTransaction).toHaveBeenCalledTimes(1);
+    const lockCall = connCalls(/task_topics WHERE id = \? FOR UPDATE/)[0];
+    expect(lockCall[1]).toEqual([5]);
+    // ...and the move no longer goes out as a bare, unlocked UPDATE.
+    expect(topCalls(/UPDATE crm_tasks/)).toHaveLength(0);
+  });
+
+  it('updateTask REFUSES to move a task into a topic that is gone', async () => {
+    // Re-filing a task is the second way to orphan one, and it used to run as
+    // a single unguarded UPDATE outside any transaction.
+    const store = newStore({ tasks: [{ ...seedTask }], missingTopics: [9] });
+    mountTxStore(store);
+    mountRollbackTransaction(store);
+
+    await expect(updateTask('t1', { topicId: 9 })).rejects.toThrow('ไม่พบหัวข้อที่เลือก');
+    expect(store.tasks[0].topicId).toBe(1);
+    expect(connCalls(/UPDATE crm_tasks/)).toHaveLength(0);
+  });
+
+  it('a patch that does NOT touch topicId still runs as one plain UPDATE', async () => {
+    // No lock is needed to rename a task, and taking one would serialise every
+    // edit on the board behind its topic.
+    topQuery.mockImplementation((sql: string) => defaultAnswer(sql));
+
+    await updateTask('t1', { title: 'แค่เปลี่ยนชื่อ' });
+
+    expect(runTransaction).not.toHaveBeenCalled();
+    expect(topCalls(/UPDATE crm_tasks SET/)).toHaveLength(1);
   });
 });
 

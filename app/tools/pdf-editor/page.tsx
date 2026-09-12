@@ -735,11 +735,15 @@ export default function PdfEditorPage() {
 
   const commitTextDraft = useCallback(() => {
     if (!textDraft) return;
-    const text = textDraft.value.trim();
-    if (!text) {
+    // Only whitespace-only input is treated as "nothing typed" and cancels the
+    // draft. A real value must be stored EXACTLY as typed — leading/trailing
+    // spaces are part of what the admin wrote (e.g. aligning text after a
+    // logo), and trimming here silently ate them on confirm.
+    if (!textDraft.value.trim()) {
       setTextDraft(null);
       return;
     }
+    const text = textDraft.value;
 
     if (textDraft.editingId) {
       const id = textDraft.editingId;
@@ -867,6 +871,8 @@ export default function PdfEditorPage() {
     const ok = await runExport(model, "_edited");
     // Only a download that actually produced a file clears the leave guard.
     if (ok) setSnapshot(dirtyKey(model));
+    // The caller needs this: LeaveGuard must not navigate away on a failure.
+    return ok;
   }, [model, runExport, setSnapshot]);
 
   const handleSplit = useCallback(async () => {
@@ -1482,8 +1488,13 @@ export default function PdfEditorPage() {
           destroy the work. "บันทึกแล้วออก" is therefore the download. */}
       <LeaveGuardModal
         show={showLeaveModal}
-        onSave={() => {
-          void handleDownload().then(() => confirmLeave());
+        onSave={async () => {
+          // ONLY on a download that produced a file. Nothing in this editor is
+          // stored server-side, so navigating after a failed export — an
+          // unreachable Sarabun, an unsupported picture — throws the whole
+          // session away and leaves the admin with nothing at all. The error
+          // modal is already up; staying put is what lets him act on it.
+          if (await handleDownload()) confirmLeave();
         }}
         onDiscard={confirmLeave}
         onCancel={cancelLeave}

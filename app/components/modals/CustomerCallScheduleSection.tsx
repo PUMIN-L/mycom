@@ -8,6 +8,26 @@ interface CustomerCallScheduleSectionProps {
   customerId: string;
 }
 
+/** "YYYY-MM-DD" -> a LOCAL Date for the picker, and the exact inverse of
+ *  `toLocalDateString` above.
+ *
+ *  `new Date("2026-09-05")` is parsed as UTC MIDNIGHT, so on any machine west
+ *  of Greenwich the picker opens on the 4th: the card says 5 Sep, the edit
+ *  modal highlights 4 Sep, and clicking the highlighted day writes 2026-09-04
+ *  back — the appointment silently moves a day earlier just for being opened.
+ *
+ *  This is the fourth copy of this function (AlertDateSearchPanel.tsx,
+ *  TaskFormModal.tsx, app/crm/alerts/page.tsx). It belongs beside
+ *  `toLocalDateString` in app/lib/dateFormat.ts; that file is owned elsewhere
+ *  in this change, so the consolidation is left as a follow-up rather than a
+ *  conflicting edit. */
+function parseDateValue(value: string | null | undefined): Date | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value ?? "").trim());
+  if (!match) return null;
+  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
 // Customer-scoped call-follow-up schedules — the same service_schedules
 // records/API as equipment schedules (see EquipmentDetailsModal.tsx), but
 // scoped to customerId instead of equipmentId and always scheduleType
@@ -322,7 +342,7 @@ export default function CustomerCallScheduleSection({
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-1.5">วันที่นัดหมาย <span className="text-red-500">*</span></label>
                 <DatePicker
-                  selected={editingSchedule?.scheduledDate ? new Date(editingSchedule.scheduledDate) : null}
+                  selected={parseDateValue(editingSchedule?.scheduledDate)}
                   onChange={(date) => {
                     setScheduleFormError(false);
                     setEditingSchedule((prev) => ({ ...prev, scheduledDate: date ? toLocalDateString(date) : "" }));

@@ -40,6 +40,25 @@
 // This tool does not redact.
 //
 // ======================================================================
+// /Rotate IS NOT FREE — EVERYTHING DRAWN MUST BE COUNTER-ROTATED
+// ======================================================================
+// pdf-lib appends operators in UNROTATED user space and does not compensate
+// for the page's /Rotate (measured: `PDFPage.drawImage` passes
+// `options.rotate ?? degrees(0)` straight into the content stream). The viewer
+// then rotates the WHOLE content stream by /Rotate when it displays the page.
+//
+// So on a page whose effective rotation is 90, anything drawn at 0 shows up
+// lying on its side — while the overlay, which paints an upright <img> inside
+// a CSS box, says it is fine. The cure is to draw at the page's effective
+// rotation: `rotate` is counter-clockwise and /Rotate is clockwise, so the two
+// cancel and the content lands upright inside the rectangle the admin drew.
+//
+// A WHITEOUT IS THE EXCEPTION, and deliberately so: an axis-aligned rectangle
+// turned a quarter turn about the anchor `rotatedDrawAnchor` returns covers the
+// identical region, so it keeps its plain `angleDeg: 0` form and its output is
+// byte-for-byte what it always was.
+//
+// ======================================================================
 // NEVER page.getSize()
 // ======================================================================
 // It returns the UNROTATED MediaBox and ignores both /Rotate and the CropBox —
@@ -286,8 +305,15 @@ export async function applyEdits({
   });
 
   /* --- 5. Keep the form interactive, if that is what was asked ----- */
+  //
+  // NOT gated on `wantsForm`. A fillable PDF that the admin whited out or
+  // rotated WITHOUT touching a single field still arrives here with its widget
+  // annotations copied and its AcroForm missing (see step 2), so skipping this
+  // would hand back a file that still LOOKS like a form and has zero fields —
+  // a silent, irreversible loss. `rehomeAcroForm` finds no widgets on an
+  // ordinary document and returns without touching the catalog.
 
-  if (wantsForm && !model.flattenForm) {
+  if (!model.flattenForm) {
     await rehomeAcroForm(outDoc);
   }
 
@@ -328,6 +354,9 @@ export async function applyEdits({
 
   for (const docPage of model.pages) {
     const page = pageById.get(docPage.id)!;
+    // Step 4 put this angle on the page, so the viewer will turn everything
+    // below by it. Drawing at the same angle is what cancels it out.
+    const pageRotation = effectiveRotation(docPage);
 
     // Annotations stranded on a page that is no longer in the document are
     // dropped rather than thrown on — that is the "annotation left on page 7
@@ -343,10 +372,23 @@ export async function applyEdits({
           break;
         case "image":
         case "signature":
-          await drawImageAnnotation(page, ann, await embedAsset(ann.assetId));
+          await drawImageAnnotation(
+            page,
+            ann,
+            await embedAsset(ann.assetId),
+            pageRotation,
+            degrees
+          );
           break;
         case "text":
-          await drawTextAnnotation(page, ann, await getFont(ann.bold), degrees, rgb);
+          await drawTextAnnotation(
+            page,
+            ann,
+            await getFont(ann.bold),
+            pageRotation,
+            degrees,
+            rgb
+          );
           break;
       }
     }
@@ -367,6 +409,11 @@ export async function applyEdits({
 type RgbFn = (typeof import("pdf-lib"))["rgb"];
 type DegreesFn = (typeof import("pdf-lib"))["degrees"];
 
+/**
+ * The one thing that does NOT need the page rotation: a quarter turn maps an
+ * axis-aligned rectangle onto exactly the same region, so 0 is both correct and
+ * the smallest possible content stream.
+ */
 function drawWhiteout(page: PDFPage, ann: WhiteoutAnnotation, rgb: RgbFn): void {
   const box = rotatedDrawAnchor(ann.rect, 0);
   page.drawRectangle({
@@ -379,17 +426,27 @@ function drawWhiteout(page: PDFPage, ann: WhiteoutAnnotation, rgb: RgbFn): void 
   });
 }
 
+/**
+ * `pageRotation` is the page's EFFECTIVE /Rotate. Drawing at it (counter-
+ * clockwise) cancels the clockwise turn the viewer applies, so the picture
+ * comes out upright and filling the rectangle the admin drew — which is what
+ * the overlay has been showing him all along. `rotatedDrawAnchor` supplies both
+ * the pivot corner and the width/height swap that a quarter turn needs.
+ */
 async function drawImageAnnotation(
   page: PDFPage,
   ann: ImageAnnotation | SignatureAnnotation,
-  image: PDFImage
+  image: PDFImage,
+  pageRotation: number,
+  degrees: DegreesFn
 ): Promise<void> {
-  const box = rotatedDrawAnchor(ann.rect, 0);
+  const box = rotatedDrawAnchor(ann.rect, pageRotation);
   page.drawImage(image, {
     x: box.x,
     y: box.y,
     width: box.width,
     height: box.height,
+    rotate: degrees(box.angleDeg),
     // A signature is always fully opaque; only a picture carries an opacity.
     opacity: ann.kind === "image" ? clamp01(ann.opacity) : 1,
   });
@@ -415,17 +472,24 @@ async function drawTextAnnotation(
   page: PDFPage,
   ann: TextAnnotation,
   font: PDFFont,
+  pageRotation: number,
   degrees: DegreesFn,
   rgb: RgbFn
 ): Promise<void> {
   if (ann.text === "") return;
 
   const size = ann.sizePt;
+  // The angle the OPERATORS carry is the admin's own angle PLUS the page's
+  // effective /Rotate: the viewer subtracts the page rotation again, leaving
+  // the text at exactly the angle he typed it at. On an unrotated page this is
+  // `ann.angleDeg` and nothing about the output changes.
+  const totalAngle = ann.angleDeg + pageRotation;
   // A free-form angle (read off an existing skewed line) has no "fits the
-  // rectangle" answer, so it pivots about the rectangle's own corner instead.
+  // rectangle" answer, so it pivots about the corner the page rotation alone
+  // would have used — at 0 that is the rectangle's own bottom-left, as before.
   const frame = isQuarterTurn(ann.angleDeg)
-    ? rotatedDrawAnchor(ann.rect, ann.angleDeg)
-    : { ...ann.rect, angleDeg: ann.angleDeg };
+    ? rotatedDrawAnchor(ann.rect, totalAngle)
+    : { ...rotatedDrawAnchor(ann.rect, pageRotation), angleDeg: totalAngle };
 
   const lines = wrapThai(ann.text, font, size, frame.width);
   if (lines.length === 0) return;

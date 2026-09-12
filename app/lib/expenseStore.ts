@@ -223,11 +223,44 @@ export interface GenerateExpensesResult {
 /**
  * Turns every ACTIVE recurring template not yet generated for `month`
  * ("YYYY-MM") into a real `expenses` row dated the 1st of that month.
- * Idempotent per template per month — safe to click twice (including two
- * concurrent clicks/tabs): the UPDATE below only "claims" a template+month if
- * it isn't already claimed, and its row lock means at most one concurrent
- * caller can win that race for the same template, so it never creates a
- * duplicate expense for the same template+month even under concurrency.
+ *
+ * IDEMPOTENCE IS PER TEMPLATE PER MONTH, and it is decided by looking for the
+ * `expenses` row itself — never by `lastGeneratedMonth`.
+ *
+ * `lastGeneratedMonth` holds ONE month, so it cannot answer "was August
+ * generated?" once September has been. It used to be the guard, and that made
+ * an ordinary backfill duplicate money: generate 2026-09 (marker = "2026-09",
+ * one row dated 2026-09-01), then backfill 2026-08 — the old
+ * `lastGeneratedMonth != "2026-08"` guard matched, inserted August, and
+ * OVERWROTE the marker with "2026-08". Re-running September then matched
+ * again and inserted a SECOND 2026-09-01 row for the same template. `expenses`
+ * has no unique key on (recurringExpenseId, expenseDate), so nothing rejected
+ * it and the month's total was silently double-counted on the dashboard.
+ *
+ * The guard is now the row: inside the transaction we take a row lock on the
+ * template (SELECT ... FOR UPDATE) and then ask `expenses` whether this
+ * template already has a row dated `<month>-01`. Two concurrent callers for the
+ * same template serialize on that lock, so the loser sees the winner's
+ * committed row and skips — the same mutual exclusion the old claim UPDATE
+ * provided, now asking a question that is actually per-month.
+ *
+ * This also makes the callback safe for `withTransaction`'s retry-after-a-lost-
+ * commit-ack: the retry re-reads `expenses`, finds the row the first attempt
+ * committed, and skips instead of inserting a duplicate. The expense id is
+ * minted INSIDE the callback for the same reason.
+ *
+ * No unique index was added for this. One would be a genuine belt-and-braces,
+ * but `expenses` in production may already carry duplicate pairs created by the
+ * bug above — `CREATE UNIQUE INDEX` on a table that already violates it fails,
+ * and the only ways through are to delete real financial rows during bootstrap
+ * or to leave the migration throwing and strand the database half-migrated.
+ * Neither is worth it when the write path is the only thing that creates these
+ * rows and it is now correct under concurrency and under retry.
+ *
+ * `lastGeneratedMonth` survives as a DISPLAY hint only ("the latest month this
+ * template has been generated for" — /expenses reads it to badge the current
+ * month), so it now only ever moves FORWARD. Backfilling August after
+ * September no longer rewinds the badge and no longer re-arms September.
  */
 export async function generateExpensesForMonth(
   month: string
@@ -247,33 +280,64 @@ export async function generateExpensesForMonth(
       continue;
     }
 
-    const expenseId = crypto.randomUUID();
-    const now = new Date().toISOString();
+    const expenseDate = `${month}-01`;
     try {
-      // One row created + one template claimed, atomically — a failure here
-      // must never leave a template marked "generated" with no matching
-      // expense row (or vice versa), and the claim's row lock is what makes
-      // concurrent calls for the same template+month mutually exclusive.
-      const claimed = await withTransaction(async (conn) => {
-        const [claimResult] = await conn.query<ResultSetHeader>(
-          `UPDATE recurring_expenses
-           SET lastGeneratedMonth = ?
-           WHERE id = ? AND (lastGeneratedMonth IS NULL OR lastGeneratedMonth != ?)`,
-          [month, t.id, month]
+      // One row created + the display marker moved, atomically. Everything the
+      // decision depends on is read INSIDE the attempt, so a retried callback
+      // reaches the same conclusion as the attempt that was lost.
+      const outcome = await withTransaction(async (conn) => {
+        // The lock, and nothing else. Two concurrent generate() calls for this
+        // template queue up here, so the existence check below cannot race.
+        const [lockRows] = await conn.query<RowDataPacket[]>(
+          "SELECT id FROM recurring_expenses WHERE id = ? FOR UPDATE",
+          [t.id]
         );
-        if (claimResult.affectedRows === 0) return false;
+        if (lockRows.length === 0) return { status: "gone" as const };
+
+        // THE guard. Per month, and reading the thing that actually matters —
+        // whether this template's expense for this month exists.
+        const [existingRows] = await conn.query<RowDataPacket[]>(
+          "SELECT id FROM expenses WHERE recurringExpenseId = ? AND expenseDate = ? LIMIT 1",
+          [t.id, expenseDate]
+        );
+        if (existingRows.length > 0) return { status: "exists" as const };
+
+        // Minted here, not before the transaction: withTransaction retries the
+        // whole body on a transient connection loss, and a retry must be free
+        // to write a fresh row rather than collide with the previous attempt's
+        // primary key.
+        const expenseId = crypto.randomUUID();
+        const now = new Date().toISOString();
         await conn.query(
           `INSERT INTO expenses (id, title, amount, expenseDate, category, note, createdAt, recurringExpenseId)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-          [expenseId, t.title, t.amount, `${month}-01`, t.category, t.note, now, t.id]
+          [expenseId, t.title, t.amount, expenseDate, t.category, t.note, now, t.id]
         );
-        return true;
+        // Display hint only, and forward-only: a backfill of an older month
+        // must not rewind "latest month generated" (lexical compare is correct
+        // for "YYYY-MM").
+        await conn.query<ResultSetHeader>(
+          `UPDATE recurring_expenses
+           SET lastGeneratedMonth = ?
+           WHERE id = ? AND (lastGeneratedMonth IS NULL OR lastGeneratedMonth < ?)`,
+          [month, t.id, month]
+        );
+        return { status: "generated" as const, id: expenseId };
       });
 
-      if (claimed) {
-        result.generated.push({ id: expenseId, title: t.title, amount: t.amount });
-      } else {
+      if (outcome.status === "generated") {
+        result.generated.push({ id: outcome.id, title: t.title, amount: t.amount });
+      } else if (outcome.status === "exists") {
         result.skippedAlreadyGenerated.push(t.title);
+      } else {
+        // The template was deleted between listRecurringExpenses() and here.
+        // Reported as a failure rather than silently dropped: "nothing
+        // happened for this one" is a fact the admin has to be told, and
+        // "already generated" would be a lie.
+        console.error(
+          `generateExpensesForMonth: template ${t.id} (${t.title}) disappeared before it could be generated`
+        );
+        result.failed.push(t.title);
       }
     } catch (err) {
       // One template failing (e.g. a transient DB error) must not hide

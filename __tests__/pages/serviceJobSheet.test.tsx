@@ -53,8 +53,30 @@ const MACHINE_2 = {
   serialNumber: 'SN-002',
 };
 
+/** The sheet the server answers a save with. The job NUMBER on it is the
+ *  server's, which is the whole point: nothing on the page may invent one. */
+const SAVED_JOB = {
+  id: 'job-1',
+  jobNo: '120926-22',
+  status: 'issued',
+  companyId: 'co-1',
+  customerId: 'cust-1',
+  jobDate: '2026-09-12',
+  technicianName: '',
+  scheduleId: null,
+  equipments: [
+    { equipmentId: 'eq-1', productName: 'เครื่องชั่ง XYZ', serialNumber: 'SN-001' },
+  ],
+};
+
+/** What GET /api/service-jobs/next-no answers with. A PREVIEW of the next free
+ *  number — it reserves nothing, so it must never end up on the paper. */
+let previewJobNo: string | null = '120926-30';
+/** The sheet ?id= reopens, when a test sets one. */
+let reopenedJob: Record<string, unknown> | null = null;
+
 function mockFetch() {
-  const fetchMock = vi.fn(async (url: string) => {
+  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
     if (url === '/api/companies')
       return { ok: true, json: async () => [COMPANY, OTHER_COMPANY] };
     if (url === '/api/customers')
@@ -66,10 +88,26 @@ function mockFetch() {
         ok: true,
         json: async () => ({ phone: '062-000-0000', addressDisplay: 'ที่อยู่จากการตั้งค่า' }),
       };
+    if (url.startsWith('/api/service-jobs/next-no'))
+      return previewJobNo === null
+        ? { ok: false, json: async () => ({ error: 'ไม่สำเร็จ' }) }
+        : { ok: true, json: async () => ({ jobNo: previewJobNo }) };
+    if (url.startsWith('/api/service-jobs/') && !init)
+      return reopenedJob
+        ? { ok: true, json: async () => reopenedJob }
+        : { ok: false, json: async () => ({ error: 'ไม่พบใบ Job' }) };
+    if (url === '/api/service-jobs' && init?.method === 'POST')
+      return { ok: true, json: async () => SAVED_JOB };
     return { ok: true, json: async () => [] };
   });
   vi.stubGlobal('fetch', fetchMock);
   return fetchMock;
+}
+
+/** The hydrate effect reads window.location.search directly (the page stays
+ *  mounted across query-string changes), so deep links are driven from here. */
+function setSearch(search: string) {
+  window.history.replaceState({}, '', `/service-job${search}`);
 }
 
 /** A literal string as a regex. "เลือกบริษัท..." unescaped would also match
@@ -86,6 +124,9 @@ function pick(placeholder: string, option: string) {
 
 beforeEach(() => {
   auth = { isLoggedIn: true, isLoading: false };
+  previewJobNo = '120926-30';
+  reopenedJob = null;
+  setSearch('');
   vi.clearAllMocks();
   mockFetch();
 });
@@ -190,15 +231,90 @@ describe('the printed sheet', () => {
     expect(signatures.querySelectorAll('span.border-b').length).toBe(1);
   });
 
-  it('generates a random job number on creation instead of a placeholder', async () => {
+  it('leaves the DOC NO. box saying so until the server has minted a number', async () => {
     render(<ServiceJobPage />);
     await screen.findByText('เครื่องในใบงานนี้');
-    // The job number is now generated randomly on creation (e.g. 070926-15)
-    // and shown in the sheet. No placeholder text.
-    expect(screen.queryByText('— ออกเลขที่เมื่อบันทึก —')).toBeNull();
-    // The job number input should have a value in DDMMYY-NN format
-    const jobNoInput = screen.getByPlaceholderText('ระบบจะสร้างให้อัตโนมัติ หรือพิมพ์เอง');
-    expect((jobNoInput as HTMLInputElement).value).toMatch(/^\d{6}-/);
+
+    // The preview is an ESTIMATE — it reserves nothing. Printing it would put
+    // a number on paper that the ledger may hand to somebody else.
+    await screen.findByText('120926-30');
+    const sheet = document.getElementById('job-sheet')!;
+    expect(within(sheet).getByText('— ออกเลขที่เมื่อบันทึก —')).toBeInTheDocument();
+    expect(within(sheet).queryByText('120926-30')).toBeNull();
+  });
+});
+
+// ── The job number ───────────────────────────────────────────────────────────
+//
+// It is not a field: it is a claim on `used_docnos`, the never-purged ledger
+// quotations (QT…) and billing (INV/BN/RC) also draw from. The page shows it
+// and the server owns it.
+
+describe('เลขที่ใบงาน (JOB NO.)', () => {
+  it('offers NO way to type a job number', async () => {
+    render(<ServiceJobPage />);
+    await screen.findByText('เครื่องในใบงานนี้');
+
+    // The old free-text field let an admin type `QT150926-03` and burn a
+    // quotation number in the shared ledger, permanently.
+    expect(screen.queryByPlaceholderText('ระบบจะสร้างให้อัตโนมัติ หรือพิมพ์เอง')).toBeNull();
+    for (const box of screen.getAllByRole('textbox')) {
+      expect((box as HTMLInputElement).value).not.toMatch(/^\d{6}-\d{2}$/);
+    }
+  });
+
+  it('SHOWS what number the sheet will carry, straight from the ledger', async () => {
+    render(<ServiceJobPage />);
+    await screen.findByText('เครื่องในใบงานนี้');
+
+    await waitFor(() =>
+      expect(screen.getByTestId('job-no').textContent).toBe('120926-30')
+    );
+    expect(vi.mocked(fetch)).toHaveBeenCalledWith(
+      expect.stringContaining('/api/service-jobs/next-no?date=')
+    );
+    // …and says plainly that it is only an estimate until บันทึก.
+    expect(screen.getByText(/ตัวอย่างเลขที่ถัดไป/)).toBeInTheDocument();
+  });
+
+  it('never sends a job number to the server — not even the previewed one', async () => {
+    const fetchMock = vi.mocked(fetch);
+    render(<ServiceJobPage />);
+    await screen.findByText('เครื่องในใบงานนี้');
+
+    pick('เลือกบริษัท...', 'บจก. ตัวอย่าง');
+    pick('เลือกผู้ติดต่อ...', 'คุณสมชาย');
+    await screen.findByRole('button', { name: literal('เลือกเครื่องเพื่อเพิ่มลงในใบ...') });
+    pick('เลือกเครื่องเพื่อเพิ่มลงในใบ...', 'เครื่องชั่ง XYZ');
+
+    fireEvent.click(screen.getByRole('button', { name: /บันทึกและออกเลขที่ใบ/ }));
+
+    await waitFor(() => {
+      const post = fetchMock.mock.calls.find(
+        (c) => c[0] === '/api/service-jobs' && (c[1] as RequestInit)?.method === 'POST'
+      );
+      expect(post).toBeTruthy();
+      const body = JSON.parse(String((post![1] as RequestInit).body));
+      expect(body.jobNo).toBeUndefined();
+      expect(JSON.stringify(body)).not.toContain('120926-30');
+    });
+
+    // And the sheet then carries the number the SERVER minted.
+    await waitFor(() => expect(screen.getByTestId('job-no').textContent).toBe('120926-22'));
+  });
+
+  it('REFUSES to print a sheet whose number the database has never seen', async () => {
+    // A closed sheet cannot be saved, so there is no way to mint a number for
+    // it here — and paper stamped with a number in no row of used_docnos is
+    // paper nobody can close. Refuse, in Thai, rather than print it.
+    reopenedJob = { ...SAVED_JOB, jobNo: '', status: 'completed' };
+    setSearch('?id=job-1');
+    render(<ServiceJobPage />);
+    await screen.findByText('เครื่องในใบงานนี้');
+    await waitFor(() => expect(screen.getAllByText(/ปิดงานแล้ว/).length).toBeGreaterThan(0));
+
+    fireEvent.click(screen.getByRole('button', { name: /ดาวน์โหลด PDF/ }));
+    expect(await screen.findByText(/ยังไม่มีเลขที่ใบงาน/)).toBeInTheDocument();
   });
 });
 

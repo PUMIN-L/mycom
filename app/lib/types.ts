@@ -356,6 +356,13 @@ export interface ReceivableAlert {
 export interface CrmAlerts {
   expiringWarranties: CustomerEquipment[];
   nearingCalibration: CustomerEquipment[];
+  /** True count of matching (non-snoozed) equipment nearing or past its
+   * calibration date. `nearingCalibration` is capped at
+   * ALERT_LIST_DISPLAY_LIMIT — nothing closes a calibration except recording a
+   * NEW date, so the backlog only ever grows — and the tab must state the real
+   * number rather than the length of the capped list. The exact twin of
+   * `incompleteEquipmentsTotal` below. */
+  nearingCalibrationTotal: number;
   incompleteEquipments: CustomerEquipment[];
   /** True count of matching (non-snoozed) incomplete equipment, which can
    * exceed incompleteEquipments.length since that list is capped. */

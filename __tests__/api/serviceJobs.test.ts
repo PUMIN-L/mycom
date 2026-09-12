@@ -29,6 +29,7 @@ vi.mock('@/app/lib/serviceJobStore', () => {
     deleteJob: vi.fn(),
     completeJob: vi.fn(),
     cancelJob: vi.fn(),
+    peekNextJobNo: vi.fn(),
     ServiceJobValidationError,
     ServiceJobNotEditableError,
   };
@@ -42,6 +43,7 @@ import {
   deleteJob,
   completeJob,
   cancelJob,
+  peekNextJobNo,
   ServiceJobValidationError,
   ServiceJobNotEditableError,
 } from '@/app/lib/serviceJobStore';
@@ -55,6 +57,7 @@ import {
   PUT as putRoute,
   DELETE as deleteRoute,
 } from '@/app/api/service-jobs/[id]/route';
+import { GET as nextNoRoute } from '@/app/api/service-jobs/next-no/route';
 import { POST as completeRoute } from '@/app/api/service-jobs/[id]/complete/route';
 import { POST as cancelRoute } from '@/app/api/service-jobs/[id]/cancel/route';
 
@@ -159,11 +162,57 @@ describe('POST /api/service-jobs', () => {
     expect(await res.json()).toMatchObject({ jobNo: '050926-22' });
   });
 
-  it('400s a sheet with no machine on it', async () => {
+  it('400s a sheet with no machine on it — neither picked nor typed', async () => {
     const res = await createRoute(mutReq(BASE, 'POST', { ...validBody, equipmentIds: [] }));
     expect(res.status).toBe(400);
     expect((await res.json()).error).toContain('อย่างน้อย 1 เครื่อง');
     expect(createJob).not.toHaveBeenCalled();
+  });
+
+  // v39 lets a sheet carry machines that are not in the registry at all (the
+  // technician is going to a customer whose machine nobody has entered yet).
+  // The store permits equipmentIds: [] when custom entries are present, so a
+  // shape check that refuses it makes that feature unreachable — the only way
+  // in is this API.
+  it('accepts a sheet whose machines are ALL typed by hand', async () => {
+    vi.mocked(createJob).mockResolvedValue(job as never);
+    const res = await createRoute(
+      mutReq(BASE, 'POST', {
+        ...validBody,
+        equipmentIds: [],
+        customEquipments: [{ productName: 'เครื่องชั่ง', serialNumber: 'X1' }],
+      })
+    );
+    expect(res.status).toBe(201);
+    expect(vi.mocked(createJob).mock.calls[0][0].customEquipments).toEqual([
+      { productName: 'เครื่องชั่ง', serialNumber: 'X1' },
+    ]);
+  });
+
+  it('carries the typed machines through to the store, sanitized', async () => {
+    vi.mocked(createJob).mockResolvedValue(job as never);
+    await createRoute(
+      mutReq(BASE, 'POST', {
+        ...validBody,
+        customEquipments: [
+          { productName: '<b>เครื่องชั่ง</b>', serialNumber: '<i>X1</i>' },
+          { productName: '', serialNumber: '' },
+        ],
+      })
+    );
+    // The blank row is dropped — it would print as an empty line on the paper.
+    expect(vi.mocked(createJob).mock.calls[0][0].customEquipments).toEqual([
+      { productName: 'เครื่องชั่ง', serialNumber: 'X1' },
+    ]);
+  });
+
+  it('leaves customEquipments UNDEFINED when the caller sent no such key', async () => {
+    vi.mocked(createJob).mockResolvedValue(job as never);
+    await createRoute(mutReq(BASE, 'POST', validBody));
+    // undefined ≠ []: on a PUT the store reads it as "leave the column alone".
+    // Folding it into [] is how an edit from a client with no typed-machine UI
+    // silently blanks the ones another client wrote.
+    expect(vi.mocked(createJob).mock.calls[0][0].customEquipments).toBeUndefined();
   });
 
   it('400s a malformed date — the column is compared and sorted lexically', async () => {
@@ -197,10 +246,29 @@ describe('POST /api/service-jobs', () => {
     expect(vi.mocked(createJob).mock.calls[0][0].technicianName).toBe('');
   });
 
-  it('passes the client-suggested job number to createJob', async () => {
+  // The route's own contract: "the job number is never accepted from the
+  // client". `used_docnos` is ONE ledger shared with quotations and billing and
+  // is never purged, so a number off the wire is written verbatim into it — a
+  // client that posts 'QT150926-03' burns a quotation number for good, and two
+  // clients can post the same number for the same day.
+  it('DROPS a client-supplied job number instead of passing it to the store', async () => {
     vi.mocked(createJob).mockResolvedValue(job as never);
-    await createRoute(mutReq(BASE, 'POST', { ...validBody, jobNo: '050926-99' }));
-    expect(vi.mocked(createJob).mock.calls[0][0].jobNo).toBe('050926-99');
+    await createRoute(
+      mutReq(BASE, 'POST', { ...validBody, jobNo: 'QT150926-03' })
+    );
+    const passed = vi.mocked(createJob).mock.calls[0][0] as Record<string, unknown>;
+    expect(passed.jobNo).toBeUndefined();
+    expect(JSON.stringify(passed)).not.toContain('QT150926-03');
+  });
+
+  it('DROPS a client-supplied job number on an edit too', async () => {
+    vi.mocked(updateJob).mockResolvedValue(job as never);
+    await putRoute(
+      mutReq(`${BASE}/job-1`, 'PUT', { ...validBody, jobNo: '999999-99' }),
+      ctx('job-1')
+    );
+    const passed = vi.mocked(updateJob).mock.calls[0][1] as Record<string, unknown>;
+    expect(passed.jobNo).toBeUndefined();
   });
 
   it('turns a store refusal into a THAI 400, not a 500', async () => {
@@ -339,5 +407,43 @@ describe('POST /api/service-jobs/[id]/cancel', () => {
     );
     const res = await cancelRoute(mutReq(`${BASE}/job-1/cancel`, 'POST'), ctx('job-1'));
     expect(res.status).toBe(400);
+  });
+});
+
+// ── GET /api/service-jobs/next-no ─────────────────────────────────────────────
+//
+// The screen has to be able to say what number the sheet will carry BEFORE it
+// is printed — otherwise the only way to find out is to save. This is that
+// answer, and it is an ESTIMATE: the real number is minted in the transaction.
+
+describe('GET /api/service-jobs/next-no', () => {
+  it('needs a session', async () => {
+    vi.mocked(getSession).mockResolvedValue(null);
+    const res = await nextNoRoute(getReq(`${BASE}/next-no?date=2026-09-05`));
+    expect(res.status).toBe(401);
+    expect(peekNextJobNo).not.toHaveBeenCalled();
+  });
+
+  it('answers the next free number for the date', async () => {
+    vi.mocked(peekNextJobNo).mockResolvedValue('050926-03');
+    const res = await nextNoRoute(getReq(`${BASE}/next-no?date=2026-09-05`));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ jobNo: '050926-03' });
+    expect(peekNextJobNo).toHaveBeenCalledWith('2026-09-05');
+  });
+
+  it('400s a malformed date in Thai rather than guessing one', async () => {
+    vi.mocked(peekNextJobNo).mockRejectedValue(
+      new ServiceJobValidationError('กรุณาระบุวันที่ให้ถูกต้อง (YYYY-MM-DD)')
+    );
+    const res = await nextNoRoute(getReq(`${BASE}/next-no?date=05/09/2026`));
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toContain('YYYY-MM-DD');
+  });
+
+  it('sanitizes the date before it reaches the store', async () => {
+    vi.mocked(peekNextJobNo).mockResolvedValue('050926-01');
+    await nextNoRoute(getReq(`${BASE}/next-no?date=${encodeURIComponent('<b>2026-09-05</b>')}`));
+    expect(peekNextJobNo).toHaveBeenCalledWith('2026-09-05');
   });
 });

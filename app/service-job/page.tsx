@@ -10,7 +10,6 @@ import { useLeaveGuard, LeaveGuardModal } from "../components/LeaveGuard";
 import { toLocalDateString, formatDisplayDate, isValidDateString } from "../lib/dateFormat";
 import { stripHtml } from "../lib/stripHtml";
 import type { ServiceJob, ServiceJobStatus } from "../lib/types";
-import { serviceJobDocNoPrefix } from "../lib/serviceJobNumber";
 
 // ── ใบ Job — สร้าง/แก้ไขใบบันทึกงานบริการ (the printed job sheet) ─────────────
 //
@@ -140,7 +139,15 @@ export default function ServiceJobPage() {
 
   // ── The document ──────────────────────────────────────────────────────────
   const [jobId, setJobId] = useState("");
+  /** The number the SERVER minted for this sheet. Empty until a save comes
+   *  back. Nothing on this page ever writes anything else into it — see the
+   *  JOB NO. block in the form. */
   const [jobNo, setJobNo] = useState("");
+  /** What the ledger says the next free number for `jobDate` is — a PREVIEW,
+   *  shown so the admin knows what he is about to print. It reserves nothing
+   *  and is never sent back to the server, never printed, and never allowed
+   *  to stand in for `jobNo` on the sheet. */
+  const [nextJobNoPreview, setNextJobNoPreview] = useState("");
   const [status, setStatus] = useState<ServiceJobStatus>("issued");
   const [companyId, setCompanyId] = useState("");
   const [customerId, setCustomerId] = useState("");
@@ -220,6 +227,34 @@ export default function ServiceJobPage() {
     useLeaveGuard(formData);
 
   const locked = status !== "issued";
+
+  // ── The number the sheet is going to carry ────────────────────────────────
+  // For a sheet that has not been saved yet, ask the ledger what the next free
+  // number for this date is and SHOW it, so the admin is not choosing a date
+  // and pressing print with no idea what number comes out. It is a preview:
+  // the server mints the real number on save (another admin may take this one
+  // first), so it is never sent back, never written onto the sheet and never
+  // put into `jobNo`.
+  useEffect(() => {
+    if (!isLoggedIn || jobId || !jobDate || !isValidDateString(jobDate)) return;
+    let cancelled = false;
+    fetch(`/api/service-jobs/next-no?date=${encodeURIComponent(jobDate)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (cancelled) return;
+        setNextJobNoPreview(typeof data?.jobNo === "string" ? data.jobNo : "");
+      })
+      .catch(() => {
+        if (!cancelled) setNextJobNoPreview("");
+      });
+    // Clearing belongs in the cleanup, not the body: the date changing, or the
+    // sheet being saved, must drop the OLD preview immediately rather than
+    // leave yesterday's number under a new date while the next answer lands.
+    return () => {
+      cancelled = true;
+      setNextJobNoPreview("");
+    };
+  }, [isLoggedIn, jobId, jobDate]);
 
   // ── Lookups: companies + contacts ─────────────────────────────────────────
   useEffect(() => {
@@ -336,12 +371,10 @@ export default function ServiceJobPage() {
     const today = toLocalDateString(new Date());
     setJobDate(today);
 
-    // Generate a random job number for preview when creating a new sheet.
-    // The server will mint the real number on save, but this gives the admin
-    // a sensible default they can edit before saving.
-    const prefix = serviceJobDocNoPrefix(today);
-    const seq = String(Math.floor(Math.random() * 99) + 1).padStart(2, "0");
-    setJobNo(`${prefix}${seq}`);
+    // NO number is invented here. A job number is a claim on `used_docnos` —
+    // the never-purged ledger quotations and billing share — and the server
+    // mints it inside the transaction that writes the row. What this page
+    // shows before that is the PREVIEW fetched below, clearly labelled as one.
 
     if (!fromSchedule && !fromEquipment) {
       // A blank new sheet: today's date is the system's suggestion, not the
@@ -593,7 +626,9 @@ export default function ServiceJobPage() {
       technicianName,
       scheduleId,
       equipmentIds: picked.map((p) => p.equipmentId),
-      jobNo,
+      // jobNo is deliberately absent: the server owns it. It is also why the
+      // leave-guard fingerprint above does not track it — there is nothing
+      // about the number for the admin to change, and so nothing to lose.
     };
     try {
       const res = await fetch(
@@ -785,10 +820,23 @@ export default function ServiceJobPage() {
     setGenerating(true);
     try {
       let docNo = jobNo;
+      let savedId = jobId;
       if (!locked && (isDirty || !jobId)) {
         const saved = await save();
         if (!saved) return;
+        // Straight off the response, not out of state: the number is minted by
+        // the server and `setJobNo` has not rendered yet.
         docNo = saved.jobNo;
+        savedId = saved.id;
+      }
+      // The last gate before paper. A number reaches this line ONLY by having
+      // come back from a save, so anything missing here means the sheet in
+      // front of the admin is not in the database — and a sheet printed under
+      // a number the ledger never minted is a sheet nobody can close. Refuse,
+      // in Thai, instead of printing something that cannot be trusted.
+      if (!savedId || !docNo) {
+        showToast("ยังไม่มีเลขที่ใบงาน กรุณากดบันทึกก่อนดาวน์โหลด PDF", "error");
+        return;
       }
       await generatePdf(docNo);
     } catch {
@@ -1013,14 +1061,30 @@ export default function ServiceJobPage() {
             <section className="bg-white rounded-xl shadow-sm border border-gray-200 p-5 space-y-3">
               <h2 className="font-bold text-gray-800">ข้อมูลใบงาน</h2>
               <fieldset disabled={locked} className="space-y-3 disabled:opacity-60">
+                {/* เลขที่ใบงาน — READ-ONLY, on purpose.
+                    The number is not a field the admin owns: it is a claim on
+                    `used_docnos`, the shared ledger quotations (QT…) and
+                    billing (INV/BN/RC) draw from and which is never purged. A
+                    typed number lands in that ledger verbatim, so one typo
+                    burns a number another document family needed, and a number
+                    the browser chose is a number two browsers can choose. So
+                    the server mints it — and this block exists so the admin
+                    can still SEE what the sheet will carry before he prints. */}
                 <div>
                   <label className={labelCls}>เลขที่ใบงาน (JOB NO.)</label>
-                  <input
-                    className={inputCls}
-                    value={jobNo}
-                    onChange={(e) => setJobNo(e.target.value)}
-                    placeholder="ระบบจะสร้างให้อัตโนมัติ หรือพิมพ์เอง"
-                  />
+                  <div
+                    data-testid="job-no"
+                    className="w-full px-3 py-2 border border-gray-200 bg-gray-50 rounded-lg text-sm font-mono font-bold text-gray-800"
+                  >
+                    {jobNo || nextJobNoPreview || "—"}
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">
+                    {jobNo
+                      ? "ระบบออกเลขที่นี้ให้แล้ว และแก้ไขไม่ได้ — เลขที่เดียวกันนี้อยู่บนกระดาษที่ช่างถือไป"
+                      : nextJobNoPreview
+                        ? "ตัวอย่างเลขที่ถัดไปของวันที่เลือก ระบบจะออกเลขที่จริงตอนกดบันทึก (ถ้ามีคนบันทึกก่อน ระบบจะเลื่อนไปเลขถัดไปให้เอง)"
+                        : "ระบบจะออกเลขที่ให้อัตโนมัติตอนกดบันทึก"}
+                  </p>
                 </div>
                 <div>
                   <label className={labelCls}>วันที่เข้าบริการ *</label>
@@ -1196,8 +1260,15 @@ export default function ServiceJobPage() {
                       <div
                         className="border-2 border-gray-800 border-t-0 rounded-b-lg px-2.5 py-1 text-center"
                       >
+                        {/* The PAPER shows a minted number or nothing at all.
+                            The preview above is never printed here: it is not
+                            this sheet's number until the save comes back. */}
                         <div className="text-lg font-black tracking-widest leading-tight text-gray-900">
-                          {jobNo || "—"}
+                          {jobNo || (
+                            <span className="text-[9px] font-semibold tracking-normal text-gray-500">
+                              — ออกเลขที่เมื่อบันทึก —
+                            </span>
+                          )}
                         </div>
                       </div>
                     </div>

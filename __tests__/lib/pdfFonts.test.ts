@@ -364,6 +364,30 @@ describe("wrapThai", () => {
     expect(wrapThai("   ", font, 12, 100)).toEqual([""]);
   });
 
+  // These two are the regression. `commitTextDraft` used to `.trim()` the
+  // admin's text, so typed indentation vanished on confirm. Removing that trim
+  // was not enough: the wrapper dropped a leading-whitespace segment on every
+  // line, including the first, so the fix simply moved the trim here and the
+  // PDF still disagreed with the preview (which renders `whitespace-pre-wrap`).
+  it("keeps indentation the admin typed at the START of a paragraph", () => {
+    expect(wrapThai("    รายการ", font, 12, 1000)).toEqual(["    รายการ"]);
+    expect(wrapThai("  Hello", font, 12, 1000)).toEqual(["  Hello"]);
+  });
+
+  it("keeps trailing whitespace on the LAST line, which shifts a centred line", () => {
+    expect(wrapThai("รายการ  ", font, 12, 1000)).toEqual(["รายการ  "]);
+  });
+
+  it("still drops the whitespace that a WRAP lands on, so no line is indented by the break", () => {
+    // 10pt per character makes the break point checkable by hand.
+    const ruler: TextMeasurer = {
+      widthOfTextAtSize: (t, size) => t.length * size,
+    };
+    // "  aaa bbb" — the two leading spaces are the author's and survive; the
+    // space between aaa and bbb is the break and must not indent line 2.
+    expect(wrapThai("  aaa bbb", ruler, 1, 5)).toEqual(["  aaa", "bbb"]);
+  });
+
   it("works with any measurer, not just PDFFont", () => {
     // 10pt per character, so the arithmetic is checkable by hand.
     const ruler: TextMeasurer = {

@@ -784,3 +784,116 @@ describe("AlertDateSearchPanel — reading a result", () => {
     ).toBeInTheDocument();
   });
 });
+
+// ── Out-of-order responses ──────────────────────────────────────────────────
+// `applyPreset` deliberately does NOT refuse a click while a search is in
+// flight (handleSubmitSearch does) — changing your mind has to work. That makes
+// overlapping requests normal, and without a sequence token a slow EARLIER
+// response installs its rows over a newer one: the header and both date fields
+// read the new range while the table holds the old one, and a row ticked from
+// that table is then submitted against a range the screen says it is not
+// showing.
+
+describe("AlertDateSearchPanel — a slow earlier search cannot overwrite a newer one", () => {
+  const FUTURE_ROW = row({
+    kind: "schedule",
+    id: "future-1",
+    title: "แถวจากช่วงอนาคต",
+    matchedDate: "2026-06-19",
+  });
+  const PAST_ROW = row({
+    kind: "schedule",
+    id: "past-1",
+    title: "แถวจากช่วงที่ผ่านมา",
+    matchedDate: "2026-05-20",
+  });
+
+  /** Mounts the panel with a fetch that hands back a resolver per search
+   *  instead of answering, so a test can land the responses in any order. */
+  function renderDeferredPanel() {
+    const pending: { url: string; settle: (r: Response) => void; fail: (e: Error) => void }[] = [];
+    const onToast = vi.fn();
+
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      return new Promise<Response>((resolve, reject) => {
+        pending.push({ url, settle: resolve, fail: reject });
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <AlertDateSearchPanel
+        onToast={onToast}
+        onRescheduled={vi.fn()}
+        onUnauthorized={vi.fn()}
+        today={TODAY}
+      />
+    );
+    return { pending, onToast };
+  }
+
+  const answer = (
+    req: { url: string; settle: (r: Response) => void },
+    rows: DatedAlertRow[]
+  ) => {
+    const params = new URL(req.url, "http://localhost").searchParams;
+    req.settle(jsonResponse(searchResult(rows, params.get("from")!, params.get("to")!)));
+  };
+
+  it("keeps the NEWER preset's rows when the older request resolves last", async () => {
+    const { pending } = renderDeferredPanel();
+
+    fireEvent.click(screen.getByRole("button", { name: "7 วันข้างหน้า" }));
+    fireEvent.click(screen.getByRole("button", { name: "30 วันที่ผ่านมา" }));
+    expect(pending).toHaveLength(2);
+    expect(pending[0].url).toContain(`from=${TODAY}`);
+    expect(pending[1].url).toContain("to=2026-06-12");
+
+    // The newer search lands first...
+    answer(pending[1], [PAST_ROW]);
+    expect(await screen.findByText("แถวจากช่วงที่ผ่านมา")).toBeInTheDocument();
+
+    // ...and then the abandoned +7-day request finally answers.
+    answer(pending[0], [FUTURE_ROW]);
+
+    await waitFor(() =>
+      expect(screen.getByText("แถวจากช่วงที่ผ่านมา")).toBeInTheDocument()
+    );
+    // The assertion that bites: before the sequence token these rows replaced
+    // the ones above, under a header still describing the past-30-day range.
+    expect(screen.queryByText("แถวจากช่วงอนาคต")).not.toBeInTheDocument();
+  });
+
+  it("does not let an abandoned request's FAILURE cover the newer result", async () => {
+    const { pending, onToast } = renderDeferredPanel();
+
+    fireEvent.click(screen.getByRole("button", { name: "7 วันข้างหน้า" }));
+    fireEvent.click(screen.getByRole("button", { name: "30 วันที่ผ่านมา" }));
+
+    answer(pending[1], [PAST_ROW]);
+    expect(await screen.findByText("แถวจากช่วงที่ผ่านมา")).toBeInTheDocument();
+
+    pending[0].fail(new Error("เครือข่ายขัดข้อง"));
+
+    await waitFor(() =>
+      expect(screen.getByText("แถวจากช่วงที่ผ่านมา")).toBeInTheDocument()
+    );
+    expect(onToast).not.toHaveBeenCalled();
+  });
+
+  it("does not clear the spinner while the search the admin is waiting for is still in flight", async () => {
+    const { pending } = renderDeferredPanel();
+
+    fireEvent.click(screen.getByRole("button", { name: "7 วันข้างหน้า" }));
+    fireEvent.click(screen.getByRole("button", { name: "30 วันที่ผ่านมา" }));
+
+    // The abandoned request finishes first; the screen must still look busy.
+    answer(pending[0], [FUTURE_ROW]);
+    await waitFor(() => expect(pending).toHaveLength(2));
+    expect(screen.getByRole("button", { name: /กำลังค้นหา/ })).toBeDisabled();
+
+    answer(pending[1], [PAST_ROW]);
+    expect(await screen.findByText("แถวจากช่วงที่ผ่านมา")).toBeInTheDocument();
+  });
+});

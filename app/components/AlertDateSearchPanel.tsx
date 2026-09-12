@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import DatePicker from "./DatePicker";
 import ConfirmDialog from "./ConfirmDialog";
 import SearchableDropdown from "./SearchableDropdown";
@@ -265,6 +265,18 @@ export default function AlertDateSearchPanel({
 
   // ── Search ────────────────────────────────────────────────────────────────
 
+  /** Monotonic id of the most recently STARTED search. Every response checks it
+   *  before touching state, so a slow earlier request can never install its
+   *  rows over a newer one's. A ref, not state: it has to be readable and
+   *  writable synchronously inside the request, and changing it must not
+   *  re-render.
+   *
+   *  Without it, clicking "7 วันข้างหน้า" then "30 วันที่ผ่านมา" could leave the
+   *  +7-day rows on screen under a header and date fields that read
+   *  today-30 … today — and a row ticked from that list is then submitted
+   *  against a range the screen says it is not showing. */
+  const searchSeqRef = useRef(0);
+
   const runSearch = useCallback(
     async (from: string, to: string, options?: { keepReport?: boolean }) => {
       // The SAME validator the route runs. The screen can therefore never state
@@ -275,6 +287,8 @@ export default function AlertDateSearchPanel({
         setFormError(rangeError);
         return;
       }
+      const seq = ++searchSeqRef.current;
+      const isCurrent = () => searchSeqRef.current === seq;
       setFormError(null);
       setIsSearching(true);
       try {
@@ -292,17 +306,26 @@ export default function AlertDateSearchPanel({
               "ค้นหาแจ้งเตือนตามวันที่ไม่สำเร็จ"
           );
         }
+        // A superseded response is DISCARDED, not merged: the newer search owns
+        // the screen, including its own loading state and its own selection.
+        if (!isCurrent()) return;
         setResult(data as AlertDateSearchResult);
         setSearchError(null);
         setSelected(new Set());
         if (!options?.keepReport) setReport(null);
       } catch (err) {
+        // Same rule for a failure: an old request's error message must not
+        // appear over results the newer one is still fetching or has landed.
+        if (!isCurrent()) return;
         const message =
           err instanceof Error ? err.message : "ค้นหาแจ้งเตือนตามวันที่ไม่สำเร็จ";
         setSearchError(message);
         onToast(message, "error");
       } finally {
-        setIsSearching(false);
+        // Only the newest request may clear the spinner — an older one
+        // finishing must not make the screen look settled while the search the
+        // admin is actually waiting for is still in flight.
+        if (isCurrent()) setIsSearching(false);
       }
     },
     [onToast, onUnauthorized]
@@ -316,7 +339,13 @@ export default function AlertDateSearchPanel({
   };
 
   /** The quick ranges. They exist to make the point that this search reaches
-   *  BACKWARDS as freely as forwards — the feed can show neither. */
+   *  BACKWARDS as freely as forwards — the feed can show neither.
+   *
+   *  Deliberately NOT guarded by `isSearching` the way handleSubmitSearch is:
+   *  a preset click is the admin changing his mind, and refusing it silently
+   *  would leave the buttons looking dead. The date fields move to the new
+   *  range immediately, and runSearch's sequence token makes the abandoned
+   *  request unable to answer for them. */
   const applyPreset = (from: string, to: string, mode: SearchMode) => {
     setSearchMode(mode);
     setFromDate(from);

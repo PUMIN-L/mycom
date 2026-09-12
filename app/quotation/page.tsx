@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "../context/AuthContext";
 import Toast from "../components/Toast";
@@ -134,6 +134,16 @@ function randomId(): string {
 // numbers that are already out with customers (see quotationNumber.ts).
 const baseOfDocNo = (docNo: string) => docNo.replace(/(?:-V|v)\d+$/i, "");
 
+/** Does this number already carry a version suffix ("…-23v2")? */
+const hasVersionSuffix = (docNo: string) => /(?:-V|v)\d+$/i.test(docNo.trim());
+
+/**
+ * The owner we file a number under when the SERVER has just refused it: we know
+ * `used_docnos` owns it, we do not know which quotation owns it, and "not this
+ * document" is the whole of what the duplicate guard needs.
+ */
+const TAKEN_BY_ANOTHER = "__taken__";
+
 const emptyState = (): QuoteState => ({
   id: "",
   docNo: "",
@@ -255,7 +265,23 @@ export default function QuotationPage() {
   const [dbCustomers, setDbCustomers] = useState<any[]>([]);
   const [dbSalespeople, setDbSalespeople] = useState<any[]>([]);
   const [dbProductSpecs, setDbProductSpecs] = useState<any[]>([]);
+  // ── The TWO reserved-number ledgers, and what each is allowed to do ───────
+  // `existingDocs` — GET /api/quotations/docnos with NO base: the last ~7 days
+  // across every prefix. It exists to WARN that a hand-typed number is one of
+  // this week's. It may NEVER mint one (see `dayLedger`).
   const [existingDocs, setExistingDocs] = useState<{ id: string; docNo: string }[]>([]);
+  // `dayLedger` — GET …?base=<each of the day's TWO prefixes>: every number
+  // EVER issued under them, unwindowed. This is the only list a new number may
+  // be minted from. A day's current DDMMYY prefix is another day's legacy
+  // YYMMDD prefix a year earlier (25 Oct 2026 → "QT251026-" ← 26 Oct 2025), and
+  // those 2025 numbers sit outside the 7-day window while used_docnos owns them
+  // forever — minting from the window hands back a number the PRIMARY KEY then
+  // refuses, and pressing บันทึก again handed back the very same number.
+  // Tagged with the date it was read FOR, so yesterday's answer can never be
+  // mistaken for today's.
+  const [dayLedger, setDayLedger] = useState<
+    { forDate: string; docs: { id: string; docNo: string }[]; failed: boolean } | null
+  >(null);
   const [uploadingItemId, setUploadingItemId] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false); // building the PDF
   const [savePrompt, setSavePrompt] = useState(false); // "keep 30d or delete now?" after download
@@ -449,8 +475,9 @@ export default function QuotationPage() {
       .catch(() => {});
   }, [isLoggedIn]);
 
-  // Reserved quotation numbers (last ~2 days) — for the duplicate warning and
-  // the auto-running number. Survives deletion (separate ledger).
+  // Reserved quotation numbers from the last ~7 days — for the duplicate
+  // warning only. Survives deletion (separate ledger). NOT a mint source: see
+  // `dayLedger` above and the ⚠️ in app/lib/quotationNumber.ts.
   useEffect(() => {
     if (!isLoggedIn) return;
     fetch("/api/quotations/docnos")
@@ -468,16 +495,86 @@ export default function QuotationPage() {
       .catch(() => {});
   }, [isLoggedIn]);
 
+  /**
+   * Every number `used_docnos` has EVER issued under `isoDate`'s two prefixes.
+   * Both prefixes go in one request (`?base=…&base=…`) so the answer is one
+   * consistent snapshot rather than two that can disagree.
+   *
+   * A failure comes back as `failed: true` with NO docNos, never as "the day is
+   * empty" — the caller must be able to tell "I could not read the ledger" from
+   * "the ledger holds nothing", because minting on the first reading is exactly
+   * the bug this replaced.
+   */
+  const loadDayDocNos = useCallback(async (isoDate: string) => {
+    const qs = quotationDocNoPrefixes(isoDate)
+      .map((p) => `base=${encodeURIComponent(p)}`)
+      .join("&");
+    try {
+      const res = await fetch(`/api/quotations/docnos?${qs}`);
+      if (!res.ok) throw new Error(`docnos responded ${res.status}`);
+      const list = await res.json();
+      if (!Array.isArray(list)) throw new Error("docnos did not return a list");
+      return {
+        forDate: isoDate,
+        docs: list.map((x: { quotationId: string; docNo: string }) => ({
+          id: String(x.quotationId ?? ""),
+          docNo: String(x.docNo ?? ""),
+        })),
+        failed: false,
+      };
+    } catch (err) {
+      console.error("[quotation] failed to load the day's docNo ledger", err);
+      return { forDate: isoDate, docs: [], failed: true };
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isLoggedIn || !q.docDate) return;
+    let cancelled = false;
+    loadDayDocNos(q.docDate).then((led) => {
+      if (!cancelled) setDayLedger(led);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [isLoggedIn, q.docDate, loadDayDocNos]);
+
+  // The day ledger ONLY when it was read for the date currently on the
+  // document; a ledger fetched for another date is not an answer about this one.
+  const dayDocs =
+    dayLedger !== null && dayLedger.forDate === q.docDate ? dayLedger.docs : null;
+  /** The unwindowed ledger for this date has been read (successfully or not). */
+  const docNoLedgerReady = dayDocs !== null;
+  /** …and reading it FAILED, so nothing here can promise the number is free. */
+  const docNoLedgerFailed =
+    dayLedger !== null && dayLedger.forDate === q.docDate && dayLedger.failed;
+
+  // ONE list behind BOTH the mint and the duplicate warning. They used to read
+  // different sources, so the admin could be warned about one number and
+  // blocked on saving a different one.
+  const knownDocNos = useMemo(() => {
+    const byDocNo = new Map<string, { id: string; docNo: string }>();
+    // The unwindowed day ledger first: it is authoritative for these prefixes.
+    for (const d of dayDocs ?? []) byDocNo.set(d.docNo, d);
+    for (const d of existingDocs) if (!byDocNo.has(d.docNo)) byDocNo.set(d.docNo, d);
+    return Array.from(byDocNo.values());
+  }, [dayDocs, existingDocs]);
+
   // Once the ledger is loaded or date changes, bump a fresh quote's docNo
   // to the next free trailing number.
   useEffect(() => {
     if (!isFreshRef.current || !q.docDate) return;
+    // Never mint from a ledger we have not read for THIS date. A list that does
+    // not contain a number is not a statement that the number is free, and
+    // minting off the 7-day window is what handed back QT251026-22 while
+    // used_docnos had owned it since 26 Oct 2025.
+    if (!docNoLedgerReady) return;
     // BOTH shapes of the day's numbers are scanned, so the running number keeps
     // climbing across the DDMMYY switchover instead of restarting at 22 next to
     // a legacy QT<YYMMDD>-NN that is already out with a customer (task 5a).
     const prefixes = quotationDocNoPrefixes(q.docDate);
     const prefix = prefixes[0];
-    const next = nextDocNo(prefixes, existingDocs.map((u) => u.docNo));
+    const next = nextDocNo(prefixes, knownDocNos.map((u) => u.docNo));
     setQ((prev) => {
       if (
         prev.docNo === `${prefix}${pad2(DOCNO_START)}` ||
@@ -488,7 +585,7 @@ export default function QuotationPage() {
       }
       return prev; // user edited it manually
     });
-  }, [q.docDate, existingDocs]);
+  }, [q.docDate, knownDocNos, docNoLedgerReady]);
 
   // ── Unsaved-changes guard ──
   // Serialize only the user-editable fields (skip volatile ids/timestamps).
@@ -655,9 +752,12 @@ export default function QuotationPage() {
   // Duplicate doc-number guard: is this docNo already used by a DIFFERENT saved
   // quotation? (Same id = editing the same one, allowed.)
   const trimmedDocNo = q.docNo.trim();
+  // Read from `knownDocNos` — the SAME list the number was minted from. Reading
+  // the 7-day window here while minting from somewhere else is how the admin
+  // ended up with a number nothing had warned him about and the save refused.
   const docNoDup =
     trimmedDocNo !== "" &&
-    existingDocs.some((d) => d.docNo === trimmedDocNo && d.id !== q.id);
+    knownDocNos.some((d) => d.docNo === trimmedDocNo && d.id !== q.id);
 
   // Render the A4 sheet to a real .pdf file and download it (no print dialog).
   // Libraries are dynamically imported so they only load on click and never run
@@ -827,9 +927,12 @@ export default function QuotationPage() {
         body: JSON.stringify({ id: q.id, docNo: q.docNo, data: q, uploadedImages }),
       });
       if (res.status === 409) {
-        // Another quotation grabbed this number since the page loaded.
+        // Another quotation grabbed this number since the page loaded — advance
+        // onto a free one rather than leave the admin pressing the same
+        // rejected number. Nothing is downloaded: the sheet still shows the old
+        // number, and a PDF is the copy the customer keeps.
         const data = await res.json().catch(() => null);
-        showToast(data?.error ?? "เลขที่ใบเสนอราคาซ้ำ กรุณาเปลี่ยนเลขที่", "error");
+        await handleDocNoConflict(data?.error);
         setGenerating(false);
         return;
       }
@@ -866,6 +969,73 @@ export default function QuotationPage() {
         { id: q.id, docNo: doc },
       ]);
     }
+  }
+
+  /** File a number the server has just refused, so neither the mint nor the
+   * duplicate warning can offer it again this session. */
+  function markDocNoTaken(docNo: string) {
+    const doc = docNo.trim();
+    if (!doc) return;
+    setExistingDocs((prev) =>
+      prev.some((d) => d.docNo === doc)
+        ? prev
+        : [...prev, { id: TAKEN_BY_ANOTHER, docNo: doc }]
+    );
+  }
+
+  /**
+   * `used_docnos` already owns `taken` — move the document FORWARD onto a
+   * number that is free. Two admins saving at the same moment is the ordinary
+   * case, and what must not happen is what used to: the same rejected number
+   * handed straight back, with บันทึก refusing it again, forever.
+   *
+   * The day's ledger is RE-READ first, unwindowed: the other admin may have
+   * issued several numbers since this page loaded, and advancing one at a time
+   * would simply bounce off each of them in turn.
+   *
+   * Returns the replacement, or null if none could be worked out (the caller
+   * then shows the server's own Thai message and the number stays put — the
+   * duplicate warning is already lit, because `markDocNoTaken` fired first).
+   */
+  async function advancePastTakenDocNo(taken: string): Promise<string | null> {
+    const doc = taken.trim();
+    if (!doc) return null;
+    markDocNoTaken(doc);
+    // A version number continues as a VERSION (…-23v1 → …-23v2). Renumbering it
+    // into the day's running sequence would cut it loose from the document it
+    // is a version of.
+    if (hasVersionSuffix(doc)) {
+      const next = await nextVersionDocNo(doc);
+      return next && next !== doc ? next : null;
+    }
+    if (!q.docDate) return null;
+    const led = await loadDayDocNos(q.docDate);
+    setDayLedger(led);
+    const pool = [
+      doc,
+      ...knownDocNos.map((d) => d.docNo),
+      ...led.docs.map((d) => d.docNo),
+    ];
+    const next = nextDocNo(quotationDocNoPrefixes(q.docDate), pool);
+    return next !== doc ? next : null;
+  }
+
+  /** The 409 path both save buttons share. */
+  async function handleDocNoConflict(serverMessage?: string | null) {
+    const taken = q.docNo.trim();
+    const next = await advancePastTakenDocNo(taken);
+    if (!next) {
+      showToast(serverMessage || "เลขที่ใบเสนอราคาซ้ำ กรุณาเปลี่ยนเลขที่", "error");
+      return;
+    }
+    // Not auto-resubmitted on purpose: the number is printed on the sheet the
+    // customer receives, so the admin sees the new one before it is committed.
+    setQ((prev) => (prev.docNo.trim() === taken ? { ...prev, docNo: next } : prev));
+    if (isFreshRef.current) lastAutoDocNoRef.current = next;
+    showToast(
+      `เลขที่ ${taken} ถูกใช้ไปแล้ว ระบบเปลี่ยนเป็น ${next} ให้อัตโนมัติ — กรุณากดบันทึกอีกครั้ง`,
+      "error"
+    );
   }
 
   // ── "แก้ไข (New Ver.)" — task 6 ────────────────────────────────────────────
@@ -942,7 +1112,7 @@ export default function QuotationPage() {
       });
       if (res.status === 409) {
         const data = await res.json().catch(() => null);
-        showToast(data?.error ?? "เลขที่ใบเสนอราคาซ้ำ กรุณาเปลี่ยนเลขที่", "error");
+        await handleDocNoConflict(data?.error);
         return;
       }
       if (res.ok) {
@@ -1024,7 +1194,7 @@ export default function QuotationPage() {
             setCloneSource(null);
             const resetDocNo = nextDocNo(
               quotationDocNoPrefixes(iso),
-              existingDocs.map((u) => u.docNo)
+              knownDocNos.map((u) => u.docNo)
             );
             // Record it as the number WE issued, exactly as seedFresh() does.
             // Without this the auto-running-number effect reads the reset number
@@ -1200,6 +1370,16 @@ export default function QuotationPage() {
                 {docNoDup && (
                   <p className="mt-1 text-xs text-red-500 font-semibold">
                     ⚠ เลขที่นี้ซ้ำกับใบที่บันทึกไว้ — กรุณาเปลี่ยน
+                  </p>
+                )}
+                {/* The ledger could not be read, so "ไม่ซ้ำ" would be a claim we
+                    cannot make. Said out loud rather than blocking บันทึก: the
+                    used_docnos PRIMARY KEY still refuses a real duplicate, and
+                    the 409 path then moves the document onto a free number. */}
+                {!docNoDup && docNoLedgerFailed && (
+                  <p className="mt-1 text-xs text-amber-600 font-semibold">
+                    ⚠ ตรวจสอบเลขที่ที่ใช้ไปแล้วไม่สำเร็จ — ยังยืนยันไม่ได้ว่าเลขที่นี้ว่าง
+                    กรุณารีเฟรชหน้าก่อนบันทึก
                   </p>
                 )}
               </div>

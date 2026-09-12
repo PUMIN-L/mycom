@@ -1347,6 +1347,87 @@ describe('cost is untouched by any of this', () => {
   });
 });
 
+/**
+ * An EMPTY catalog is "I could not read the catalog", not "the catalog says
+ * this product is gone".
+ *
+ * `app/dashboard/page.tsx` starts `products` as [] and only replaces it if
+ * `GET /api/products` answered, so [] is exactly what a failed catalog load
+ * looks like in here. Read as a deletion, it stripped the link and the category
+ * off EVERY line of a real bill, and the whole thing was booked under
+ * «ไม่ระบุสินค้า» / «ไม่ระบุหมวด» — on a screen that looked fine.
+ */
+describe('an unreadable catalog (report 18)', () => {
+  const LINKED: QuotationLine[] = [
+    { id: 'qi1', productId: 'p1', name: 'เครื่องชั่ง A', qty: 1, unit: 'เครื่อง', unitPrice: 120000 },
+  ];
+
+  it('keeps the quotation’s own productId when /api/products came back empty', () => {
+    const [line] = buildLineDrafts({ items: LINKED, products: [] });
+    expect(line.productId).toBe('p1'); // NOT dropped
+    expect(line.productMissing).toBe(false); // NOT "deleted from catalog"
+    expect(line.catalogUnavailable).toBe(true); // "I do not know"
+  });
+
+  it('treats an absent catalog the same way as an empty one', () => {
+    const [omitted] = buildLineDrafts({ items: LINKED });
+    const [nulled] = buildLineDrafts({ items: LINKED, products: null });
+    expect(omitted.catalogUnavailable).toBe(true);
+    expect(nulled.catalogUnavailable).toBe(true);
+    expect(omitted.productId).toBe('p1');
+  });
+
+  it('REFUSES the bill in Thai rather than booking it under «ไม่ระบุหมวด»', () => {
+    const lines = filled(buildLineDrafts({ items: LINKED, products: [] }));
+    const errors = validateLineDrafts(lines);
+    expect(errors).toContain(
+      'รายการที่ 1 (เครื่องชั่ง A): โหลดรายการสินค้าในระบบไม่สำเร็จ จึงยืนยันสินค้าและหมวดหมู่ที่ใบเสนอราคาผูกไว้ไม่ได้ — กรุณารีเฟรชหน้าแล้วเลือกใบเสนอราคาใหม่อีกครั้ง หรือเลือก «ไม่ผูกสินค้าในระบบ» ให้รายการนี้'
+    );
+  });
+
+  it('says nothing about a line that was never linked to a product', () => {
+    const lines = filled(
+      buildLineDrafts({
+        items: [{ id: 'qi2', productId: '', name: 'ขาตั้งพิเศษ', qty: 1, unitPrice: 4500 }],
+        products: [],
+      })
+    );
+    expect(lines[0].catalogUnavailable).toBe(false);
+    expect(validateLineDrafts(lines)).toEqual([]);
+  });
+
+  it('lets the admin through by saying «ไม่ผูกสินค้าในระบบ» out loud', () => {
+    const [draft] = buildLineDrafts({ items: LINKED, products: [] });
+    const unlinked = applyProductSelection(draft, CUSTOM_PRODUCT_SENTINEL, []);
+    expect(unlinked.catalogUnavailable).toBe(false);
+    expect(validateLineDrafts(filled([unlinked]))).toEqual([]);
+  });
+
+  it('does not let a pick made against the unreadable catalog clear the refusal', () => {
+    const [draft] = buildLineDrafts({ items: LINKED, products: [] });
+    const picked = applyProductSelection(draft, 'p1', []);
+    expect(picked.productId).toBe('p1');
+    expect(picked.categoryId).toBeNull(); // still nothing said about its category
+    expect(picked.catalogUnavailable).toBe(true);
+  });
+
+  it('still calls a deletion a deletion when the catalog DID load', () => {
+    const [line] = buildLineDrafts({
+      items: [{ id: 'x', productId: 'deleted', name: 'เครื่องเก่า', qty: 1, unitPrice: 10 }],
+      products: PRODUCTS,
+    });
+    expect(line.productMissing).toBe(true);
+    expect(line.catalogUnavailable).toBe(false);
+    expect(validateLineDrafts(filled([line]))).toEqual([]); // saveable, as before
+  });
+
+  it('leaves a normally-resolved line completely untouched', () => {
+    const [line] = drafts();
+    expect(line.catalogUnavailable).toBe(false);
+    expect(validateLineDrafts(filled(drafts()))).toEqual([]);
+  });
+});
+
 describe('validateLineDrafts — the discount field', () => {
   it('refuses a negative discount (a surcharge wearing a discount’s name)', () => {
     const lines = withCosts(discountDrafts(), 100).map((l, i) =>

@@ -1068,15 +1068,58 @@ export async function getAlerts(
   // unlike warranty (silenced by status='Expired'), nothing marks a
   // calibration "done" except recording a NEW calibrationDate, so an already
   // overdue one must keep alerting indefinitely, not just while approaching.
+  //
+  // Because nothing closes it, this backlog only ever GROWS — exactly like
+  // incompleteEquipments and overdueReceivables — so the list is capped at
+  // ALERT_LIST_DISPLAY_LIMIT and the true count is reported separately as
+  // `nearingCalibrationTotal`. Without the cap, a few thousand machines
+  // carrying an old calibrationDate meant GET /api/admin/alerts shipped a few
+  // thousand fully-joined equipment rows on EVERY poll, from every admin page,
+  // every five minutes.
+  const calibrationMonths = CALIBRATION_VALIDITY_MONTHS - CALIBRATION_ALERT_LEAD_MONTHS;
+
+  // The exact rule (DATE_ADD on the column) cannot use idx_ce_calibrationDate,
+  // so it is paired with a redundant, index-usable bound on the bare column.
+  // Inverting MySQL's month arithmetic is exact EXCEPT where DATE_ADD clamped a
+  // day-of-month to a shorter target month (31 Jan + 10 months = 30 Nov), which
+  // can only ever pull the inverse EARLIER, and by at most 3 days (31 -> 28).
+  // Widening by 3 days therefore makes this a strict SUPERSET of the exact rule
+  // above: it can never hide a row, it only lets the optimiser start the scan
+  // in the right place. DATE_FORMAT keeps it a STRING comparison, which is what
+  // the VARCHAR column's index is built on.
+  const CALIBRATION_WHERE = `
+     WHERE e.calibrationDate IS NOT NULL
+       AND DATE_ADD(e.calibrationDate, INTERVAL ? MONTH) <= ?
+       AND e.calibrationDate <= DATE_FORMAT(DATE_SUB(?, INTERVAL ? MONTH) + INTERVAL 3 DAY, '%Y-%m-%d')
+       AND (sno.snoozeUntil IS NULL OR sno.snoozeUntil <= ?)`;
+  const calibrationParams = [
+    calibrationMonths,
+    today,
+    today,
+    calibrationMonths,
+    nowIso,
+  ];
+
   const [calibrationRows] = await query<RowDataPacket[]>(
     `${EQUIPMENT_SELECT}
      LEFT JOIN alert_snoozes sno ON sno.alertType = 'calibration' AND sno.referenceId = e.id
-     WHERE e.calibrationDate IS NOT NULL
-       AND DATE_ADD(e.calibrationDate, INTERVAL ? MONTH) <= ?
-       AND (sno.snoozeUntil IS NULL OR sno.snoozeUntil <= ?)
-     ORDER BY e.calibrationDate ASC`,
-    [CALIBRATION_VALIDITY_MONTHS - CALIBRATION_ALERT_LEAD_MONTHS, today, nowIso]
+     ${CALIBRATION_WHERE}
+     ORDER BY e.calibrationDate ASC LIMIT ${ALERT_LIST_DISPLAY_LIMIT}`,
+    calibrationParams
   );
+
+  // Unbounded twin of the capped list above, same filter, no joins beyond the
+  // snooze it has to honour — so the bell counts the real backlog instead of
+  // the truncated array, and the page can say "and N more" rather than
+  // silently dropping the rest.
+  const [calibrationCountRows] = await query<RowDataPacket[]>(
+    `SELECT COUNT(*) AS cnt
+     FROM customer_equipments e
+     LEFT JOIN alert_snoozes sno ON sno.alertType = 'calibration' AND sno.referenceId = e.id
+     ${CALIBRATION_WHERE}`,
+    calibrationParams
+  );
+  const nearingCalibrationTotal = Number(calibrationCountRows[0]?.cnt) || 0;
 
   const [incompleteRows] = await query<RowDataPacket[]>(
     `${EQUIPMENT_SELECT}
@@ -1225,6 +1268,7 @@ export async function getAlerts(
   return {
     expiringWarranties: warrantyRows as CustomerEquipment[],
     nearingCalibration: calibrationRows as CustomerEquipment[],
+    nearingCalibrationTotal,
     incompleteEquipments: incompleteRows as CustomerEquipment[],
     incompleteEquipmentsTotal,
     missingDocuments: missingDocRows as SalesRecord[],

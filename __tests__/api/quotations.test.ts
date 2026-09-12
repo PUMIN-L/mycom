@@ -200,6 +200,62 @@ describe('Quotations API', () => {
       expect(listDocNosByBase).not.toHaveBeenCalled();
     });
 
+    // A day has TWO legitimate prefixes — the current DDMMYY shape and the
+    // legacy YYMMDD one — and the MINT has to see both in one answer. Reading
+    // only the first would leave the numbers issued under the other shape
+    // invisible, which is the whole reason the mint stopped using the 7-day
+    // window in the first place.
+    it('merges every repeated ?base= into one de-duplicated answer', async () => {
+      vi.mocked(getSession).mockResolvedValue(adminSession);
+      vi.mocked(listDocNosByBase).mockImplementation(async (base) =>
+        base === 'QT251026-'
+          ? [{ docNo: 'QT251026-22', quotationId: 'q-2025' }]
+          : [{ docNo: 'QT261025-40', quotationId: 'q-legacy' }]
+      );
+      const res = await docnosGET(
+        new NextRequest(
+          'http://localhost/api/quotations/docnos?base=QT251026-&base=QT261025-'
+        )
+      );
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual([
+        { docNo: 'QT251026-22', quotationId: 'q-2025' },
+        { docNo: 'QT261025-40', quotationId: 'q-legacy' },
+      ]);
+      expect(listDocNosByBase).toHaveBeenCalledTimes(2);
+      expect(listDocNosByBase).toHaveBeenCalledWith('QT251026-');
+      expect(listDocNosByBase).toHaveBeenCalledWith('QT261025-');
+      expect(listRecentDocNos).not.toHaveBeenCalled();
+    });
+
+    // On the dates where DDMMYY == YYMMDD (26 Sep 2026 → "260926" both ways)
+    // the caller sends the same base twice.
+    it('asks once, and returns one row, for a base repeated verbatim', async () => {
+      vi.mocked(getSession).mockResolvedValue(adminSession);
+      vi.mocked(listDocNosByBase).mockResolvedValue([
+        { docNo: 'QT260926-22', quotationId: 'q1' },
+      ]);
+      const res = await docnosGET(
+        new NextRequest(
+          'http://localhost/api/quotations/docnos?base=QT260926-&base=QT260926-'
+        )
+      );
+      expect(await res.json()).toEqual([{ docNo: 'QT260926-22', quotationId: 'q1' }]);
+      expect(listDocNosByBase).toHaveBeenCalledTimes(1);
+    });
+
+    it('drops blank repeats instead of falling back to the recent window', async () => {
+      vi.mocked(getSession).mockResolvedValue(adminSession);
+      vi.mocked(listDocNosByBase).mockResolvedValue([]);
+      const res = await docnosGET(
+        new NextRequest('http://localhost/api/quotations/docnos?base=%20%20&base=QT251026-')
+      );
+      expect(res.status).toBe(200);
+      expect(listDocNosByBase).toHaveBeenCalledTimes(1);
+      expect(listDocNosByBase).toHaveBeenCalledWith('QT251026-');
+      expect(listRecentDocNos).not.toHaveBeenCalled();
+    });
+
     it('still rejects anonymous callers when a base is supplied', async () => {
       const res = await docnosGET(
         new NextRequest('http://localhost/api/quotations/docnos?base=QT260719-23')

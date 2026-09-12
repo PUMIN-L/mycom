@@ -131,12 +131,61 @@ describe('recurring expense templates', () => {
 });
 
 describe('generateExpensesForMonth', () => {
-  it('creates one expense per active template not yet generated this month, atomically with the claim', async () => {
+  /** Scripts one transaction connection against a tiny in-memory world.
+   *  `expenses` holds the (recurringExpenseId, expenseDate) pairs that already
+   *  exist; `missingTemplates` are ids whose recurring_expenses row is gone. */
+  function mockTxWorld(world: {
+    expenses?: { recurringExpenseId: string; expenseDate: string }[];
+    missingTemplates?: string[];
+  }) {
+    const expenses = [...(world.expenses ?? [])];
+    const missing = new Set(world.missingTemplates ?? []);
+
+    conn.query.mockImplementation((sql: string, params: unknown[] = []) => {
+      const text = String(sql);
+      if (text.includes('FROM recurring_expenses') && text.includes('FOR UPDATE')) {
+        const id = String(params[0]);
+        return Promise.resolve([missing.has(id) ? [] : [{ id }]]);
+      }
+      if (text.includes('SELECT id FROM expenses')) {
+        const [templateId, date] = params as string[];
+        const hit = expenses.filter(
+          (e) => e.recurringExpenseId === templateId && e.expenseDate === date
+        );
+        return Promise.resolve([hit.map(() => ({ id: 'existing' }))]);
+      }
+      if (text.includes('INSERT INTO expenses')) {
+        // params: id, title, amount, expenseDate, category, note, createdAt, recurringExpenseId
+        expenses.push({
+          recurringExpenseId: String(params[7]),
+          expenseDate: String(params[3]),
+        });
+        return Promise.resolve([{ affectedRows: 1 }]);
+      }
+      return Promise.resolve([{ affectedRows: 1 }]);
+    });
+
+    return expenses;
+  }
+
+  const template = (over: Record<string, unknown> = {}) => ({
+    id: 'r1',
+    title: 'ค่าเช่า',
+    amount: '15000.00',
+    category: 'ค่าเช่า',
+    note: '',
+    active: 1,
+    lastGeneratedMonth: null,
+    createdAt: 'x',
+    ...over,
+  });
+
+  it('creates one expense per active template not yet generated for the month', async () => {
     topQuery.mockResolvedValueOnce([[
-      { id: 'r1', title: 'ค่าเช่า', amount: '15000.00', category: 'ค่าเช่า', note: '', active: 1, lastGeneratedMonth: null, createdAt: 'x' },
-      { id: 'r2', title: 'เงินเดือน', amount: '30000.00', category: 'เงินเดือน', note: '', active: 1, lastGeneratedMonth: null, createdAt: 'x' },
+      template(),
+      template({ id: 'r2', title: 'เงินเดือน', amount: '30000.00', category: 'เงินเดือน' }),
     ]]); // listRecurringExpenses
-    conn.query.mockResolvedValue([{ affectedRows: 1 }]);
+    mockTxWorld({});
 
     const result = await generateExpensesForMonth('2026-09');
 
@@ -145,88 +194,157 @@ describe('generateExpensesForMonth', () => {
     expect(result.skippedInactive).toBe(0);
     expect(result.failed).toEqual([]);
 
-    // Each template: one claim UPDATE, one INSERT into expenses.
-    expect(conn.query).toHaveBeenCalledTimes(4);
-    const insertCalls = conn.query.mock.calls.filter(([sql]) => String(sql).includes('INSERT INTO expenses'));
+    const insertCalls = conn.query.mock.calls.filter(([sql]) =>
+      String(sql).includes('INSERT INTO expenses')
+    );
     expect(insertCalls).toHaveLength(2);
     expect(insertCalls[0][1]).toEqual(
       expect.arrayContaining(['ค่าเช่า', 15000, '2026-09-01', 'ค่าเช่า', '', 'r1'])
     );
   });
 
-  it('skips an inactive template (no transaction attempted) and a template the claim UPDATE reports as already generated', async () => {
-    topQuery.mockResolvedValueOnce([[
-      { id: 'r1', title: 'ปิดใช้งาน', amount: '100.00', category: '', note: '', active: 0, lastGeneratedMonth: null, createdAt: 'x' },
-      { id: 'r2', title: 'ทำไปแล้ว', amount: '100.00', category: '', note: '', active: 1, lastGeneratedMonth: '2026-09', createdAt: 'x' },
-    ]]);
-    // The claim UPDATE's WHERE excludes rows already generated this month,
-    // so it affects 0 rows for r2 — that's what actually decides the skip,
-    // not the in-memory lastGeneratedMonth snapshot.
-    conn.query.mockResolvedValue([{ affectedRows: 0 }]);
+  it('skips an inactive template without opening a transaction at all', async () => {
+    topQuery.mockResolvedValueOnce([[template({ title: 'ปิดใช้งาน', active: 0 })]]);
+    mockTxWorld({});
 
     const result = await generateExpensesForMonth('2026-09');
 
     expect(result.generated).toEqual([]);
     expect(result.skippedInactive).toBe(1);
-    expect(result.skippedAlreadyGenerated).toEqual(['ทำไปแล้ว']);
-    expect(result.failed).toEqual([]);
-    // r1 (inactive) never enters a transaction; r2 only runs the claim UPDATE
-    // (no INSERT, since the claim lost).
-    expect(conn.query).toHaveBeenCalledTimes(1);
+    expect(conn.query).not.toHaveBeenCalled();
   });
 
-  it('treats a claim affecting 0 rows as already-generated even when the in-memory template still looks fresh (concurrent-caller safety)', async () => {
-    // Simulates a race: another concurrent generate() call already committed
-    // its claim for this exact template+month between listRecurringExpenses()
-    // reading lastGeneratedMonth: null here and this call's own UPDATE.
-    topQuery.mockResolvedValueOnce([[
-      { id: 'r1', title: 'ค่าเช่า', amount: '15000.00', category: '', note: '', active: 1, lastGeneratedMonth: null, createdAt: 'x' },
-    ]]);
-    conn.query.mockResolvedValue([{ affectedRows: 0 }]);
+  it('decides "already generated" from the expenses ROW, not from lastGeneratedMonth', async () => {
+    // The marker says a DIFFERENT month, which under the old guard was the
+    // whole test — here the row for this month exists, and that is what counts.
+    topQuery.mockResolvedValueOnce([[template({ title: 'ทำไปแล้ว', lastGeneratedMonth: '2026-11' })]]);
+    mockTxWorld({ expenses: [{ recurringExpenseId: 'r1', expenseDate: '2026-09-01' }] });
 
     const result = await generateExpensesForMonth('2026-09');
 
     expect(result.generated).toEqual([]);
-    expect(result.skippedAlreadyGenerated).toEqual(['ค่าเช่า']);
-    // Only the claim ran — losing it must never fall through to an INSERT,
-    // which is exactly what would create a duplicate expense row.
-    expect(conn.query).toHaveBeenCalledTimes(1);
+    expect(result.skippedAlreadyGenerated).toEqual(['ทำไปแล้ว']);
+    expect(
+      conn.query.mock.calls.filter(([sql]) => String(sql).includes('INSERT INTO expenses'))
+    ).toHaveLength(0);
   });
 
-  it('is safe to call twice in a row for the same month — the second call skips via the atomic claim', async () => {
-    // First call: template is fresh, the claim UPDATE succeeds.
-    topQuery.mockResolvedValueOnce([[
-      { id: 'r1', title: 'ค่าเช่า', amount: '15000.00', category: '', note: '', active: 1, lastGeneratedMonth: null, createdAt: 'x' },
-    ]]);
-    conn.query.mockResolvedValue([{ affectedRows: 1 }]);
-    const first = await generateExpensesForMonth('2026-09');
-    expect(first.generated).toHaveLength(1);
+  it('BACKFILLING AUGUST AFTER SEPTEMBER MUST NOT DUPLICATE SEPTEMBER', async () => {
+    // The bug this guard replaced: lastGeneratedMonth holds ONE month, so
+    // backfilling August overwrote the "2026-09" marker with "2026-08" and
+    // re-armed September. A third call then inserted a SECOND 2026-09-01 row
+    // for the same template — `expenses` has no unique key on
+    // (recurringExpenseId, expenseDate), so nothing rejected it and the month
+    // was silently double-counted on the dashboard.
+    const world = mockTxWorld({});
 
-    // Second call: the real DB row now has lastGeneratedMonth set, so the
-    // claim UPDATE affects 0 rows this time.
-    topQuery.mockResolvedValueOnce([[
-      { id: 'r1', title: 'ค่าเช่า', amount: '15000.00', category: '', note: '', active: 1, lastGeneratedMonth: '2026-09', createdAt: 'x' },
-    ]]);
-    conn.query.mockReset();
-    conn.query.mockResolvedValue([{ affectedRows: 0 }]);
-    const second = await generateExpensesForMonth('2026-09');
-    expect(second.generated).toEqual([]);
-    expect(second.skippedAlreadyGenerated).toEqual(['ค่าเช่า']);
+    // 1. September.
+    topQuery.mockResolvedValueOnce([[template()]]);
+    expect((await generateExpensesForMonth('2026-09')).generated).toHaveLength(1);
+
+    // 2. Backfill August. The marker in the real DB is now "2026-09"; the
+    //    template row we read back reflects that.
+    topQuery.mockResolvedValueOnce([[template({ lastGeneratedMonth: '2026-09' })]]);
+    expect((await generateExpensesForMonth('2026-08')).generated).toHaveLength(1);
+
+    // 3. September again — the step that used to insert the duplicate.
+    topQuery.mockResolvedValueOnce([[template({ lastGeneratedMonth: '2026-09' })]]);
+    const third = await generateExpensesForMonth('2026-09');
+    expect(third.generated).toEqual([]);
+    expect(third.skippedAlreadyGenerated).toEqual(['ค่าเช่า']);
+
+    // Exactly one row per month, and no third row anywhere.
+    expect(world).toEqual([
+      { recurringExpenseId: 'r1', expenseDate: '2026-09-01' },
+      { recurringExpenseId: 'r1', expenseDate: '2026-08-01' },
+    ]);
+  });
+
+  it('never rewinds lastGeneratedMonth when an older month is backfilled', async () => {
+    // The marker is a DISPLAY hint now ("latest month generated" — /expenses
+    // badges the current month with it). Rewinding it to 2026-08 made the
+    // September badge disappear as well as re-arming the duplicate.
+    topQuery.mockResolvedValueOnce([[template({ lastGeneratedMonth: '2026-09' })]]);
+    mockTxWorld({});
+
+    await generateExpensesForMonth('2026-08');
+
+    const markerCall = conn.query.mock.calls.find(([sql]) =>
+      String(sql).includes('SET lastGeneratedMonth')
+    )!;
+    expect(String(markerCall[0])).toContain('lastGeneratedMonth < ?');
+    expect(String(markerCall[0])).not.toContain('lastGeneratedMonth != ?');
+    expect(markerCall[1]).toEqual(['2026-08', 'r1', '2026-08']);
+  });
+
+  it('takes the template row lock BEFORE it looks for the expense row', async () => {
+    // That ordering is the whole concurrency story: two callers for the same
+    // template serialize on the lock, so the loser sees the winner's committed
+    // row instead of inserting a second one.
+    topQuery.mockResolvedValueOnce([[template()]]);
+    mockTxWorld({});
+
+    await generateExpensesForMonth('2026-09');
+
+    const order = conn.query.mock.calls.map(([sql]) => String(sql));
+    const lockAt = order.findIndex((sql) => sql.includes('FOR UPDATE'));
+    const checkAt = order.findIndex((sql) => sql.includes('SELECT id FROM expenses'));
+    const insertAt = order.findIndex((sql) => sql.includes('INSERT INTO expenses'));
+    expect(lockAt).toBeGreaterThanOrEqual(0);
+    expect(lockAt).toBeLessThan(checkAt);
+    expect(checkAt).toBeLessThan(insertAt);
+  });
+
+  it('is safe under a withTransaction retry whose first attempt actually committed', async () => {
+    // withTransaction retries its callback on a transient connection loss,
+    // INCLUDING after a commit whose acknowledgement was lost. The retry must
+    // re-read the expenses table and skip, not insert a second row.
+    topQuery.mockResolvedValueOnce([[template()]]);
+    const world = mockTxWorld({});
+
+    const { withTransaction } = await import('@/app/lib/db');
+    vi.mocked(withTransaction).mockImplementationOnce(async (fn: any) => {
+      await fn(conn); // first attempt: commits, ack lost
+      return fn(conn); // retry
+    });
+
+    const result = await generateExpensesForMonth('2026-09');
+
+    expect(world).toEqual([{ recurringExpenseId: 'r1', expenseDate: '2026-09-01' }]);
+    expect(result.generated).toEqual([]);
+    expect(result.skippedAlreadyGenerated).toEqual(['ค่าเช่า']);
+  });
+
+  it('reports a template deleted mid-run as a failure, never as "already generated"', async () => {
+    topQuery.mockResolvedValueOnce([[template({ title: 'ถูกลบไปแล้ว' })]]);
+    mockTxWorld({ missingTemplates: ['r1'] });
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const result = await generateExpensesForMonth('2026-09');
+
+    expect(result.generated).toEqual([]);
+    expect(result.skippedAlreadyGenerated).toEqual([]);
+    expect(result.failed).toEqual(['ถูกลบไปแล้ว']);
   });
 
   it('records a per-template failure without losing or aborting the rest of the batch', async () => {
     topQuery.mockResolvedValueOnce([[
-      { id: 'r1', title: 'ค่าเช่า', amount: '15000.00', category: '', note: '', active: 1, lastGeneratedMonth: null, createdAt: 'x' },
-      { id: 'r2', title: 'เงินเดือน', amount: '30000.00', category: '', note: '', active: 1, lastGeneratedMonth: null, createdAt: 'x' },
+      template(),
+      template({ id: 'r2', title: 'เงินเดือน', amount: '30000.00' }),
     ]]);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
     conn.query
-      .mockRejectedValueOnce(new Error('transient DB error')) // r1's claim throws
-      .mockResolvedValueOnce([{ affectedRows: 1 }]) // r2's claim succeeds
-      .mockResolvedValueOnce([{ affectedRows: 1 }]); // r2's insert succeeds
+      .mockRejectedValueOnce(new Error('transient DB error')) // r1's lock throws
+      .mockResolvedValueOnce([[{ id: 'r2' }]]) // r2 locks
+      .mockResolvedValueOnce([[]]) // r2 has no row for this month
+      .mockResolvedValueOnce([{ affectedRows: 1 }]) // r2 inserts
+      .mockResolvedValueOnce([{ affectedRows: 1 }]); // r2's marker
 
     const result = await generateExpensesForMonth('2026-09');
 
     expect(result.failed).toEqual(['ค่าเช่า']);
-    expect(result.generated).toEqual([{ id: expect.any(String), title: 'เงินเดือน', amount: 30000 }]);
+    expect(result.generated).toEqual([
+      { id: expect.any(String), title: 'เงินเดือน', amount: 30000 },
+    ]);
   });
 });

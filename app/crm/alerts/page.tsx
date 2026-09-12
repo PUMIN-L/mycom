@@ -540,6 +540,19 @@ export default function AlertsPage() {
 
   const incompleteTotal = alerts?.incompleteEquipmentsTotal ?? alerts?.incompleteEquipments?.length ?? 0;
   const incompleteHiddenCount = Math.max(0, incompleteTotal - (alerts?.incompleteEquipments?.length || 0));
+  // ใกล้ถึงกำหนดสอบเทียบ is capped the same way, and for the same reason:
+  // nothing closes a calibration except recording a NEW date, so the backlog
+  // only grows. The list it ships is therefore the first ALERT_ROW_CAP rows,
+  // and the tab has to state `nearingCalibrationTotal` — the length of a
+  // capped list is a confident wrong answer, which is the one thing a number
+  // on a screen must never be. `?? length` keeps the tab honest against a
+  // server that predates the total.
+  const calibrationTotal =
+    alerts?.nearingCalibrationTotal ?? alerts?.nearingCalibration?.length ?? 0;
+  const calibrationHiddenCount = Math.max(
+    0,
+    calibrationTotal - (alerts?.nearingCalibration?.length || 0)
+  );
 
   /**
    * "เครื่องที่ i/n ของใบขายเดียวกัน" for every incomplete-data row that shares
@@ -593,14 +606,16 @@ export default function AlertsPage() {
     {
       id: "all",
       label: "ทั้งหมด",
-      // Built from the TRUE totals of the two capped categories, so that
+      // Built from the TRUE totals of EVERY capped category, so that
       // (cards on screen) + (the "และอีก N รายการ" lines under the grid) adds
       // up to exactly this number — nothing is hidden without being counted.
+      // A category that gains a LIMIT must gain a line here in the same commit.
       count: countOr(
         allAlerts.length
           - (alerts?.incompleteEquipments?.length || 0) + incompleteTotal
           - (callFollowUps?.length || 0) + callFollowUpsTotal
           - (alerts?.overdueReceivables?.length || 0) + receivablesTotal
+          - (alerts?.nearingCalibration?.length || 0) + calibrationTotal
       ),
       color: "bg-gray-100 text-gray-700",
     },
@@ -609,7 +624,7 @@ export default function AlertsPage() {
     // category now, not a subset of the service schedules (task 9.1).
     { id: "customer_call", label: "นัดโทรลูกค้า", count: callFollowUpsFailed ? null : countOr(callFollowUpsTotal), color: "bg-violet-50 text-violet-700 border-violet-200" },
     { id: "warranty", label: "ประกันใกล้หมด", count: countOr(alerts?.expiringWarranties?.length || 0), color: "bg-orange-50 text-orange-700 border-orange-200" },
-    { id: "calibration", label: "ใกล้ถึงกำหนดสอบเทียบ", count: countOr(alerts?.nearingCalibration?.length || 0), color: "bg-cyan-50 text-cyan-700 border-cyan-200" },
+    { id: "calibration", label: "ใกล้ถึงกำหนดสอบเทียบ", count: countOr(calibrationTotal), color: "bg-cyan-50 text-cyan-700 border-cyan-200" },
     { id: "incomplete", label: "ข้อมูลไม่ครบ", count: countOr(incompleteTotal), color: "bg-rose-50 text-rose-700 border-rose-200" },
     { id: "missing_doc", label: "เอกสารค้าง", count: countOr(alerts?.missingDocuments?.length || 0), color: "bg-red-50 text-red-700 border-red-200" },
     // Labelled by WHO owes money, not by a document, so it can never be
@@ -1234,6 +1249,12 @@ export default function AlertsPage() {
         {(activeTab === "all" || activeTab === "customer_call") && callFollowUpsHiddenCount > 0 && (
           <p className="text-center text-sm text-gray-500 mt-3">
             และอีก {callFollowUpsHiddenCount} รายการนัดโทรลูกค้า (แสดงผลสูงสุด {ALERT_ROW_CAP} รายการ)
+          </p>
+        )}
+        {/* Same treatment again, for the same reason. */}
+        {(activeTab === "all" || activeTab === "calibration") && calibrationHiddenCount > 0 && (
+          <p className="text-center text-sm text-gray-500 mt-3">
+            และอีก {calibrationHiddenCount} รายการที่ใกล้ถึงกำหนดสอบเทียบ (แสดงผลสูงสุด {ALERT_ROW_CAP} รายการ)
           </p>
         )}
         {(activeTab === "all" || activeTab === "receivable") && receivablesHiddenCount > 0 && (

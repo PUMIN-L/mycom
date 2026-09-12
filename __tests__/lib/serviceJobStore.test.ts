@@ -13,6 +13,7 @@ vi.mock('@/app/lib/db', () => ({
 import { query } from '@/app/lib/db';
 import {
   createJob,
+  peekNextJobNo,
   updateJob,
   completeJob,
   cancelJob,
@@ -148,6 +149,40 @@ describe('createJob', () => {
     // The number belongs to THIS sheet: the ledger row and the job row carry
     // the same id.
     expect(ledger[0][1]![1]).toBe((callsMatching('INSERT INTO service_jobs')[0][1] as unknown[])[0]);
+  });
+
+  // THE FINDING THIS TEST EXISTS FOR: the page used to invent a number
+  // client-side (prefix-of-today + Math.random) and the store INSERTed it
+  // verbatim. `used_docnos` is one never-purged ledger shared with quotations
+  // and billing, so that number was neither sequential, nor tied to the visit
+  // date, nor even guaranteed to belong to this document family.
+  it('IGNORES a caller-supplied job number and mints from the ledger anyway', async () => {
+    // A quotation number, posted as if it were a job number, under a prefix
+    // for a different day than the visit.
+    await createJob(input({ jobNo: 'QT150926-03' } as Record<string, unknown>));
+
+    const claimed = callsMatching('INSERT INTO used_docnos').map(
+      (c) => (c[1] as unknown[])[0]
+    );
+    expect(claimed).toEqual(['050926-22']); // the day's next free number
+    expect(claimed).not.toContain('QT150926-03');
+    // And the sheet carries the minted number, not the suggested one.
+    expect((callsMatching('INSERT INTO service_jobs')[0][1] as unknown[])[1]).toBe('050926-22');
+  });
+
+  it('numbers the sheet from ITS OWN visit date, not from whatever day it is issued', async () => {
+    await createJob(input({ jobDate: '2026-09-15' }));
+    // 15 Sep, not "today" — and from DOCNO_START, the same place every other
+    // document family's day starts.
+    expect((callsMatching('INSERT INTO used_docnos')[0][1] as unknown[])[0]).toBe('150926-22');
+  });
+
+  it('runs the day sequentially — -22 then -23 — instead of landing anywhere in it', async () => {
+    ledgerDocNos = [];
+    await createJob(input());
+    conn.query.mockClear();
+    await createJob(input());
+    expect((callsMatching('INSERT INTO used_docnos')[0][1] as unknown[])[0]).toBe('050926-23');
   });
 
   it('reads the ledger WITHOUT a date window, under both prefixes for the day', async () => {
@@ -409,6 +444,37 @@ describe('completeJob', () => {
 // ── Editing, cancelling, deleting ────────────────────────────────────────────
 
 describe('updateJob', () => {
+  // v39 keeps the typed (unregistered) machines in a JSON column. A caller
+  // that says nothing about them — the job-sheet page has no UI for them —
+  // must not blank the column: that is data loss with a 200 on it.
+  it('leaves customEquipments ALONE when the caller sent no such key', async () => {
+    await updateJob('job-1', input());
+    const update = callsMatching('UPDATE service_jobs')[0];
+    expect(sqlOf(update)).not.toContain('customEquipments');
+    expect(update[1]).toEqual([
+      'co-1', CUSTOMER, JOB_DATE, '', null, null, 'job-1',
+    ]);
+  });
+
+  it('REPLACES customEquipments when the caller does send the key', async () => {
+    await updateJob(
+      'job-1',
+      input({ customEquipments: [{ productName: 'เครื่องชั่ง', serialNumber: 'X1' }] })
+    );
+    const update = callsMatching('UPDATE service_jobs')[0];
+    expect(sqlOf(update)).toContain('customEquipments = ?');
+    expect((update[1] as unknown[])[6]).toBe(
+      JSON.stringify([{ productName: 'เครื่องชั่ง', serialNumber: 'X1' }])
+    );
+  });
+
+  it('CLEARS customEquipments on an explicit empty list', async () => {
+    await updateJob('job-1', input({ customEquipments: [] }));
+    const update = callsMatching('UPDATE service_jobs')[0];
+    expect(sqlOf(update)).toContain('customEquipments = ?');
+    expect((update[1] as unknown[])[6]).toBeNull();
+  });
+
   it('replaces the machine list without ever rewriting the job number', async () => {
     await updateJob('job-1', input({ equipmentIds: ['eq-2', 'eq-3'] }));
 
@@ -530,5 +596,48 @@ describe('reads', () => {
     expect(String(sql)).toContain('sjel.equipmentId = ?');
     expect(String(sql)).toContain('ORDER BY j.createdAt DESC');
     expect(params).toEqual(['eq-1']);
+  });
+});
+
+// ── Previewing the next number ───────────────────────────────────────────────
+//
+// The job-sheet page must be able to SHOW what number a sheet will carry
+// before it is printed — the field on screen is read-only, so this read is the
+// only way the admin finds out without saving.
+
+describe('peekNextJobNo', () => {
+  it('answers the next free number for the date, under both prefixes, un-windowed', async () => {
+    ledgerDocNos = ['050926-22', '050926-23'];
+    (query as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      async (sql: string, params: unknown[] = []) => {
+        if (sql.includes('SELECT docNo FROM used_docnos')) {
+          const prefix = String(params[0]).replace(/%$/, '').replace(/\\/g, '');
+          return [ledgerDocNos.filter((d) => d.startsWith(prefix)).map((docNo) => ({ docNo }))];
+        }
+        return [[]];
+      }
+    );
+
+    expect(await peekNextJobNo(JOB_DATE)).toBe('050926-24');
+    const reads = (query as unknown as ReturnType<typeof vi.fn>).mock.calls.filter((c) =>
+      String(c[0]).includes('SELECT docNo FROM used_docnos')
+    );
+    expect(reads).toHaveLength(2); // current + legacy shape
+    for (const call of reads) expect(String(call[0])).not.toContain('createdAt >=');
+  });
+
+  it('RESERVES NOTHING — it is a read, so the number is still free afterwards', async () => {
+    (query as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([[]]);
+    await peekNextJobNo(JOB_DATE);
+    const writes = (query as unknown as ReturnType<typeof vi.fn>).mock.calls.filter((c) =>
+      /INSERT|UPDATE|DELETE/i.test(String(c[0]))
+    );
+    expect(writes).toHaveLength(0);
+  });
+
+  it('refuses a malformed date in Thai instead of previewing a nonsense prefix', async () => {
+    for (const bad of ['', '05/09/2026', '2026-9-5', 'tomorrow']) {
+      await expect(peekNextJobNo(bad)).rejects.toBeInstanceOf(ServiceJobValidationError);
+    }
   });
 });

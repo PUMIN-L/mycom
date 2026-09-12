@@ -149,6 +149,21 @@ function pageContent(doc: PDFDocument, index: number): string {
 
 type M6 = [number, number, number, number, number, number];
 
+/** `m` then `n` — the order PDF's `cm` composes in. */
+const mul = (m: M6, n: M6): M6 => [
+  m[0] * n[0] + m[1] * n[2],
+  m[0] * n[1] + m[1] * n[3],
+  m[2] * n[0] + m[3] * n[2],
+  m[2] * n[1] + m[3] * n[3],
+  m[4] * n[0] + m[5] * n[2] + n[4],
+  m[4] * n[1] + m[5] * n[3] + n[5],
+];
+
+const applyM6 = (m: M6, x: number, y: number) => ({
+  x: m[0] * x + m[2] * y + m[4],
+  y: m[1] * x + m[3] * y + m[5],
+});
+
 /**
  * Every filled path in the stream, as an axis-aligned box in ABSOLUTE user
  * space — the `cm` matrices in force are composed and applied, so a rectangle
@@ -158,14 +173,6 @@ type M6 = [number, number, number, number, number, number];
  */
 function filledBoxes(content: string): Rect[] {
   const tokens = content.split(/\s+/).filter(Boolean);
-  const mul = (m: M6, n: M6): M6 => [
-    m[0] * n[0] + m[1] * n[2],
-    m[0] * n[1] + m[1] * n[3],
-    m[2] * n[0] + m[3] * n[2],
-    m[2] * n[1] + m[3] * n[3],
-    m[4] * n[0] + m[5] * n[2] + n[4],
-    m[4] * n[1] + m[5] * n[3] + n[5],
-  ];
   let ctm: M6 = [1, 0, 0, 1, 0, 0];
   const stack: M6[] = [];
   const points: Array<{ x: number; y: number }> = [];
@@ -199,6 +206,57 @@ function filledBoxes(content: string): Rect[] {
         height: Math.max(...ys) - Math.min(...ys),
       });
       points.length = 0;
+    }
+  }
+  return out;
+}
+
+/**
+ * The matrix in force at every `Do` — i.e. the transform that takes the image's
+ * UNIT SQUARE into user space. It carries the placement AND the orientation,
+ * which is the whole of what the /Rotate bug got wrong: a bounding box alone
+ * cannot tell a picture from the same picture lying on its side.
+ */
+function imageMatrices(content: string): M6[] {
+  const tokens = content.split(/\s+/).filter(Boolean);
+  let ctm: M6 = [1, 0, 0, 1, 0, 0];
+  const stack: M6[] = [];
+  const out: M6[] = [];
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i];
+    if (t === "q") stack.push([...ctm] as M6);
+    else if (t === "Q") ctm = stack.pop() ?? [1, 0, 0, 1, 0, 0];
+    else if (t === "cm") {
+      const n = tokens.slice(i - 6, i).map(Number) as M6;
+      if (n.every(Number.isFinite)) ctm = mul(n, ctm);
+    } else if (t === "Do") out.push([...ctm] as M6);
+  }
+  return out;
+}
+
+/**
+ * The text matrix in force at every `Tj`, composed with the graphics CTM, so
+ * `(0,0)` through it is the line's BASELINE START in user space and the linear
+ * part is the glyphs' size and direction.
+ */
+function textMatrices(content: string): M6[] {
+  const tokens = content.split(/\s+/).filter(Boolean);
+  let ctm: M6 = [1, 0, 0, 1, 0, 0];
+  let tm: M6 = [1, 0, 0, 1, 0, 0];
+  const stack: M6[] = [];
+  const out: M6[] = [];
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i];
+    if (t === "q") stack.push([...ctm] as M6);
+    else if (t === "Q") ctm = stack.pop() ?? [1, 0, 0, 1, 0, 0];
+    else if (t === "cm") {
+      const n = tokens.slice(i - 6, i).map(Number) as M6;
+      if (n.every(Number.isFinite)) ctm = mul(n, ctm);
+    } else if (t === "Tm") {
+      const n = tokens.slice(i - 6, i).map(Number) as M6;
+      if (n.every(Number.isFinite)) tm = n;
+    } else if (t === "Tj" || t === "TJ") {
+      out.push(mul(tm, ctm));
     }
   }
   return out;
@@ -346,6 +404,194 @@ describe("applyEdits — the coordinate round trip", () => {
   });
 });
 
+describe("applyEdits — a rotated page must not tip its content over", () => {
+  // ONE absolute drag, in CSS pixels, small enough to fit inside BOTH the
+  // 400x600 viewport of an upright page and the 600x400 one of a page lying on
+  // its side. The admin points at the same screen pixels either way, so the
+  // file has to put the mark on those same pixels either way.
+  //
+  // WHY THIS IS NOT THE WHITEOUT TEST ABOVE. A whiteout is axis-aligned, so a
+  // bounding box describes it completely and it survives being drawn at the
+  // wrong angle. A signature or a line of text does not: it can land in exactly
+  // the right box and still be lying on its side. These tests therefore read
+  // the ORIENTATION out of the operators — the `cm` before the image's `Do` and
+  // the `Tm` before the text's `Tj` — and compose it with the viewport a reader
+  // builds for the OUTPUT file, which is where /Rotate finally gets applied.
+  const FROM = { x: 30, y: 44 };
+  const TO = { x: 190, y: 124 };
+  const SIZE_PT = 14;
+
+  /** The file's own /Rotate, plus whatever "หมุนขวา 90°" added on top of it. */
+  const cases: Array<{ base: Rotation; added: Rotation }> = [
+    { base: 0, added: 0 },
+    { base: 90, added: 0 },
+    { base: 180, added: 0 },
+    { base: 270, added: 0 },
+    // Stacked: a scanned file that already carried /Rotate and was then turned
+    // again in the thumbnail rail. `addedRotation` alone is not the answer.
+    { base: 90, added: 90 },
+    { base: 270, added: 180 },
+  ];
+
+  async function run(
+    base: Rotation,
+    added: Rotation,
+    make: (pageId: string, rect: Rect) => Annotation[]
+  ) {
+    const source = await buildSource(base);
+    const created = createModel("src", [
+      { widthPt: CROP_W, heightPt: CROP_H, baseRotation: base },
+    ]);
+    const model: EditModel = {
+      ...created,
+      pages: [{ ...created.pages[0], addedRotation: added }],
+    };
+    const page = model.pages[0];
+    const rot = effectiveRotation(page);
+
+    // Exactly what PageOverlay does: drag -> viewport matrix -> user space.
+    const vp = overlayViewport(rot, { x: 0, y: 0 });
+    const box: ScreenBox = { left: 0, top: 0, width: vp.width, height: vp.height };
+    const rect = screenRectToPdfRect(FROM, TO, box, vp);
+
+    const out = await PDFDocument.load(
+      await applyEdits({
+        sources: { src: source },
+        assets: { png: PNG_1PX },
+        model: { ...model, annotations: make(page.id, rect) },
+      })
+    );
+    const outPage = out.getPages()[0];
+    expect(outPage.getRotation().angle).toBe(rot);
+
+    // The viewport a READER builds for the output — same maths as pdfjs, and
+    // the only place the page's /Rotate is ever applied.
+    const crop = outPage.getCropBox();
+    const outVp = makeViewport(crop.width, crop.height, outPage.getRotation().angle, 1, [
+      crop.x,
+      crop.y,
+      crop.x + crop.width,
+      crop.y + crop.height,
+    ] as BoxArray);
+
+    return {
+      rect,
+      content: pageContent(out, 0),
+      /** Operator space -> the pixels the reader shows. */
+      toScreen: (m: M6): M6 => mul(m, outVp.transform as unknown as M6),
+    };
+  }
+
+  /** No shear, x to the right, y DOWN the screen: the mark is the right way up. */
+  function expectUpright(t: M6, label: string) {
+    expect(t[1], `${label}: sheared/rotated on screen`).toBeCloseTo(0, 4);
+    expect(t[2], `${label}: sheared/rotated on screen`).toBeCloseTo(0, 4);
+    expect(t[0], `${label}: mirrored horizontally`).toBeGreaterThan(0);
+    expect(t[3], `${label}: upside down`).toBeLessThan(0);
+  }
+
+  for (const { base, added } of cases) {
+    const label = `/Rotate ${base} + ${added}° added`;
+
+    it(`lands a signature upright on the pixels it was dropped on — ${label}`, async () => {
+      const { rect, content, toScreen } = await run(base, added, (pageId, r) => [
+        { kind: "whiteout", id: "w", pageId, rect: r },
+        { kind: "signature", id: "s", pageId, rect: r, assetId: "png" },
+      ]);
+
+      // CONTROL. The whiteout is the one mark rotation must NOT change: an
+      // axis-aligned rectangle covers the same content either way, so it still
+      // comes back as exactly the rectangle the drag produced.
+      const boxes = filledBoxes(content);
+      expectRectClose(boxes[boxes.length - 1], rect);
+
+      const matrices = imageMatrices(content);
+      expect(matrices).toHaveLength(1);
+      const t = toScreen(matrices[0]);
+      expectUpright(t, label);
+
+      // The image's unit square maps onto the drag's own corners, in pixels.
+      const bottomLeft = applyM6(t, 0, 0);
+      const topRight = applyM6(t, 1, 1);
+      expect(bottomLeft.x, label).toBeCloseTo(FROM.x, 1);
+      expect(bottomLeft.y, label).toBeCloseTo(TO.y, 1);
+      expect(topRight.x, label).toBeCloseTo(TO.x, 1);
+      expect(topRight.y, label).toBeCloseTo(FROM.y, 1);
+    });
+  }
+
+  it("draws typed Thai the right way up, in the same place, at every rotation", async () => {
+    const baselines: Array<{ label: string; x: number; y: number }> = [];
+
+    for (const { base, added } of cases) {
+      const label = `/Rotate ${base} + ${added}° added`;
+      const { content, toScreen } = await run(base, added, (pageId, r) => [
+        {
+          kind: "text",
+          id: "t",
+          pageId,
+          rect: r,
+          text: "ลงชื่อผู้รับของ",
+          sizePt: SIZE_PT,
+          color: { r: 0, g: 0, b: 0 },
+          bold: false,
+          angleDeg: 0,
+          align: "left",
+        },
+      ]);
+
+      const matrices = textMatrices(content);
+      expect(matrices.length, label).toBeGreaterThan(0);
+      const t = toScreen(matrices[0]);
+      expectUpright(t, label);
+      // pdf-lib keeps the glyph size in `Tf`, so the text matrix is pure
+      // orientation: unit scale, and y running down the screen.
+      expect(t[0], label).toBeCloseTo(1, 4);
+      expect(t[3], label).toBeCloseTo(-1, 4);
+
+      const origin = applyM6(t, 0, 0);
+      baselines.push({ label, x: origin.x, y: origin.y });
+    }
+
+    for (const b of baselines) {
+      // Left-aligned text starts at the box's left edge whatever the rotation…
+      expect(b.x, b.label).toBeCloseTo(FROM.x, 1);
+      // …and the first baseline sits one ascender below the box's top edge, in
+      // the same screen place on every one of them.
+      expect(b.y, b.label).toBeCloseTo(baselines[0].y, 1);
+      expect(b.y, b.label).toBeGreaterThan(FROM.y);
+      expect(b.y, b.label).toBeLessThan(FROM.y + SIZE_PT * 2);
+    }
+  });
+
+  it("still honours a free-form angle read off existing text, on top of the page rotation", async () => {
+    // A 20° line snapped from the page: on an unrotated page it must come out
+    // at 20°, and on a page carrying /Rotate 90 it must STILL read at 20° to
+    // the admin — i.e. 110° in the operators, which the reader turns back.
+    for (const base of [0, 90] as Rotation[]) {
+      const { content, toScreen } = await run(base, 0, (pageId, r) => [
+        {
+          kind: "text",
+          id: "t",
+          pageId,
+          rect: r,
+          text: "สำเนา",
+          sizePt: SIZE_PT,
+          color: { r: 0, g: 0, b: 0 },
+          bold: false,
+          angleDeg: 20,
+          align: "left",
+        },
+      ]);
+      const t = toScreen(textMatrices(content)[0]);
+      // Screen y runs down, so a counter-clockwise page angle is a clockwise
+      // screen angle: atan2(-b, a).
+      const onScreenDeg = (Math.atan2(-t[1], t[0]) * 180) / Math.PI;
+      expect(onScreenDeg, `/Rotate ${base}`).toBeCloseTo(20, 3);
+    }
+  });
+});
+
 describe("applyEdits — page assembly", () => {
   it("emits pages in MODEL order across two sources, with each box on its own page", async () => {
     const a = await buildSource(0);
@@ -411,6 +657,109 @@ describe("applyEdits — page assembly", () => {
       await applyEdits({ sources: { src: source }, model: stranded })
     );
     // Only the source's own marker survives.
+    expect(filledBoxes(pageContent(out, 0))).toHaveLength(1);
+  });
+});
+
+describe("applyEdits — a fillable form survives an edit that never touched it", () => {
+  /**
+   * A two-field fillable PDF. The appearances are generated with Sarabun up
+   * front because pdf-lib's own pass uses Helvetica, which cannot encode a
+   * single Thai character — the same trap `pdfFormFill` exists to hide.
+   */
+  async function buildFormSource(): Promise<Uint8Array> {
+    const doc = await PDFDocument.create();
+    const page = doc.addPage([CROP_W, CROP_H]);
+    const form = doc.getForm();
+
+    const name = form.createTextField("customer.name");
+    name.setText("Acme");
+    name.addToPage(page, { x: 20, y: 500, width: 240, height: 22 });
+
+    const agree = form.createCheckBox("agree");
+    agree.addToPage(page, { x: 20, y: 460, width: 16, height: 16 });
+
+    const fontkit = (await import("@pdf-lib/fontkit")).default;
+    doc.registerFontkit(fontkit);
+    const sarabun = await doc.embedFont(readAsBytes("fonts/Sarabun_400Regular.ttf"), {
+      subset: true,
+    });
+    form.updateFieldAppearances(sarabun);
+    return new Uint8Array(await doc.save({ updateFieldAppearances: false }));
+  }
+
+  function formModel(): EditModel {
+    return createModel("form", [
+      { widthPt: CROP_W, heightPt: CROP_H, baseRotation: 0 },
+    ]);
+  }
+
+  it("keeps the fields fillable when the admin only whited something out", async () => {
+    const source = await buildFormSource();
+    const model = formModel();
+    // `formValues` stays empty and `flattenForm` stays off: the admin never
+    // opened the form panel. `copyPages` brings the widgets but NOT the
+    // AcroForm, so without re-homing the output has zero fields while still
+    // looking exactly right — an unannounced, irreversible loss.
+    const out = await PDFDocument.load(
+      await applyEdits({
+        sources: { form: source },
+        model: {
+          ...model,
+          annotations: [
+            {
+              kind: "whiteout",
+              id: "w",
+              pageId: model.pages[0].id,
+              rect: { x: 40, y: 100, width: 120, height: 30 },
+            },
+          ],
+        },
+      })
+    );
+
+    const names = out.getForm().getFields().map((f) => f.getName()).sort();
+    expect(names).toEqual(["agree", "customer.name"]);
+    expect(out.getForm().getTextField("customer.name").getText()).toBe("Acme");
+  });
+
+  it("keeps the fields fillable when nothing at all was annotated — a rotate alone", async () => {
+    const source = await buildFormSource();
+    const base = formModel();
+    const out = await PDFDocument.load(
+      await applyEdits({
+        sources: { form: source },
+        model: { ...base, pages: [{ ...base.pages[0], addedRotation: 90 }] },
+      })
+    );
+    expect(out.getPages()[0].getRotation().angle).toBe(90);
+    expect(out.getForm().getFields().map((f) => f.getName()).sort()).toEqual([
+      "agree",
+      "customer.name",
+    ]);
+  });
+
+  it("still flattens to NO fields when that is what was asked", async () => {
+    const source = await buildFormSource();
+    const out = await PDFDocument.load(
+      await applyEdits({
+        sources: { form: source },
+        model: { ...formModel(), flattenForm: true },
+      })
+    );
+    expect(out.getForm().getFields()).toEqual([]);
+  });
+
+  it("leaves an ordinary PDF without a form alone", async () => {
+    const source = await buildSource(0);
+    const model = createModel("src", [
+      { widthPt: CROP_W, heightPt: CROP_H, baseRotation: 0 },
+    ]);
+    const out = await PDFDocument.load(
+      await applyEdits({ sources: { src: source }, model })
+    );
+    expect(out.getForm().getFields()).toEqual([]);
+    // And the page's own content is untouched — one 40x40 marker, nothing else.
     expect(filledBoxes(pageContent(out, 0))).toHaveLength(1);
   });
 });
