@@ -218,15 +218,30 @@ export async function sendScheduleDeleteOtpEmail(
 export async function sendEquipmentDeleteOtpEmail(
   to: string,
   otp: string,
-  equipmentInfo: { productName: string; serialNumber?: string; completedScheduleCount: number }
+  equipmentInfo: {
+    productName: string;
+    serialNumber?: string;
+    completedScheduleCount: number;
+    /** Closed ใบ Job sheets that recorded a visit to this machine. Optional so
+     *  an older caller still compiles, but the route always passes it: since
+     *  v38 this is the ONLY history some machines have, and an email that
+     *  counted appointments alone told the owner "0 รายการ" while asking him
+     *  to approve destroying a service record. */
+    jobLogCount?: number;
+  }
 ): Promise<void> {
   const label = equipmentInfo.serialNumber
     ? `${equipmentInfo.productName} (S/N: ${equipmentInfo.serialNumber})`
     : equipmentInfo.productName;
+  const jobLogCount = equipmentInfo.jobLogCount ?? 0;
+  const parts = [
+    `นัดหมายที่เสร็จสิ้นแล้ว ${equipmentInfo.completedScheduleCount} รายการ`,
+  ];
+  if (jobLogCount > 0) parts.push(`ใบ Job ที่ปิดงานแล้ว ${jobLogCount} รายการ`);
   await sendOtpNotification(
     to,
     `[รหัสยืนยัน OTP] ขอลบอุปกรณ์ที่มีประวัติงานเสร็จสิ้นแล้ว`,
-    `มีการขอลบอุปกรณ์: ${label}\n\nอุปกรณ์นี้มีประวัตินัดหมายที่เสร็จสิ้นแล้ว ${equipmentInfo.completedScheduleCount} รายการผูกอยู่ — การลบอุปกรณ์จะลบประวัตินัดหมายและบันทึกผลงานเหล่านั้นไปด้วย ซึ่งส่งผลต่อข้อมูลการรับประกันและการบริการ กรุณานำรหัสยืนยัน 6 หลักด้านล่างนี้ไปกรอกเพื่อยืนยันการลบ:\n\nรหัสยืนยัน: ${otp}\n\n(รหัสนี้มีอายุ 15 นาที)\n\nหากคุณไม่ได้เป็นผู้ดำเนินการ กรุณาเพิกเฉยต่ออีเมลฉบับนี้ และตรวจสอบความปลอดภัยของบัญชีผู้ดูแลระบบทันที`
+    `มีการขอลบอุปกรณ์: ${label}\n\nอุปกรณ์นี้มีประวัติการให้บริการผูกอยู่ (${parts.join(" และ ")}) — การลบอุปกรณ์จะลบประวัติและบันทึกผลงานเหล่านั้นไปด้วย ซึ่งส่งผลต่อข้อมูลการรับประกันและการบริการ กรุณานำรหัสยืนยัน 6 หลักด้านล่างนี้ไปกรอกเพื่อยืนยันการลบ:\n\nรหัสยืนยัน: ${otp}\n\n(รหัสนี้มีอายุ 15 นาที)\n\nหากคุณไม่ได้เป็นผู้ดำเนินการ กรุณาเพิกเฉยต่ออีเมลฉบับนี้ และตรวจสอบความปลอดภัยของบัญชีผู้ดูแลระบบทันที`
   );
 }
 

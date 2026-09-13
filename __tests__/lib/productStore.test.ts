@@ -460,6 +460,52 @@ describe('productStore', () => {
       const result = await addProduct({ ...baseProduct, bestSellerRank: 1 });
       expect(result.bestSellerRank).toBe(1);
     });
+
+    // ── The race the pre-check cannot see ────────────────────────────────
+    // Two admins save rank 1 while nobody holds it. Both pre-checks read zero
+    // rows — TiDB takes no gap lock on a row that does not exist, so
+    // `FOR UPDATE` there locked nothing — and both used to INSERT. The
+    // UNIQUE index added in db.ts v40 is what refuses the loser, and this
+    // asserts the loser is told what actually happened rather than getting a
+    // bare "บันทึกไม่สำเร็จ".
+    //
+    // This bites: drop the try/catch around the INSERT and a raw ER_DUP_ENTRY
+    // escapes instead of BestSellerRankConflictError.
+    it('reports the loser of a rank RACE as a rank conflict, not a database error', async () => {
+      const dup = Object.assign(new Error('Duplicate entry'), { code: 'ER_DUP_ENTRY' });
+      const conn = {
+        query: vi.fn().mockImplementation(async (sql: string) => {
+          if (sql.includes('MAX(sortOrder)')) return [[{ nextSort: 0 }]] as any;
+          // The pre-check sees nothing: the other admin has not committed yet.
+          if (sql.includes('WHERE bestSellerRank = ?')) return [[]] as any;
+          // ...and by the time we INSERT, they have.
+          if (sql.includes('INSERT INTO products')) throw dup;
+          return [{ affectedRows: 1 }] as any;
+        }),
+      };
+      vi.mocked(withTransaction).mockImplementation(async (fn: any) => fn(conn));
+
+      await expect(addProduct({ ...baseProduct, bestSellerRank: 1 })).rejects.toThrow(
+        BestSellerRankConflictError
+      );
+    });
+
+    it('lets an unrelated duplicate-key error keep its own identity', async () => {
+      const dup = Object.assign(new Error('Duplicate entry'), { code: 'ER_DUP_ENTRY' });
+      const conn = {
+        query: vi.fn().mockImplementation(async (sql: string) => {
+          if (sql.includes('MAX(sortOrder)')) return [[{ nextSort: 0 }]] as any;
+          if (sql.includes('INSERT INTO products')) throw dup;
+          return [{ affectedRows: 1 }] as any;
+        }),
+      };
+      vi.mocked(withTransaction).mockImplementation(async (fn: any) => fn(conn));
+
+      // No rank was being set, so nothing here is a best-seller collision.
+      await expect(
+        addProduct({ ...baseProduct, bestSellerRank: null })
+      ).rejects.not.toBeInstanceOf(BestSellerRankConflictError);
+    });
   });
 
   describe('deleteProduct', () => {

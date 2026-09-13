@@ -69,6 +69,84 @@ export function docNoVersion(docNo: string): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+/**
+ * `DOCNO_VERSION_SUFFIX` again, for MySQL. The two MUST describe the same set.
+ *
+ * The JS alternation `(?:-V|-v|v|V)` is exactly an optional hyphen before a
+ * case-insensitive `v`, which is what this writes — spelled with an explicit
+ * `[vV]` class rather than a case-insensitive flag because TiDB defaults
+ * utf8mb4 to `utf8mb4_bin`, where `REGEXP` would otherwise not fold case.
+ * It lives beside its JS twin so that changing one without the other is a
+ * visible omission rather than an invisible drift across two files.
+ */
+const SQL_DOCNO_VERSION_SUFFIX = "-?[vV][0-9]+$";
+
+/** `baseDocNo(col)` in SQL. */
+function sqlBaseDocNo(col: string): string {
+  return `REGEXP_REPLACE(${col}, '${SQL_DOCNO_VERSION_SUFFIX}', '')`;
+}
+
+/** `docNoVersion(col)` in SQL — an unversioned original is 0, as in JS. */
+function sqlDocNoVersion(col: string): string {
+  return `(CASE WHEN ${col} REGEXP '${SQL_DOCNO_VERSION_SUFFIX}'
+                THEN CAST(REGEXP_SUBSTR(${col}, '[0-9]+$') AS UNSIGNED)
+                ELSE 0 END)`;
+}
+
+/**
+ * "This row has NOT been replaced by a document that is still alive" — the one
+ * SQL spelling of the rule `buildReceivablesLedger` applies in TypeScript.
+ *
+ * ── WHY THIS IS A FUNCTION AND NOT FOUR COPIES ──────────────────────────────
+ * The rule had been hand-copied into the alert bell, the dated alert search,
+ * the receipt builder's invoice dropdown and the "ตั้งให้ทุกใบที่ยังไม่กำหนด"
+ * list. Every copy drifted at a different time: two were still on the original
+ * `supersededById IS NULL` after the ledger learned that a CANCELLED successor
+ * revives the debt, and all four missed the base-docNo route entirely. Anything
+ * that asks "is this row still owed?" in SQL calls this and nothing else.
+ *
+ * ── BOTH ROUTES, BECAUSE THE COLUMN IS YOUNGER THAN THE DATA ────────────────
+ *  1. `supersededById` — stamped by แก้ไข (New Ver.) from v37 onward.
+ *  2. The base-docNo fallback — rows corrected BEFORE that column existed carry
+ *     no stamp, and are known only by a sibling docNo with a higher version.
+ *     `buildReceivablesLedger` has always applied this one; the SQL never did,
+ *     so a pre-v37 corrected invoice was counted by the bell and by the receipt
+ *     dropdown while the ledger screen correctly hid it — the same debt billed
+ *     twice, and a receipt could be written against the row the ledger refused
+ *     to show.
+ *
+ * In BOTH routes the successor must be alive: a replacement that was itself
+ * ยกเลิกแล้ว replaces nothing, and the original debt comes back.
+ *
+ * ── THE `LIKE` IS NOT REDUNDANT ─────────────────────────────────────────────
+ * `REGEXP_REPLACE(...) = REGEXP_REPLACE(...)` alone is a function on both sides
+ * and therefore a full scan of `billing_documents` for EVERY candidate row —
+ * on a dashboard that loads with every page. The `LIKE CONCAT(base, '%')` says
+ * the same thing in a form `idx_billing_docNo` can range-scan, because a
+ * sibling version's docNo always starts with the shared base. It narrows;
+ * the equality that follows is what actually decides, since "INV260810-01" is
+ * also a prefix of the unrelated "INV260810-011". docNos are alphanumerics and
+ * hyphens only, so neither `%` nor `_` can leak into the pattern.
+ */
+export function sqlNotSupersededByLiveRow(alias: string): string {
+  const outerBase = sqlBaseDocNo(`${alias}.docNo`);
+  return `NOT EXISTS (
+          SELECT 1 FROM billing_documents newer
+           WHERE newer.cancelledAt IS NULL
+             AND newer.id <> ${alias}.id
+             AND (
+                   newer.id = ${alias}.supersededById
+                OR (
+                     ${alias}.docNo <> '' AND newer.docNo <> ''
+                     AND newer.docNo LIKE CONCAT(${outerBase}, '%')
+                     AND ${sqlBaseDocNo("newer.docNo")} = ${outerBase}
+                     AND ${sqlDocNoVersion("newer.docNo")}
+                       > ${sqlDocNoVersion(`${alias}.docNo`)}
+                   )
+             )
+        )`;
+}
+
 /** Why a document is NOT a live receivable. First match wins. */
 export type ReceivableTerminal =
   /** ยกเลิกแล้ว — keeps its payment history and its reserved docNo. */

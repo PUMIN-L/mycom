@@ -118,6 +118,24 @@ function cleanDate(d?: string | Date | null): string | undefined {
   return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : undefined;
 }
 
+/**
+ * The ONE definition of "is this an equipment sale?".
+ *
+ * Anything that is not exactly "service" is an equipment sale — that is what
+ * this store has always written to the column, and therefore what the row
+ * MEANS. It is exported because the API route has to ask the same question
+ * before it decides whether to build machine rows: while the route tested
+ * `saleType === "equipment"` and the store defaulted everything else IN, a
+ * payload that simply omitted the field was stored as an equipment sale for
+ * qty machines with ZERO `customer_equipments` rows — the machines vanished,
+ * and the «ข้อมูลไม่ครบ» alert that exists to chase missing serials had
+ * nothing to chase because no row was ever created to be incomplete.
+ */
+export function normalizeSaleType(value: unknown): "service" | "equipment" {
+  return value === "service" ? "service" : "equipment";
+}
+
+
 function cleanInput(data: SalesRecordInput) {
   return {
     salespersonId: sanitizePlainText(data.salespersonId || "").substring(0, 255),
@@ -143,7 +161,7 @@ function cleanInput(data: SalesRecordInput) {
      */
     totalAmountProvided: isTotalAmountProvided(data.totalAmount),
     costAmount: Math.max(0, Math.min(9999999999.99, Number(data.costAmount) || 0)),
-    saleType: data.saleType === "service" ? "service" : "equipment",
+    saleType: normalizeSaleType(data.saleType),
     saleDate: (() => {
       const raw = sanitizePlainText(data.saleDate || "").substring(0, 10);
       // Validate YYYY-MM-DD format and that it's a real date

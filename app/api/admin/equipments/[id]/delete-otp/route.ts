@@ -1,7 +1,7 @@
 import { randomInt } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { withRoute, requireAuth, jsonError } from "../../../../../lib/apiHelpers";
-import { getEquipment, listSchedules } from "../../../../../lib/crmStore";
+import { getEquipment, countProtectedServiceHistory } from "../../../../../lib/crmStore";
 import { getContactEmail, setSetting } from "../../../../../lib/settingsStore";
 import { isMailConfigured, sendEquipmentDeleteOtpEmail } from "../../../../../lib/mailer";
 import { resetOtpAttempts } from "../../../../../lib/otpAttempts";
@@ -12,11 +12,16 @@ function generateOtp(): string {
 
 /**
  * POST /api/admin/equipments/[id]/delete-otp
- * Sends a 6-digit OTP to the contact email to authorize deleting equipment
- * that has one or more completed service schedules attached — deleting the
- * equipment cascades to those schedules and their logs, so this closes the
- * same gap the schedule-delete OTP flow protects against, reached via a
- * different route.
+ * Sends a 6-digit OTP to the contact email to authorize deleting equipment that
+ * carries real service history — deleting the equipment cascades to that
+ * history, so this closes the same gap the schedule-delete OTP flow protects
+ * against, reached via a different route.
+ *
+ * The "does it need a code?" question is `countProtectedServiceHistory`, the
+ * SAME call the DELETE makes. They must never be two tests: one asking about
+ * completed schedules while the other asks about all history means either a
+ * refusal to send the code the delete insists on, or a code for a delete that
+ * would have gone through anyway.
  */
 export const POST = withRoute(
   "ไม่สามารถส่งรหัส OTP ได้",
@@ -30,13 +35,13 @@ export const POST = withRoute(
     const equipment = await getEquipment(id);
     if (!equipment) return jsonError("ไม่พบอุปกรณ์", 404);
 
-    const schedules = await listSchedules(id);
-    const completedCount = schedules.filter((s) => s.status === "completed").length;
+    const history = await countProtectedServiceHistory(id);
 
-    if (completedCount === 0) {
+    if (history.total === 0) {
       return NextResponse.json({
         needOtp: false,
-        message: "อุปกรณ์นี้ไม่มีประวัตินัดหมายที่เสร็จสิ้นแล้ว สามารถลบได้เลยโดยไม่ต้องใช้ OTP",
+        message:
+          "อุปกรณ์นี้ยังไม่มีประวัติการให้บริการ (ทั้งนัดหมายที่เสร็จสิ้นและใบ Job ที่ปิดงานแล้ว) สามารถลบได้เลยโดยไม่ต้องใช้ OTP",
       });
     }
 
@@ -65,7 +70,12 @@ export const POST = withRoute(
     await sendEquipmentDeleteOtpEmail(contactEmail, otp, {
       productName: equipment.productName || "อุปกรณ์",
       serialNumber: equipment.serialNumber || undefined,
-      completedScheduleCount: completedCount,
+      // What the owner is about to destroy, counted the way he would count it.
+      // Two doors write this history and the email names both, so a machine
+      // visited only on ใบ Job does not read as "0 นัดหมาย" next to a warning
+      // that its history is about to go.
+      completedScheduleCount: history.completedSchedules,
+      jobLogCount: history.jobLogs,
     });
 
     return NextResponse.json({

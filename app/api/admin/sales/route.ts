@@ -4,6 +4,7 @@ import { withRoute, requireAuth } from "../../../lib/apiHelpers";
 import {
   createSaleWithLineItems,
   listSalesRecords,
+  normalizeSaleType,
 } from "../../../lib/salesDashboardStore";
 import type { SaleLineItem } from "../../../lib/saleLineItemStore";
 import type { EquipmentRowInput } from "../../../lib/crmStore";
@@ -161,7 +162,12 @@ function legacyLineItem(body: SaleBody): Partial<SaleLineItem> {
  * machines silently, which is exactly what the alert is meant to prevent.
  */
 function legacyEquipments(body: SaleBody): EquipmentRowInput[] {
-  if (body.saleType !== "equipment") return [];
+  // `normalizeSaleType`, never a bare `=== "equipment"`: the store defaults
+  // every value that is not exactly "service" IN, so a payload with no
+  // saleType at all is an equipment sale — and a direct comparison here
+  // answered "no machines" for a row the store then wrote as an equipment
+  // sale, losing every machine on it without a word.
+  if (normalizeSaleType(body.saleType) !== "equipment") return [];
   const qty = Math.max(1, Number(body.qty) || 1);
   const limit = Math.min(qty, MAX_EQUIPMENT_ROWS);
   const serials = Array.isArray(body.serialNumbers) ? body.serialNumbers : [];
@@ -245,11 +251,23 @@ export const POST = withRoute(
       // Report 7 — the per-machine "ขาดชิ้นที่ N" blocker is GONE from this
       // branch too: the flat form is the plain "เพิ่มรายการขาย" form, so
       // leaving the rule here would keep refusing exactly the bill the owner
-      // asked to be able to record. Only the SHAPE is still checked (an
-      // equipment sale must send a serial array, even one full of blanks);
-      // `legacyEquipments` pads it to one row per machine and the
+      // asked to be able to record. Only the SHAPE is still checked;
+      // `legacyEquipments` pads the list to one row per machine and the
       // «ข้อมูลไม่ครบ» alert takes it from there.
-      if (body.saleType === "equipment" && !Array.isArray(body.serialNumbers)) {
+      //
+      // PRESENT-BUT-WRONG is refused; ABSENT is not. A `serialNumbers` that is
+      // not an array is a malformed field and the caller has to hear about it.
+      // A payload that simply omits it is the oldest flat shape there is, and
+      // it is an equipment sale by default — refusing it would break a caller
+      // that has always worked, while accepting it now produces one blank
+      // machine row per `qty` instead of the nothing it used to produce. That
+      // silent nothing was the bug: qty machines recorded as sold, zero rows
+      // written, and the alert built to chase missing serials had no row to
+      // chase because none was ever created.
+      if (
+        body.serialNumbers !== undefined &&
+        !Array.isArray(body.serialNumbers)
+      ) {
         return badRequest("ข้อมูล Serial Number ไม่ถูกต้อง");
       }
       items = [legacyLineItem(body)];

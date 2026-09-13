@@ -12,7 +12,7 @@ import type { QueryResult, FieldPacket, RowDataPacket } from "mysql2";
 // did not lower the 33 already written to `settings`, so the next change to
 // reuse 33 was skipped entirely and its tables were never created in
 // production. Reverting a migration means moving FORWARD to a new number.
-const SCHEMA_VERSION = 39;
+const SCHEMA_VERSION = 40;
 
 type DbPool = ReturnType<typeof mysql.createPool>;
 
@@ -341,6 +341,51 @@ async function bootstrapSchemaOnce(): Promise<void> {
     try {
       await connection.query(
         `CREATE INDEX idx_products_categoryId ON products (categoryId)`
+      );
+    } catch (error) {
+      if (!isBenignSchemaError(error)) throw error;
+    }
+
+    // v40 — ONE PRODUCT PER BEST-SELLER RANK, enforced by the database.
+    //
+    // `saveProduct` re-checked the rank with `SELECT ... FOR UPDATE` before
+    // inserting, which cannot work: the row being claimed does not exist yet,
+    // and TiDB takes no gap lock on a row that does not exist (the same fact
+    // `saveQuotationAtomic` documents, which is why THAT code claims its number
+    // with an INSERT instead). Two admins saving rank 1 at the same moment both
+    // read zero rows and both inserted. A UNIQUE index is the only thing that
+    // can actually refuse the second one. NULL is exempt, and MySQL allows any
+    // number of NULLs in a unique index — which is exactly right, since most
+    // products carry no rank at all.
+    //
+    // Duplicates already in production are cleared FIRST, or the index cannot
+    // be built: the row that has held the rank longest keeps it and the others
+    // are set back to "no rank". That is visible and repairable in the admin UI
+    // — an unbuildable index would instead leave the constraint silently absent
+    // forever. `createdAt` is the tie-break, `id` behind it, so the choice is
+    // deterministic rather than whatever order the scan returned.
+    try {
+      await connection.query(
+        `UPDATE products p
+           JOIN (
+             SELECT id FROM (
+               SELECT id,
+                      ROW_NUMBER() OVER (
+                        PARTITION BY bestSellerRank ORDER BY createdAt ASC, id ASC
+                      ) AS rn
+                 FROM products
+                WHERE bestSellerRank IS NOT NULL
+             ) ranked WHERE ranked.rn > 1
+           ) dupes ON dupes.id = p.id
+            SET p.bestSellerRank = NULL`
+      );
+    } catch (error) {
+      if (!isBenignSchemaError(error)) throw error;
+    }
+
+    try {
+      await connection.query(
+        `CREATE UNIQUE INDEX uq_products_bestSellerRank ON products (bestSellerRank)`
       );
     } catch (error) {
       if (!isBenignSchemaError(error)) throw error;

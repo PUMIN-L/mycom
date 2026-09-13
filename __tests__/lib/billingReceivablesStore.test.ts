@@ -35,26 +35,58 @@ const sql = (call: unknown[]) => String(call[0]).replace(/\s+/g, ' ').trim();
 // documents), so nothing at the database level stops a DELETE from orphaning
 // financial records. This ban is that stop.
 describe('deleteBillingDocument', () => {
+  // The check and the DELETE are ONE transaction, opened by locking the
+  // document row. Two pool queries let a receipt saved in the gap between them
+  // be orphaned: the count sees zero, the INSERT lands, the DELETE removes the
+  // document, and `billing_payments` has no FOREIGN KEY to refuse the survivor.
+  // Counting under FOR UPDATE could not have fixed it — TiDB takes no gap lock
+  // on a payment row that does not exist yet — so the lock is on the invoice,
+  // and `syncReceiptPayment` takes the same one.
+  const lockThen = (...results: unknown[]) => {
+    conn.query.mockResolvedValueOnce([[{ id: 'inv-1' }]]);
+    for (const r of results) conn.query.mockResolvedValueOnce(r as never);
+  };
+
   it('REFUSES and issues no DELETE when a live payment exists', async () => {
-    topQuery.mockResolvedValueOnce([[{ cnt: 1 }]]);
+    lockThen([[{ cnt: 1 }]]);
 
     await expect(deleteBillingDocument('inv-1')).rejects.toBeInstanceOf(
       BillingDocumentHasPaymentsError
     );
-    expect(topQuery).toHaveBeenCalledTimes(1);
-    expect(topQuery.mock.calls.some(([s]) => /DELETE FROM billing_documents/.test(String(s)))).toBe(
-      false
+    expect(withTransaction).toHaveBeenCalledTimes(1);
+    expect(
+      conn.query.mock.calls.some(([s]) => /DELETE FROM billing_documents/.test(String(s)))
+    ).toBe(false);
+  });
+
+  it('locks the document row BEFORE counting its payments', async () => {
+    lockThen([[{ cnt: 0 }]], [{ affectedRows: 1 }]);
+
+    expect(await deleteBillingDocument('inv-1')).toBe(true);
+    expect(sql(conn.query.mock.calls[0])).toBe(
+      'SELECT id FROM billing_documents WHERE id = ? FOR UPDATE'
     );
+    expect(conn.query.mock.calls[0][1]).toEqual(['inv-1']);
+    // Ordering is the point: a count taken before the lock is a stale count.
+    expect(sql(conn.query.mock.calls[1])).toContain('FROM billing_payments');
+  });
+
+  it('returns false without counting anything when the document is already gone', async () => {
+    conn.query.mockResolvedValueOnce([[]]);
+
+    expect(await deleteBillingDocument('inv-1')).toBe(false);
+    expect(conn.query).toHaveBeenCalledTimes(1);
+    expect(
+      conn.query.mock.calls.some(([s]) => /DELETE FROM billing_documents/.test(String(s)))
+    ).toBe(false);
   });
 
   it('counts only LIVE payments — a document whose only payment was voided is deletable again', async () => {
-    topQuery
-      .mockResolvedValueOnce([[{ cnt: 0 }]])
-      .mockResolvedValueOnce([{ affectedRows: 1 }]);
+    lockThen([[{ cnt: 0 }]], [{ affectedRows: 1 }]);
 
     expect(await deleteBillingDocument('inv-1')).toBe(true);
-    expect(sql(topQuery.mock.calls[0])).toContain('voidedAt IS NULL');
-    expect(sql(topQuery.mock.calls[1])).toBe('DELETE FROM billing_documents WHERE id = ?');
+    expect(sql(conn.query.mock.calls[1])).toContain('voidedAt IS NULL');
+    expect(sql(conn.query.mock.calls[2])).toBe('DELETE FROM billing_documents WHERE id = ?');
   });
 
   // A receipt's implied payment carries the RECEIPT's id and points at the
@@ -62,11 +94,14 @@ describe('deleteBillingDocument', () => {
   // that clause let a receipt be deleted while its credit lived on, and the
   // invoice it had settled stayed "paid" with no document behind it.
   it('also refuses for the RECEIPT that MINTED a payment, not just the doc it was paid against', async () => {
-    topQuery.mockResolvedValueOnce([[{ cnt: 0 }]]).mockResolvedValueOnce([{ affectedRows: 1 }]);
+    conn.query
+      .mockResolvedValueOnce([[{ id: 'rc-1' }]]) // lock
+      .mockResolvedValueOnce([[{ cnt: 0 }]])
+      .mockResolvedValueOnce([{ affectedRows: 1 }]);
     await deleteBillingDocument('rc-1');
-    const text = sql(topQuery.mock.calls[0]);
+    const text = sql(conn.query.mock.calls[1]);
     expect(text).toContain('billingDocumentId = ? OR id = ?');
-    expect(topQuery.mock.calls[0][1]).toEqual(['rc-1', 'rc-1']);
+    expect(conn.query.mock.calls[1][1]).toEqual(['rc-1', 'rc-1']);
   });
 });
 
@@ -366,6 +401,43 @@ describe('backfillBillingDerivedColumns', () => {
 
     expect(conn.query.mock.calls[0][1]).toEqual(['2026-08-10', 2140, 'บริษัท ก', '02-1', 'a']);
     expect(result).toEqual({ scanned: 1, updated: 1, done: true });
+  });
+
+  // ── The counter belongs INSIDE the transaction ────────────────────────────
+  // `withTransaction` replays its callback on a transient connection loss. A
+  // counter captured outside keeps the tally of the attempt that was rolled
+  // back: a batch that wrote 2 rows, died, and then succeeded reported 4 rows
+  // written. That number is shown to the owner AND feeds `updated === 0`,
+  // which decides whether the queue is drained.
+  //
+  // This bites: move `let updated = 0` back outside `withTransaction` and the
+  // count comes back 4.
+  it('counts only the attempt that COMMITTED, even when the transaction is replayed', async () => {
+    const rows = [
+      { id: 'a', data: '{"docDate":"2026-08-10","items":[]}', createdAt: '2026-08-11T00:00:00.000Z' },
+      { id: 'b', data: '{"docDate":"2026-08-11","items":[]}', createdAt: '2026-08-12T00:00:00.000Z' },
+    ];
+    topQuery.mockResolvedValueOnce([rows]);
+    conn.query.mockResolvedValue([{ affectedRows: 1 }]);
+
+    // One rolled-back attempt, then a clean one — exactly what the real
+    // withTransaction does on PROTOCOL_CONNECTION_LOST. The first attempt's
+    // return value is DISCARDED, as a rollback discards its writes.
+    let attempts = 0;
+    vi.mocked(withTransaction).mockImplementation((async (
+      fn: (c: typeof conn) => Promise<unknown>
+    ) => {
+      attempts += 1;
+      await fn(conn); // attempt 1: runs, then is rolled back
+      return fn(conn); // attempt 2: the one that commits
+    }) as never);
+
+    const result = await backfillBillingDerivedColumns(200);
+
+    expect(attempts).toBe(1);
+    // TWO rows exist, so TWO is the only honest answer — never 4.
+    expect(result.updated).toBe(2);
+    expect(result.scanned).toBe(2);
   });
 
   it('does NOT invent a dueDate and does NOT touch paidAmount', async () => {

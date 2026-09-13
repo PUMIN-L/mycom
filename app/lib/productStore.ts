@@ -1,9 +1,14 @@
 import { cache } from "react";
 import { query, withTransaction } from "./db";
 import { RowDataPacket, ResultSetHeader } from "mysql2";
+import type { PoolConnection } from "mysql2/promise";
 import type { ProductCategory, ProductData } from "./types";
 import { sanitizeRichText } from "./sanitizeHtml";
 import { saveRevision } from "./revisionStore";
+
+/** Pool or transaction connection — the same narrow shape `billingPayments`
+ *  uses, so a helper can be called from inside a transaction or outside one. */
+type Queryable = Pick<PoolConnection, "query">;
 
 // Re-exported so existing callers can keep importing these from "./productStore".
 export type { ProductCategory, ProductData } from "./types";
@@ -164,6 +169,61 @@ function sameSupplierSet(a: string[], b: string[]): boolean {
   return sortedA.every((id, i) => id === sortedB[i]);
 }
 
+/**
+ * The product INSERT, with `uq_products_bestSellerRank` translated into the
+ * same Thai refusal the pre-check raises.
+ *
+ * The unique index — not the SELECT above it — is what makes "one product per
+ * rank" true, because the pre-check cannot lock a row that does not exist yet.
+ * A duplicate key here therefore means a genuine race with another admin, and
+ * it must read as the collision it is rather than as "บันทึกไม่สำเร็จ".
+ *
+ * Only the RANK can collide: `products.id` is a freshly minted uuid, so the
+ * error is only re-attributed when this save was actually setting a rank.
+ */
+async function insertProductRow(
+  conn: Queryable,
+  product: ProductData,
+  cleaned: {
+    title_th: string;
+    title_en: string;
+    title_zh: string;
+    desc_th: string;
+    desc_en: string;
+    desc_zh: string;
+    isPublished: boolean;
+    sortOrder: number;
+  }
+): Promise<void> {
+  try {
+    await conn.query(
+      "INSERT INTO products (id, categoryId, image, title_th, title_en, title_zh, desc_th, desc_en, desc_zh, createdAt, isPublished, sortOrder, bestSellerRank, showBestSellerBadge) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [
+        product.id,
+        product.categoryId,
+        product.image,
+        cleaned.title_th,
+        cleaned.title_en,
+        cleaned.title_zh,
+        cleaned.desc_th,
+        cleaned.desc_en,
+        cleaned.desc_zh,
+        product.createdAt,
+        cleaned.isPublished,
+        cleaned.sortOrder,
+        product.bestSellerRank ?? null,
+        product.showBestSellerBadge !== false,
+      ]
+    );
+  } catch (error) {
+    const isDup = (error as { code?: string })?.code === "ER_DUP_ENTRY";
+    if (isDup && product.bestSellerRank != null) {
+      throw new BestSellerRankConflictError(product.bestSellerRank);
+    }
+    throw error;
+  }
+}
+
 export async function addProduct(product: ProductData): Promise<ProductData> {
   const isPublished = product.isPublished !== false;
   // Sanitize rich-text descriptions on write so stored HTML is always safe to
@@ -188,12 +248,16 @@ export async function addProduct(product: ProductData): Promise<ProductData> {
     }
 
     if (product.bestSellerRank != null) {
-      // The UI only warns against a rank already taken in the snapshot it
-      // loaded on open, which two concurrent/stale admin tabs can both pass —
-      // re-check against the live row here so a genuine collision is rejected
-      // instead of silently creating two products with the same rank.
+      // A COURTESY CHECK, NOT THE GUARANTEE. It catches the ordinary case — a
+      // rank taken before this admin opened the form — and turns it into a Thai
+      // message instead of a database error. It CANNOT catch two saves racing:
+      // the row being claimed does not exist yet, and TiDB takes no gap lock on
+      // a row that does not exist, so both readers see nothing. That is why the
+      // rank now carries `uq_products_bestSellerRank` (db.ts v40) and why the
+      // INSERT below is wrapped — the index is what actually refuses the second
+      // writer, exactly as `saveQuotationAtomic` claims a docNo.
       const [rankRows] = await conn.query<RowDataPacket[]>(
-        "SELECT id FROM products WHERE bestSellerRank = ? FOR UPDATE",
+        "SELECT id FROM products WHERE bestSellerRank = ?",
         [product.bestSellerRank]
       );
       if (rankRows.length > 0) {
@@ -201,25 +265,16 @@ export async function addProduct(product: ProductData): Promise<ProductData> {
       }
     }
 
-    await conn.query(
-      "INSERT INTO products (id, categoryId, image, title_th, title_en, title_zh, desc_th, desc_en, desc_zh, createdAt, isPublished, sortOrder, bestSellerRank, showBestSellerBadge) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-      [
-        product.id,
-        product.categoryId,
-        product.image,
-        title_th,
-        title_en,
-        title_zh,
-        desc_th,
-        desc_en,
-        desc_zh,
-        product.createdAt,
-        isPublished,
-        sortOrder,
-        product.bestSellerRank ?? null,
-        product.showBestSellerBadge !== false,
-      ]
-    );
+    await insertProductRow(conn, product, {
+      title_th,
+      title_en,
+      title_zh,
+      desc_th,
+      desc_en,
+      desc_zh,
+      isPublished,
+      sortOrder: sortOrder as number,
+    });
 
     if (product.supplierIds && product.supplierIds.length > 0) {
       for (const supplierId of product.supplierIds) {
@@ -396,10 +451,15 @@ export async function updateProduct(
       updates.bestSellerRank != null &&
       updates.bestSellerRank !== existing.bestSellerRank
     ) {
-      // Same collision guard as addProduct — the UI's warning is only as
-      // fresh as the snapshot it loaded, so re-check the live row.
+      // Same courtesy check as addProduct, and with the same limit: it turns an
+      // already-taken rank into a Thai message, but it is
+      // `uq_products_bestSellerRank` that refuses a true race — see the UPDATE
+      // below, which translates the duplicate-key error the index raises.
+      // `FOR UPDATE` is gone because it was never doing anything: on the common
+      // path it locks nothing (no row holds the rank), and where a row DOES
+      // hold it we refuse immediately, so there is nothing left to protect.
       const [rankRows] = await conn.query<RowDataPacket[]>(
-        "SELECT id FROM products WHERE bestSellerRank = ? AND id != ? FOR UPDATE",
+        "SELECT id FROM products WHERE bestSellerRank = ? AND id != ?",
         [updates.bestSellerRank, id]
       );
       if (rankRows.length > 0) {
@@ -421,10 +481,21 @@ export async function updateProduct(
       if (changed) {
         await saveRevision("product", id, existing, conn);
       }
-      await conn.query(
-        `UPDATE products SET ${sets.join(", ")} WHERE id = ?`,
-        [...values, id]
-      );
+      try {
+        await conn.query(
+          `UPDATE products SET ${sets.join(", ")} WHERE id = ?`,
+          [...values, id]
+        );
+      } catch (error) {
+        // The unique index on the rank, reported as the collision it is. Only
+        // claimed when this save actually SETS a rank — an unrelated duplicate
+        // key must keep its own error rather than be mislabelled.
+        const isDup = (error as { code?: string })?.code === "ER_DUP_ENTRY";
+        if (isDup && updates.bestSellerRank != null) {
+          throw new BestSellerRankConflictError(updates.bestSellerRank);
+        }
+        throw error;
+      }
     }
     
     if (updates.supplierIds !== undefined) {

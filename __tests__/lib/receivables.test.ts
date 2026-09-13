@@ -11,6 +11,7 @@ vi.mock('@/app/lib/db', () => ({
 }));
 
 import {
+  sqlNotSupersededByLiveRow,
   isDebtCarrier,
   resolveReceivableStatus,
   receivableAgeingBucket,
@@ -700,5 +701,87 @@ describe('THE MONEY — a discounted, VAT-ed invoice paid by deposit then balanc
       const done = status({ totalAmount: total, paidAmount: round2(deposit + balance) });
       expect([unitPrice, done.outstanding, done.paymentState]).toEqual([unitPrice, 0, 'paid']);
     }
+  });
+});
+
+// ── The SQL twin of the supersession rule ───────────────────────────────────
+//
+// `buildReceivablesLedger` decides "has a live row replaced this one?" in
+// TypeScript, over the rows it was handed. Four SQL queries — the alert bell
+// and its COUNT twin, the dated alert search, the receipt builder's invoice
+// dropdown and the ตั้งให้ทุกใบที่ยังไม่กำหนด list — have to answer the same
+// question in the database. They were hand-copied, and drifted twice: first to
+// a `supersededById IS NULL` that kept a debt terminal after its replacement
+// was cancelled, then to a stamp-only test blind to the pre-v37 rows. The
+// clause is now generated once, and what is tested here is the part a database
+// cannot be asked about from a unit test: that the SQL version-suffix pattern
+// describes EXACTLY the same strings as the JS one.
+describe('sqlNotSupersededByLiveRow', () => {
+  /** The pattern the generated SQL actually carries, lifted back out of it. */
+  const sqlSuffixSource = (() => {
+    const match = /REGEXP_REPLACE\(b\.docNo, '([^']+)', ''\)/.exec(
+      sqlNotSupersededByLiveRow('b')
+    );
+    if (!match) throw new Error('no REGEXP_REPLACE pattern in the generated SQL');
+    return match[1];
+  })();
+
+  const DOCNOS = [
+    'INV260810-01',
+    'INV260810-01v2',
+    'INV260810-01V2',
+    'INV260810-01-v2',
+    'INV260810-01-V2',
+    'INV260810-01v12',
+    'INV260810-011',
+    'QT251026-22',
+    '050926-22',
+    '050926-22v3',
+    'RCv2',
+    'INV-v',
+    'INVv0',
+    '',
+  ];
+
+  // The one that matters. `baseDocNo` strips the version in JS; the SQL strips
+  // it with this pattern. If they ever disagree about a single docNo, two rows
+  // that the ledger calls the same document stop being the same document in
+  // SQL — which is the whole supersession rule, silently off by one row.
+  it('strips exactly the same version suffixes as baseDocNo does', () => {
+    const sqlRegex = new RegExp(sqlSuffixSource);
+    for (const docNo of DOCNOS) {
+      expect(docNo.replace(sqlRegex, '')).toBe(baseDocNo(docNo));
+    }
+  });
+
+  it('reads the same version number as docNoVersion does', () => {
+    const hasSuffix = new RegExp(sqlSuffixSource);
+    for (const docNo of DOCNOS) {
+      // What `sqlDocNoVersion` computes: 0 unless the suffix is there, else the
+      // trailing digits.
+      const sqlValue = hasSuffix.test(docNo)
+        ? Number(/[0-9]+$/.exec(docNo)?.[0] ?? 0)
+        : 0;
+      expect(sqlValue).toBe(docNoVersion(docNo));
+    }
+  });
+
+  it('binds to whichever alias the caller uses, and never to the wrong one', () => {
+    const aliased = sqlNotSupersededByLiveRow('billing_documents');
+    expect(aliased).toContain('newer.id <> billing_documents.id');
+    expect(aliased).toContain('newer.id = billing_documents.supersededById');
+    expect(aliased).not.toContain('b.docNo');
+  });
+
+  it('demands a LIVE successor, by both routes', () => {
+    const sql = sqlNotSupersededByLiveRow('b').replace(/\s+/g, ' ');
+    expect(sql).toMatch(/^NOT EXISTS/);
+    // One cancelledAt test, covering both branches — a cancelled replacement
+    // replaces nothing however it was identified.
+    expect(sql).toContain('newer.cancelledAt IS NULL');
+    expect(sql).toContain('newer.id = b.supersededById');
+    expect(sql).toContain("newer.docNo LIKE CONCAT(REGEXP_REPLACE(b.docNo, '-?[vV][0-9]+$', ''), '%')");
+    // Blank docNos take part in neither half: every row would share the base ''.
+    expect(sql).toContain("b.docNo <> '' AND newer.docNo <> ''");
   });
 });

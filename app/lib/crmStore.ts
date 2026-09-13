@@ -2,6 +2,7 @@ import { query, withTransaction } from "./db";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { sanitizePlainText } from "./sanitizeHtml";
 import { bangkokDateString } from "./dateFormat";
+import { sqlNotSupersededByLiveRow } from "./receivables";
 import type {
   CustomerEquipment,
   ServiceSchedule,
@@ -930,6 +931,46 @@ export async function deleteSchedule(id: string): Promise<boolean> {
   return res.affectedRows > 0;
 }
 
+/**
+ * How much real service history a machine carries — the ONE predicate the
+ * equipment-delete OTP gate asks, from both the route that demands the code and
+ * the route that emails it.
+ *
+ * ── WHY IT IS NOT "COMPLETED SCHEDULES" ANY MORE ────────────────────────────
+ * The gate used to count completed `service_schedules` only. v38 gave service
+ * history a SECOND door: closing an ใบ Job writes one `service_logs` row per
+ * machine with `jobId` set and `scheduleId` NULL, which is a visit that never
+ * had an appointment. A machine whose entire history arrived that way answered
+ * "no completed schedules", so it was deleted with no OTP at all — and
+ * `service_logs.equipmentId` has an index but deliberately no FOREIGN KEY, so
+ * those visit records survived pointing at a machine that no longer exists.
+ * The guard exists to protect "the same data the schedule-delete OTP flow
+ * protects, reached through a different door"; this is that door.
+ *
+ * Both numbers are returned rather than a bare boolean because the email tells
+ * the owner what he is about to destroy, and "3 ใบ Job" and "3 นัดหมาย" are not
+ * the same sentence.
+ */
+export async function countProtectedServiceHistory(
+  equipmentId: string
+): Promise<{ completedSchedules: number; jobLogs: number; total: number }> {
+  const [rows] = await query<RowDataPacket[]>(
+    `SELECT
+       (SELECT COUNT(*) FROM service_schedules
+         WHERE equipmentId = ? AND status = 'completed') AS completedSchedules,
+       (SELECT COUNT(*) FROM service_logs
+         WHERE equipmentId = ? AND jobId IS NOT NULL) AS jobLogs`,
+    [equipmentId, equipmentId]
+  );
+  const completedSchedules = Number(rows[0]?.completedSchedules) || 0;
+  const jobLogs = Number(rows[0]?.jobLogs) || 0;
+  return {
+    completedSchedules,
+    jobLogs,
+    total: completedSchedules + jobLogs,
+  };
+}
+
 // ── Logs / complete ───────────────────────────────────────────────────────────
 
 export async function listLogs(scheduleId: string): Promise<ServiceLog[]> {
@@ -1229,25 +1270,21 @@ export async function getAlerts(
   // minus anything overridden OUT. Every column read here is denormalised, so
   // the JSON blob is never touched.
   //
-  // "ถูกแทนที่" MEANS REPLACED BY A ROW THAT IS STILL ALIVE — the NOT EXISTS,
-  // never a plain `supersededById IS NULL`. When a correction is raised and
-  // then CANCELLED, nothing replaces the original any more: the debt is real
-  // again, `buildReceivablesLedger` puts it back in ยอดค้างทั้งหมด with a
-  // "เวอร์ชันใหม่ถูกยกเลิก" badge, and `listOpenInvoices` lets a receipt be
-  // pointed at it. This clause is the SAME rule, or the bell is the one place
-  // that can never mention a debt the ledger screen is showing — an invoice
-  // months overdue that no alert will ever raise, because the version that
-  // briefly replaced it was withdrawn.
+  // "ถูกแทนที่" MEANS REPLACED BY A ROW THAT IS STILL ALIVE, and it is asked
+  // through `sqlNotSupersededByLiveRow` — never spelled out here. Two separate
+  // rounds of drift came from this clause being hand-copied: first a plain
+  // `supersededById IS NULL` that kept a debt terminal after its correction was
+  // itself CANCELLED, then a stamp-only test that could not see the pre-v37
+  // rows whose only evidence of replacement is a sibling docNo. Both made the
+  // bell disagree with the ledger screen the owner reads — in the first case an
+  // invoice months overdue that no alert would ever raise, in the second the
+  // same debt counted twice. One function, four callers, no copies.
   const dueCutoff = bangkokDateString(
     new Date(Date.now() + RECEIVABLE_ALERT_LEAD_DAYS * 86400000)
   );
   const RECEIVABLE_WHERE = `
      WHERE b.cancelledAt IS NULL
-       AND NOT EXISTS (
-             SELECT 1 FROM billing_documents newer
-              WHERE newer.id = b.supersededById
-                AND newer.cancelledAt IS NULL
-           )
+       AND ${sqlNotSupersededByLiveRow("b")}
        AND (b.receivableOverride = 1
             OR (b.receivableOverride IS NULL AND b.docType = 'invoice'))
        AND b.dueDate IS NOT NULL

@@ -4,7 +4,7 @@ import {
   getEquipment,
   updateEquipment,
   deleteEquipment,
-  listSchedules,
+  countProtectedServiceHistory,
 } from "../../../../lib/crmStore";
 import { isValidDateString } from "../../../../lib/dateFormat";
 import { EQUIPMENT_OWNERSHIP_SOURCES } from "../../../../lib/types";
@@ -98,10 +98,15 @@ export const PUT = withRoute(
 );
 
 // DELETE /api/admin/equipments/[id] — remove equipment (schedules+logs cascade).
-// Deleting equipment that has one or more COMPLETED service schedules
-// requires the same 6-digit emailed OTP as deleting a completed schedule
-// directly (see /api/admin/schedules/[id]) — the cascade would otherwise
-// delete that same protected history through an unguarded door.
+// Deleting equipment that carries REAL SERVICE HISTORY requires the same
+// 6-digit emailed OTP as deleting a completed schedule directly (see
+// /api/admin/schedules/[id]) — the cascade would otherwise delete that same
+// protected history through an unguarded door.
+//
+// "History" is `countProtectedServiceHistory`, not a count of completed
+// schedules: since v38 a closed ใบ Job writes service history with no
+// appointment behind it, and a machine visited only that way used to be
+// deletable with no code at all.
 export const DELETE = withRoute(
   "ลบอุปกรณ์ไม่สำเร็จ",
   async (
@@ -114,10 +119,9 @@ export const DELETE = withRoute(
     const equipment = await getEquipment(id);
     if (!equipment) return jsonError("ไม่พบอุปกรณ์", 404);
 
-    const schedules = await listSchedules(id);
-    const hasCompletedSchedule = schedules.some((s) => s.status === "completed");
+    const history = await countProtectedServiceHistory(id);
 
-    if (hasCompletedSchedule) {
+    if (history.total > 0) {
       let otp = "";
       try {
         const body = await request.json();

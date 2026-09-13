@@ -3,6 +3,7 @@ import { query, withTransaction } from "./db";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { sanitizePlainText } from "./sanitizeHtml";
 import { bangkokDateString } from "./dateFormat";
+import { sqlNotSupersededByLiveRow } from "./receivables";
 import { CALIBRATION_VALIDITY_MONTHS } from "./types";
 import {
   DATE_SEARCH_ROW_CAP,
@@ -85,22 +86,18 @@ const EQUIPMENT_SEARCH_FROM = `
 // that has been paid in full still genuinely fell due on that day, and the
 // point of searching a past date is to review what was supposed to happen.
 //
-// "ถูกแทนที่" MEANS REPLACED BY A ROW THAT IS STILL ALIVE, exactly as in
-// `getAlerts`, `listOpenInvoices` and `buildReceivablesLedger`. A plain
-// `supersededById IS NULL` withdraws a document that nothing replaces any
-// more: raise a correction, cancel the correction, and the original invoice
-// disappears from the day it fell due while the ledger screen is still
-// counting it. Searching a past date is how the owner reconstructs that day,
-// so it has to show the same debts the day's ledger did.
+// "ถูกแทนที่" comes from `sqlNotSupersededByLiveRow`, the same call `getAlerts`,
+// `listOpenInvoices` and `listUndatedReceivables` make. Searching a past date is
+// how the owner reconstructs what that day looked like, so it has to show the
+// same debts the day's ledger did — and every time this clause was written out
+// by hand instead, it stopped doing that: a cancelled correction made the
+// original vanish from the day it fell due, and a pre-v37 correction left both
+// versions in the results.
 const RECEIVABLE_SEARCH_WHERE = `
   WHERE b.dueDate IS NOT NULL
     AND b.dueDate BETWEEN ? AND ?
     AND b.cancelledAt IS NULL
-    AND NOT EXISTS (
-          SELECT 1 FROM billing_documents newer
-           WHERE newer.id = b.supersededById
-             AND newer.cancelledAt IS NULL
-        )
+    AND ${sqlNotSupersededByLiveRow("b")}
     AND (b.receivableOverride = 1
          OR (b.receivableOverride IS NULL AND b.docType = 'invoice'))`;
 
@@ -564,12 +561,22 @@ export async function rescheduleDatedAlerts(
     }
 
     // One grouped SELECT per table, inside the same transaction — never one
-    // query per item.
+    // query per item — and every one of them `FOR UPDATE`.
+    //
+    // ── WHY THE LOCK ────────────────────────────────────────────────────────
+    // The read decides what this move is ALLOWED to do (the staleness test
+    // against `expectedDate`, and the +N days arithmetic that starts from
+    // `state.date`). Without a lock two admins both read 12 มิ.ย., both pass
+    // the staleness test, and both write: one asks for +7 and the other for
+    // +3, both are told "ย้ายแล้ว", and the appointment ends up on whichever
+    // date committed last. The same pattern as `replaceInNotes`, which locks
+    // its grouped read for the same reason and says so.
     const scheduleState = new Map<string, { date: string; status: string }>();
     if (scheduleIds.length > 0) {
       const [rows] = await conn.query(
         `SELECT id, scheduledDate, status FROM service_schedules
-         WHERE id IN (${scheduleIds.map(() => "?").join(", ")})`,
+         WHERE id IN (${scheduleIds.map(() => "?").join(", ")})
+         FOR UPDATE`,
         scheduleIds
       );
       for (const row of rows as RowDataPacket[]) {
@@ -584,7 +591,8 @@ export async function rescheduleDatedAlerts(
     if (taskIds.length > 0) {
       const [rows] = await conn.query(
         `SELECT id, dueDate, status FROM crm_tasks
-         WHERE id IN (${taskIds.map(() => "?").join(", ")})`,
+         WHERE id IN (${taskIds.map(() => "?").join(", ")})
+         FOR UPDATE`,
         taskIds
       );
       for (const row of rows as RowDataPacket[]) {
@@ -684,27 +692,39 @@ export async function rescheduleDatedAlerts(
         continue;
       }
 
-      // 7. The narrow write: one named date column, with the status condition
-      //    repeated in the WHERE so a row closed between the read above and
-      //    this statement cannot be moved.
+      // 7. The narrow write: one named date column, with BOTH the status and
+      //    the date we read repeated in the WHERE. The status condition stops a
+      //    row closed since the read from being moved; the date condition is
+      //    the compare-and-set that makes this write conditional on the world
+      //    not having changed — the same shape as `replaceInNotes`'s
+      //    `WHERE id = ? AND note = ?`. `FOR UPDATE` above already serialises
+      //    the two transactions, so this is the belt to that lock's braces: it
+      //    also covers a row edited by something that never took the lock at
+      //    all (the per-row date picker on the alert card, another session's
+      //    save), where the alternative is reporting "ย้ายแล้ว" over a change
+      //    the admin never saw.
       const [result] = isSchedule
         ? await conn.query(
-            `UPDATE service_schedules SET scheduledDate = ? WHERE id = ? AND status = 'pending'`,
-            [nextDate, item.id]
+            `UPDATE service_schedules SET scheduledDate = ?
+              WHERE id = ? AND status = 'pending' AND scheduledDate = ?`,
+            [nextDate, item.id, state.date]
           )
         : await conn.query(
-            `UPDATE crm_tasks SET dueDate = ? WHERE id = ? AND status = 'pending'`,
-            [nextDate, item.id]
+            `UPDATE crm_tasks SET dueDate = ?
+              WHERE id = ? AND status = 'pending' AND dueDate = ?`,
+            [nextDate, item.id, state.date]
           );
 
       if ((result as ResultSetHeader)?.affectedRows === 0) {
-        // The status changed underneath us. That is THIS item's refusal, not
-        // grounds to roll back everybody else's move.
+        // The status OR the date changed underneath us. Either way this item is
+        // refused — never rolled back on everybody else's behalf. The message
+        // covers both because the row is gone from under us and re-reading it
+        // to say which one moved would be one more race.
         results.push(
           refused(
             item,
             "closed",
-            "รายการนี้ถูกปิดงานไปพอดีระหว่างที่กำลังบันทึก ระบบจึงไม่ย้ายวันให้ กรุณาค้นหาใหม่เพื่อดูสถานะล่าสุด",
+            "รายการนี้ถูกปิดงานหรือถูกแก้วันที่ไปพอดีระหว่างที่กำลังบันทึก ระบบจึงไม่ย้ายวันให้ กรุณาค้นหาใหม่เพื่อดูสถานะล่าสุด",
             state.date
           )
         );

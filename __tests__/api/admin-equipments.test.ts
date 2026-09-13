@@ -11,6 +11,7 @@ vi.mock('@/app/lib/crmStore', () => ({
   updateEquipment: vi.fn(),
   deleteEquipment: vi.fn(),
   listSchedules: vi.fn(),
+  countProtectedServiceHistory: vi.fn(),
   declineWarrantyRenewal: vi.fn(),
 }));
 import {
@@ -20,6 +21,7 @@ import {
   updateEquipment,
   deleteEquipment,
   listSchedules,
+  countProtectedServiceHistory,
   declineWarrantyRenewal,
 } from '@/app/lib/crmStore';
 
@@ -104,6 +106,11 @@ describe('Admin Equipments API', () => {
     vi.mocked(getSession).mockResolvedValue(null);
     vi.mocked(getEquipment).mockResolvedValue(equipmentNoSchedule as any);
     vi.mocked(listSchedules).mockResolvedValue([]);
+    vi.mocked(countProtectedServiceHistory).mockResolvedValue({
+      completedSchedules: 0,
+      jobLogs: 0,
+      total: 0,
+    });
   });
 
   // ── Auth ────────────────────────────────────────────────────────────────
@@ -343,6 +350,11 @@ describe('Admin Equipments API', () => {
   it('DELETE requires an OTP when the equipment has a completed schedule', async () => {
     vi.mocked(getSession).mockResolvedValue(admin);
     vi.mocked(listSchedules).mockResolvedValue([{ id: 's1', status: 'completed' }] as any);
+    vi.mocked(countProtectedServiceHistory).mockResolvedValue({
+      completedSchedules: 1,
+      jobLogs: 0,
+      total: 1,
+    });
 
     const res = await DELETE(mutReqId('DELETE'), ctx('eq-1'));
     expect(res.status).toBe(400);
@@ -353,6 +365,11 @@ describe('Admin Equipments API', () => {
   it('DELETE succeeds with a correct OTP when a completed schedule is attached', async () => {
     vi.mocked(getSession).mockResolvedValue(admin);
     vi.mocked(listSchedules).mockResolvedValue([{ id: 's1', status: 'completed' }] as any);
+    vi.mocked(countProtectedServiceHistory).mockResolvedValue({
+      completedSchedules: 1,
+      jobLogs: 0,
+      total: 1,
+    });
     vi.mocked(deleteEquipment).mockResolvedValue(true);
     mockSettingsState({
       'equipment_delete_otp_eq-1': '123456',
@@ -367,6 +384,11 @@ describe('Admin Equipments API', () => {
   it('DELETE rejects a wrong OTP without deleting', async () => {
     vi.mocked(getSession).mockResolvedValue(admin);
     vi.mocked(listSchedules).mockResolvedValue([{ id: 's1', status: 'completed' }] as any);
+    vi.mocked(countProtectedServiceHistory).mockResolvedValue({
+      completedSchedules: 1,
+      jobLogs: 0,
+      total: 1,
+    });
     mockSettingsState({
       'equipment_delete_otp_eq-1': '123456',
       'equipment_delete_otp_expires_eq-1': String(Date.now() + 100000),
@@ -381,6 +403,11 @@ describe('Admin Equipments API', () => {
   it('DELETE rejects an expired OTP without deleting', async () => {
     vi.mocked(getSession).mockResolvedValue(admin);
     vi.mocked(listSchedules).mockResolvedValue([{ id: 's1', status: 'completed' }] as any);
+    vi.mocked(countProtectedServiceHistory).mockResolvedValue({
+      completedSchedules: 1,
+      jobLogs: 0,
+      total: 1,
+    });
     mockSettingsState({
       'equipment_delete_otp_eq-1': '123456',
       'equipment_delete_otp_expires_eq-1': String(Date.now() - 1000),
@@ -410,11 +437,11 @@ describe('Admin Equipments API', () => {
 
     it('sends an OTP naming the completed-schedule count when one exists', async () => {
       vi.mocked(getSession).mockResolvedValue(admin);
-      vi.mocked(listSchedules).mockResolvedValue([
-        { id: 's1', status: 'completed' },
-        { id: 's2', status: 'completed' },
-        { id: 's3', status: 'pending' },
-      ] as any);
+      vi.mocked(countProtectedServiceHistory).mockResolvedValue({
+        completedSchedules: 2,
+        jobLogs: 0,
+        total: 2,
+      });
 
       const res = await deleteOtpPOST(mutReqId('POST'), ctx('eq-1'));
       expect(res.status).toBe(200);
@@ -423,13 +450,54 @@ describe('Admin Equipments API', () => {
       expect(sendEquipmentDeleteOtpEmail).toHaveBeenCalledWith(
         'admin@example.com',
         expect.stringMatching(/^\d{6}$/),
-        expect.objectContaining({ completedScheduleCount: 2 })
+        expect.objectContaining({ completedScheduleCount: 2, jobLogCount: 0 })
       );
+    });
+
+    // The v38 door. A machine that was never on an appointment, but that three
+    // closed ใบ Job sheets recorded a visit to, used to answer "no completed
+    // schedules" — so it was deleted with NO code at all and its service logs
+    // were left pointing at a machine that no longer existed.
+    it('demands a code for a machine whose history is ใบ Job only', async () => {
+      vi.mocked(getSession).mockResolvedValue(admin);
+      vi.mocked(countProtectedServiceHistory).mockResolvedValue({
+        completedSchedules: 0,
+        jobLogs: 3,
+        total: 3,
+      });
+
+      const res = await deleteOtpPOST(mutReqId('POST'), ctx('eq-1'));
+      expect(res.status).toBe(200);
+      expect((await res.json()).success).toBe(true);
+      expect(sendEquipmentDeleteOtpEmail).toHaveBeenCalledWith(
+        'admin@example.com',
+        expect.stringMatching(/^\d{6}$/),
+        expect.objectContaining({ completedScheduleCount: 0, jobLogCount: 3 })
+      );
+    });
+
+    it('DELETE refuses without a code when the history is ใบ Job only', async () => {
+      vi.mocked(getSession).mockResolvedValue(admin);
+      vi.mocked(countProtectedServiceHistory).mockResolvedValue({
+        completedSchedules: 0,
+        jobLogs: 3,
+        total: 3,
+      });
+
+      const res = await DELETE(mutReqId('DELETE'), ctx('eq-1'));
+      expect(res.status).toBe(400);
+      expect((await res.json()).needOtp).toBe(true);
+      expect(deleteEquipment).not.toHaveBeenCalled();
     });
 
     it('returns 503 when SMTP is not configured', async () => {
       vi.mocked(getSession).mockResolvedValue(admin);
       vi.mocked(listSchedules).mockResolvedValue([{ id: 's1', status: 'completed' }] as any);
+    vi.mocked(countProtectedServiceHistory).mockResolvedValue({
+      completedSchedules: 1,
+      jobLogs: 0,
+      total: 1,
+    });
       vi.mocked(isMailConfigured).mockReturnValue(false);
 
       const res = await deleteOtpPOST(mutReqId('POST'), ctx('eq-1'));

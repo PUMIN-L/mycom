@@ -458,13 +458,51 @@ describe('rescheduleDatedAlerts — one transaction, per-item refusals', () => {
     });
     const updates = connSql().filter((s) => /^UPDATE/.test(s));
     expect(updates).toEqual([
-      "UPDATE service_schedules SET scheduledDate = ? WHERE id = ? AND status = 'pending'",
-      "UPDATE crm_tasks SET dueDate = ? WHERE id = ? AND status = 'pending'",
+      "UPDATE service_schedules SET scheduledDate = ? WHERE id = ? AND status = 'pending' AND scheduledDate = ?",
+      "UPDATE crm_tasks SET dueDate = ? WHERE id = ? AND status = 'pending' AND dueDate = ?",
     ]);
     // Never updateSchedule(), which merges the whole row and rewrites notes /
     // scheduleType / assignedToAdminId along with the date.
     for (const sql of updates) {
       expect(sql).not.toMatch(/notes|scheduleType|assignedToAdminId|status\s*=\s*\?/);
+    }
+  });
+
+  // ── Two admins, one appointment ───────────────────────────────────────────
+  // The read decides what the move is allowed to do — the staleness test, and
+  // the +N days arithmetic that counts from the date it read. With no lock and
+  // no date in the WHERE, A (+7) and B (+3) both read 12 มิ.ย., both passed the
+  // staleness test, both wrote, and both were told "ย้ายแล้ว" while only the
+  // last write survived. A's screen reported a date the appointment is not on.
+  //
+  // This bites: drop `FOR UPDATE` and the two assertions below fail; drop the
+  // date from the WHERE and the compare-and-set assertions fail.
+  it('locks the rows it read and writes compare-and-set, so a concurrent move cannot be lost', async () => {
+    scriptTx(
+      [{ id: 's1', scheduledDate: '2026-06-12', status: 'pending' }],
+      [{ id: 't1', dueDate: '2026-06-12', status: 'pending' }]
+    );
+    await rescheduleDatedAlerts({
+      mode: 'shift',
+      shiftDays: 7,
+      items: [
+        { kind: 'schedule', id: 's1', expectedDate: '2026-06-12' },
+        { kind: 'task', id: 't1', expectedDate: '2026-06-12' },
+      ],
+    });
+
+    const reads = connSql().filter((s) => /^SELECT/.test(s));
+    expect(reads.length).toBe(2);
+    for (const sql of reads) expect(sql).toMatch(/FOR UPDATE$/);
+
+    // The date read is carried into the write, and it is the date that was
+    // actually read — not the client's `expectedDate`, which a caller controls.
+    const updateCalls = conn.query.mock.calls.filter(([sql]) =>
+      /^UPDATE/.test(String(sql).replace(/\s+/g, ' ').trim())
+    );
+    expect(updateCalls.length).toBe(2);
+    for (const [, params] of updateCalls) {
+      expect((params as unknown[])[2]).toBe('2026-06-12');
     }
   });
 

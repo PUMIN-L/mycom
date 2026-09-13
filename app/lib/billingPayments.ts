@@ -344,6 +344,20 @@ export async function syncReceiptPayment(
   // may correct the money on the row, but it may never bring a voided payment
   // back to life. That single `voidedAt = NULL` re-credited invoices from
   // payments an admin had deliberately voided, with nothing on screen to say so.
+  //
+  // ── LOCK THE INVOICE FIRST ──────────────────────────────────────────────
+  // `deleteBillingDocument` takes this same row lock before it counts the
+  // payments attached to a document. Without this line the two interleave: the
+  // delete counts zero, this INSERT lands, the delete removes the invoice, and
+  // the payment is orphaned against a document that no longer exists —
+  // `billing_payments` has no FOREIGN KEY to catch it. Taking the lock here is
+  // what makes that count trustworthy. A missing invoice is NOT an error: the
+  // payment still records that money arrived, `recomputePaidAmount` simply has
+  // nothing to update, and refusing the save would lose the receipt instead.
+  await conn.query(
+    "SELECT id FROM billing_documents WHERE id = ? FOR UPDATE",
+    [settlesDocId]
+  );
   await conn.query(
     `INSERT INTO billing_payments
        (id, billingDocumentId, amount, paidDate, method, ref, note, receiptDocId, voidedAt, voidReason, createdAt)

@@ -257,6 +257,38 @@ describe('POST /api/customers/note-replace — the happy path still keeps histor
     expect(updates()).toEqual(['UPDATE customers SET note = ? WHERE id = ? AND note = ?']);
   });
 
+  // ── The screen and the server must measure the SAME string ───────────────
+  // `validateReplacement` used to run AFTER `sanitizePlainText`, which expands
+  // every `&` to `&amp;`. The browser measured the 200 characters the admin
+  // typed and let him press the button; the server measured the ~700 the
+  // encoder produced and refused the whole batch with a length nobody had
+  // typed. The real ceiling is the finished note, and `noteLengthRefusal`
+  // checks that per customer against the sanitised text.
+  //
+  // This bites: sanitise before validating and this request comes back 400.
+  it('measures the replacement as TYPED, not as encoded — "&" does not shrink the limit', async () => {
+    // Well under the 500-character limit as typed; far over it once every
+    // ampersand becomes a five-character entity.
+    const typed = Array.from({ length: 150 }, () => 'ก&').join('');
+    expect(typed.length).toBeLessThan(500);
+
+    conn.query.mockImplementation((sql: string) =>
+      /^\s*SELECT/i.test(sql)
+        ? Promise.resolve([[customerRow('c1', 'เวอร์เนีย')]])
+        : Promise.resolve([{ affectedRows: 1 }])
+    );
+
+    const res = await replacePOST(
+      replaceReq({
+        term: 'เวอร์เนีย',
+        replacement: typed,
+        items: [{ customerId: 'c1', expectedNote: 'เวอร์เนีย' }],
+      })
+    );
+
+    expect(res.status).toBe(200);
+  });
+
   it('401s an anonymous request before any statement is issued', async () => {
     vi.mocked(getSession).mockResolvedValue(null as never);
     const res = await replacePOST(

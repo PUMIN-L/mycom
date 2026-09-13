@@ -9,6 +9,7 @@ import {
   voidSupersededReceiptPayment,
 } from "./billingPayments";
 import type { ReceivableRow } from "./receivables";
+import { sqlNotSupersededByLiveRow } from "./receivables";
 
 // Persisted billing documents (Invoice / Billing Note / Receipt).
 // `data` is the opaque client state (same shape as QuoteState, stored as JSON).
@@ -401,20 +402,49 @@ export async function listBillingDocuments(
 //    receipt be deleted while its payment lived on: the invoice stayed credited
 //    by a document that no longer existed, and the ledger reported ฿0 owed on a
 //    debt nobody had paid.
+// ── AND THE CHECK AND THE DELETE ARE ONE TRANSACTION ────────────────────────
+// The count and the DELETE used to be two separate pool queries, so a receipt
+// saved in the gap between them was orphaned by the very ban above: A counts
+// zero payments, B's `syncReceiptPayment` inserts one against this invoice, A
+// deletes the invoice, and the payment row survives forever pointing at a
+// document that no longer exists — invisible on every screen, with no FOREIGN
+// KEY to refuse it.
+//
+// Counting under `FOR UPDATE` would NOT have closed that: TiDB takes no gap
+// lock on rows that do not exist yet (the same fact `saveQuotationAtomic`
+// documents), so a count of zero locks nothing and the concurrent INSERT
+// proceeds. The lock has to be on a row that DOES exist and that both sides
+// touch — the billing document itself. `syncReceiptPayment` takes the same
+// lock on the invoice it is about to credit, so the two serialise: whichever
+// transaction arrives second sees the first one's result rather than a stale
+// read of it.
 export async function deleteBillingDocument(id: string): Promise<boolean> {
-  const [paymentRows] = await query<RowDataPacket[]>(
-    `SELECT COUNT(*) AS cnt FROM billing_payments
-      WHERE (billingDocumentId = ? OR id = ?) AND voidedAt IS NULL`,
-    [id, id]
-  );
-  if ((Number(paymentRows[0]?.cnt) || 0) > 0) {
-    throw new BillingDocumentHasPaymentsError(id);
-  }
-  const [res] = await query<ResultSetHeader>(
-    "DELETE FROM billing_documents WHERE id = ?",
-    [id]
-  );
-  return (res.affectedRows ?? 0) > 0;
+  return withTransaction(async (conn) => {
+    // Idempotent under `withTransaction`'s replay: a retry after a lost commit
+    // ack re-runs lock → count → DELETE against a row that is already gone and
+    // returns false. The caller reports "ไม่พบเอกสาร" for a delete that did in
+    // fact happen, which is a worse message but the same true end state — and
+    // the alternative, assuming success, would claim a deletion that never ran.
+    const [docRows] = await conn.query<RowDataPacket[]>(
+      "SELECT id FROM billing_documents WHERE id = ? FOR UPDATE",
+      [id]
+    );
+    if (docRows.length === 0) return false;
+
+    const [paymentRows] = await conn.query<RowDataPacket[]>(
+      `SELECT COUNT(*) AS cnt FROM billing_payments
+        WHERE (billingDocumentId = ? OR id = ?) AND voidedAt IS NULL`,
+      [id, id]
+    );
+    if ((Number(paymentRows[0]?.cnt) || 0) > 0) {
+      throw new BillingDocumentHasPaymentsError(id);
+    }
+    const [res] = await conn.query<ResultSetHeader>(
+      "DELETE FROM billing_documents WHERE id = ?",
+      [id]
+    );
+    return (res.affectedRows ?? 0) > 0;
+  });
 }
 
 /**
@@ -496,10 +526,13 @@ export async function listReceivableRows(): Promise<ReceivableRow[]> {
 /** Open invoices for the receipt builder's "ชำระให้ใบแจ้งหนี้" dropdown, and
  *  for the nudge that links an unattached receipt to the debt it discharges.
  *
- *  "ถูกแทนที่" means REPLACED BY A ROW THAT IS STILL ALIVE — the same rule
- *  `buildReceivablesLedger` applies. A `supersededById IS NULL` test made an
- *  invoice whose newer version was later CANCELLED unpickable forever, so the
- *  debt was still real but no receipt could ever be pointed at it. */
+ *  "ถูกแทนที่" is asked through `sqlNotSupersededByLiveRow`, the one SQL
+ *  spelling of the rule `buildReceivablesLedger` applies. Writing it out here
+ *  went wrong twice: a `supersededById IS NULL` test made an invoice whose
+ *  newer version was later CANCELLED unpickable forever, and a stamp-only test
+ *  offered pre-v37 corrected invoices that the ledger screen hides — so a
+ *  receipt could credit a row the ledger never shows, while the live version
+ *  went on reading as fully unpaid. */
 export async function listOpenInvoices(): Promise<
   { id: string; docNo: string; customerName: string; dueDate: string | null; outstanding: number }[]
 > {
@@ -507,11 +540,7 @@ export async function listOpenInvoices(): Promise<
     `SELECT id, docNo, customerName, dueDate, totalAmount, paidAmount
        FROM billing_documents
       WHERE cancelledAt IS NULL
-        AND NOT EXISTS (
-              SELECT 1 FROM billing_documents newer
-               WHERE newer.id = billing_documents.supersededById
-                 AND newer.cancelledAt IS NULL
-            )
+        AND ${sqlNotSupersededByLiveRow("billing_documents")}
         AND (receivableOverride = 1 OR (receivableOverride IS NULL AND docType = 'invoice'))
         AND totalAmount - paidAmount > 0.005
       ORDER BY dueDate IS NULL, dueDate ASC
@@ -566,11 +595,7 @@ export async function listUndatedReceivables(): Promise<
       WHERE dueDate IS NULL
         AND docDate IS NOT NULL
         AND cancelledAt IS NULL
-        AND NOT EXISTS (
-              SELECT 1 FROM billing_documents newer
-               WHERE newer.id = billing_documents.supersededById
-                 AND newer.cancelledAt IS NULL
-            )
+        AND ${sqlNotSupersededByLiveRow("billing_documents")}
         AND (receivableOverride = 1 OR (receivableOverride IS NULL AND docType = 'invoice'))
         AND totalAmount > 0
         AND totalAmount - paidAmount > 0.005
@@ -684,8 +709,15 @@ export async function backfillBillingDerivedColumns(
   );
   if (rows.length === 0) return { scanned: 0, updated: 0, done: true };
 
-  let updated = 0;
-  await withTransaction(async (conn) => {
+  // INSIDE the callback, never outside it — the same rule
+  // `setDueDatesForUndatedReceivables` spells out. `withTransaction` replays on
+  // a transient connection loss, so a counter captured outside keeps the tally
+  // of the attempt that was rolled back: a 200-row batch that died after 150
+  // writes and then succeeded reported 350 rows written. That number is not
+  // only shown to the owner, it feeds `done: ... || updated === 0`, so an
+  // inflated count can also decide the queue is not drained when it is.
+  const updated = await withTransaction(async (conn) => {
+    let written = 0;
     for (const row of rows) {
       const derived = deriveBillingColumns(row.data);
       // A blob with no docDate of its own falls back to the day the row was
@@ -705,8 +737,9 @@ export async function backfillBillingDerivedColumns(
           row.id,
         ]
       );
-      updated += 1;
+      written += 1;
     }
+    return written;
   });
 
   // Fewer rows than asked for means the queue is drained; a batch where nothing

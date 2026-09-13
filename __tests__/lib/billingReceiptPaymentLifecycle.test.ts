@@ -96,6 +96,16 @@ function makeDb() {
       const newer = doc?.supersededById ? docs.get(doc.supersededById) : undefined;
       return [newer && !newer.cancelledAt ? [{ liveSuccessorId: newer.id }] : []];
     }
+    // The row lock `syncReceiptPayment` takes on the invoice before it writes,
+    // so `deleteBillingDocument` cannot count zero payments and delete the
+    // document while this save is in flight. Nothing consumes its result — it
+    // exists to make the two transactions queue — so the fake answers with the
+    // row if it is there and an empty set if it is not, which is also what
+    // tells the caller a concurrent delete already won.
+    if (sql.startsWith('SELECT id FROM billing_documents WHERE id = ? FOR UPDATE')) {
+      const doc = docs.get(p(0));
+      return [doc ? [{ id: doc.id }] : []];
+    }
     if (sql.startsWith('SELECT COALESCE(SUM(amount), 0)')) {
       let paid = 0;
       for (const row of payments.values()) {

@@ -513,7 +513,7 @@ export async function peekNextJobNo(jobDate: string): Promise<string> {
 }
 
 /**
- * Claim `JOB<DDMMYY>-NN` from the SHARED `used_docnos` ledger — the same
+ * Claim `<DDMMYY>-NN` from the SHARED `used_docnos` ledger — the same
  * register quotations and billing documents use, so all three document families
  * are kept apart by one PRIMARY KEY instead of three hopeful conventions.
  * (`quotationId` is that ledger's owner column whatever kind of document owns

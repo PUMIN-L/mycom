@@ -11,7 +11,7 @@
  * Spec: openspec/changes/add-crm-task-board (tasks 4.2, 11.4-11.15, 17.1-17.4).
  */
 
-import { isValidDateString } from "./dateFormat";
+import { isValidDateString, daysBetweenDateStrings } from "./dateFormat";
 import type { CrmTask, TaskLink, TaskLinkTarget, TaskTopic } from "./types";
 
 // ── Labels ───────────────────────────────────────────────────────────────────
@@ -64,18 +64,18 @@ export function dueBucketOf(dueDate: string | null | undefined, today: string): 
   return DUE_BUCKET.FUTURE;
 }
 
-/** Whole days from `from` to `to` (negative when `to` is earlier). null when
- * either side is not a real YYYY-MM-DD. */
-export function daysBetweenDateStrings(
-  from: string | null | undefined,
-  to: string | null | undefined
-): number | null {
-  if (!hasDueDate(from) || !hasDueDate(to)) return null;
-  const a = Date.parse(`${from}T00:00:00Z`);
-  const b = Date.parse(`${to}T00:00:00Z`);
-  if (Number.isNaN(a) || Number.isNaN(b)) return null;
-  return Math.round((b - a) / 86_400_000);
-}
+/**
+ * Whole days from `from` to `to` (negative when `to` is earlier). null when
+ * either side is not a real YYYY-MM-DD.
+ *
+ * RE-EXPORTED, not re-implemented. This file used to carry its own copy built
+ * on `Date.parse`, which meant the board's "เลยกำหนด N วัน" badge and the
+ * receivables "เกินกำหนด N วัน" badge were two different pieces of calendar
+ * arithmetic that merely happened to agree — a fix to one (a range check, a
+ * different null policy) would silently not have reached the other. The name
+ * stays exported here so existing importers of `taskBoard` keep working.
+ */
+export { daysBetweenDateStrings };
 
 // ── Ordering (task 4.2) ──────────────────────────────────────────────────────
 

@@ -68,11 +68,23 @@ export const POST = withRoute(
     // An empty replacement is allowed and means "delete this word" — a real
     // thing to want, and the confirm dialog says so in words rather than
     // showing an arrow pointing at nothing.
-    const replacement = sanitizePlainText(
-      String(payload.replacement ?? "").slice(0, NOTE_SEARCH_MAX_INPUT_LENGTH)
+    //
+    // MEASURED BEFORE SANITISING, because that is the string the admin typed
+    // and the string `CustomerNoteSearchPanel` measured before it let him press
+    // the button. `sanitizePlainText` expands `&` to `&amp;`, so a 200-character
+    // replacement full of company names like "A&B, C&D" grew past the ceiling
+    // on the way in and was refused with a length nobody had typed — the screen
+    // stating one rule while the server enforced another, which is precisely
+    // what `noteSearch.ts` exists to prevent. The real ceiling is not this one
+    // anyway: what must actually fit is the FINISHED note, and
+    // `noteLengthRefusal` checks that per customer against the sanitised text.
+    const rawReplacement = String(payload.replacement ?? "").slice(
+      0,
+      NOTE_SEARCH_MAX_INPUT_LENGTH
     );
-    const replacementError = validateReplacement(replacement);
+    const replacementError = validateReplacement(rawReplacement);
     if (replacementError) return jsonError(replacementError, 400);
+    const replacement = sanitizePlainText(rawReplacement);
 
     const rawItems = payload.items;
     if (!Array.isArray(rawItems) || rawItems.length === 0) {

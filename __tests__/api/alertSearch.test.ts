@@ -349,8 +349,8 @@ describe('POST /api/admin/alerts/reschedule — the refusal that matters', () =>
     }
     // And the only writes are the two permitted columns.
     expect(updates()).toEqual([
-      "UPDATE service_schedules SET scheduledDate = ? WHERE id = ? AND status = 'pending'",
-      "UPDATE crm_tasks SET dueDate = ? WHERE id = ? AND status = 'pending'",
+      "UPDATE service_schedules SET scheduledDate = ? WHERE id = ? AND status = 'pending' AND scheduledDate = ?",
+      "UPDATE crm_tasks SET dueDate = ? WHERE id = ? AND status = 'pending' AND dueDate = ?",
     ]);
   });
 

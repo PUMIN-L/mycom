@@ -17,6 +17,11 @@ vi.mock('@/app/lib/salesDashboardStore', async () => {
     updateSalesRecord: vi.fn(),
     deleteSalesRecord: vi.fn(),
     SaleScalarsNotAttributableError: actual.SaleScalarsNotAttributableError,
+    // REAL, not a stub. The route asks it whether a payload is an equipment
+    // sale, and the whole point of sharing it with the store is that both
+    // sides answer identically — a mock here could agree with the route
+    // while production disagreed.
+    normalizeSaleType: actual.normalizeSaleType,
   };
 });
 import {
@@ -410,6 +415,52 @@ describe('Admin Sales API', () => {
   describe('POST /api/admin/sales — legacy single-product payload (task 7.1)', () => {
     beforeEach(() => {
       vi.mocked(getSession).mockResolvedValue(admin);
+    });
+
+    // ── The payload that lost its machines ────────────────────────────────
+    // The route asked `saleType === "equipment"` while the store defaulted
+    // everything that was not exactly "service" IN. A payload that simply
+    // omitted the field therefore answered "not an equipment sale" here — no
+    // machine rows built — and was then written to the column as an equipment
+    // sale for `qty` machines. Three machines sold, zero rows, and the
+    // «ข้อมูลไม่ครบ» alert had nothing to chase because nothing existed to be
+    // incomplete.
+    //
+    // This bites: restore `body.saleType !== "equipment"` in `legacyEquipments`
+    // and `equipments` comes back `[]`.
+    it('a payload with NO saleType is an equipment sale, and its machines are recorded', async () => {
+      vi.mocked(createSaleWithLineItems).mockResolvedValue({ id: 'rec-9' } as any);
+
+      const res = await postSale({
+        saleDate: '2026-08-22',
+        productName: 'Scale A',
+        qty: 3,
+        unitPrice: 500,
+      });
+
+      expect(res.status).toBe(201);
+      const sent = vi.mocked(createSaleWithLineItems).mock.calls[0][0];
+      // One row per machine, blank serials to be filled in later — never zero.
+      expect(sent.equipments).toEqual([
+        { serialNumber: '' },
+        { serialNumber: '' },
+        { serialNumber: '' },
+      ]);
+    });
+
+    it('an explicit service sale still records no machines', async () => {
+      vi.mocked(createSaleWithLineItems).mockResolvedValue({ id: 'rec-10' } as any);
+
+      const res = await postSale({
+        saleDate: '2026-08-22',
+        saleType: 'service',
+        productName: 'Calibration',
+        qty: 3,
+        unitPrice: 500,
+      });
+
+      expect(res.status).toBe(201);
+      expect(vi.mocked(createSaleWithLineItems).mock.calls[0][0].equipments).toEqual([]);
     });
 
     it('creates sale record on valid payload', async () => {

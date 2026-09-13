@@ -1806,6 +1806,37 @@ describe('getAlerts — "today" must be Bangkok (UTC+7) time, not server UTC', (
     }
   });
 
+  // ── And it has to know the OTHER way a row can be superseded ──────────────
+  // `supersededById` arrived in v37. Every invoice corrected before that is
+  // known to be superseded ONLY by a sibling docNo carrying a higher version,
+  // which is the fallback `buildReceivablesLedger` has always applied. While
+  // the SQL tested the column alone, a pre-v37 correction left BOTH rows
+  // eligible: the bell counted one debt twice and its alert named an invoice
+  // the ledger screen does not list at all.
+  //
+  // This bites: with the stamp-only clause restored, the base-docNo half is
+  // absent and every one of these assertions fails.
+  it('also recognises the pre-v37 replacement, the one known only by its docNo', async () => {
+    await getAlerts();
+    const calls = topQuery.mock.calls.filter(([s]) =>
+      String(s).includes('FROM billing_documents b')
+    );
+    expect(calls.length).toBe(2);
+    for (const [raw] of calls) {
+      const sql = String(raw).replace(/\s+/g, ' ');
+      // The version suffix, stripped in SQL exactly as `baseDocNo` strips it.
+      expect(sql).toContain("REGEXP_REPLACE(newer.docNo, '-?[vV][0-9]+$', '')");
+      expect(sql).toContain("REGEXP_REPLACE(b.docNo, '-?[vV][0-9]+$', '')");
+      // Only a HIGHER version supersedes — otherwise v2 would hide v3.
+      expect(sql).toContain('REGEXP_SUBSTR');
+      // The prefix LIKE is what keeps this off a full scan of the table for
+      // every candidate row, on a query the dashboard runs on every load.
+      expect(sql).toContain('newer.docNo LIKE CONCAT(');
+      // A row can never supersede itself, by either route.
+      expect(sql).toContain('newer.id <> b.id');
+    }
+  });
+
   it('compares the balance with a satang tolerance, never float equality', async () => {
     await getAlerts();
     const sql = String(

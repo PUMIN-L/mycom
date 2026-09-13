@@ -33,7 +33,27 @@ beforeEach(() => {
 });
 
 const sqlOf = (call: unknown[]) => String(call[0]).replace(/\s+/g, ' ').trim();
-const calls = () => conn.query.mock.calls;
+
+/** EVERY statement the connection saw, lock included. */
+const rawCalls = () => conn.query.mock.calls;
+
+/**
+ * The statements that DO something, with the invoice row-lock filtered out.
+ *
+ * `syncReceiptPayment` takes `SELECT id FROM billing_documents ... FOR UPDATE`
+ * before it writes, so that `deleteBillingDocument` cannot count zero payments
+ * and delete the invoice while this INSERT is in flight. It is a lock and not a
+ * read — nothing consumes its result — so the assertions below keep indexing
+ * the real work. The lock itself is asserted on `rawCalls()`, by the test named
+ * for it; hiding it here without testing it there would be how it gets deleted.
+ */
+const calls = () =>
+  rawCalls().filter(
+    ([sql]) =>
+      !/^\s*SELECT id FROM billing_documents WHERE id = \? FOR UPDATE\s*$/i.test(
+        String(sql)
+      )
+  );
 
 const payment = {
   id: 'pay-1',
@@ -162,6 +182,39 @@ describe('syncReceiptPayment — issuing a receipt records the payment, in one a
     ref: 'TRF-1',
     createdAt: '2026-09-06T03:00:00.000Z',
   };
+
+  // The other half of the fix in `deleteBillingDocument`. That function counts
+  // the payments on a document and then deletes it; counting under FOR UPDATE
+  // would protect nothing, because TiDB takes no gap lock on a payment row that
+  // does not exist yet. The two transactions can only be made to queue by both
+  // locking a row that DOES exist — the invoice — so if this lock ever goes, a
+  // receipt saved in the gap is orphaned against a deleted document with no
+  // FOREIGN KEY to catch it.
+  it('locks the invoice row BEFORE writing the payment, so a concurrent delete cannot orphan it', async () => {
+    conn.query
+      .mockResolvedValueOnce([[]]) // no existing payment
+      .mockResolvedValueOnce([[]]) // the lock
+      .mockResolvedValueOnce([{ affectedRows: 1 }]) // upsert
+      .mockResolvedValueOnce([[{ paid: '107000.00' }]])
+      .mockResolvedValueOnce([{ affectedRows: 1 }]);
+
+    await syncReceiptPayment(conn as never, receipt);
+
+    const sqls = rawCalls().map(sqlOf);
+    const lockAt = sqls.findIndex((sql) =>
+      /SELECT id FROM billing_documents WHERE id = \? FOR UPDATE/i.test(sql)
+    );
+    const insertAt = sqls.findIndex((sql) =>
+      /INSERT INTO billing_payments/i.test(sql)
+    );
+
+    expect(lockAt).toBeGreaterThanOrEqual(0);
+    expect(insertAt).toBeGreaterThanOrEqual(0);
+    // Ordering is the whole point: a lock taken after the write locks nothing.
+    expect(lockAt).toBeLessThan(insertAt);
+    // And it locks the INVOICE the money lands on, not the receipt.
+    expect(rawCalls()[lockAt][1]).toEqual(['inv-1']);
+  });
 
   it('upserts ONE payment keyed by the receipt id, so re-saving the receipt cannot mint a second one', async () => {
     conn.query
