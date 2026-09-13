@@ -45,7 +45,7 @@ export default function MaintenanceBanner() {
   if (isLoading || !isLoggedIn || !enabled) return null;
 
   return (
-    <div className="fixed top-4 right-4 z-[100] max-w-xs animate-in fade-in slide-in-from-right duration-300">
+    <div className="fixed top-20 right-4 z-[100] max-w-xs animate-in fade-in slide-in-from-right duration-300">
       <div className="flex items-center gap-2.5 px-4 py-3 bg-amber-50 border border-amber-300 rounded-xl shadow-lg backdrop-blur-sm">
         <span className="text-lg shrink-0">⚠️</span>
         <div className="text-sm">
