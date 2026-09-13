@@ -12,6 +12,8 @@ import {
 } from "./lib/site";
 import "./globals.css";
 import GlobalAdminBell from "./components/GlobalAdminBell";
+import MaintenanceOverlay from "./components/MaintenanceOverlay";
+import MaintenanceBanner from "./components/MaintenanceBanner";
 
 const cormorant = Cormorant_Garamond({
   variable: "--font-serif",
@@ -100,6 +102,8 @@ export default function RootLayout({
           <AuthProvider>
             <NavProvider>{children}</NavProvider>
             <GlobalAdminBell />
+            <MaintenanceOverlay />
+            <MaintenanceBanner />
           </AuthProvider>
         </LanguageProvider>
         <div id="root-portal" />

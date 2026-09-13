@@ -181,6 +181,25 @@ export async function sendCompanyProfileOtpEmail(
   );
 }
 
+/** Send a 6-digit OTP to `to` to authorize toggling site-wide maintenance mode. */
+export async function sendMaintenanceOtpEmail(
+  to: string,
+  otp: string,
+  enable: boolean
+): Promise<void> {
+  const action = enable ? "เปิด" : "ปิด";
+  await sendOtpNotification(
+    to,
+    `[รหัส OTP] ยืนยันการ${action}โหมดปรับปรุงเว็บไซต์`,
+    `มีการขอ${action}โหมดปรับปรุงเว็บไซต์ (Maintenance Mode)\n\n` +
+      `เมื่อ${enable ? "เปิด" : "ปิด"}โหมดนี้ ผู้ใช้ทั่วไป${enable ? "จะไม่สามารถเข้าถึงหน้าเว็บไซต์ได้ชั่วคราว" : "จะสามารถเข้าถึงหน้าเว็บไซต์ได้ตามปกติ"}\n\n` +
+      `หากคุณเป็นผู้ดำเนินการ กรุณานำรหัสยืนยันด้านล่างนี้ไปกรอกในหน้าตั้งค่า:\n\n` +
+      `รหัสยืนยัน: ${otp}\n\n` +
+      `(รหัสนี้มีอายุ 10 นาที)\n\n` +
+      `หากคุณไม่ได้เป็นผู้ดำเนินการ กรุณาเพิกเฉยต่ออีเมลฉบับนี้ และตรวจสอบความปลอดภัยของบัญชีผู้ดูแลระบบทันที`
+  );
+}
+
 /** Send a 5-digit OTP to `to` to authorize deleting orphaned Cloudinary images. */
 export async function sendOrphanDeleteOtpEmail(
   to: string,

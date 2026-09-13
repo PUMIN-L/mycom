@@ -16,6 +16,224 @@ interface OrphanAsset {
 
 // Admin settings (CMS). Client-side redirect gates the UI like the create
 // pages; the real protection is requireAuth() on /api/settings/* server-side.
+
+// ── Maintenance Mode sub-section ───────────────────────────────────────────
+// Extracted to keep the main SettingsPage component manageable. The OTP flow
+// follows the exact same pattern as the company-profile section above it.
+function MaintenanceModeSection({ showToast }: { showToast: (msg: string, type: "success" | "error") => void }) {
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [showOtpModal, setShowOtpModal] = useState(false);
+  const [otpValue, setOtpValue] = useState("");
+  const [pendingEnable, setPendingEnable] = useState(false);
+
+  useEffect(() => {
+    async function load() {
+      try {
+        const res = await fetch("/api/settings/maintenance");
+        if (res.ok) {
+          const data = await res.json();
+          setEnabled(Boolean(data.enabled));
+        }
+      } catch {
+        // leave null
+      } finally {
+        setLoading(false);
+      }
+    }
+    load();
+  }, []);
+
+  async function handleRequestOtp(wantEnable: boolean) {
+    setSaving(true);
+    try {
+      const res = await fetch("/api/settings/maintenance/otp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enable: wantEnable }),
+      });
+      if (res.ok) {
+        setPendingEnable(wantEnable);
+        setShowOtpModal(true);
+        showToast("ระบบส่งรหัส OTP ไปยังอีเมลติดต่อแล้ว", "success");
+      } else {
+        const data = await res.json().catch(() => null);
+        showToast(data?.error ?? "ไม่สามารถขอรหัส OTP ได้", "error");
+      }
+    } catch {
+      showToast("เกิดข้อผิดพลาด กรุณาลองใหม่", "error");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleVerifyOtp(e: React.FormEvent) {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      const res = await fetch("/api/settings/maintenance", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ otp: otpValue }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        showToast(data?.error ?? "รหัส OTP ไม่ถูกต้องหรือหมดอายุ", "error");
+        return;
+      }
+      setEnabled(Boolean(data.enabled));
+      setShowOtpModal(false);
+      setOtpValue("");
+      showToast(
+        data.enabled
+          ? "เปิดโหมดปรับปรุงเว็บไซต์แล้ว — ผู้ใช้ทั่วไปจะเห็นหน้าปรับปรุง"
+          : "ปิดโหมดปรับปรุงเว็บไซต์แล้ว — ผู้ใช้ทั่วไปสามารถเข้าชมได้ตามปกติ",
+        "success"
+      );
+    } catch {
+      showToast("เกิดข้อผิดพลาด กรุณาลองใหม่", "error");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <>
+      <div className="mt-8 bg-white rounded-lg shadow p-6 space-y-4">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+              🔧 โหมดปรับปรุงเว็บไซต์
+            </h2>
+            <p className="text-sm text-gray-600 mt-1">
+              เมื่อเปิดโหมดนี้ ผู้ใช้ทั่วไปจะเห็นหน้า &quot;กำลังปรับปรุง&quot; แทนหน้าแรกและหน้าติดต่อเรา
+              (ผู้ดูแลระบบที่ login แล้วยังเห็นหน้าเดิมตามปกติ)
+              การเปลี่ยนแปลงต้องยืนยันด้วยรหัส OTP ที่ส่งไปทางอีเมล
+            </p>
+          </div>
+        </div>
+
+        {/* สถานะปัจจุบัน */}
+        <div className="flex items-center gap-3">
+          <span className="text-sm font-semibold text-gray-700">สถานะปัจจุบัน:</span>
+          {loading ? (
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-500">
+              <span className="w-2 h-2 rounded-full bg-gray-300 animate-pulse" />
+              กำลังโหลด...
+            </span>
+          ) : enabled ? (
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-800 border border-amber-300">
+              <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+              เปิดอยู่ — ผู้ใช้ทั่วไปจะเห็นหน้าปรับปรุง
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-green-100 text-green-800 border border-green-300">
+              <span className="w-2 h-2 rounded-full bg-green-500" />
+              ปิดอยู่ — เว็บไซต์ทำงานปกติ
+            </span>
+          )}
+        </div>
+
+        {/* ปุ่มสลับ */}
+        {!loading && enabled !== null && (
+          enabled ? (
+            <button
+              type="button"
+              onClick={() => handleRequestOtp(false)}
+              disabled={saving}
+              className="w-full px-6 py-3 bg-green-600 text-white font-bold rounded-lg hover:bg-green-700 transition disabled:opacity-50 flex items-center justify-center gap-2"
+            >
+              {saving ? (
+                <>
+                  <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24" fill="none">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                  </svg>
+                  กำลังดำเนินการ...
+                </>
+              ) : (
+                "✅ ปิดโหมดปรับปรุง (เปิดเว็บไซต์ให้ผู้ใช้ทั่วไป)"
+              )}
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => handleRequestOtp(true)}
+              disabled={saving}
+              className="w-full px-6 py-3 bg-amber-500 text-white font-bold rounded-lg hover:bg-amber-600 transition disabled:opacity-50 flex items-center justify-center gap-2"
+            >
+              {saving ? (
+                <>
+                  <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24" fill="none">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                  </svg>
+                  กำลังดำเนินการ...
+                </>
+              ) : (
+                "⚠️ เปิดโหมดปรับปรุง (ซ่อนเว็บไซต์จากผู้ใช้ทั่วไป)"
+              )}
+            </button>
+          )
+        )}
+
+        <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
+          ℹ️ เมื่อเปิดโหมดปรับปรุง หน้าแรก (<code className="font-mono">/</code>) และหน้าติดต่อเรา (<code className="font-mono">/contact</code>)
+          จะแสดงหน้า &quot;กำลังปรับปรุง&quot; แทน รวมถึงซ่อนเบอร์โทรศัพท์และข้อมูลการติดต่อ LINE
+          ผู้ดูแลระบบที่ login แล้วจะยังเห็นหน้าเดิมตามปกติ พร้อมแถบแจ้งเตือนที่มุมขวาบน
+        </div>
+      </div>
+
+      {/* Maintenance OTP Modal */}
+      {showOtpModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-sm animate-in fade-in zoom-in duration-200">
+            <h2 className="text-xl font-bold text-gray-900 mb-2">ยืนยันตัวตนด้วยรหัส OTP</h2>
+            <p className="text-sm text-gray-600 mb-4">
+              ระบบได้ส่งรหัสยืนยัน 6 หลักไปยังอีเมลติดต่อของคุณแล้ว
+              กรุณานำมากรอกเพื่อยืนยันการ{pendingEnable ? "เปิด" : "ปิด"}โหมดปรับปรุงเว็บไซต์
+            </p>
+            <form onSubmit={handleVerifyOtp} className="space-y-4">
+              <div>
+                <input
+                  type="text"
+                  required
+                  maxLength={6}
+                  value={otpValue}
+                  onChange={(e) => setOtpValue(e.target.value.replace(/\D/g, ""))}
+                  placeholder="รหัสยืนยัน"
+                  className="w-full px-4 py-3 text-center text-2xl tracking-widest border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 font-mono"
+                />
+              </div>
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowOtpModal(false);
+                    setOtpValue("");
+                  }}
+                  disabled={saving}
+                  className="flex-1 px-4 py-2 bg-gray-100 text-gray-700 font-semibold rounded-lg hover:bg-gray-200 transition disabled:opacity-50"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  type="submit"
+                  disabled={saving || otpValue.length !== 6}
+                  className="flex-1 px-4 py-2 bg-orange-500 text-white font-bold rounded-lg hover:bg-orange-600 transition disabled:opacity-50"
+                >
+                  {saving ? "กำลังยืนยัน..." : "ยืนยัน"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 export default function SettingsPage() {
   const router = useRouter();
   const { isLoggedIn, isLoading } = useAuth();
@@ -698,6 +916,9 @@ export default function SettingsPage() {
             </div>
           )}
         </form>
+
+        {/* ── โหมดปรับปรุงเว็บไซต์ (Maintenance Mode) ─────────────────── */}
+        <MaintenanceModeSection showToast={showToast} />
 
         {/* Cloudinary Orphan Scanner */}
         <div className="mt-8 bg-white rounded-lg shadow p-6 space-y-4">

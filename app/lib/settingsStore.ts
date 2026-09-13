@@ -149,6 +149,18 @@ export async function updateCompanyProfile(
   );
 }
 
+// ── Maintenance mode ─────────────────────────────────────────────────────────
+// Site-wide flag toggled from /settings (OTP-gated). When "true", public pages
+// (/, /contact) show a full-screen maintenance overlay and hide contact details
+// (phone, LINE). Admins who are logged in bypass the overlay and see a banner.
+
+export const MAINTENANCE_MODE_SETTING = "maintenance_mode";
+
+/** Whether the public site is currently in maintenance mode. */
+export async function isMaintenanceMode(): Promise<boolean> {
+  return (await getSetting(MAINTENANCE_MODE_SETTING)) === "true";
+}
+
 /** Single-line address for a Google Maps text-search query / embed. */
 export function companyAddressQuery(profile: CompanyProfile): string {
   return `${profile.addressStreet}, ${profile.addressLocality}, ${profile.addressRegion} ${profile.addressPostalCode}, ${profile.addressCountry}`;
