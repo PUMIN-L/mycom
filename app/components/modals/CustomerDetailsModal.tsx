@@ -161,43 +161,50 @@ export default function CustomerDetailsModal({
 
   return (
     <>
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-        <div className="absolute inset-0 bg-gray-900/40 backdrop-blur-sm" onClick={onClose}></div>
-        <div className="relative bg-white rounded-3xl shadow-2xl max-w-xl w-full p-8 max-h-[85vh] overflow-y-auto transform transition-all">
-          <div className="absolute top-0 right-0 p-4 flex items-center gap-2">
-            <button
-              type="button"
-              onClick={handleOpenTaskForm}
-              disabled={isLoadingTaskTopics}
-              className="flex items-center gap-1.5 px-3 py-2 text-sm font-semibold text-orange-700 bg-orange-50 hover:bg-orange-100 rounded-xl transition-colors disabled:opacity-50"
-            >
-              {isLoadingTaskTopics ? (
-                <>
-                  <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                  </svg>
-                  กำลังโหลด...
-                </>
-              ) : (
-                <>📝 สร้างสิ่งที่ต้องทำ</>
-              )}
-            </button>
-            <button onClick={onClose} aria-label="ปิด" className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full transition-colors">
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
-            </button>
-          </div>
-          <div className="flex items-center gap-5 mb-8">
-            <div className="w-20 h-20 rounded-full bg-gradient-to-tr from-orange-200 to-orange-100 border-4 border-white shadow-sm flex items-center justify-center text-orange-700 font-bold text-3xl">
-              {customer.name.charAt(0)}
+      <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fade-in" onClick={onClose}>
+        <div className="bg-white rounded-3xl shadow-2xl max-w-xl w-full max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+          {/* Header — sticky, bordered, same shape as EquipmentDetailsModal's
+              header (title/subtitle on the left, actions on the right) so
+              the two detail modals frame their rounded corners identically
+              instead of this one looking flat/square at the top. */}
+          <div className="p-6 border-b border-gray-100 flex justify-between items-center sticky top-0 bg-white z-10">
+            <div className="flex items-center gap-4 min-w-0">
+              <div className="w-14 h-14 rounded-full bg-gradient-to-tr from-orange-200 to-orange-100 border-4 border-white shadow-sm flex items-center justify-center text-orange-700 font-bold text-xl shrink-0">
+                {customer.name.charAt(0)}
+              </div>
+              <div className="min-w-0">
+                <h2 className="text-xl font-bold text-gray-900 truncate">{customer.name}</h2>
+                {customer.companyName && (
+                  <p className="text-sm text-orange-600 font-medium mt-0.5 truncate">{customer.companyName}</p>
+                )}
+              </div>
             </div>
-            <div>
-              <h2 className="text-2xl font-bold text-gray-900">{customer.name}</h2>
-              <p className="text-orange-600 font-medium">{customer.companyName}</p>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={handleOpenTaskForm}
+                disabled={isLoadingTaskTopics}
+                className="flex items-center gap-1.5 px-3 py-2 text-sm font-semibold text-orange-700 bg-orange-50 hover:bg-orange-100 rounded-xl transition-colors disabled:opacity-50"
+              >
+                {isLoadingTaskTopics ? (
+                  <>
+                    <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                    กำลังโหลด...
+                  </>
+                ) : (
+                  <>📝 สร้างสิ่งที่ต้องทำ</>
+                )}
+              </button>
+              <button onClick={onClose} aria-label="ปิด" className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full transition-colors">
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+              </button>
             </div>
           </div>
 
-          <div className="space-y-4">
+          <div className="p-6 space-y-4">
             <div className="flex items-center p-4 bg-gray-50 rounded-2xl border border-gray-100">
               <div className="p-2 bg-white rounded-xl shadow-sm mr-4 text-gray-400">
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path></svg>
