@@ -293,6 +293,125 @@ describe("TaskFormModal", () => {
   });
 });
 
+// ── initialLinks (spec: add-customer-quick-task-button) ──────────────────────
+//
+// A caller — the "📝 สร้างสิ่งที่ต้องทำ" button on the customer detail page —
+// can seed the picker with a link before the admin has touched it, so opening
+// the form from that customer's own profile does not require searching for
+// that same customer again. The one rule that actually needs guarding is the
+// negative one: EDIT must never take it, or opening someone ELSE's saved task
+// could silently pick up a link that was never really on it.
+
+describe("TaskFormModal — initialLinks", () => {
+  const SEEDED_CUSTOMER_LINK = { targetType: "customer" as const, targetId: "c1", label: "สมชาย (บริษัท ก)" };
+
+  /** Fill the two required fields the way the admin would — a local copy of
+   *  the sibling describe block's helper, which is out of scope here. */
+  async function fillRequired(title = "โทรหาคุณสมชาย") {
+    fireEvent.click(screen.getByText("เลือกหัวข้อของงาน..."));
+    fireEvent.click(await screen.findByText("📞 โทรลูกค้า"));
+    fireEvent.change(screen.getByPlaceholderText(/เช่น โทรหาคุณสมชาย/), {
+      target: { value: title },
+    });
+  }
+
+  it("seeds the picker with the given link when creating a task", async () => {
+    const fetchMock = mockFetch((url, init) =>
+      url === "/api/admin/tasks" && init?.method === "POST" ? jsonOk({ id: "t9" }, 201) : null
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const onSaved = vi.fn();
+    render(
+      <TaskFormModal
+        topics={TOPICS}
+        initialLinks={[SEEDED_CUSTOMER_LINK]}
+        onClose={vi.fn()}
+        onSaved={onSaved}
+      />
+    );
+
+    // Rendered as an ordinary chip, with no search on the admin's part.
+    expect(screen.getByText("สมชาย (บริษัท ก)")).toBeInTheDocument();
+
+    await fillRequired();
+    fireEvent.click(screen.getByRole("button", { name: "สร้างงาน" }));
+
+    await waitFor(() => expect(onSaved).toHaveBeenCalledWith({ id: "t9" }));
+    const body = readBody(
+      fetchMock.mock.calls.find((c) => c[0] === "/api/admin/tasks") as unknown[]
+    );
+    expect(body.links).toEqual([SEEDED_CUSTOMER_LINK]);
+  });
+
+  it("the seeded link can still be removed before saving, like any hand-picked one", async () => {
+    const fetchMock = mockFetch((url, init) =>
+      url === "/api/admin/tasks" && init?.method === "POST" ? jsonOk({ id: "t9" }, 201) : null
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <TaskFormModal
+        topics={TOPICS}
+        initialLinks={[SEEDED_CUSTOMER_LINK]}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /เอาลิงก์ สมชาย \(บริษัท ก\) ออกจากงานนี้/ }));
+    expect(screen.queryByText("สมชาย (บริษัท ก)")).not.toBeInTheDocument();
+
+    await fillRequired();
+    fireEvent.click(screen.getByRole("button", { name: "สร้างงาน" }));
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.some((c) => c[0] === "/api/admin/tasks")).toBe(true)
+    );
+    const body = readBody(
+      fetchMock.mock.calls.find((c) => c[0] === "/api/admin/tasks") as unknown[]
+    );
+    expect(body.links).toEqual([]);
+  });
+
+  it("a repeated seed link is not duplicated (same dedup as the picker)", () => {
+    render(
+      <TaskFormModal
+        topics={TOPICS}
+        initialLinks={[SEEDED_CUSTOMER_LINK, SEEDED_CUSTOMER_LINK]}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    );
+    expect(screen.getAllByText("สมชาย (บริษัท ก)")).toHaveLength(1);
+  });
+
+  it("EDIT mode ignores initialLinks entirely — the task's own links always win", () => {
+    const existingTask: CrmTask = {
+      id: "t1",
+      topicId: 1,
+      title: "งานเดิม",
+      detail: null,
+      dueDate: null,
+      status: "pending",
+      completedAt: null,
+      createdAt: "2026-02-01T00:00:00.000Z",
+      links: [{ taskId: "t1", targetType: "equipment", targetId: "e1", label: "เครื่องวัด A", createdAt: "" }],
+    };
+    render(
+      <TaskFormModal
+        task={existingTask}
+        topics={TOPICS}
+        initialLinks={[SEEDED_CUSTOMER_LINK]}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    );
+    // The task's own link is there...
+    expect(screen.getByText("เครื่องวัด A")).toBeInTheDocument();
+    // ...and the unrelated initialLinks link never sneaks in.
+    expect(screen.queryByText("สมชาย (บริษัท ก)")).not.toBeInTheDocument();
+  });
+});
+
 // ── The board's open topic filter → the form (item 9a) ───────────────────────
 //
 // The board publishes the topic its filter has open and the form reads it as

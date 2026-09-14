@@ -6,8 +6,17 @@ import type {
   CustomerEquipment,
   ServiceSchedule,
   ServiceJobSummary,
+  TaskTopic,
 } from "../../lib/types";
 import { toLocalDateString, formatDisplayDate } from "../../lib/dateFormat";
+// "สร้างสิ่งที่ต้องทำ" linked to this equipment — spec:
+// add-equipment-quick-task-button. Mirrors the same button on the Viewing
+// Customer modal (add-customer-quick-task-button): reuses TaskFormModal and
+// the client-safe label builder rather than inventing either a second time,
+// and shares its topic cache with that button through useTaskTopics.ts.
+import TaskFormModal, { type TaskLinkPayload } from "../TaskFormModal";
+import { buildTaskLinkLabel } from "../TaskLinkChips";
+import { ensureTaskTopicsLoaded } from "../useTaskTopics";
 
 // Note: Local stripHtml function
 function stripHtml(html?: string): string {
@@ -62,6 +71,14 @@ export default function EquipmentDetailsModal({
   // its status beside the number instead of reading as "times we visited".
   const [jobs, setJobs] = useState<ServiceJobSummary[]>([]);
   const [jobsLoading, setJobsLoading] = useState(true);
+
+  // "สร้างสิ่งที่ต้องทำ" — see the button in the header. `taskTopics === null`
+  // means "not resolved on THIS modal instance yet"; the actual fetch (if any)
+  // is owned by the module-level cache in `useTaskTopics.ts`, shared with the
+  // customer-page button, so a load done from either one covers both.
+  const [taskTopics, setTaskTopics] = useState<TaskTopic[] | null>(null);
+  const [isLoadingTaskTopics, setIsLoadingTaskTopics] = useState(false);
+  const [showTaskForm, setShowTaskForm] = useState(false);
 
   useEffect(() => {
     fetchSchedules(equipment.id);
@@ -152,6 +169,50 @@ export default function EquipmentDetailsModal({
       setIsSaving(false);
     }
   };
+
+  /**
+   * "สร้างสิ่งที่ต้องทำ" — the topic list is required before `TaskFormModal`
+   * can open (a task with no active topic is refused with a 400 by `POST
+   * /api/admin/tasks`), so it must be in hand first; there is no honest
+   * "open now, fail later" path. Reports with `alert()`, matching every other
+   * outcome this modal already reports that way (schedule save/delete, OTP) —
+   * introducing a toast for this one button alone would leave the modal
+   * speaking two different languages for the same kind of message.
+   */
+  const handleOpenTaskForm = async () => {
+    if (isLoadingTaskTopics) return;
+    let topics = taskTopics;
+    if (topics === null) {
+      setIsLoadingTaskTopics(true);
+      const loaded = await ensureTaskTopicsLoaded();
+      setIsLoadingTaskTopics(false);
+      if (loaded === null) {
+        alert("โหลดหัวข้องานไม่สำเร็จ กรุณาลองใหม่");
+        return;
+      }
+      topics = loaded;
+      setTaskTopics(topics);
+    }
+    if (topics.length === 0) {
+      alert("ยังไม่มีหัวข้องาน กรุณาไปสร้างหัวข้อที่หน้ากระดานงานก่อน");
+      return;
+    }
+    setShowTaskForm(true);
+  };
+
+  /** The equipment link `TaskFormModal` opens pre-seeded with — computed with
+   *  the SAME function the form's own link picker uses (`TaskLinkChips.tsx`),
+   *  so the chip reads identically whichever way it was added. */
+  const taskFormInitialLinks = (): TaskLinkPayload[] => [
+    {
+      targetType: "equipment",
+      targetId: equipment.id,
+      label: buildTaskLinkLabel("equipment", {
+        productName: equipment.productName,
+        serialNumber: equipment.serialNumber,
+      }),
+    },
+  ];
 
   const executeDeleteSchedule = async () => {
     if (!deleteScheduleConfirm || isSaving) return;
@@ -287,6 +348,13 @@ export default function EquipmentDetailsModal({
               <p className="text-sm text-gray-400 mt-1">{stripHtml(equipment.productName)} — S/N: {equipment.serialNumber || "—"}</p>
             </div>
             <div className="flex gap-2">
+              <button
+                onClick={handleOpenTaskForm}
+                disabled={isLoadingTaskTopics}
+                className="px-4 py-2 bg-orange-50 text-orange-700 font-semibold rounded-xl hover:bg-orange-100 transition-all text-sm disabled:opacity-50"
+              >
+                {isLoadingTaskTopics ? "กำลังโหลด..." : "📝 สร้างสิ่งที่ต้องทำ"}
+              </button>
               <button
                 onClick={() => onEditEquipment(equipment)}
                 className="px-4 py-2 bg-gray-100 text-gray-700 font-semibold rounded-xl hover:bg-gray-200 transition-all text-sm"
@@ -781,6 +849,23 @@ export default function EquipmentDetailsModal({
             </div>
           </div>
         </div>
+      )}
+
+      {/* "สร้างสิ่งที่ต้องทำ" ผูกกับเครื่องนี้ — a sibling modal (own backdrop,
+          z-200 > this modal's z-[150]) rather than nested inside the markup
+          above, so closing this one leaves the equipment details modal
+          exactly as it was. `taskTopics` is asserted non-null by
+          `handleOpenTaskForm` before this ever opens. */}
+      {showTaskForm && taskTopics && (
+        <TaskFormModal
+          topics={taskTopics}
+          initialLinks={taskFormInitialLinks()}
+          onClose={() => setShowTaskForm(false)}
+          onSaved={() => {
+            setShowTaskForm(false);
+            alert("สร้างงานสำเร็จ — ผูกกับเครื่องนี้แล้ว");
+          }}
+        />
       )}
     </>
   );

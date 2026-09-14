@@ -34,6 +34,12 @@ export type AlertEditRoute =
    * only the secondary "go and look at the invoice" path, so it navigates
    * rather than fetching anything first. */
   | { kind: "billing_document"; billingDocumentId: string }
+  /** นัดโทรลูกค้า — navigate to `/customers?customerId=<id>`, which already
+   * knows how to switch to the customer-list tab and open that customer's
+   * detail modal (and says so in Thai if the id turns out to be gone). What
+   * the admin wants before making the call is the CUSTOMER's info (department
+   * / email / phone / บันทึกลูกค้า), not the appointment's own date field. */
+  | { kind: "customer_profile"; customerId: string }
   /** Nothing sensible to open (no target, or a row with no usable id). */
   | { kind: "none" };
 
@@ -69,12 +75,18 @@ function usableId(value: unknown): string | null {
 /**
  * Decide what the edit button opens for one alert card.
  *
- * Schedules split on `equipmentId` and nothing else:
- *   - present → the original path, unchanged (fetch the machine, open its
- *     details modal);
- *   - absent → the schedule form, with NO equipment request at all.
- * `customer_call` rows are customer-scoped by definition, so they always take
- * the second path (tasks 10.2 and 10.5 are the same code path on purpose).
+ * `schedule` (equipment-scoped) and `customer_call` (customer-scoped) used to
+ * share one branch that split on `equipmentId` alone — which was correct back
+ * when the only bug being fixed was "don't fetch /equipments/undefined". They
+ * now split on TYPE first:
+ *   - `schedule` always carries an `equipmentId` (it is queried that way) →
+ *     unchanged: fetch the machine, open its details modal.
+ *   - `customer_call` is customer-scoped by definition → open that customer's
+ *     own profile instead of a form for the appointment. A row with no
+ *     usable `customerId` (data that should not exist, but the button must
+ *     still do SOMETHING) falls back to the old schedule form rather than
+ *     going to `none` — a dead button reads as broken, a slightly-wrong-but-
+ *     working one reads as merely odd.
  */
 export function resolveAlertEditRoute(
   target: AlertEditTarget | null | undefined
@@ -92,9 +104,18 @@ export function resolveAlertEditRoute(
     return billingDocumentId ? { kind: "billing_document", billingDocumentId } : { kind: "none" };
   }
 
-  if (target.type === "schedule" || target.type === "customer_call") {
+  if (target.type === "schedule") {
     const equipmentId = usableId(data.equipmentId);
     if (equipmentId) return { kind: "equipment_fetch", equipmentId };
+    const scheduleId = usableId(data.id);
+    return scheduleId ? { kind: "schedule_form", scheduleId } : { kind: "none" };
+  }
+
+  if (target.type === "customer_call") {
+    const customerId = usableId(data.customerId);
+    if (customerId) return { kind: "customer_profile", customerId };
+    // No usable customerId — fall back to the pre-existing behaviour rather
+    // than leaving the button with nothing to do.
     const scheduleId = usableId(data.id);
     return scheduleId ? { kind: "schedule_form", scheduleId } : { kind: "none" };
   }

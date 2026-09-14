@@ -26,13 +26,42 @@ describe("resolveAlertEditRoute", () => {
       ).toEqual({ kind: "schedule_form", scheduleId: "sch-2" });
     });
 
-    it("routes the new นัดโทรลูกค้า category the same way (10.5)", () => {
+    it("routes นัดโทรลูกค้า to that customer's own profile, not the schedule form (route-customer-call-edit-to-profile)", () => {
       expect(
         resolveAlertEditRoute({
           type: "customer_call",
           data: { id: "sch-3", customerId: "cus-2" },
         })
-      ).toEqual({ kind: "schedule_form", scheduleId: "sch-3" });
+      ).toEqual({ kind: "customer_profile", customerId: "cus-2" });
+    });
+
+    it("falls back to the schedule form when a นัดโทรลูกค้า row has no usable customerId", () => {
+      // Every spelling of "there is no customerId" — should not happen in
+      // practice (a customer_call row is customer-scoped by definition), but
+      // the button must still do something rather than nothing.
+      for (const customerId of [undefined, null, "", "   ", "undefined", "null"]) {
+        expect(
+          resolveAlertEditRoute({
+            type: "customer_call",
+            data: { id: "sch-3", customerId },
+          })
+        ).toEqual({ kind: "schedule_form", scheduleId: "sch-3" });
+      }
+    });
+
+    it("gives up entirely when a นัดโทรลูกค้า row has neither a usable customerId nor a usable id", () => {
+      expect(
+        resolveAlertEditRoute({ type: "customer_call", data: { customerId: "undefined" } })
+      ).toEqual({ kind: "none" });
+    });
+
+    it("trims a customerId that merely needs it", () => {
+      expect(
+        resolveAlertEditRoute({
+          type: "customer_call",
+          data: { id: "sch-3", customerId: " cus-9 " },
+        })
+      ).toEqual({ kind: "customer_profile", customerId: "cus-9" });
     });
 
     it("never builds an equipment request from a missing id", () => {

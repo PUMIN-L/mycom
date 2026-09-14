@@ -51,6 +51,11 @@
  *                 `topics` offered below, and BOTH are ignored in edit mode:
  *                 the task's own topic always wins, so opening a task to fix a
  *                 typo can never silently re-file it.
+ *   initialLinks  pre-seeded chips for a NEW task (e.g. the customer whose
+ *                 profile the admin opened this from) — see
+ *                 add-customer-quick-task-button. Ignored in edit mode for the
+ *                 same reason as `defaultTopicId`: the task's own `task.links`
+ *                 always wins. Still ordinary, removable chips once seeded.
  *   onClose       close without saving. Also fired by Escape and by the
  *                 backdrop — both are ignored while a save is in flight.
  *   onSaved(task) the API answered. THE PARENT closes the modal (and shows the
@@ -82,15 +87,29 @@ export interface TaskFormModalProps {
   task?: CrmTask | null;
   topics: TaskTopic[];
   defaultTopicId?: number | null;
+  /** Links to pre-seed the picker with when CREATING a task (`task` omitted).
+   *  Ignored in edit mode — an existing task's links always come from
+   *  `task.links`, never from this, so opening one to fix a typo can never
+   *  silently pick up an unrelated link. Still ordinary chips once seeded:
+   *  the admin can remove one before saving exactly like a hand-picked one
+   *  (see add-customer-quick-task-button, the "สร้างสิ่งที่ต้องทำ" button on
+   *  the customer detail page, which is the first caller of this). */
+  initialLinks?: TaskLinkPayload[];
   onClose: () => void;
   onSaved: (task: CrmTask) => void;
 }
 
 /** What the payload carries per link — the store's `TaskLinkInput`. */
-interface TaskLinkPayload {
+export interface TaskLinkPayload {
   targetType: TaskLinkTarget;
   targetId: string;
   label: string;
+}
+
+/** `targetType:targetId` — a link's identity for dedup, matching the store's
+ *  own `(taskId, targetType, targetId)` primary key. */
+function linkKey(link: Pick<TaskLinkPayload, "targetType" | "targetId">): string {
+  return `${link.targetType}:${link.targetId}`;
 }
 
 const MAX_TITLE = 255;
@@ -177,6 +196,7 @@ export default function TaskFormModal({
   task,
   topics,
   defaultTopicId,
+  initialLinks,
   onClose,
   onSaved,
 }: TaskFormModalProps) {
@@ -191,16 +211,29 @@ export default function TaskFormModal({
   const [title, setTitle] = useState<string>(task?.title ?? "");
   const [detail, setDetail] = useState<string>(task?.detail ?? "");
   const [dueDate, setDueDate] = useState<string>(task?.dueDate ?? "");
-  const [links, setLinks] = useState<TaskLinkPayload[]>(() =>
-    (task?.links ?? [])
+  const [links, setLinks] = useState<TaskLinkPayload[]>(() => {
+    // EDIT MODE: always the task's own links, exactly as before. CREATE MODE:
+    // the task's own links don't exist yet, so `initialLinks` — the caller's
+    // pre-seeded pick (e.g. "this customer") — seeds the picker instead.
+    // Never both: an edited task's links must never be able to pick up an
+    // unrelated `initialLinks` a caller happened to pass.
+    const source = task ? (task.links ?? []) : (initialLinks ?? []);
+    const cleaned = source
       .filter((link) => (TASK_LINK_TARGETS as readonly string[]).includes(link?.targetType))
       .map((link) => ({
         targetType: link.targetType,
         targetId: String(link.targetId ?? ""),
         label: String(link.label ?? ""),
       }))
-      .filter((link) => link.targetId !== "")
-  );
+      .filter((link) => link.targetId !== "");
+    // Dedup by identity, same key as the store's PK — a caller-supplied
+    // `initialLinks` with an accidental repeat must not become two chips.
+    const byKey = new Map<string, TaskLinkPayload>();
+    for (const link of cleaned) {
+      if (!byKey.has(linkKey(link))) byKey.set(linkKey(link), link);
+    }
+    return [...byKey.values()];
+  });
 
   const [pickerKind, setPickerKind] = useState<TaskLinkTarget>("customer");
   const [pickerNote, setPickerNote] = useState<string>("");

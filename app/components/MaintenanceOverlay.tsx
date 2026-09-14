@@ -2,13 +2,7 @@
 import { useState, useEffect } from "react";
 import { usePathname } from "next/navigation";
 import { useAuth } from "../context/AuthContext";
-
-/**
- * Pages that the maintenance overlay blocks. Only these paths show the
- * full-screen "under maintenance" page — other public pages (/catalog,
- * /about, /showcase, etc.) remain accessible during maintenance.
- */
-const BLOCKED_PATHS = ["/", "/contact"];
+import { MAINTENANCE_BLOCKED_PATHS } from "../lib/maintenanceConfig";
 
 /**
  * Full-screen maintenance overlay shown to non-admin visitors when
@@ -59,7 +53,7 @@ export default function MaintenanceOverlay() {
 
   // Only block specific pages (/, /contact). Other public pages like
   // /catalog, /about, /showcase remain accessible during maintenance.
-  if (!BLOCKED_PATHS.includes(pathname)) return null;
+  if (!MAINTENANCE_BLOCKED_PATHS.includes(pathname as typeof MAINTENANCE_BLOCKED_PATHS[number])) return null;
 
   // Maintenance mode is off — nothing to show.
   if (!enabled) return null;

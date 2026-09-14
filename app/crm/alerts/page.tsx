@@ -352,11 +352,11 @@ export default function AlertsPage() {
    * The edit button on every alert card and in the details modal.
    *
    * The decision of WHERE to go lives in `resolveAlertEditRoute` (pure, unit
-   * tested — tasks 10.1-10.5 / 17.5). It exists because this used to assume
-   * every schedule has an `equipmentId` and fetched
-   * `/api/admin/equipments/undefined` for a customer-scoped call, which failed
-   * every single time. Equipment-scoped schedules keep the exact old path,
-   * failing load and all.
+   * tested — tasks 10.1-10.5 / 17.5, then route-customer-call-edit-to-profile).
+   * Equipment-scoped schedules keep the exact old path (fetch the machine,
+   * open its details modal). นัดโทรลูกค้า (customer-scoped, no equipment)
+   * navigates to that customer's own profile instead of a schedule-edit form
+   * — see route-customer-call-edit-to-profile for why.
    */
   const handleEditClick = async (alertTarget?: any) => {
     const target = alertTarget || selectedAlert;
@@ -387,6 +387,17 @@ export default function AlertsPage() {
     if (route.kind === "billing_document") {
       // Secondary path only: the card's primary action is the payment modal.
       router.push(`/billing?id=${encodeURIComponent(route.billingDocumentId)}&view=1`);
+      setSelectedAlert(null);
+      return;
+    }
+
+    if (route.kind === "customer_profile") {
+      // นัดโทรลูกค้า: navigate away rather than opening the schedule form —
+      // /customers already knows how to deep-link to one customer's own
+      // detail modal (?customerId=), including the "ไม่พบ/โหลดไม่สำเร็จ"
+      // messages if the id turns out to be stale. Nothing here duplicates
+      // that page's logic.
+      router.push(`/customers?customerId=${encodeURIComponent(route.customerId)}`);
       setSelectedAlert(null);
       return;
     }

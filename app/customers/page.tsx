@@ -13,6 +13,14 @@ import SearchableDropdown from "../components/SearchableDropdown";
 // exactly as it always has.
 import CustomerNoteSearchPanel from "../components/CustomerNoteSearchPanel";
 import { downloadExcel } from "../lib/xlsxExport";
+// "สร้างสิ่งที่ต้องทำ" from the customer's own detail page (spec:
+// add-customer-quick-task-button) — reuses the board's own create form and
+// the same client-safe label builder the form's own link picker uses, rather
+// than inventing a second copy of either.
+import TaskFormModal, { type TaskLinkPayload } from "../components/TaskFormModal";
+import { buildTaskLinkLabel } from "../components/TaskLinkChips";
+import { ensureTaskTopicsLoaded } from "../components/useTaskTopics";
+import type { TaskTopic } from "../lib/types";
 
 interface Company {
   id: string;
@@ -187,6 +195,26 @@ function CustomersInner() {
   const noteViewRef = useRef<HTMLParagraphElement | null>(null);
   const [noteMinHeight, setNoteMinHeight] = useState<number | null>(null);
 
+  // "สร้างสิ่งที่ต้องทำ" from the Viewing Customer modal.
+  //
+  // `taskTopics === null` means "not resolved on THIS page instance yet" —
+  // distinct from `[]` ("resolved, and there are genuinely none). The actual
+  // fetch (if any) is owned by `useTaskTopics.ts`'s module-level cache, shared
+  // with `EquipmentDetailsModal`'s own "สร้างสิ่งที่ต้องทำ" button — so a
+  // fresh mount of THIS page still resolves instantly, with no network
+  // request, if the admin already loaded topics from the equipment button
+  // earlier in the same session. This local state exists only because the
+  // render below needs a concrete array to hand `TaskFormModal`, not because
+  // this page caches anything of its own anymore.
+  const [taskTopics, setTaskTopics] = useState<TaskTopic[] | null>(null);
+  const [isLoadingTaskTopics, setIsLoadingTaskTopics] = useState(false);
+  // The customer the task form is creating FOR — captured at the moment the
+  // button is pressed, not read live off `viewingCustomer`, so the form's
+  // link stays pinned to the customer the admin actually meant even if
+  // `viewingCustomer` changes underneath (closing/reopening a different one)
+  // while the form is still open on top of it.
+  const [taskFormCustomer, setTaskFormCustomer] = useState<Customer | null>(null);
+
   const [deleteConfirmCompany, setDeleteConfirmCompany] = useState<Company | null>(null);
   const [deleteConfirmCustomer, setDeleteConfirmCustomer] = useState<Customer | null>(null);
   const [deleteConfirmSalesperson, setDeleteConfirmSalesperson] = useState<Salesperson | null>(null);
@@ -264,6 +292,52 @@ function CustomersInner() {
       setIsSavingCustomerNote(false);
     }
   };
+
+  /**
+   * "สร้างสิ่งที่ต้องทำ" from the Viewing Customer modal.
+   *
+   * The topic list is required by `TaskFormModal` (and by `POST
+   * /api/admin/tasks` behind it — a task with no active topic is refused with
+   * a 400), so it must be in hand BEFORE the form opens; there is no honest
+   * "open now, fail later" path here. The actual fetch-once-and-cache is
+   * `ensureTaskTopicsLoaded()`'s job (shared with `EquipmentDetailsModal`'s
+   * own button) — a failed load resolves to `null` here so the very next
+   * click retries rather than remembering the failure forever.
+   */
+  const handleOpenTaskForm = async (customer: Customer) => {
+    if (isLoadingTaskTopics) return;
+    let topics = taskTopics;
+    if (topics === null) {
+      setIsLoadingTaskTopics(true);
+      const loaded = await ensureTaskTopicsLoaded();
+      setIsLoadingTaskTopics(false);
+      if (loaded === null) {
+        showToast("โหลดหัวข้องานไม่สำเร็จ กรุณาลองใหม่", "error");
+        return;
+      }
+      topics = loaded;
+      setTaskTopics(topics);
+    }
+    if (topics.length === 0) {
+      showToast("ยังไม่มีหัวข้องาน กรุณาไปสร้างหัวข้อที่หน้ากระดานงานก่อน", "error");
+      return;
+    }
+    setTaskFormCustomer(customer);
+  };
+
+  /** The customer link `TaskFormModal` opens pre-seeded with — computed with
+   *  the SAME function the form's own link picker uses (`TaskLinkChips.tsx`),
+   *  so the chip reads identically whichever way it was added. */
+  const taskFormInitialLinks = (customer: Customer): TaskLinkPayload[] => [
+    {
+      targetType: "customer",
+      targetId: customer.id,
+      label: buildTaskLinkLabel("customer", {
+        name: customer.name,
+        companyName: customer.companyName,
+      }),
+    },
+  ];
 
   const fetchData = async () => {
     setIsLoadingData(true);
@@ -969,7 +1043,25 @@ function CustomersInner() {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-gray-900/40 backdrop-blur-sm" onClick={() => setViewingCustomer(null)}></div>
           <div className="relative bg-white rounded-3xl shadow-2xl max-w-xl w-full p-8 max-h-[85vh] overflow-y-auto transform transition-all">
-            <div className="absolute top-0 right-0 p-4">
+            <div className="absolute top-0 right-0 p-4 flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => handleOpenTaskForm(viewingCustomer)}
+                disabled={isLoadingTaskTopics}
+                className="flex items-center gap-1.5 px-3 py-2 text-sm font-semibold text-orange-700 bg-orange-50 hover:bg-orange-100 rounded-xl transition-colors disabled:opacity-50"
+              >
+                {isLoadingTaskTopics ? (
+                  <>
+                    <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                    กำลังโหลด...
+                  </>
+                ) : (
+                  <>📝 สร้างสิ่งที่ต้องทำ</>
+                )}
+              </button>
               <button onClick={() => setViewingCustomer(null)} className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full transition-colors">
                 <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
               </button>
@@ -1098,6 +1190,26 @@ function CustomersInner() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* "สร้างสิ่งที่ต้องทำ" from the customer's own detail page — a sibling
+          modal (own backdrop, higher z-index) rather than nested inside the
+          Viewing Customer modal above, so closing this one leaves that one
+          exactly as it was. `taskTopics` is asserted non-null by
+          `handleOpenTaskForm` before this ever opens. */}
+      {taskFormCustomer && taskTopics && (
+        <TaskFormModal
+          // Already active-only: fetched with no `includeHidden`, unlike
+          // /crm/alerts' own `topics` state (which deliberately keeps hidden
+          // ones too, for its topic manager) — no second filter needed here.
+          topics={taskTopics}
+          initialLinks={taskFormInitialLinks(taskFormCustomer)}
+          onClose={() => setTaskFormCustomer(null)}
+          onSaved={() => {
+            setTaskFormCustomer(null);
+            showToast("สร้างงานสำเร็จ — ผูกกับลูกค้ารายนี้แล้ว", "success");
+          }}
+        />
       )}
 
       {/* Viewing Salesperson Modal */}

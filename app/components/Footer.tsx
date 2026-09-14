@@ -21,6 +21,17 @@ export default function Footer({ email, phone, address }: FooterProps) {
 
   // When maintenance mode is on, hide phone/LINE/address from non-admin
   // visitors — the admin still sees everything.
+  //
+  // DELIBERATELY SITE-WIDE, on every page Footer is mounted on
+  // (/, /contact, /catalog, /about, /showcase/[id]) — NOT limited to the two
+  // paths `MaintenanceOverlay` full-screen-blocks. The overlay leaves
+  // /catalog, /about and /showcase browsable on purpose (an earlier version
+  // of this file scoped the hiding to match, on the reasoning that a page
+  // left open should stay FULLY open) — but the owner confirmed the actual
+  // intent is the opposite: those pages stay browsable, while every route to
+  // actually reach the company (phone, LINE) disappears from them too. Do
+  // not re-add a path check here without asking again; the reasoning
+  // changed once already.
   const [maintenanceOn, setMaintenanceOn] = useState(false);
   useEffect(() => {
     fetch("/api/settings/maintenance")
