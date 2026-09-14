@@ -24,7 +24,7 @@ vi.mock('@/app/lib/session', () => ({ getSession: vi.fn() }));
 import { getSession } from '@/app/lib/session';
 
 import { POST } from '@/app/api/customers/route';
-import { PUT, DELETE } from '@/app/api/customers/[id]/route';
+import { GET, PUT, DELETE } from '@/app/api/customers/[id]/route';
 
 const admin = { userId: '1', username: 'admin', expiresAt: new Date() } as any;
 const ctx = (id: string) => ({ params: Promise.resolve({ id }) });
@@ -44,6 +44,10 @@ const deleteReq = (id: string) =>
   new NextRequest(`http://localhost:3000/api/customers/${id}`, {
     method: 'DELETE',
     headers: { origin: 'http://localhost:3000', host: 'localhost:3000' },
+  });
+const getReq = (id: string) =>
+  new NextRequest(`http://localhost:3000/api/customers/${id}`, {
+    headers: { host: 'localhost:3000' },
   });
 
 /** The transaction connection: the locking SELECT on `customers` returns
@@ -77,6 +81,41 @@ beforeEach(() => {
   runTransaction
     .mockReset()
     .mockImplementation(async (fn: (c: typeof conn) => Promise<unknown>) => fn(conn));
+});
+
+// ── GET /api/customers/[id] — spec: open-customer-profile-in-place ─────────
+//
+// /crm/alerts opens CustomerDetailsModal without the full customer list in
+// hand (unlike /customers, which already has one), so it needs one row by
+// id rather than loading everyone — the exact thing this route exists to
+// avoid needing, with ~6,000 customers on the way.
+describe('GET /api/customers/[id]', () => {
+  it('returns the one row, joined with the company name — same shape as the list route', async () => {
+    vi.mocked(query).mockResolvedValueOnce([[{ ...existingCustomer, companyName: 'บริษัท ก' }]] as any);
+    const res = await GET(getReq('cust-1'), ctx('cust-1'));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toEqual({ ...existingCustomer, companyName: 'บริษัท ก' });
+
+    const sql = String(vi.mocked(query).mock.calls[0][0]).replace(/\s+/g, ' ');
+    expect(sql).toContain('LEFT JOIN companies ON customers.companyId = companies.id');
+    expect(sql).toContain('WHERE customers.id = ?');
+    expect(vi.mocked(query).mock.calls[0][1]).toEqual(['cust-1']);
+  });
+
+  it('404s in Thai when the customer is gone', async () => {
+    vi.mocked(query).mockResolvedValueOnce([[]] as any);
+    const res = await GET(getReq('gone'), ctx('gone'));
+    expect(res.status).toBe(404);
+    expect((await res.json()).error).toContain('ไม่พบลูกค้า');
+  });
+
+  it('401s an anonymous request before any query runs', async () => {
+    vi.mocked(getSession).mockResolvedValueOnce(null as never);
+    const res = await GET(getReq('cust-1'), ctx('cust-1'));
+    expect(res.status).toBe(401);
+    expect(query).not.toHaveBeenCalled();
+  });
 });
 
 describe('POST /api/customers', () => {

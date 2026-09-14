@@ -109,6 +109,25 @@ export interface DocumentData {
   sortOrder: number;
 }
 
+/**
+ * A contact person at a customer's company. Was a private interface inside
+ * `app/customers/page.tsx`; promoted here (spec: open-customer-profile-
+ * in-place) so `CustomerDetailsModal` — now shared between `/customers` and
+ * `/crm/alerts` — and both of those pages can all agree on one shape instead
+ * of each declaring their own copy.
+ */
+export interface Customer {
+  id: string;
+  companyId: string;
+  // Joined display field (present on reads, absent on a bare write payload).
+  companyName?: string;
+  name: string;
+  department: string;
+  phone: string;
+  email: string;
+  note: string;
+}
+
 // ── CRM: Sold Equipment & Warranty Tracking ─────────────────────────────────
 
 /** A calibration is valid for 1 year — the "next due" date shown to admins

@@ -98,6 +98,13 @@ export interface TaskBoardSectionProps {
   onUnauthorized?: () => void;
   /** targetId → current label, per target type. See LinkTargetIndex. */
   linkTargetIndex?: LinkTargetIndex | null;
+  /** Open a "customer" chip's target IN PLACE instead of navigating there
+   *  (spec: open-task-chip-targets-in-place). When omitted, the chip falls
+   *  back to its old `<Link href>` navigation — never a button that does
+   *  nothing. `quotation`/`document` chips are unaffected either way. */
+  onOpenCustomer?: (customerId: string) => void;
+  /** The equipment twin of `onOpenCustomer`. */
+  onOpenEquipment?: (equipmentId: string) => void;
 }
 
 /** Static Tailwind class strings per topic colour token — never built by
@@ -208,6 +215,8 @@ export default function TaskBoardSection({
   onTasksChanged,
   onUnauthorized,
   linkTargetIndex = null,
+  onOpenCustomer,
+  onOpenEquipment,
 }: TaskBoardSectionProps) {
   const [tasks, setTasks] = useState<CrmTask[] | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -773,29 +782,74 @@ export default function TaskBoardSection({
                 {/* Link chips */}
                 {links.length > 0 && (
                   <div className="flex flex-wrap gap-1.5 mb-3">
-                    {links.map((link) =>
-                      link.isDead || !link.href ? (
-                        <span
-                          key={`${link.targetType}-${link.targetId}`}
-                          title={`${link.typeLabel} นี้ถูกลบไปแล้ว`}
-                          aria-disabled="true"
-                          className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-semibold bg-white/60 text-gray-400 border border-gray-200 line-through decoration-gray-300 cursor-not-allowed"
-                        >
+                    {links.map((link) => {
+                      const chipClassName =
+                        "inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-semibold bg-white text-gray-700 border border-gray-200 hover:border-gray-400 hover:bg-gray-50 transition-colors";
+                      const chipBody = (
+                        <>
                           <span aria-hidden>{link.icon}</span>
-                          {link.label} ({DELETED_TARGET_LABEL})
-                        </span>
-                      ) : (
+                          {link.label}
+                        </>
+                      );
+
+                      if (link.isDead || !link.href) {
+                        return (
+                          <span
+                            key={`${link.targetType}-${link.targetId}`}
+                            title={`${link.typeLabel} นี้ถูกลบไปแล้ว`}
+                            aria-disabled="true"
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-semibold bg-white/60 text-gray-400 border border-gray-200 line-through decoration-gray-300 cursor-not-allowed"
+                          >
+                            <span aria-hidden>{link.icon}</span>
+                            {link.label} ({DELETED_TARGET_LABEL})
+                          </span>
+                        );
+                      }
+
+                      // "customer"/"equipment" open the shared details modal
+                      // IN PLACE instead of navigating there (spec:
+                      // open-task-chip-targets-in-place) — but ONLY when the
+                      // host actually gave us a way to do that. No handler ⇒
+                      // fall through to the old `<Link href>`, never a button
+                      // that silently does nothing.
+                      if (link.targetType === "customer" && onOpenCustomer) {
+                        return (
+                          <button
+                            key={`${link.targetType}-${link.targetId}`}
+                            type="button"
+                            onClick={() => onOpenCustomer(link.targetId)}
+                            title={`เปิด${link.typeLabel}: ${link.label}`}
+                            className={chipClassName}
+                          >
+                            {chipBody}
+                          </button>
+                        );
+                      }
+                      if (link.targetType === "equipment" && onOpenEquipment) {
+                        return (
+                          <button
+                            key={`${link.targetType}-${link.targetId}`}
+                            type="button"
+                            onClick={() => onOpenEquipment(link.targetId)}
+                            title={`เปิด${link.typeLabel}: ${link.label}`}
+                            className={chipClassName}
+                          >
+                            {chipBody}
+                          </button>
+                        );
+                      }
+
+                      return (
                         <Link
                           key={`${link.targetType}-${link.targetId}`}
                           href={link.href}
                           title={`เปิด${link.typeLabel}: ${link.label}`}
-                          className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-semibold bg-white text-gray-700 border border-gray-200 hover:border-gray-400 hover:bg-gray-50 transition-colors"
+                          className={chipClassName}
                         >
-                          <span aria-hidden>{link.icon}</span>
-                          {link.label}
+                          {chipBody}
                         </Link>
-                      )
-                    )}
+                      );
+                    })}
                   </div>
                 )}
 

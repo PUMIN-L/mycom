@@ -5,6 +5,32 @@ import { sanitizePlainText } from "../../../lib/sanitizeHtml";
 import { withRoute, requireAuth, jsonError } from "../../../lib/apiHelpers";
 import { saveRevision } from "../../../lib/revisionStore";
 
+// GET /api/customers/[id] — one customer, by id.
+//
+// The list route (`GET /api/customers`) returns everyone, and /customers has
+// always used it that way because it already keeps the full list in memory
+// for its own table. /crm/alerts does not, and with ~6,000 customers on the
+// way, loading the entire list just to find one it already knows the id of
+// would be exactly the wrong direction to make that page depend on the
+// customer count. Same SELECT/JOIN as the list route, with `id` narrowed to
+// one row, so this returns the identical shape.
+export const GET = withRoute(
+  "โหลดข้อมูลลูกค้าไม่สำเร็จ",
+  async (_request: Request, { params }: { params: Promise<{ id: string }> }) => {
+    await requireAuth();
+    const { id } = await params;
+    const [rows] = await query<RowDataPacket[]>(
+      `SELECT customers.*, companies.name as companyName
+       FROM customers
+       LEFT JOIN companies ON customers.companyId = companies.id
+       WHERE customers.id = ?`,
+      [id]
+    );
+    if (rows.length === 0) return jsonError("ไม่พบลูกค้า", 404);
+    return NextResponse.json(rows[0]);
+  }
+);
+
 export const PUT = withRoute(
   // Thai: this is the message an admin actually reads when the save fails —
   // including the case that matters most here, a snapshot into `revisions`

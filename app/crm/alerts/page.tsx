@@ -12,6 +12,7 @@ import {
   CALIBRATION_VALIDITY_MONTHS,
   type CrmAlerts,
   type CrmTask,
+  type Customer,
   type CustomerEquipment,
   type TaskTopic,
 } from "../../lib/types";
@@ -30,6 +31,10 @@ import { resolveAlertEditRoute } from "../../lib/alertEditRoute";
 import EquipmentEditModal from "../../components/modals/EquipmentEditModal";
 import EquipmentDetailsModal from "../../components/modals/EquipmentDetailsModal";
 import SalesRecordEditModal from "../../components/modals/SalesRecordEditModal";
+// นัดโทรลูกค้า's "แก้ไข" opens this IN PLACE (spec:
+// open-customer-profile-in-place) — the same component /customers uses,
+// never a second copy, and never a navigation away from this page.
+import CustomerDetailsModal from "../../components/modals/CustomerDetailsModal";
 
 // The manual task board ("post-it notes the owner wrote for himself"). It is
 // NOT an alert: it lives in its own block below the alert grid, never in the
@@ -126,6 +131,10 @@ export default function AlertsPage() {
   // Modals state
   const [editingEquipment, setEditingEquipment] = useState<CustomerEquipment | null>(null);
   const [viewingEquipmentDetails, setViewingEquipmentDetails] = useState<CustomerEquipment | null>(null);
+  // นัดโทรลูกค้า's "แก้ไข" — opens CustomerDetailsModal IN PLACE, the same
+  // shape as viewingEquipmentDetails above (spec:
+  // open-customer-profile-in-place). No URL change, no navigation.
+  const [viewingCustomerDetails, setViewingCustomerDetails] = useState<Customer | null>(null);
   const [editingSalesRecordId, setEditingSalesRecordId] = useState<string | null>(null);
   
   // Complete modal
@@ -349,14 +358,66 @@ export default function AlertsPage() {
   };
 
   /**
+   * Fetch one customer and open `CustomerDetailsModal` IN PLACE — never a
+   * navigation to /customers (spec: open-customer-profile-in-place). Shared
+   * by the "แก้ไข" button on a นัดโทรลูกค้า card AND the "customer" chip on a
+   * saved task card (spec: open-task-chip-targets-in-place) — one fetch-and-
+   * open, not a second copy per caller. Returns whether it succeeded, so a
+   * caller with its own state to close (like `handleEditClick`'s
+   * `selectedAlert` panel) only closes it on success, exactly as before this
+   * was extracted.
+   */
+  const openCustomerProfile = useCallback(
+    async (customerId: string): Promise<boolean> => {
+      try {
+        const res = await fetch(`/api/customers/${encodeURIComponent(customerId)}`);
+        if (res.ok) {
+          const customer = await res.json();
+          setViewingCustomerDetails(customer);
+          return true;
+        }
+        showToast("โหลดข้อมูลลูกค้าไม่สำเร็จ", "error");
+        return false;
+      } catch {
+        showToast("โหลดข้อมูลลูกค้าไม่สำเร็จ", "error");
+        return false;
+      }
+    },
+    [showToast]
+  );
+
+  /** The equipment twin of `openCustomerProfile` above — same reasoning,
+   *  same two callers (the "แก้ไข" button on an equipment-scoped card, and
+   *  the "equipment" chip on a saved task card). */
+  const openEquipmentDetails = useCallback(
+    async (equipmentId: string): Promise<boolean> => {
+      try {
+        const res = await fetch(`/api/admin/equipments/${encodeURIComponent(equipmentId)}`);
+        if (res.ok) {
+          const eq = await res.json();
+          setViewingEquipmentDetails(eq);
+          return true;
+        }
+        showToast("โหลดข้อมูลอุปกรณ์ไม่สำเร็จ", "error");
+        return false;
+      } catch {
+        showToast("โหลดข้อมูลอุปกรณ์ไม่สำเร็จ", "error");
+        return false;
+      }
+    },
+    [showToast]
+  );
+
+  /**
    * The edit button on every alert card and in the details modal.
    *
    * The decision of WHERE to go lives in `resolveAlertEditRoute` (pure, unit
-   * tested — tasks 10.1-10.5 / 17.5, then route-customer-call-edit-to-profile).
-   * Equipment-scoped schedules keep the exact old path (fetch the machine,
-   * open its details modal). นัดโทรลูกค้า (customer-scoped, no equipment)
-   * navigates to that customer's own profile instead of a schedule-edit form
-   * — see route-customer-call-edit-to-profile for why.
+   * tested — tasks 10.1-10.5 / 17.5, then route-customer-call-edit-to-profile,
+   * then open-customer-profile-in-place). Equipment-scoped schedules keep the
+   * exact old path (fetch the machine, open its details modal IN PLACE, via
+   * `openEquipmentDetails`). นัดโทรลูกค้า (customer-scoped, no equipment)
+   * opens `CustomerDetailsModal` the same way via `openCustomerProfile` — IN
+   * PLACE, never a navigation to /customers.
    */
   const handleEditClick = async (alertTarget?: any) => {
     const target = alertTarget || selectedAlert;
@@ -392,13 +453,11 @@ export default function AlertsPage() {
     }
 
     if (route.kind === "customer_profile") {
-      // นัดโทรลูกค้า: navigate away rather than opening the schedule form —
-      // /customers already knows how to deep-link to one customer's own
-      // detail modal (?customerId=), including the "ไม่พบ/โหลดไม่สำเร็จ"
-      // messages if the id turns out to be stale. Nothing here duplicates
-      // that page's logic.
-      router.push(`/customers?customerId=${encodeURIComponent(route.customerId)}`);
-      setSelectedAlert(null);
+      // นัดโทรลูกค้า: open CustomerDetailsModal IN PLACE — never navigate
+      // away from /crm/alerts (spec: open-customer-profile-in-place). The
+      // panel closes only on success, exactly as before this was extracted
+      // into `openCustomerProfile`.
+      if (await openCustomerProfile(route.customerId)) setSelectedAlert(null);
       return;
     }
 
@@ -409,18 +468,7 @@ export default function AlertsPage() {
       return;
     }
 
-    try {
-      const res = await fetch(`/api/admin/equipments/${encodeURIComponent(route.equipmentId)}`);
-      if (res.ok) {
-        const eq = await res.json();
-        setViewingEquipmentDetails(eq);
-        setSelectedAlert(null);
-      } else {
-        showToast("โหลดข้อมูลอุปกรณ์ไม่สำเร็จ", "error");
-      }
-    } catch {
-      showToast("โหลดข้อมูลอุปกรณ์ไม่สำเร็จ", "error");
-    }
+    if (await openEquipmentDetails(route.equipmentId)) setSelectedAlert(null);
   };
 
   const handleSaveSchedule = async (e: React.FormEvent) => {
@@ -1316,6 +1364,12 @@ export default function AlertsPage() {
             revealTask={revealTask}
             onToast={showToast}
             onUnauthorized={handleUnauthorized}
+            // Customer/equipment chips open the shared details modal IN
+            // PLACE instead of navigating (spec:
+            // open-task-chip-targets-in-place) — same fetch-and-open
+            // functions the card's own "แก้ไข" button uses.
+            onOpenCustomer={openCustomerProfile}
+            onOpenEquipment={openEquipmentDetails}
           />
         </div>
       </div>
@@ -1740,7 +1794,24 @@ export default function AlertsPage() {
           }}
         />
       )}
-      
+
+      {/* นัดโทรลูกค้า's "แก้ไข" (spec: open-customer-profile-in-place) — the
+          same component /customers uses, opened here instead of navigating.
+          `onClose` re-fetches for the same reason the equipment modal above
+          does: CustomerCallScheduleSection inside it can add/edit/delete the
+          very call schedules this feed shows. */}
+      {viewingCustomerDetails && (
+        <CustomerDetailsModal
+          customer={viewingCustomerDetails}
+          onClose={() => {
+            setViewingCustomerDetails(null);
+            fetchAlerts();
+          }}
+          onSaved={setViewingCustomerDetails}
+          showToast={showToast}
+        />
+      )}
+
       {/* ลูกหนี้ค้างชำระ: recording a payment happens HERE, on the feed. It does
           not navigate away — one payment must stay one action, and the alert
           clears itself because the WHERE requires an outstanding balance. */}
