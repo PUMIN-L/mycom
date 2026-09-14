@@ -162,12 +162,23 @@ export default function CustomerDetailsModal({
   return (
     <>
       <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fade-in" onClick={onClose}>
-        <div className="bg-white rounded-3xl shadow-2xl max-w-xl w-full max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-          {/* Header — sticky, bordered, same shape as EquipmentDetailsModal's
-              header (title/subtitle on the left, actions on the right) so
-              the two detail modals frame their rounded corners identically
-              instead of this one looking flat/square at the top. */}
-          <div className="p-6 border-b border-gray-100 flex justify-between items-center sticky top-0 bg-white z-10">
+        <div
+          className="bg-white rounded-3xl shadow-2xl max-w-xl w-full max-h-[85vh] overflow-hidden flex flex-col"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* Header — a flex sibling ABOVE the scrollable body below, not
+              `position: sticky` inside one shared scroll box. `sticky` looks
+              identical when nothing scrolls, but Chromium has a real bug
+              where a sticky child can escape its ancestor's
+              `border-radius` clip once that ancestor actually scrolls —
+              which is exactly why this modal's top corners looked square
+              only once its note/schedule content grew long enough to
+              scroll, while EquipmentDetailsModal's (also `sticky`) looked
+              fine in a screenshot that never needed to scroll. Splitting
+              header/body into their own flex boxes, with `overflow-hidden`
+              on the rounded outer box, makes the rounding correct
+              regardless of scroll state. */}
+          <div className="p-6 border-b border-gray-100 flex justify-between items-center shrink-0">
             <div className="flex items-center gap-4 min-w-0">
               <div className="w-14 h-14 rounded-full bg-gradient-to-tr from-orange-200 to-orange-100 border-4 border-white shadow-sm flex items-center justify-center text-orange-700 font-bold text-xl shrink-0">
                 {customer.name.charAt(0)}
@@ -204,7 +215,7 @@ export default function CustomerDetailsModal({
             </div>
           </div>
 
-          <div className="p-6 space-y-4">
+          <div className="p-6 space-y-4 overflow-y-auto min-h-0">
             <div className="flex items-center p-4 bg-gray-50 rounded-2xl border border-gray-100">
               <div className="p-2 bg-white rounded-xl shadow-sm mr-4 text-gray-400">
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path></svg>
