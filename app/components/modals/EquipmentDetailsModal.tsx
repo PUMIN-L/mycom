@@ -351,9 +351,20 @@ export default function EquipmentDetailsModal({
   return (
     <>
       <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[150] flex items-center justify-center p-4 animate-fade-in" onClick={onClose}>
-        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-          {/* Header */}
-          <div className="p-6 border-b border-gray-100 flex justify-between items-start sticky top-0 bg-white z-10">
+        <div
+          className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-hidden flex flex-col"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* Header — a flex sibling ABOVE the scrollable body, not
+              `position: sticky` inside one shared scroll box: Chromium has a
+              real bug where a sticky child can escape its ancestor's
+              `border-radius` clip once that ancestor actually scrolls, which
+              squared off these top corners once there was enough content
+              (job history + schedules) to need scrolling. Splitting header/
+              body into their own flex boxes with `overflow-hidden` on this
+              outer one keeps the rounding correct regardless of scroll
+              state (same fix as CustomerDetailsModal). */}
+          <div className="p-6 border-b border-gray-100 flex justify-between items-start shrink-0">
             <div>
               <h3 className="text-xl font-bold text-gray-800">รายละเอียดอุปกรณ์</h3>
               <p className="text-sm text-gray-400 mt-1">{stripHtml(equipment.productName)} — S/N: {equipment.serialNumber || "—"}</p>
@@ -381,6 +392,8 @@ export default function EquipmentDetailsModal({
             </div>
           </div>
 
+          {/* Scrollable body — everything below the header. */}
+          <div className="overflow-y-auto min-h-0">
           {/* Equipment info grid */}
           <div className="p-6 grid grid-cols-2 gap-4">
             <Info label="ลูกค้า" value={equipment.customerName} />
@@ -562,6 +575,7 @@ export default function EquipmentDetailsModal({
                 ))}
               </div>
             )}
+          </div>
           </div>
         </div>
       </div>
