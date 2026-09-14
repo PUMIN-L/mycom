@@ -5,11 +5,14 @@
  * Mirrors the customer-page button (add-customer-quick-task-button) closely
  * enough that most of what is worth pinning down is the same shape: the link
  * seeded correctly, still removable, no form opened with nothing to file the
- * task under. What is specific to THIS button: it reports outcomes with
- * `alert()` (this modal's own established convention, not a toast), and its
- * topic cache is the MODULE-LEVEL one shared with the customer button
- * (`useTaskTopics.ts`) — a load done from either button must be visible to
- * the other, which is exercised directly rather than just asserted.
+ * task under. What is specific to THIS button: topic-load/no-topics FAILURES
+ * still report with `alert()` (this modal's own established convention, not
+ * a toast, for everything else it does), but a successful save shows the
+ * shared `TaskCreatedNotice` dialog instead — the same as the customer-page
+ * button — and its topic cache is the MODULE-LEVEL one shared with that
+ * button (`useTaskTopics.ts`) — a load done from either button must be
+ * visible to the other, which is exercised directly rather than just
+ * asserted.
  */
 import { render, screen, waitFor, fireEvent, within } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -107,8 +110,14 @@ afterEach(() => {
 describe("EquipmentDetailsModal — ปุ่ม สร้างสิ่งที่ต้องทำ", () => {
   it("เปิดฟอร์มสร้างงานพร้อมลิงก์เครื่องนี้ และบันทึกสำเร็จ", async () => {
     const fetchMock = mockFetch();
+    const onTaskCreated = vi.fn();
     render(
-      <EquipmentDetailsModal equipment={EQUIPMENT} onClose={vi.fn()} onEditEquipment={vi.fn()} />
+      <EquipmentDetailsModal
+        equipment={EQUIPMENT}
+        onClose={vi.fn()}
+        onEditEquipment={vi.fn()}
+        onTaskCreated={onTaskCreated}
+      />
     );
 
     fireEvent.click(await screen.findByRole("button", { name: /สร้างสิ่งที่ต้องทำ/ }));
@@ -118,7 +127,14 @@ describe("EquipmentDetailsModal — ปุ่ม สร้างสิ่งท�
 
     await saveTaskForm();
 
-    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith("สร้างงานสำเร็จ — ผูกกับเครื่องนี้แล้ว"));
+    // A nice styled dialog, not the native `alert()` — and it fires
+    // `onTaskCreated` so a host page's task board can reveal it without a
+    // manual refresh (spec: fix reported by user — see git log).
+    expect(await screen.findByText("สร้างงานสำเร็จ")).toBeInTheDocument();
+    expect(screen.getByText("ผูกกับเครื่องนี้แล้ว")).toBeInTheDocument();
+    expect(alertSpy).not.toHaveBeenCalled();
+    expect(onTaskCreated).toHaveBeenCalledWith(expect.objectContaining({ id: "t9" }));
+
     const saveCall = fetchMock.mock.calls.find(
       ([url, init]) => url === "/api/admin/tasks" && (init as RequestInit)?.method === "POST"
     )!;
@@ -127,6 +143,12 @@ describe("EquipmentDetailsModal — ปุ่ม สร้างสิ่งท�
       { targetType: "equipment", targetId: "eq-1", label: "เครื่องชั่ง A (S/N SN-1)" },
     ]);
     // The equipment details modal itself is still open underneath.
+    expect(screen.getByText("รายละเอียดอุปกรณ์")).toBeInTheDocument();
+
+    // Dismissing the notice does not reopen the create-task form or close
+    // the equipment modal.
+    fireEvent.click(screen.getByRole("button", { name: "ตกลง" }));
+    expect(screen.queryByText("สร้างงานสำเร็จ")).not.toBeInTheDocument();
     expect(screen.getByText("รายละเอียดอุปกรณ์")).toBeInTheDocument();
   });
 

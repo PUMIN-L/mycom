@@ -7,6 +7,7 @@ import type {
   ServiceSchedule,
   ServiceJobSummary,
   TaskTopic,
+  CrmTask,
 } from "../../lib/types";
 import { toLocalDateString, formatDisplayDate } from "../../lib/dateFormat";
 // "สร้างสิ่งที่ต้องทำ" linked to this equipment — spec:
@@ -17,6 +18,7 @@ import { toLocalDateString, formatDisplayDate } from "../../lib/dateFormat";
 import TaskFormModal, { type TaskLinkPayload } from "../TaskFormModal";
 import { buildTaskLinkLabel } from "../TaskLinkChips";
 import { ensureTaskTopicsLoaded } from "../useTaskTopics";
+import TaskCreatedNotice from "./TaskCreatedNotice";
 
 // Note: Local stripHtml function
 function stripHtml(html?: string): string {
@@ -28,12 +30,18 @@ interface EquipmentDetailsModalProps {
   equipment: CustomerEquipment;
   onClose: () => void;
   onEditEquipment: (equipment: CustomerEquipment) => void;
+  // Fired after the quick-create "สร้างสิ่งที่ต้องทำ" button saves a task —
+  // lets a host page with its own task board (e.g. /crm/alerts) reveal the
+  // new task there instead of requiring a manual refresh. Hosts with no task
+  // board of their own (EquipmentTab) simply omit it.
+  onTaskCreated?: (task: CrmTask) => void;
 }
 
 export default function EquipmentDetailsModal({
   equipment,
   onClose,
   onEditEquipment,
+  onTaskCreated,
 }: EquipmentDetailsModalProps) {
   // State for schedules
   const [schedules, setSchedules] = useState<ServiceSchedule[]>([]);
@@ -79,6 +87,7 @@ export default function EquipmentDetailsModal({
   const [taskTopics, setTaskTopics] = useState<TaskTopic[] | null>(null);
   const [isLoadingTaskTopics, setIsLoadingTaskTopics] = useState(false);
   const [showTaskForm, setShowTaskForm] = useState(false);
+  const [taskCreatedMessage, setTaskCreatedMessage] = useState<string | null>(null);
 
   useEffect(() => {
     fetchSchedules(equipment.id);
@@ -174,10 +183,12 @@ export default function EquipmentDetailsModal({
    * "สร้างสิ่งที่ต้องทำ" — the topic list is required before `TaskFormModal`
    * can open (a task with no active topic is refused with a 400 by `POST
    * /api/admin/tasks`), so it must be in hand first; there is no honest
-   * "open now, fail later" path. Reports with `alert()`, matching every other
-   * outcome this modal already reports that way (schedule save/delete, OTP) —
-   * introducing a toast for this one button alone would leave the modal
-   * speaking two different languages for the same kind of message.
+   * "open now, fail later" path. The topic-load/no-topics FAILURE paths still
+   * report with `alert()`, matching every other failure this modal already
+   * reports that way (schedule save/delete, OTP) — only the task-created
+   * SUCCESS message gets the nicer `TaskCreatedNotice` dialog (shared with
+   * `CustomerDetailsModal`), since a plain `alert()` there is what the user
+   * flagged as ugly.
    */
   const handleOpenTaskForm = async () => {
     if (isLoadingTaskTopics) return;
@@ -861,10 +872,18 @@ export default function EquipmentDetailsModal({
           topics={taskTopics}
           initialLinks={taskFormInitialLinks()}
           onClose={() => setShowTaskForm(false)}
-          onSaved={() => {
+          onSaved={(task) => {
             setShowTaskForm(false);
-            alert("สร้างงานสำเร็จ — ผูกกับเครื่องนี้แล้ว");
+            setTaskCreatedMessage("ผูกกับเครื่องนี้แล้ว");
+            onTaskCreated?.(task);
           }}
+        />
+      )}
+
+      {taskCreatedMessage && (
+        <TaskCreatedNotice
+          message={taskCreatedMessage}
+          onClose={() => setTaskCreatedMessage(null)}
         />
       )}
     </>

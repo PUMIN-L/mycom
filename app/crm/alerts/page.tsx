@@ -1792,6 +1792,10 @@ export default function AlertsPage() {
             setViewingEquipmentDetails(null);
             setEditingEquipment(eq);
           }}
+          // Same `revealTask` mechanism the board's own "สร้างงานใหม่" button
+          // uses — makes a task created from inside this modal show up on
+          // the board below without a manual refresh.
+          onTaskCreated={setRevealTask}
         />
       )}
 
@@ -1809,6 +1813,10 @@ export default function AlertsPage() {
           }}
           onSaved={setViewingCustomerDetails}
           showToast={showToast}
+          // Same `revealTask` mechanism the board's own "สร้างงานใหม่" button
+          // uses — makes a task created from inside this modal show up on
+          // the board below without a manual refresh.
+          onTaskCreated={setRevealTask}
         />
       )}
 

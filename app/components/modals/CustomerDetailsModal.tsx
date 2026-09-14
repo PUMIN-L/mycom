@@ -23,25 +23,37 @@
  *              caller decides what to do with it (update a list, update its
  *              own "currently viewing" state) — this component never assumes
  *              there IS a list to patch, which is true on /crm/alerts.
- *   showToast  the host page's own toast function (`(message, type) =>
- *              void`) — both current callers already have one; this never
- *              introduces a second feedback mechanism the way
- *              `EquipmentDetailsModal` deliberately keeps using `alert()`
- *              because IT has no toast system to match.
+ *   showToast     the host page's own toast function (`(message, type) =>
+ *                 void`) — both current callers already have one; this never
+ *                 introduces a second feedback mechanism the way
+ *                 `EquipmentDetailsModal` deliberately keeps using `alert()`
+ *                 for its OTHER messages, because IT has no toast system to
+ *                 match. The one exception is the task-created confirmation,
+ *                 which both modals show via the shared `TaskCreatedNotice`
+ *                 dialog instead of either `showToast` or `alert()`.
+ *   onTaskCreated optional. Fired after the quick-create button saves a task,
+ *                 so a host with its own task board (only /crm/alerts today)
+ *                 can reveal it there instead of requiring a manual refresh.
  */
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import type { Customer, TaskTopic } from "../../lib/types";
+import type { Customer, TaskTopic, CrmTask } from "../../lib/types";
 import CustomerCallScheduleSection from "./CustomerCallScheduleSection";
 import TaskFormModal, { type TaskLinkPayload } from "../TaskFormModal";
 import { buildTaskLinkLabel } from "../TaskLinkChips";
 import { ensureTaskTopicsLoaded } from "../useTaskTopics";
+import TaskCreatedNotice from "./TaskCreatedNotice";
 
 export interface CustomerDetailsModalProps {
   customer: Customer;
   onClose: () => void;
   onSaved: (updated: Customer) => void;
   showToast: (message: string, type: "success" | "error") => void;
+  // Fired after the quick-create "สร้างสิ่งที่ต้องทำ" button saves a task —
+  // lets a host page with its own task board (e.g. /crm/alerts) reveal the
+  // new task there instead of requiring a manual refresh. Hosts with no task
+  // board of their own (/customers) simply omit it.
+  onTaskCreated?: (task: CrmTask) => void;
 }
 
 export default function CustomerDetailsModal({
@@ -49,6 +61,7 @@ export default function CustomerDetailsModal({
   onClose,
   onSaved,
   showToast,
+  onTaskCreated,
 }: CustomerDetailsModalProps) {
   // Inline "บันทึกลูกค้า" editing directly inside this modal — no need to
   // close it and reopen a separate edit-customer modal.
@@ -109,6 +122,7 @@ export default function CustomerDetailsModal({
   const [taskTopics, setTaskTopics] = useState<TaskTopic[] | null>(null);
   const [isLoadingTaskTopics, setIsLoadingTaskTopics] = useState(false);
   const [showTaskForm, setShowTaskForm] = useState(false);
+  const [taskCreatedMessage, setTaskCreatedMessage] = useState<string | null>(null);
 
   const handleOpenTaskForm = useCallback(async () => {
     if (isLoadingTaskTopics) return;
@@ -306,10 +320,18 @@ export default function CustomerDetailsModal({
           topics={taskTopics}
           initialLinks={taskFormInitialLinks}
           onClose={() => setShowTaskForm(false)}
-          onSaved={() => {
+          onSaved={(task) => {
             setShowTaskForm(false);
-            showToast("สร้างงานสำเร็จ — ผูกกับลูกค้ารายนี้แล้ว", "success");
+            setTaskCreatedMessage("ผูกกับลูกค้ารายนี้แล้ว");
+            onTaskCreated?.(task);
           }}
+        />
+      )}
+
+      {taskCreatedMessage && (
+        <TaskCreatedNotice
+          message={taskCreatedMessage}
+          onClose={() => setTaskCreatedMessage(null)}
         />
       )}
     </>

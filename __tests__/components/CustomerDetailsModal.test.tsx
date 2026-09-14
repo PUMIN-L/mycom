@@ -180,7 +180,16 @@ describe("CustomerDetailsModal — แก้ไขบันทึกลูกค
 describe("CustomerDetailsModal — ปุ่ม สร้างสิ่งที่ต้องทำ", () => {
   it("เปิดฟอร์มพร้อมลิงก์ลูกค้านี้ และบันทึกสำเร็จ", async () => {
     const fetchMock = mockFetch();
-    render(<CustomerDetailsModal customer={CUSTOMER} onClose={vi.fn()} onSaved={vi.fn()} showToast={showToast} />);
+    const onTaskCreated = vi.fn();
+    render(
+      <CustomerDetailsModal
+        customer={CUSTOMER}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+        showToast={showToast}
+        onTaskCreated={onTaskCreated}
+      />
+    );
 
     fireEvent.click(screen.getByRole("button", { name: /สร้างสิ่งที่ต้องทำ/ }));
     const dialog = await screen.findByRole("dialog", { name: "สร้างงานใหม่" });
@@ -188,14 +197,23 @@ describe("CustomerDetailsModal — ปุ่ม สร้างสิ่งท�
 
     await saveTaskForm();
 
-    await waitFor(() =>
-      expect(showToast).toHaveBeenCalledWith("สร้างงานสำเร็จ — ผูกกับลูกค้ารายนี้แล้ว", "success")
-    );
+    // A styled dialog now, not just a toast — and `onTaskCreated` fires so a
+    // host page's task board can reveal it without a manual refresh (bug the
+    // user reported: creating from this button needed a manual page refresh
+    // before the new task appeared on the board).
+    expect(await screen.findByText("สร้างงานสำเร็จ")).toBeInTheDocument();
+    expect(screen.getByText("ผูกกับลูกค้ารายนี้แล้ว")).toBeInTheDocument();
+    expect(showToast).not.toHaveBeenCalled();
+    expect(onTaskCreated).toHaveBeenCalledWith(expect.objectContaining({ id: "t9" }));
+
     const saveCall = fetchMock.mock.calls.find(
       ([url, init]) => url === "/api/admin/tasks" && (init as RequestInit)?.method === "POST"
     )!;
     const body = JSON.parse(String((saveCall[1] as RequestInit).body));
     expect(body.links).toEqual([{ targetType: "customer", targetId: "c1", label: "สมชาย ใจดี (บริษัท ก)" }]);
+
+    fireEvent.click(screen.getByRole("button", { name: "ตกลง" }));
+    expect(screen.queryByText("สร้างงานสำเร็จ")).not.toBeInTheDocument();
   });
 
   it("ไม่มีหัวข้องานเลย — toast แล้วไม่เปิดฟอร์ม", async () => {
