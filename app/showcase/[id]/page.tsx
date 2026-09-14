@@ -9,6 +9,7 @@ import { getAllProducts, getAllCategories, isProductPublic } from "../../lib/pro
 import { getSession } from "../../lib/session";
 import { SITE_URL, SITE_NAME } from "../../lib/site";
 import { getCompanyInfo } from "../../lib/companyInfo";
+import { stripHtml } from "../../lib/stripHtml";
 import ShowcaseClient from "./ShowcaseClient";
 
 export const dynamic = "force-dynamic";
@@ -54,21 +55,27 @@ export async function generateMetadata({
     plainTextFromBlocks(content.blocks).slice(0, 160) || SITE_NAME;
   const image = firstImage(content.blocks);
   const canonical = `/showcase/${content.id}`;
+  // `content.title` is rich text (sanitizeRichText, not plain text) — the
+  // page itself renders it with dangerouslySetInnerHTML, but <title>/OG/
+  // Twitter tags are plain-text contexts, so a title saved as e.g.
+  // `<p>GM-4</p>` was showing up on Google literally with the tags still in
+  // it. Strip it here; ShowcaseClient.tsx's own on-page heading is untouched.
+  const title = stripHtml(content.title).trim() || SITE_NAME;
 
   return {
-    title: content.title,
+    title,
     description,
     alternates: { canonical },
     openGraph: {
       type: "article",
-      title: content.title,
+      title,
       description,
       url: `${SITE_URL}${canonical}`,
       images: image ? [{ url: image }] : undefined,
     },
     twitter: {
       card: "summary_large_image",
-      title: content.title,
+      title,
       description,
     },
   };
@@ -118,12 +125,15 @@ export default async function ShowcaseContentPage({
 
   const description = plainTextFromBlocks(content.blocks).slice(0, 200);
   const image = firstImage(content.blocks);
+  // Same rich-text-title issue as generateMetadata above: schema.org's
+  // `headline`/breadcrumb `name` are plain-text fields, not HTML.
+  const plainTitle = stripHtml(content.title).trim() || SITE_NAME;
 
   const logo = { "@type": "ImageObject", url: `${SITE_URL}/icon.png` };
   const articleLd = {
     "@context": "https://schema.org",
     "@type": "Article",
-    headline: content.title,
+    headline: plainTitle,
     description: description || undefined,
     image: image ? [image] : undefined,
     datePublished: content.createdAt || undefined,
@@ -146,7 +156,7 @@ export default async function ShowcaseContentPage({
       {
         "@type": "ListItem",
         position: 2,
-        name: content.title,
+        name: plainTitle,
         item: `${SITE_URL}/showcase/${content.id}`,
       },
     ],
