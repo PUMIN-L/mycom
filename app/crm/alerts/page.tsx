@@ -713,6 +713,13 @@ export default function AlertsPage() {
         </div>
       )}
 
+      {/* Wraps the sticky header + the alert feed ONLY (not the task board
+          below) — `sticky` un-sticks once its own containing block's bottom
+          edge scrolls past, so scoping it to this wrapper (instead of the
+          page root, which spans all the way to the bottom of the task
+          board) makes the tab bar disappear once the admin scrolls into
+          "สิ่งที่ต้องทำ" instead of floating over an unrelated section. */}
+      <div className="relative">
       {/* Header */}
       <div className="bg-white border-b border-gray-100 sticky top-0 z-30">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6">
@@ -1331,6 +1338,7 @@ export default function AlertsPage() {
           </p>
         )}
         </div>
+      </div>
         {/* ── END OF THE AUTOMATIC FEED ─────────────────────────────────── */}
 
         {/* ── กระดานงานที่บันทึกเอง ───────────────────────────────────────────
