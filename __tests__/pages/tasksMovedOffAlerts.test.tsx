@@ -2,10 +2,13 @@
  * The "สิ่งที่ต้องทำ" board moved off `/crm/alerts` onto its own page at
  * `/crm/tasks` (spec: move-task-board-to-own-page) — this file asserts the
  * seam between the two pages: `/crm/alerts` no longer fetches or renders
- * anything board-related and instead shows a button to `/crm/tasks` (in the
- * exact spot the inline board used to occupy), badged with the same
- * `dueTaskCount` the board's floating jump button used to show; `/crm/tasks`
- * renders the board itself and a way back to `/crm/alerts`.
+ * anything board-related and instead shows a link to `/crm/tasks` TWICE
+ * (once in the header actions row, once as a card in the exact spot the
+ * inline board used to occupy — a later, separate request added the header
+ * one so the page top has a way there without scrolling past the whole
+ * feed), both badged with the same `dueTaskCount` the board's old floating
+ * jump button used to show; `/crm/tasks` renders the board itself and a way
+ * back to `/crm/alerts`.
  */
 import { render, screen, waitFor, within } from "@testing-library/react";
 import { describe, it, expect, vi, afterEach } from "vitest";
@@ -80,22 +83,28 @@ describe("/crm/alerts — the board is gone, replaced by a button to /crm/tasks"
     ).toBe(false);
   });
 
-  it("shows a badged button to /crm/tasks when there are due tasks", async () => {
+  it("shows two badged links to /crm/tasks (header + bottom card) when there are due tasks", async () => {
     stubFetch(alertsPayload({ dueTaskCount: 4 }));
     render(<AlertsPage />);
 
-    const link = await screen.findByRole("link", { name: /ไปที่หน้าสิ่งที่ต้องทำ/ });
-    expect(link).toHaveAttribute("href", "/crm/tasks");
-    expect(within(link).getByText("4")).toBeInTheDocument();
+    const links = await screen.findAllByRole("link", { name: /ไปที่หน้าสิ่งที่ต้องทำ/ });
+    expect(links).toHaveLength(2);
+    for (const link of links) {
+      expect(link).toHaveAttribute("href", "/crm/tasks");
+      expect(within(link).getByText("4")).toBeInTheDocument();
+    }
   });
 
-  it("shows no badge when there are no due tasks", async () => {
+  it("shows no badge on either link when there are no due tasks", async () => {
     stubFetch(alertsPayload({ dueTaskCount: 0 }));
     render(<AlertsPage />);
 
-    const link = await screen.findByRole("link", { name: /ไปที่หน้าสิ่งที่ต้องทำ/ });
-    expect(link).toHaveAttribute("href", "/crm/tasks");
-    expect(within(link).queryByText("0")).not.toBeInTheDocument();
+    const links = await screen.findAllByRole("link", { name: /ไปที่หน้าสิ่งที่ต้องทำ/ });
+    expect(links).toHaveLength(2);
+    for (const link of links) {
+      expect(link).toHaveAttribute("href", "/crm/tasks");
+      expect(within(link).queryByText("0")).not.toBeInTheDocument();
+    }
   });
 });
 

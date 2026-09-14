@@ -636,9 +636,23 @@ export default function AlertsPage() {
               </div>
               <p className="text-sm text-gray-500 font-medium ml-13">รวมรายการที่ต้องติดตามและอัปเดต</p>
             </div>
-            {/* flex-wrap: the guide button is a third item in this row, which
-                would otherwise push the header wider than a 360px phone. */}
+            {/* flex-wrap: four buttons in this row would otherwise push the
+                header wider than a 360px phone. */}
             <div className="flex flex-wrap items-center gap-3">
+              {/* ไปที่หน้าสิ่งที่ต้องทำ — ปุ่มเดียวกับการ์ดท้ายฟีดด้านล่าง
+                  (spec: move-task-board-to-own-page) ใส่ซ้ำไว้บนหัวหน้าด้วย
+                  เพื่อให้ไปถึงได้โดยไม่ต้องเลื่อนผ่านฟีดทั้งหมดก่อน */}
+              <Link
+                href="/crm/tasks"
+                className="px-4 py-2 bg-amber-50 border border-amber-200 text-amber-700 font-semibold rounded-xl hover:bg-amber-100 hover:border-amber-300 transition-all text-sm shadow-sm flex items-center gap-2 whitespace-nowrap"
+              >
+                📝 ไปที่หน้าสิ่งที่ต้องทำ
+                {dueTaskCount !== null && dueTaskCount > 0 && (
+                  <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-amber-500 text-white">
+                    {dueTaskCount}
+                  </span>
+                )}
+              </Link>
               {/* ปุ่มกลับไประบบจัดการ — มุมขวาบน สไตล์เดียวกับหน้า admin อื่นๆ */}
               <Link
                 href="/adminpanel"
