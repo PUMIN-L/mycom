@@ -1,20 +1,21 @@
 /**
- * Bug the user reported (with screenshots): creating a task from the
- * "สร้างสิ่งที่ต้องทำ" quick-create button INSIDE `CustomerDetailsModal` /
- * `EquipmentDetailsModal` (opened in place on `/crm/alerts`) never showed up
- * on the "สิ่งที่ต้องทำ" board below — a manual page refresh was required.
+ * Bug the user originally reported (with screenshots, back when the board
+ * lived on `/crm/alerts`): creating a task from the "สร้างสิ่งที่ต้องทำ"
+ * quick-create button INSIDE `CustomerDetailsModal`/`EquipmentDetailsModal`
+ * never showed up on the board below — a manual page refresh was required.
  *
- * Root cause: each modal's own nested `TaskFormModal.onSaved` only closed the
- * form and reported success (`alert()` / `showToast`) — neither told the
- * page's `TaskBoardSection` a new task existed. The board's OWN
- * "สร้างงานใหม่" button already solved this with `revealTask` (see
- * `TaskBoardSection.tsx`'s reveal effect: switching to the view/filter that
- * shows the save and reloading). The fix wires the SAME mechanism through a
- * new `onTaskCreated` prop on both detail modals.
+ * Root cause was each modal's own nested `TaskFormModal.onSaved` never
+ * telling the page's `TaskBoardSection` a new task existed. The fix wired
+ * the same `revealTask` mechanism the board's own "สร้างงานใหม่" button
+ * already used through a new `onTaskCreated` prop on both detail modals.
  *
- * This test proves the effect end-to-end: no `TaskFormModal` unmount trick,
- * no manual re-render — the created task appears on the board because the
- * app itself reloaded it.
+ * The board is now its own page at `/crm/tasks` (spec:
+ * move-task-board-to-own-page) — moved here (adjusted for how a detail modal
+ * is reached on THIS page: via a task chip, since the นัดโทรลูกค้า "แก้ไข"
+ * button this test used on `/crm/alerts` doesn't exist here) from
+ * alertsQuickCreateRevealsBoard.test.tsx. Still proves the effect end-to-end:
+ * no `TaskFormModal` unmount trick, no manual re-render — the created task
+ * appears on the board because the app itself reloaded it.
  */
 import { render, screen, waitFor, fireEvent, within } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -26,7 +27,7 @@ const pushMock = vi.fn();
 // re-render loop (see alertsCustomerCallEditRoute.test.tsx).
 const routerMock = { push: pushMock, replace: vi.fn(), prefetch: vi.fn(), back: vi.fn() };
 vi.mock("next/navigation", () => ({
-  usePathname: () => "/crm/alerts",
+  usePathname: () => "/crm/tasks",
   useRouter: () => routerMock,
   useSearchParams: () => new URLSearchParams(),
   notFound: vi.fn(),
@@ -39,35 +40,7 @@ vi.mock("@/app/components/modals/CustomerCallScheduleSection", () => ({
   default: () => <div data-testid="call-schedule" />,
 }));
 
-import AlertsPage from "@/app/crm/alerts/page";
-
-function alertsPayload(over: Record<string, unknown> = {}) {
-  return {
-    expiringWarranties: [],
-    nearingCalibration: [],
-    nearingCalibrationTotal: 0,
-    upcomingSchedules: [],
-    incompleteEquipments: [],
-    incompleteEquipmentsTotal: 0,
-    missingDocuments: [],
-    customerCallFollowUps: [
-      {
-        id: "sch-1",
-        customerId: "cus-42",
-        customerName: "คุณสมชาย",
-        companyName: "บ.ทดสอบ",
-        scheduledDate: "2026-09-20",
-        notes: "โทรติดตามใบเสนอราคา",
-        overdue: false,
-      },
-    ],
-    customerCallFollowUpsTotal: 1,
-    overdueReceivables: [],
-    overdueReceivablesTotal: 0,
-    dueTaskCount: 0,
-    ...over,
-  };
-}
+import TasksPage from "@/app/crm/tasks/page";
 
 const TOPICS = [
   { id: 1, name: "โทรหาลูกค้า", icon: "📞", color: "blue", sortOrder: 0, isActive: true, createdAt: "2026-01-01T00:00:00.000Z" },
@@ -85,16 +58,28 @@ const CUSTOMER = {
   note: "",
 };
 
-/** Emulates the real board: no task exists until the create-task POST lands,
- *  and every GET after that returns it — proving a real reload happened, not
- *  a locally-patched list. */
+const EXISTING_TASK = {
+  id: "t-existing",
+  topicId: 2,
+  title: "ติดตามงานลูกค้า",
+  detail: null,
+  dueDate: null,
+  status: "pending",
+  completedAt: null,
+  createdAt: "2026-09-01T00:00:00.000Z",
+  topicName: "อื่นๆ",
+  topicIcon: "📌",
+  topicColor: "slate",
+  links: [{ taskId: "t-existing", targetType: "customer", targetId: "cus-42", label: "คุณสมชาย (บ.ทดสอบ)", createdAt: "" }],
+};
+
+/** Emulates the real board: the new task exists only once the create-task
+ *  POST lands, and every GET after that includes it alongside the existing
+ *  one — proving a real reload happened, not a locally-patched list. */
 function stubFetch() {
   let created: Record<string, unknown> | null = null;
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
-    if (url.startsWith("/api/admin/alerts")) {
-      return { ok: true, status: 200, json: async () => alertsPayload() } as unknown as Response;
-    }
     if (url.startsWith("/api/admin/task-topics")) {
       return { ok: true, status: 200, json: async () => TOPICS } as unknown as Response;
     }
@@ -117,8 +102,12 @@ function stubFetch() {
         };
         return { ok: true, status: 201, json: async () => created } as unknown as Response;
       }
-      // GET — only ever includes the task once it has actually been created.
-      return { ok: true, status: 200, json: async () => (created ? [created] : []) } as unknown as Response;
+      // GET — the new task only ever appears once it has actually been created.
+      return {
+        ok: true,
+        status: 200,
+        json: async () => (created ? [EXISTING_TASK, created] : [EXISTING_TASK]),
+      } as unknown as Response;
     }
     const custMatch = url.match(/^\/api\/customers\/([^/?]+)$/);
     if (custMatch) {
@@ -140,17 +129,16 @@ afterEach(() => {
   pushMock.mockClear();
 });
 
-describe("สร้างสิ่งที่ต้องทำจากปุ่มในหน้าข้อมูลลูกค้า/เครื่อง — ขึ้นบนกระดานทันที ไม่ต้องรีเฟรช", () => {
-  it("สร้างจาก CustomerDetailsModal ที่เปิดในหน้าเดิม — งานใหม่ปรากฏบนกระดานเองโดยไม่รีเฟรชหน้า", async () => {
+describe("สร้างสิ่งที่ต้องทำจากปุ่มในหน้าข้อมูลลูกค้า/เครื่อง (หน้า /crm/tasks) — ขึ้นบนกระดานทันที ไม่ต้องรีเฟรช", () => {
+  it("สร้างจาก CustomerDetailsModal ที่เปิดในหน้าเดิม (ผ่านชิปบนงานเดิม) — งานใหม่ปรากฏบนกระดานเองโดยไม่รีเฟรชหน้า", async () => {
     stubFetch();
-    render(<AlertsPage />);
+    render(<TasksPage />);
 
-    // Board starts empty — nothing to reveal yet.
-    await screen.findByText("สิ่งที่ต้องทำ");
+    await screen.findByText("ติดตามงานลูกค้า");
     expect(screen.queryByText("ไปส่งใบเสนอราคา")).not.toBeInTheDocument();
 
-    // Open the customer profile in place via the นัดโทรลูกค้า card's "แก้ไข".
-    fireEvent.click(await screen.findByRole("button", { name: /แก้ไข/ }));
+    // Open the customer profile in place via the existing task's chip.
+    fireEvent.click(await screen.findByRole("button", { name: /คุณสมชาย \(บ\.ทดสอบ\)/ }));
     const modalHeading = await screen.findByRole("heading", { name: "คุณสมชาย", level: 2 });
     expect(modalHeading).toBeInTheDocument();
 

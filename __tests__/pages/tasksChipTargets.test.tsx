@@ -1,11 +1,15 @@
 /**
- * "customer"/"equipment" chips on a SAVED task card (the "สิ่งที่ต้องทำ"
- * board on `/crm/alerts`) used to navigate away via `<Link href>` to
- * `/customers?tab=...`. They now open the shared details modal IN PLACE —
- * the same component and the same fetch-and-open functions the card's own
- * "แก้ไข" button already uses (spec: open-task-chip-targets-in-place).
+ * "customer"/"equipment" chips on a SAVED task card (the "สิ่งที่ต้องทำ" board,
+ * now its own page at `/crm/tasks` — spec: move-task-board-to-own-page) open
+ * the shared details modal IN PLACE rather than navigating away via
+ * `<Link href>` to `/customers?tab=...` — the same component and the same
+ * fetch-and-open functions `/crm/alerts`' own "แก้ไข" button uses (spec:
+ * open-task-chip-targets-in-place, unaffected by the board's page move).
  * `quotation`/`document` chips, and any chip whose target has been deleted,
- * are untouched by this change and are asserted here as a regression check.
+ * are untouched by either change and are asserted here as a regression
+ * check. Moved verbatim (adjusted for the new page) from
+ * alertsTaskChipTargets.test.tsx, which tested this on `/crm/alerts` back
+ * when the board rendered there.
  *
  * These chips live in `TaskBoardSection.tsx`, NOT `TaskLinkChips.tsx` — the
  * latter is only used (with `navigable={false}`) inside `TaskFormModal`'s
@@ -17,11 +21,11 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 
 const pushMock = vi.fn();
 // STABLE object — see alertsCustomerCallEditRoute.test.tsx for why a fresh
-// literal per call sends this page into a real infinite re-render loop via
-// `handleUnauthorized` → `fetchTopics`.
+// literal per call sends a page depending on it into a real infinite
+// re-render loop via `handleUnauthorized` → `fetchTopics`.
 const routerMock = { push: pushMock, replace: vi.fn(), prefetch: vi.fn(), back: vi.fn() };
 vi.mock("next/navigation", () => ({
-  usePathname: () => "/crm/alerts",
+  usePathname: () => "/crm/tasks",
   useRouter: () => routerMock,
   useSearchParams: () => new URLSearchParams(),
   notFound: vi.fn(),
@@ -34,25 +38,7 @@ vi.mock("@/app/components/modals/CustomerCallScheduleSection", () => ({
   default: () => <div data-testid="call-schedule" />,
 }));
 
-import AlertsPage from "@/app/crm/alerts/page";
-
-function alertsPayload(over: Record<string, unknown> = {}) {
-  return {
-    expiringWarranties: [],
-    nearingCalibration: [],
-    nearingCalibrationTotal: 0,
-    upcomingSchedules: [],
-    incompleteEquipments: [],
-    incompleteEquipmentsTotal: 0,
-    missingDocuments: [],
-    customerCallFollowUps: [],
-    customerCallFollowUpsTotal: 0,
-    overdueReceivables: [],
-    overdueReceivablesTotal: 0,
-    dueTaskCount: 0,
-    ...over,
-  };
-}
+import TasksPage from "@/app/crm/tasks/page";
 
 const TOPIC = {
   id: 1,
@@ -88,15 +74,11 @@ const TASK_WITH_LINKS = {
 interface Options {
   customerById?: Record<string, unknown>;
   equipmentById?: Record<string, unknown>;
-  linkTargetIndex?: unknown;
 }
 
 function stubFetch({ customerById = {}, equipmentById = {} }: Options = {}) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
-    if (url.startsWith("/api/admin/alerts")) {
-      return { ok: true, status: 200, json: async () => alertsPayload() } as unknown as Response;
-    }
     if (url.startsWith("/api/admin/task-topics")) {
       return { ok: true, status: 200, json: async () => [TOPIC] } as unknown as Response;
     }
@@ -131,7 +113,7 @@ afterEach(() => {
   pushMock.mockClear();
 });
 
-describe("ชิปลิงก์บนการ์ดงาน — ลูกค้า/เครื่อง เปิดในหน้าเดิม ที่เหลือไม่เปลี่ยน", () => {
+describe("ชิปลิงก์บนการ์ดงาน (หน้า /crm/tasks) — ลูกค้า/เครื่อง เปิดในหน้าเดิม ที่เหลือไม่เปลี่ยน", () => {
   it("กดชิปลูกค้า — เปิด CustomerDetailsModal ในหน้าเดิม ไม่นำทางออก", async () => {
     const fetchMock = stubFetch({
       customerById: {
@@ -147,7 +129,7 @@ describe("ชิปลิงก์บนการ์ดงาน — ลูก�
         },
       },
     });
-    render(<AlertsPage />);
+    render(<TasksPage />);
 
     const chip = await screen.findByRole("button", { name: /คุณสมชาย \(บริษัท ก\)/ });
     fireEvent.click(chip);
@@ -166,7 +148,7 @@ describe("ชิปลิงก์บนการ์ดงาน — ลูก�
         "eq-1": { id: "eq-1", productName: "เครื่องชั่ง A", serialNumber: "SN-1" },
       },
     });
-    render(<AlertsPage />);
+    render(<TasksPage />);
 
     const chip = await screen.findByRole("button", { name: /เครื่องชั่ง A/ });
     fireEvent.click(chip);
@@ -180,7 +162,7 @@ describe("ชิปลิงก์บนการ์ดงาน — ลูก�
 
   it("ชิปใบเสนอราคา/เอกสาร ยังเป็นลิงก์นำทางเหมือนเดิม (ไม่ถูกงานนี้แตะ)", async () => {
     stubFetch();
-    render(<AlertsPage />);
+    render(<TasksPage />);
 
     const quotationChip = await screen.findByRole("link", { name: /QT260905-01/ });
     expect(quotationChip).toHaveAttribute("href", "/quotation?id=q-1&view=1");
@@ -189,13 +171,14 @@ describe("ชิปลิงก์บนการ์ดงาน — ลูก�
     expect(documentChip).toHaveAttribute("href", "/document/d-1");
   });
 
-  // `/crm/alerts` does not pass `linkTargetIndex` to `TaskBoardSection` (it
-  // never has — a pre-existing gap, not something this change touches), so
-  // every chip's liveness reads "unknown" here, never "dead". A "unknown"
-  // chip is still a live, clickable one by design (see `lookupTarget` in
-  // taskBoard.ts) — it is NOT the same thing as a confirmed-deleted target.
-  // The actual "dead chip stays inert even with onOpenCustomer set" guarantee
-  // is a `TaskBoardSection` concern and belongs in its own component test
+  // `/crm/tasks` does not pass `linkTargetIndex` to `TaskBoardSection` (it
+  // never has — same pre-existing gap this page inherited from /crm/alerts,
+  // not something this change touches), so every chip's liveness reads
+  // "unknown" here, never "dead". A "unknown" chip is still a live,
+  // clickable one by design (see `lookupTarget` in taskBoard.ts) — it is NOT
+  // the same thing as a confirmed-deleted target. The actual "dead chip
+  // stays inert even with onOpenCustomer set" guarantee is a
+  // `TaskBoardSection` concern and belongs in its own component test
   // (TaskBoardSection.test.tsx), where `linkTargetIndex` can be set directly.
   it("ชิปลูกค้าที่ยังไม่ได้ตรวจสอบ (ไม่มี linkTargetIndex) ยังเปิดได้ตามปกติ ไม่ถูกมองว่าตายไปเงียบๆ", async () => {
     const fetchMock = stubFetch({
@@ -211,7 +194,7 @@ describe("ชิปลิงก์บนการ์ดงาน — ลูก�
         },
       },
     });
-    render(<AlertsPage />);
+    render(<TasksPage />);
 
     const chip = await screen.findByRole("button", { name: /ลูกค้าที่ถูกลบ/ });
     fireEvent.click(chip);

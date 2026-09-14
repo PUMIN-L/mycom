@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "../../context/AuthContext";
@@ -11,10 +11,7 @@ import type { SearchableDropdownOption } from "../../components/SearchableDropdo
 import {
   CALIBRATION_VALIDITY_MONTHS,
   type CrmAlerts,
-  type CrmTask,
-  type Customer,
   type CustomerEquipment,
-  type TaskTopic,
 } from "../../lib/types";
 import {
   toLocalDateString,
@@ -35,14 +32,7 @@ import SalesRecordEditModal from "../../components/modals/SalesRecordEditModal";
 // open-customer-profile-in-place) — the same component /customers uses,
 // never a second copy, and never a navigation away from this page.
 import CustomerDetailsModal from "../../components/modals/CustomerDetailsModal";
-
-// The manual task board ("post-it notes the owner wrote for himself"). It is
-// NOT an alert: it lives in its own block below the alert grid, never in the
-// tab strip, and its cards never carry a snooze button.
-import TaskBoardSection from "../../components/TaskBoardSection";
-import TaskBoardJumpButton from "../../components/TaskBoardJumpButton";
-import TaskFormModal from "../../components/TaskFormModal";
-import TaskTopicManagerModal from "../../components/TaskTopicManagerModal";
+import { useCustomerEquipmentDetails } from "../../components/useCustomerEquipmentDetails";
 
 // The in-page user guide (tasks.md 18). It is opened by a boolean below and
 // nothing else — no route, no query string — so reading it never changes the
@@ -130,11 +120,6 @@ export default function AlertsPage() {
 
   // Modals state
   const [editingEquipment, setEditingEquipment] = useState<CustomerEquipment | null>(null);
-  const [viewingEquipmentDetails, setViewingEquipmentDetails] = useState<CustomerEquipment | null>(null);
-  // นัดโทรลูกค้า's "แก้ไข" — opens CustomerDetailsModal IN PLACE, the same
-  // shape as viewingEquipmentDetails above (spec:
-  // open-customer-profile-in-place). No URL change, no navigation.
-  const [viewingCustomerDetails, setViewingCustomerDetails] = useState<Customer | null>(null);
   const [editingSalesRecordId, setEditingSalesRecordId] = useState<string | null>(null);
   
   // Complete modal
@@ -161,23 +146,6 @@ export default function AlertsPage() {
   const [editingSchedule, setEditingSchedule] = useState<ScheduleEditState | null>(null);
   const [isSavingSchedule, setIsSavingSchedule] = useState(false);
 
-  // ── Task board (its own block, its own data, its own failures) ─────────────
-  // The topic list is owned HERE so the topic-manager modal can hand back a
-  // fresh, reordered set without the board refetching (TaskTopicManagerModal
-  // props). The board gets every topic, hidden ones included; the create/edit
-  // form only gets the active ones.
-  const [topics, setTopics] = useState<TaskTopic[]>([]);
-  const [topicsLoading, setTopicsLoading] = useState(true);
-  const [topicsError, setTopicsError] = useState<string | null>(null);
-  const [boardRefreshKey, setBoardRefreshKey] = useState(0);
-  const [taskModal, setTaskModal] = useState<{ task: CrmTask | null } | null>(null);
-  const [revealTask, setRevealTask] = useState<CrmTask | null>(null);
-  const [showTopicManager, setShowTopicManager] = useState(false);
-  /** The board's wrapper. The floating jump button both scrolls to it and
-   *  watches it with an IntersectionObserver, so it can hide itself once the
-   *  board is actually on screen. */
-  const taskBoardRef = useRef<HTMLDivElement>(null);
-
   // "ลูกค้าไม่ต่อประกัน" confirmation
   const [declineRenewalTarget, setDeclineRenewalTarget] = useState<CustomerEquipment | null>(null);
   const [isDecliningRenewal, setIsDecliningRenewal] = useState(false);
@@ -197,6 +165,19 @@ export default function AlertsPage() {
   const handleUnauthorized = useCallback(() => {
     router.replace("/login");
   }, [router]);
+
+  // Fetch-and-open state for CustomerDetailsModal/EquipmentDetailsModal —
+  // shared with /crm/tasks (spec: move-task-board-to-own-page), since a task
+  // chip there needs the exact same "open in place, never navigate" behavior
+  // this page's own นัดโทรลูกค้า "แก้ไข" button uses.
+  const {
+    viewingCustomerDetails,
+    setViewingCustomerDetails,
+    viewingEquipmentDetails,
+    setViewingEquipmentDetails,
+    openCustomerProfile,
+    openEquipmentDetails,
+  } = useCustomerEquipmentDetails(showToast);
 
   const fetchAlerts = async () => {
     setIsLoading(true);
@@ -228,38 +209,10 @@ export default function AlertsPage() {
     }
   };
 
-  /** Topics for the board. Deliberately a SEPARATE request from the alerts:
-   *  when this one fails the board still lists its tasks (with a retry next to
-   *  the chips) and the alert feed is untouched — tasks.md 11.16. */
-  const fetchTopics = useCallback(async () => {
-    setTopicsLoading(true);
-    try {
-      const res = await fetch("/api/admin/task-topics?includeHidden=1");
-      if (res.status === 401) {
-        handleUnauthorized();
-        setTopicsError("เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่");
-        return;
-      }
-      if (!res.ok) throw new Error("โหลดหัวข้องานไม่สำเร็จ");
-      const data = await res.json();
-      setTopics(Array.isArray(data) ? (data as TaskTopic[]) : []);
-      setTopicsError(null);
-    } catch (err) {
-      console.error(err);
-      setTopicsError("โหลดหัวข้องานไม่สำเร็จ");
-    } finally {
-      setTopicsLoading(false);
-    }
-  }, [handleUnauthorized]);
-
   useEffect(() => {
     if (isLoggedIn) fetchAlerts();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLoggedIn]);
-
-  useEffect(() => {
-    if (isLoggedIn) fetchTopics();
-  }, [isLoggedIn, fetchTopics]);
 
   const handleComplete = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -356,57 +309,6 @@ export default function AlertsPage() {
       setIsDecliningRenewal(false);
     }
   };
-
-  /**
-   * Fetch one customer and open `CustomerDetailsModal` IN PLACE — never a
-   * navigation to /customers (spec: open-customer-profile-in-place). Shared
-   * by the "แก้ไข" button on a นัดโทรลูกค้า card AND the "customer" chip on a
-   * saved task card (spec: open-task-chip-targets-in-place) — one fetch-and-
-   * open, not a second copy per caller. Returns whether it succeeded, so a
-   * caller with its own state to close (like `handleEditClick`'s
-   * `selectedAlert` panel) only closes it on success, exactly as before this
-   * was extracted.
-   */
-  const openCustomerProfile = useCallback(
-    async (customerId: string): Promise<boolean> => {
-      try {
-        const res = await fetch(`/api/customers/${encodeURIComponent(customerId)}`);
-        if (res.ok) {
-          const customer = await res.json();
-          setViewingCustomerDetails(customer);
-          return true;
-        }
-        showToast("โหลดข้อมูลลูกค้าไม่สำเร็จ", "error");
-        return false;
-      } catch {
-        showToast("โหลดข้อมูลลูกค้าไม่สำเร็จ", "error");
-        return false;
-      }
-    },
-    [showToast]
-  );
-
-  /** The equipment twin of `openCustomerProfile` above — same reasoning,
-   *  same two callers (the "แก้ไข" button on an equipment-scoped card, and
-   *  the "equipment" chip on a saved task card). */
-  const openEquipmentDetails = useCallback(
-    async (equipmentId: string): Promise<boolean> => {
-      try {
-        const res = await fetch(`/api/admin/equipments/${encodeURIComponent(equipmentId)}`);
-        if (res.ok) {
-          const eq = await res.json();
-          setViewingEquipmentDetails(eq);
-          return true;
-        }
-        showToast("โหลดข้อมูลอุปกรณ์ไม่สำเร็จ", "error");
-        return false;
-      } catch {
-        showToast("โหลดข้อมูลอุปกรณ์ไม่สำเร็จ", "error");
-        return false;
-      }
-    },
-    [showToast]
-  );
 
   /**
    * The edit button on every alert card and in the details modal.
@@ -692,16 +594,13 @@ export default function AlertsPage() {
     { id: "receivable", label: "ลูกหนี้ค้างชำระ", count: countOr(receivablesTotal), color: "bg-amber-50 text-amber-700 border-amber-200" },
   ];
 
-  // ── Task board wiring ─────────────────────────────────────────────────────
-  const activeTopics = topics.filter((topic) => topic.isActive !== false);
-
-  /** The number on the floating jump button. Deliberately the count the page
-   *  ALREADY has from /api/admin/alerts (`dueTaskCount` — pending tasks whose
-   *  due date has arrived, the same number the global bell shows): the board
-   *  owns the task list and must not be asked for it a second time just to
-   *  draw a badge. `null` while the payload is loading or failed — on this
-   *  page a 0 reads as "ไม่มีรายการ", which is a different fact from
-   *  "โหลดไม่ได้" (same rule as the tab counts above). */
+  /** The badge on the "ไปที่หน้าสิ่งที่ต้องทำ" button below (spec:
+   *  move-task-board-to-own-page). Deliberately the count the page ALREADY
+   *  has from /api/admin/alerts (`dueTaskCount` — pending tasks whose due
+   *  date has arrived, the same number the global bell shows), not a second
+   *  request just to draw a badge. `null` while the payload is loading or
+   *  failed — on this page a 0 reads as "ไม่มีรายการ", which is a different
+   *  fact from "โหลดไม่ได้" (same rule as the tab counts above). */
   const dueTaskCount = alertsError ? null : (alerts?.dueTaskCount ?? null);
 
   return (
@@ -1341,54 +1240,37 @@ export default function AlertsPage() {
       </div>
         {/* ── END OF THE AUTOMATIC FEED ─────────────────────────────────── */}
 
-        {/* ── กระดานงานที่บันทึกเอง ───────────────────────────────────────────
-            A SEPARATE block, deliberately outside the alert grid above and
-            outside every branch of it: it is not an alert, it is not a tab, and
-            it stays in the same place no matter which alert tab is selected —
-            including while the alert feed is loading or has failed entirely
-            (tasks 11.1-11.3, 11.16). */}
-        {/* ref/id/tabIndex/scroll-mt are the jump button's landing pad:
-            `tabIndex={-1}` lets it MOVE FOCUS here (so a keyboard user carries
-            on inside the board instead of at the top of the page again), and
-            the `scroll-mt-*` pair keeps the STICKY header off the board's
-            heading after the scroll — the header is a tall stacked block on a
-            phone and a single row from `sm` up, hence the two values. Nothing
-            inside the board changes. */}
-        <div
-          id="task-board"
-          ref={taskBoardRef}
-          tabIndex={-1}
-          className="mt-10 pt-8 border-t border-gray-200 scroll-mt-64 sm:scroll-mt-44 focus:outline-none"
-        >
-          <TaskBoardSection
-            topics={topics}
-            topicsLoading={topicsLoading}
-            topicsError={topicsError}
-            onRetryTopics={fetchTopics}
-            onCreateTask={() => setTaskModal({ task: null })}
-            onEditTask={(task) => setTaskModal({ task })}
-            onManageTopics={() => setShowTopicManager(true)}
-            refreshKey={boardRefreshKey}
-            revealTask={revealTask}
-            onToast={showToast}
-            onUnauthorized={handleUnauthorized}
-            // Customer/equipment chips open the shared details modal IN
-            // PLACE instead of navigating (spec:
-            // open-task-chip-targets-in-place) — same fetch-and-open
-            // functions the card's own "แก้ไข" button uses.
-            onOpenCustomer={openCustomerProfile}
-            onOpenEquipment={openEquipmentDetails}
-          />
+        {/* ── ไปที่หน้า "สิ่งที่ต้องทำ" ────────────────────────────────────────
+            The task board used to live inline right here; it now has its own
+            page (spec: move-task-board-to-own-page) so it is never buried
+            under a long alert feed. This stays in the same spot as a clear,
+            always-visible way to reach it, badge included — deliberately
+            outside the alert grid above, same as the board itself always
+            was: it is not an alert, it is not a tab. */}
+        <div className="mt-10 pt-8 border-t border-gray-200">
+          <Link
+            href="/crm/tasks"
+            className="flex flex-col sm:flex-row items-center justify-between gap-4 rounded-3xl border-2 border-dashed border-amber-200 bg-amber-50/70 hover:bg-amber-50 transition-colors p-6 sm:p-8"
+          >
+            <div className="flex items-center gap-4 text-center sm:text-left">
+              <div className="w-12 h-12 rounded-2xl bg-amber-100 flex items-center justify-center text-2xl shrink-0">
+                📝
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-gray-900">สิ่งที่ต้องทำ</h3>
+                <p className="text-sm text-gray-500">รายการที่คุณจดไว้เอง ไม่ใช่แจ้งเตือนอัตโนมัติของระบบ</p>
+              </div>
+            </div>
+            <span className="shrink-0 inline-flex items-center gap-2 px-5 py-3 bg-amber-500 text-white font-bold rounded-xl shadow-sm whitespace-nowrap">
+              ไปที่หน้าสิ่งที่ต้องทำ
+              {dueTaskCount !== null && dueTaskCount > 0 && (
+                <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-white/25">{dueTaskCount}</span>
+              )}
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14 5l7 7m0 0l-7 7m7-7H3" /></svg>
+            </span>
+          </Link>
         </div>
       </div>
-
-      {/* ── ปุ่มลอยไปยังกระดาน "สิ่งที่ต้องทำ" ──────────────────────────────
-          With a long alert feed the board ends up screens below the fold. This
-          is fixed to the BOTTOM-LEFT corner, which is free on this page:
-          GlobalAdminBell owns that corner elsewhere but renders null on
-          /crm/alerts, so the two can never overlap at any width. It hides
-          itself once the board is on screen. */}
-      <TaskBoardJumpButton targetRef={taskBoardRef} count={dueTaskCount} />
 
       {/* ── Complete Schedule Modal ─────────────────────────────────────── */}
       {completingId && (
@@ -1800,10 +1682,6 @@ export default function AlertsPage() {
             setViewingEquipmentDetails(null);
             setEditingEquipment(eq);
           }}
-          // Same `revealTask` mechanism the board's own "สร้างงานใหม่" button
-          // uses — makes a task created from inside this modal show up on
-          // the board below without a manual refresh.
-          onTaskCreated={setRevealTask}
         />
       )}
 
@@ -1821,10 +1699,6 @@ export default function AlertsPage() {
           }}
           onSaved={setViewingCustomerDetails}
           showToast={showToast}
-          // Same `revealTask` mechanism the board's own "สร้างงานใหม่" button
-          // uses — makes a task created from inside this modal show up on
-          // the board below without a manual refresh.
-          onTaskCreated={setRevealTask}
         />
       )}
 
@@ -1932,33 +1806,6 @@ export default function AlertsPage() {
             </form>
           </div>
         </div>
-      )}
-
-      {/* ── Task board modals ───────────────────────────────────────────────
-          `revealTask` is what makes a save visible: the board switches to the
-          view/filter that shows it and says which topic it landed under. */}
-      {taskModal && (
-        <TaskFormModal
-          task={taskModal.task}
-          topics={activeTopics}
-          onClose={() => setTaskModal(null)}
-          onSaved={(task) => {
-            setTaskModal(null);
-            setRevealTask(task);
-            showToast("บันทึกงานสำเร็จ", "success");
-          }}
-        />
-      )}
-
-      {showTopicManager && (
-        <TaskTopicManagerModal
-          initialTopics={topics}
-          onClose={() => setShowTopicManager(false)}
-          onTopicsChanged={(next) => setTopics(next)}
-          // A rename or recolour rewrites no task row, but every card displays
-          // it — so the list has to be re-pulled.
-          onSaveSuccess={() => setBoardRefreshKey((key) => key + 1)}
-        />
       )}
 
       {/* ── คู่มือการใช้งาน ─────────────────────────────────────────────────
