@@ -992,9 +992,6 @@ export default function PurchaseOrderPage() {
               <div id="po-footer" className="flex justify-between gap-6 mt-3">
                 <div className="flex-1 text-[12px]">
                   <div className="space-y-0.5 text-gray-700">
-                    <div className="font-bold text-gray-800">เงื่อนไข</div>
-                    {po.paymentTerms && <div>• เงื่อนไขการชำระเงิน: {po.paymentTerms}</div>}
-                    {po.deliveryTerms && <div>• เงื่อนไขการส่งมอบ: {po.deliveryTerms}</div>}
                   </div>
                   {po.note && (
                     <div className="mt-3 space-y-0.5 text-gray-700">
