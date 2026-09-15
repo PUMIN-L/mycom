@@ -209,6 +209,7 @@ export default function BillingPage() {
   // set a new number is minted against (see fetchLedgerByBases).
   const [prefixDocs, setPrefixDocs] = useState<LedgerEntry[]>([]);
   const [generating, setGenerating] = useState(false);
+  const [exportingExcel, setExportingExcel] = useState(false); // building the .xlsx
   const [saving, setSaving] = useState(false);
   const [loadingQuotation, setLoadingQuotation] = useState(false);
   const [isViewOnly, setIsViewOnly] = useState(false);
@@ -729,6 +730,92 @@ export default function BillingPage() {
     }
   }
 
+  // ── Excel — a single styled sheet laid out like the printed document
+  // (header/parties/meta, bordered item table, totals, signatures), not a
+  // flat data dump — see app/lib/documentFormExcel.ts. Purely additive: does
+  // NOT touch handleDownload/handleSave/postBillingDocument, and does not
+  // save the document — it just reads whatever is currently in `b`. Opening
+  // the result in Excel and using Excel's own Save as PDF / Print → Save as
+  // PDF is how this becomes an actual PDF from the spreadsheet. ────────────
+  async function handleDownloadExcel() {
+    if (exportingExcel) return;
+    setExportingExcel(true);
+    try {
+      const { downloadDocumentFormExcel } = await import("../lib/documentFormExcel");
+      const label = BILLING_LABELS[b.docType] || { th: "เอกสาร", en: "DOCUMENT" };
+      const columns = [
+        { key: "no", header: "ลำดับ", width: 6, align: "center" as const },
+        { key: "name", header: "รายการ", width: 30 },
+        { key: "qty", header: "จำนวน", width: 8, numeric: true },
+        { key: "unit", header: "หน่วย", width: 8, align: "center" as const },
+        { key: "unitPrice", header: "ราคาต่อหน่วย", width: 14, numeric: true },
+        ...(hasLineDiscounts ? [{ key: "discount", header: "ส่วนลด", width: 12, numeric: true }] : []),
+        { key: "amount", header: "จำนวนเงิน", width: 14, numeric: true },
+      ];
+      await downloadDocumentFormExcel(
+        `${BILLING_PREFIX[b.docType]}-${(b.docNo || "document").replace(/[^\w.-]/g, "_")}.xlsx`,
+        label.th,
+        {
+          titleTh: label.th,
+          titleEn: label.en,
+          primaryParty: {
+            label: "ผู้ออกเอกสาร (เรา)",
+            name: COMPANY.name,
+            lines: [
+              COMPANY.address.replace(/\n/g, " "),
+              b.companyTaxId ? `เลขผู้เสียภาษี ${b.companyTaxId}` : null,
+            ],
+          },
+          secondaryParty: {
+            label: "ลูกค้า",
+            name: b.customerCompany || b.customerContact,
+            lines: [
+              b.customerCompany && b.customerContact ? `ผู้ติดต่อ: ${b.customerContact}` : null,
+              b.customerAddress,
+              b.customerPhone ? `โทร ${b.customerPhone}` : null,
+            ],
+          },
+          metaRows: [
+            { label: "เลขที่ (No.)", value: b.docNo || "-" },
+            { label: "วันที่ (Date)", value: thaiDate(b.docDate) },
+          ],
+          columns,
+          items: b.items.map((it, idx) => ({
+            no: idx + 1,
+            name: [it.name, it.description].filter(Boolean).join(" — ") || "-",
+            qty: it.qty,
+            unit: it.unit,
+            unitPrice: it.unitPrice,
+            discount: lines[idx]?.discountValue ?? 0,
+            amount: hasLineDiscounts ? lines[idx]?.netAmount ?? 0 : it.qty * it.unitPrice,
+          })),
+          totals: [
+            { label: "ยอดรวมก่อนภาษี", value: fmt(afterDiscount) },
+            { label: "ภาษีมูลค่าเพิ่ม 7%", value: fmt(vat) },
+            { label: "ยอดรวมสุทธิ", value: fmt(grandTotal), emphasize: true },
+          ],
+          notes: [
+            // Payment fields are receipt-only, exactly like the printed
+            // sheet's own "การชำระเงิน / Payment" block.
+            ...(b.docType === "receipt"
+              ? [
+                  { label: "ช่องทางการชำระเงิน", text: b.paymentMethod || "" },
+                  { label: "วันที่ชำระ", text: b.paymentDate ? thaiDate(b.paymentDate) : "" },
+                  { label: "เลขที่อ้างอิง", text: b.paymentRef || "" },
+                ]
+              : []),
+            { label: "หมายเหตุ", text: b.note || "" },
+          ],
+          signatures: b.docType === "receipt" ? ["ผู้รับเงิน", "ผู้จ่ายเงิน"] : ["ผู้ออกเอกสาร", "ผู้อนุมัติ"],
+        }
+      );
+    } catch {
+      showToast("สร้างไฟล์ Excel ไม่สำเร็จ กรุณาลองใหม่", "error");
+    } finally {
+      setExportingExcel(false);
+    }
+  }
+
   if (isLoading || !isLoggedIn) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
@@ -800,6 +887,15 @@ export default function BillingPage() {
               >
                 ✏️ แก้ไข (New Ver.)
               </Link>
+            )}
+            {isViewOnly && (
+              <button
+                onClick={handleDownloadExcel}
+                disabled={exportingExcel}
+                className="px-5 py-2 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 text-sm font-bold hover:bg-emerald-100 transition shadow-sm disabled:opacity-50"
+              >
+                {exportingExcel ? "กำลังสร้าง..." : "📊 ดาวน์โหลด Excel"}
+              </button>
             )}
             {isViewOnly && (
               <button

@@ -569,49 +569,75 @@ export default function PurchaseOrderPage() {
     }
   }
 
-  // ── Excel — reuses the app's existing xlsxExport helper (no new export
-  // mechanism): one sheet of header/summary fields, one sheet of line items.
+  // ── Excel — a single styled sheet laid out like the printed document
+  // (header/parties/meta, bordered item table, totals, signatures), not a
+  // flat data dump — see app/lib/documentFormExcel.ts. Opening it in Excel
+  // and using Excel's own Save as PDF / Print → Save as PDF is how this
+  // becomes an actual PDF from the spreadsheet.
   async function handleDownloadExcel() {
     if (exportingExcel) return;
     setExportingExcel(true);
     try {
-      const { downloadExcel } = await import("../lib/xlsxExport");
-      await downloadExcel(`PO-${(po.docNo || "document").replace(/[^\w.-]/g, "_")}.xlsx`, [
+      const { downloadDocumentFormExcel } = await import("../lib/documentFormExcel");
+      await downloadDocumentFormExcel(
+        `PO-${(po.docNo || "document").replace(/[^\w.-]/g, "_")}.xlsx`,
+        "ใบสั่งซื้อ",
         {
-          name: "ข้อมูลทั่วไป",
-          rows: [
-            { หัวข้อ: "เลขที่ใบสั่งซื้อ", ค่า: po.docNo || "-" },
-            { หัวข้อ: "วันที่ออกเอกสาร", ค่า: thaiDate(po.docDate) },
-            { หัวข้อ: "วันที่ต้องการรับสินค้า", ค่า: po.deliveryDate ? thaiDate(po.deliveryDate) : "-" },
-            { หัวข้อ: "ผู้ขาย/ซัพพลายเออร์", ค่า: po.supplierCompany || "-" },
-            { หัวข้อ: "ผู้ติดต่อผู้ขาย", ค่า: po.supplierContact || "-" },
-            { หัวข้อ: "เบอร์โทรผู้ขาย", ค่า: po.supplierPhone || "-" },
-            { หัวข้อ: "ที่อยู่ผู้ขาย", ค่า: po.supplierAddress || "-" },
-            { หัวข้อ: "เลขผู้เสียภาษีผู้ขาย", ค่า: po.supplierTaxId || "-" },
-            { หัวข้อ: "ผู้ซื้อ", ค่า: COMPANY.name },
-            { หัวข้อ: "เลขผู้เสียภาษีผู้ซื้อ", ค่า: po.companyTaxId || "-" },
-            { หัวข้อ: "เงื่อนไขการชำระเงิน", ค่า: po.paymentTerms || "-" },
-            { หัวข้อ: "เงื่อนไขการส่งมอบ", ค่า: po.deliveryTerms || "-" },
-            { หัวข้อ: "ยอดรวมก่อนภาษี", ค่า: fmt(afterDiscount) },
-            { หัวข้อ: "ภาษีมูลค่าเพิ่ม 7%", ค่า: fmt(vat) },
-            { หัวข้อ: "ยอดรวมสุทธิ", ค่า: fmt(grandTotal) },
+          titleTh: "ใบสั่งซื้อ",
+          titleEn: "PURCHASE ORDER",
+          primaryParty: {
+            label: "ผู้ซื้อ (เรา)",
+            name: COMPANY.name,
+            lines: [
+              COMPANY.address.replace(/\n/g, " "),
+              po.companyTaxId ? `เลขผู้เสียภาษี ${po.companyTaxId}` : null,
+            ],
+          },
+          secondaryParty: {
+            label: "ผู้ขาย (Supplier)",
+            name: po.supplierCompany,
+            lines: [
+              po.supplierContact ? `ผู้ติดต่อ: ${po.supplierContact}` : null,
+              po.supplierAddress,
+              po.supplierPhone ? `โทร ${po.supplierPhone}` : null,
+              po.supplierTaxId ? `เลขผู้เสียภาษี ${po.supplierTaxId}` : null,
+            ],
+          },
+          metaRows: [
+            { label: "เลขที่ (No.)", value: po.docNo || "-" },
+            { label: "วันที่ (Date)", value: thaiDate(po.docDate) },
+            { label: "กำหนดรับสินค้า", value: po.deliveryDate ? thaiDate(po.deliveryDate) : "-" },
+            ...(po.issuedBy ? [{ label: "ผู้สั่งซื้อ", value: po.issuedBy }] : []),
           ],
-          columnWidths: [28, 40],
-        },
-        {
-          name: "รายการสินค้า",
-          rows: po.items.map((it, idx) => ({
-            ลำดับ: idx + 1,
-            รายการ: it.name || "-",
-            รายละเอียด: it.description || "",
-            จำนวน: it.qty,
-            หน่วย: it.unit,
-            "ราคาต่อหน่วย": it.unitPrice,
-            "จำนวนเงิน": lines[idx]?.netAmount ?? it.qty * it.unitPrice,
+          columns: [
+            { key: "no", header: "ลำดับ", width: 6, align: "center" },
+            { key: "name", header: "รายการ", width: 32 },
+            { key: "qty", header: "จำนวน", width: 8, numeric: true },
+            { key: "unit", header: "หน่วย", width: 8, align: "center" },
+            { key: "unitPrice", header: "ราคาต่อหน่วย", width: 14, numeric: true },
+            { key: "amount", header: "จำนวนเงิน", width: 14, numeric: true },
+          ],
+          items: po.items.map((it, idx) => ({
+            no: idx + 1,
+            name: [it.name, it.description].filter(Boolean).join(" — ") || "-",
+            qty: it.qty,
+            unit: it.unit,
+            unitPrice: it.unitPrice,
+            amount: lines[idx]?.netAmount ?? it.qty * it.unitPrice,
           })),
-          autoSizeColumns: true,
-        },
-      ]);
+          totals: [
+            { label: "ยอดรวมก่อนภาษี", value: fmt(afterDiscount) },
+            { label: "ภาษีมูลค่าเพิ่ม 7%", value: fmt(vat) },
+            { label: "ยอดรวมสุทธิ", value: fmt(grandTotal), emphasize: true },
+          ],
+          notes: [
+            { label: "เงื่อนไขการชำระเงิน", text: po.paymentTerms },
+            { label: "เงื่อนไขการส่งมอบ", text: po.deliveryTerms },
+            { label: "หมายเหตุ", text: po.note },
+          ],
+          signatures: ["ผู้สั่งซื้อ", "ผู้อนุมัติ", "ผู้ขาย (รับทราบ)"],
+        }
+      );
     } catch {
       showToast("สร้างไฟล์ Excel ไม่สำเร็จ กรุณาลองใหม่", "error");
     } finally {

@@ -288,6 +288,7 @@ export default function QuotationPage() {
   const [docNoLedgerAttempt, setDocNoLedgerAttempt] = useState(0);
   const [uploadingItemId, setUploadingItemId] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false); // building the PDF
+  const [exportingExcel, setExportingExcel] = useState(false); // building the .xlsx
   const [savePrompt, setSavePrompt] = useState(false); // "keep 30d or delete now?" after download
   const [deletingQuote, setDeletingQuote] = useState(false);
   const [orphanedImages, setOrphanedImages] = useState<OrphanedImage[]>([]);
@@ -945,6 +946,91 @@ export default function QuotationPage() {
     document.body.removeChild(container);
   }
 
+  // ── Excel — a single styled sheet laid out like the printed document
+  // (header/parties/meta, bordered item table, totals, signatures), not a
+  // flat data dump — see app/lib/documentFormExcel.ts. Purely additive: does
+  // NOT touch generatePdf/handleDownload/handleSave, and does not save the
+  // quotation — it just reads whatever is currently in `q`. Opening the
+  // result in Excel and using Excel's own Save as PDF / Print → Save as PDF
+  // is how this becomes an actual PDF from the spreadsheet. ────────────────
+  async function handleDownloadExcel() {
+    if (exportingExcel) return;
+    setExportingExcel(true);
+    try {
+      const { downloadDocumentFormExcel } = await import("../lib/documentFormExcel");
+      const columns = [
+        { key: "no", header: "ลำดับ", width: 6, align: "center" as const },
+        { key: "name", header: "รายการ", width: 30 },
+        { key: "qty", header: "จำนวน", width: 8, numeric: true },
+        { key: "unit", header: "หน่วย", width: 8, align: "center" as const },
+        { key: "unitPrice", header: "ราคาต่อหน่วย", width: 14, numeric: true },
+        ...(hasLineDiscounts ? [{ key: "discount", header: "ส่วนลด", width: 12, numeric: true }] : []),
+        { key: "amount", header: "จำนวนเงิน", width: 14, numeric: true },
+      ];
+      await downloadDocumentFormExcel(
+        `Quotation-${(q.docNo || "document").replace(/[^\w.-]/g, "_")}.xlsx`,
+        "ใบเสนอราคา",
+        {
+          titleTh: "ใบเสนอราคา",
+          titleEn: "QUOTATION",
+          primaryParty: {
+            label: "ผู้เสนอราคา (เรา)",
+            name: COMPANY.name,
+            lines: [
+              COMPANY.address.replace(/\n/g, " "),
+              q.companyTaxId ? `เลขผู้เสียภาษี ${q.companyTaxId}` : null,
+              q.sellerName ? `พนักงานขาย ${q.sellerName}` : null,
+            ],
+          },
+          secondaryParty: {
+            label: "ลูกค้า",
+            name: q.customerCompany || q.customerContact,
+            lines: [
+              q.customerCompany && q.customerContact ? `ผู้ติดต่อ: ${q.customerContact}` : null,
+              q.customerAddress,
+              q.customerPhone ? `โทร ${q.customerPhone}` : null,
+              q.customerEmail || null,
+            ],
+          },
+          metaRows: [
+            { label: "เลขที่ (No.)", value: q.docNo || "-" },
+            { label: "วันที่ (Date)", value: thaiDate(q.docDate) },
+            { label: "ยืนราคา", value: `${q.validDays} วัน` },
+          ],
+          columns,
+          items: q.items.map((it, idx) => ({
+            no: idx + 1,
+            name: [it.name, stripHtml(it.description)].filter(Boolean).join(" — ") || "-",
+            qty: it.qty,
+            unit: it.unit,
+            unitPrice: it.unitPrice,
+            discount: lines[idx]?.discountValue ?? 0,
+            amount: hasLineDiscounts ? lines[idx]?.netAmount ?? 0 : it.qty * it.unitPrice,
+          })),
+          totals: [
+            { label: "ยอดรวมก่อนภาษี", value: fmt(afterDiscount) },
+            { label: "ภาษีมูลค่าเพิ่ม 7%", value: fmt(vat) },
+            { label: "ยอดรวมสุทธิ", value: fmt(grandTotal), emphasize: true },
+          ],
+          notes: [
+            ...(q.conditions || [])
+              .filter((c) => c.label || c.value)
+              .map((c) => ({ label: c.label || "เงื่อนไข", text: c.value || "-" })),
+            { label: "เงื่อนไขการชำระเงิน", text: q.paymentTerms || "" },
+            { label: "เงื่อนไขการส่งมอบ", text: q.deliveryTerms || "" },
+            { label: "การรับประกัน", text: q.warrantyTerms || "" },
+            { label: "หมายเหตุ", text: q.note || "" },
+          ],
+          signatures: ["ผู้เสนอราคา", "ผู้อนุมัติ", "ลูกค้า (ยอมรับ)"],
+        }
+      );
+    } catch {
+      showToast("สร้างไฟล์ Excel ไม่สำเร็จ กรุณาลองใหม่", "error");
+    } finally {
+      setExportingExcel(false);
+    }
+  }
+
   // ── Download → save record → generate PDF → ask keep/delete ───────────────
   async function handleDownload() {
     if (generating) return;
@@ -1377,6 +1463,15 @@ export default function QuotationPage() {
                   ↩️ แก้ไขใบเดิม ({cloneSource.docNo || "-"}) แทน
                 </button>
               </div>
+            )}
+            {isViewOnly && (
+              <button
+                onClick={handleDownloadExcel}
+                disabled={exportingExcel}
+                className="px-5 py-2 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 text-sm font-bold hover:bg-emerald-100 transition shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {exportingExcel ? "กำลังสร้าง..." : "📊 ดาวน์โหลด Excel"}
+              </button>
             )}
             {isViewOnly && (
               <button
