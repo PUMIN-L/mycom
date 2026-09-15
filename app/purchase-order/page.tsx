@@ -1055,11 +1055,10 @@ export default function PurchaseOrderPage() {
                 </table>
               </div>
 
-              <div id="po-signatures" className="grid grid-cols-3 gap-6 mt-10 text-center text-[12px]">
+              <div id="po-signatures" className="grid grid-cols-2 gap-16 mt-10 text-center text-[12px] max-w-[75%] mx-auto">
                 {[
                   { title: "ผู้สั่งซื้อ", name: po.issuedBy },
                   { title: "ผู้อนุมัติ", name: "" },
-                  { title: "ผู้ขาย (รับทราบคำสั่งซื้อ)", name: "" },
                 ].map((s) => (
                   <div key={s.title}>
                     <div className="border-b border-gray-400 h-12 mb-2" />
