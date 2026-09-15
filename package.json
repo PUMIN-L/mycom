@@ -17,6 +17,7 @@
     "@types/bcryptjs": "^2.4.6",
     "bcryptjs": "^3.0.3",
     "cloudinary": "^2.10.0",
+    "exceljs": "^4.4.0",
     "html2canvas-pro": "^2.2.4",
     "jose": "^6.2.3",
     "jspdf": "^4.2.1",

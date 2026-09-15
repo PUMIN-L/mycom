@@ -6,19 +6,15 @@
 // `downloadExcel()`/`ExcelSheet` (built on the plain `xlsx` package) is for
 // flat DATA exports (customer lists, equipment lists, dashboard reports) —
 // unstyled by design, and used in a dozen places that have no reason to
-// change. A document FORM needs cell borders, merges and fills, which the
-// free `xlsx` package cannot write at all (styling was stripped from its
-// open-source build) — this module dynamically imports `xlsx-js-style`
-// instead, a drop-in-API-compatible fork that restores it. Both packages
-// stay client-side-only, dynamically imported inside a function that only
-// ever runs from a "use client" page, same safety pattern `xlsxExport.ts`
-// and the PDF generators (`html2canvas-pro`/`jspdf`) already use.
+// change. A document FORM needs cell borders, merges, fills AND embedded
+// images (the company logo), which the free `xlsx` package cannot write at
+// all — this module dynamically imports `exceljs` instead, a full-featured
+// library that supports styling, images and page setup.
 //
-// This produces the closest a spreadsheet can get to the PDF — Excel and
-// Numbers both have their own File → Save as PDF / Print → Save as PDF,
-// which is how the admin turns this into an actual PDF from Excel; nothing
-// here can embed a "Save as PDF" button inside the .xlsx file itself, since
-// that isn't a thing the file format can do.
+// Both packages stay client-side-only, dynamically imported inside a function
+// that only ever runs from a "use client" page, same safety pattern
+// `xlsxExport.ts` and the PDF generators (`html2canvas-pro`/`jspdf`) already
+// use.
 
 // Re-export sanitizeExcelCell's protection so every text cell in a form is
 // safe from Excel formula injection, same as the flat exports.
@@ -110,6 +106,9 @@ export interface DocumentFormOptions {
   notes?: FormNoteBlock[];
   /** Signature labels along the bottom, left to right. */
   signatures?: string[];
+  /** URL of the company logo (PNG) to embed in the header.
+   *  Defaults to "/images/profin-logo-3.png" — the same logo the PDF uses. */
+  logoUrl?: string;
 }
 
 /** Build the styled single sheet (no I/O — kept pure so it's unit-testable
@@ -240,38 +239,148 @@ export function buildDocumentFormSheet(opts: DocumentFormOptions) {
   return { rows, merges, columnWidths: opts.columns.map((c) => c.width) };
 }
 
+// ── exceljs helpers ─────────────────────────────────────────────────────────
+
+type ExcelJSBorderStyle = "thin" | "medium" | "thick";
+interface ExcelJSBorder {
+  style: ExcelJSBorderStyle;
+  color: { argb: string };
+}
+
+function toArgb(rgb: string): string {
+  // "9CA3AF" → "FF9CA3AF"
+  return `FF${rgb}`;
+}
+
+function mapBorder(b: { style: BorderStyle; color: { rgb: string } }): ExcelJSBorder {
+  return { style: b.style, color: { argb: toArgb(b.color.rgb) } };
+}
+
 /** Build the sheet and trigger a browser download. Dynamically imports
- *  xlsx-js-style so it is never bundled unless this is actually called. */
+ *  exceljs so it is never bundled unless this is actually called. */
 export async function downloadDocumentFormExcel(
   filename: string,
   sheetName: string,
   opts: DocumentFormOptions
 ): Promise<void> {
-  const XLSX = await import("xlsx-js-style");
+  const ExcelJS = await import("exceljs");
   const { rows, merges, columnWidths } = buildDocumentFormSheet(opts);
 
-  const ws = XLSX.utils.aoa_to_sheet(rows as unknown[][]);
-  ws["!merges"] = merges;
-  ws["!cols"] = columnWidths.map((wch) => ({ wch }));
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet(sheetName, {
+    pageSetup: {
+      paperSize: 9, // A4
+      orientation: "portrait" as const,
+      fitToPage: true,
+      fitToWidth: 1,
+      fitToHeight: 0, // 0 = auto (let it flow vertically)
+      margins: {
+        left: 0.3,
+        right: 0.3,
+        top: 0.5,
+        bottom: 0.5,
+        header: 0.3,
+        footer: 0.3,
+      },
+    },
+  });
 
-  // Print settings: A4, fit to 1 page wide, narrow margins
-  ws["!pageSetup"] = {
-    paperSize: 9, // A4
-    orientation: "portrait",
-    fitToPage: true,
-    fitToWidth: 1,
-    fitToHeight: 999, // Let it flow to multiple pages vertically if needed
-  };
-  ws["!margins"] = {
-    left: 0.3,
-    right: 0.3,
-    top: 0.5,
-    bottom: 0.5,
-    header: 0.3,
-    footer: 0.3,
-  };
+  // Column widths
+  ws.columns = columnWidths.map((w) => ({ width: w }));
 
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, sheetName);
-  XLSX.writeFile(wb, filename);
+  // Write data rows
+  for (const row of rows) {
+    const exRow = ws.addRow(row.map((c) => c.v));
+    row.forEach((c, ci) => {
+      const cell = exRow.getCell(ci + 1);
+      const s = c.s;
+      if (!s) return;
+
+      // Font
+      if (s.font) {
+        cell.font = {
+          name: s.font.name || "Sarabun",
+          size: s.font.sz || 12,
+          bold: s.font.bold || false,
+          italic: s.font.italic || false,
+          color: s.font.color ? { argb: toArgb(s.font.color.rgb) } : undefined,
+        };
+      }
+
+      // Alignment
+      if (s.alignment) {
+        cell.alignment = {
+          horizontal: s.alignment.horizontal,
+          vertical: s.alignment.vertical,
+          wrapText: s.alignment.wrapText,
+        };
+      }
+
+      // Fill
+      if (s.fill) {
+        cell.fill = {
+          type: "pattern",
+          pattern: "solid",
+          fgColor: { argb: toArgb(s.fill.fgColor.rgb) },
+        };
+      }
+
+      // Border
+      if (s.border) {
+        cell.border = {
+          top: s.border.top ? mapBorder(s.border.top) : undefined,
+          bottom: s.border.bottom ? mapBorder(s.border.bottom) : undefined,
+          left: s.border.left ? mapBorder(s.border.left) : undefined,
+          right: s.border.right ? mapBorder(s.border.right) : undefined,
+        };
+      }
+
+      // Number format
+      if (s.numFmt) {
+        cell.numFmt = s.numFmt;
+      }
+    });
+  }
+
+  // Apply merges
+  for (const m of merges) {
+    ws.mergeCells(m.s.r + 1, m.s.c + 1, m.e.r + 1, m.e.c + 1);
+  }
+
+  // ── Embed logo image ──────────────────────────────────────────────────
+  const logoUrl = opts.logoUrl ?? "/images/profin-logo-3.png";
+  try {
+    const logoRes = await fetch(logoUrl);
+    if (logoRes.ok) {
+      const logoBlob = await logoRes.blob();
+      const logoBuffer = await logoBlob.arrayBuffer();
+      const ext = logoUrl.endsWith(".jpg") || logoUrl.endsWith(".jpeg") ? "jpeg" : "png";
+      const imageId = wb.addImage({
+        buffer: logoBuffer,
+        extension: ext,
+      });
+      // Place logo in the top-left area — spanning ~2 columns, 2 rows
+      ws.addImage(imageId, {
+        tl: { col: 0, row: 0 },
+        ext: { width: 80, height: 80 },
+      });
+    }
+  } catch {
+    // If logo fetch fails (e.g. offline), skip silently — the rest of
+    // the document is still useful without it.
+  }
+
+  // ── Download ──────────────────────────────────────────────────────────
+  const buffer = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buffer], {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
