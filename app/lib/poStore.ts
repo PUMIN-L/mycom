@@ -136,6 +136,7 @@ export async function getPurchaseOrder(id: string): Promise<PurchaseOrderRecord 
 export interface PurchaseOrderSummary {
   id: string;
   docNo: string;
+  docDate: string;
   createdAt: string;
   supplier: string;
   total: number;
@@ -154,12 +155,14 @@ interface PoDataLite {
   discountType?: "amount" | "percent";
   vatEnabled?: boolean;
   supplierCompany?: string;
+  docDate?: string;
 }
 
-function summarize(data: PoDataLite): { supplier: string; total: number } {
+function summarize(data: PoDataLite): { supplier: string; total: number; docDate: string } {
   return {
     supplier: data.supplierCompany || "-",
     total: computeQuoteTotals(data).grandTotal,
+    docDate: data.docDate || "",
   };
 }
 
@@ -176,10 +179,11 @@ export async function listPurchaseOrders(): Promise<PurchaseOrderSummary[]> {
       LIMIT ${LIST_LIMIT}`
   );
   return rows.map((r) => {
-    const { supplier, total } = summarize(parseJson<PoDataLite>(r.data, {}));
+    const { supplier, total, docDate } = summarize(parseJson<PoDataLite>(r.data, {}));
     return {
       id: r.id,
       docNo: r.docNo ?? "",
+      docDate,
       createdAt: r.createdAt,
       supplier,
       total,

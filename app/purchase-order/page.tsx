@@ -152,6 +152,7 @@ function NumberInput({
 interface PoSummary {
   id: string;
   docNo: string;
+  docDate: string;
   createdAt: string;
   supplier: string;
   total: number;
@@ -991,8 +992,6 @@ export default function PurchaseOrderPage() {
 
               <div id="po-footer" className="flex justify-between gap-6 mt-3">
                 <div className="flex-1 text-[12px]">
-                  <div className="space-y-0.5 text-gray-700">
-                  </div>
                   {po.note && (
                     <div className="mt-3 space-y-0.5 text-gray-700">
                       <div className="font-bold text-gray-800">หมายเหตุ</div>
@@ -1070,57 +1069,65 @@ export default function PurchaseOrderPage() {
 
           {/* Recent POs — click to open in place */}
           <div className="mt-6 bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-            <div className="flex items-center justify-between gap-3 mb-3">
-              <h2 className="font-bold text-gray-800">ใบสั่งซื้อล่าสุด</h2>
+            <div className="flex items-center justify-between gap-3 mb-4">
+              <h2 className="text-base font-bold text-gray-800">📋 ใบสั่งซื้อล่าสุด</h2>
               {recent.length > 0 && (
                 <input
                   type="text"
                   value={recentSearch}
                   onChange={(e) => setRecentSearch(e.target.value)}
-                  placeholder="ค้นหาเลขที่/ผู้ขาย..."
-                  className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-orange-500/20 outline-none w-56"
+                  placeholder="🔍 ค้นหาเลขที่/ผู้ขาย..."
+                  className="px-3 py-2 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-orange-500/20 focus:border-orange-300 outline-none w-64 bg-gray-50/50 transition"
                 />
               )}
             </div>
             {recent.length === 0 ? (
-              <p className="text-sm text-gray-400">ยังไม่มีใบสั่งซื้อที่บันทึกไว้</p>
+              <div className="text-center py-8">
+                <div className="text-3xl mb-2">📭</div>
+                <p className="text-sm text-gray-400">ยังไม่มีใบสั่งซื้อที่บันทึกไว้</p>
+              </div>
             ) : filteredRecent.length === 0 ? (
-              <p className="text-sm text-gray-400">ไม่พบใบสั่งซื้อที่ตรงกับคำค้นหา</p>
+              <div className="text-center py-8">
+                <div className="text-3xl mb-2">🔍</div>
+                <p className="text-sm text-gray-400">ไม่พบใบสั่งซื้อที่ตรงกับคำค้นหา</p>
+              </div>
             ) : (
               <div className="overflow-x-auto">
-                <table className="w-full text-sm text-left">
+                <table className="w-full text-sm">
                   <thead>
-                    <tr className="text-gray-500 border-b border-gray-100">
-                      <th className="py-2 pr-3">เลขที่</th>
-                      <th className="py-2 pr-3">ผู้ขาย</th>
-                      <th className="py-2 pr-3">ยอดรวม</th>
-                      <th className="py-2 pr-3">สถานะ</th>
-                      <th className="py-2"></th>
+                    <tr className="text-xs uppercase tracking-wider text-gray-500 border-b-2 border-gray-100">
+                      <th className="py-2.5 pr-3 text-left font-semibold">เลขที่</th>
+                      <th className="py-2.5 pr-3 text-left font-semibold">ผู้ขาย</th>
+                      <th className="py-2.5 pr-3 text-left font-semibold">วันที่</th>
+                      <th className="py-2.5 pr-3 text-right font-semibold">ยอดรวม</th>
+                      <th className="py-2.5 pr-3 text-left font-semibold">สถานะ</th>
+                      <th className="py-2.5 w-10"></th>
                     </tr>
                   </thead>
-                  <tbody>
+                  <tbody className="divide-y divide-gray-50">
                     {filteredRecent.map((r) => (
                       <tr
                         key={r.id}
-                        className="border-b border-gray-50 hover:bg-gray-50/50 cursor-pointer"
+                        className="hover:bg-orange-50/40 cursor-pointer transition-colors"
                         onClick={() => {
                           router.replace(`/purchase-order?id=${encodeURIComponent(r.id)}`);
                           loadExisting(r.id);
                         }}
                       >
-                        <td className="py-2 pr-3 font-mono">{r.docNo || "-"}</td>
-                        <td className="py-2 pr-3">{r.supplier}</td>
-                        <td className="py-2 pr-3">{fmt(r.total)}</td>
-                        <td className="py-2 pr-3">
+                        <td className="py-2.5 pr-3 font-mono font-semibold text-gray-800">{r.docNo || "-"}</td>
+                        <td className="py-2.5 pr-3 text-gray-600">{r.supplier || "-"}</td>
+                        <td className="py-2.5 pr-3 text-gray-500 text-xs">{r.docDate ? thaiDate(r.docDate) : "-"}</td>
+                        <td className="py-2.5 pr-3 text-right font-medium text-gray-800">{fmt(r.total)}</td>
+                        <td className="py-2.5 pr-3">
                           {r.cancelledAt ? (
-                            <span className="text-red-600 font-semibold">ยกเลิกแล้ว</span>
+                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-red-50 text-red-600 border border-red-100">ยกเลิกแล้ว</span>
                           ) : r.supersededById ? (
-                            <span className="text-amber-600 font-semibold">ออกใบใหม่แทนแล้ว</span>
+                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-600 border border-amber-100">ออกใบใหม่แทนแล้ว</span>
                           ) : (
-                            <span className="text-green-600 font-semibold">ใช้งานอยู่</span>
+                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-600 border border-emerald-100">ใช้งานอยู่</span>
                           )}
                         </td>
-                        <td className="py-2 text-right">
+                        <td className="py-2.5 text-right">
                           <button
                             id={`delete-po-${r.id}`}
                             aria-label={`ลบใบสั่งซื้อ ${r.docNo}`}

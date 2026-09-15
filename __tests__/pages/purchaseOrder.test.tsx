@@ -129,7 +129,7 @@ describe("/purchase-order — a fresh visit", () => {
     await screen.findByText("PO010124-05");
     expect(screen.getByText("PO010124-06")).toBeInTheDocument();
 
-    fireEvent.change(screen.getByPlaceholderText("ค้นหาเลขที่/ผู้ขาย..."), {
+    fireEvent.change(screen.getByPlaceholderText("🔍 ค้นหาเลขที่/ผู้ขาย..."), {
       target: { value: "บริษัท ข" },
     });
 
