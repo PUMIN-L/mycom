@@ -668,7 +668,7 @@ export default function PurchaseOrderPage() {
       )}
 
       <div className="bg-white border-b border-gray-100 sticky top-0 z-30">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+        <div className="max-w-[1560px] mx-auto px-4 sm:px-6 py-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
           <div>
             <Link href="/adminpanel" className="inline-flex items-center gap-1.5 text-sm font-semibold text-gray-500 hover:text-gray-800 transition-colors mb-1">
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -729,14 +729,14 @@ export default function PurchaseOrderPage() {
       </div>
 
       {(isCancelled || isSuperseded) && (
-        <div className={`max-w-7xl mx-auto px-4 sm:px-6 pt-4`}>
+        <div className={`max-w-[1560px] mx-auto px-4 sm:px-6 pt-4`}>
           <div className={`rounded-xl border px-4 py-3 text-sm font-semibold ${isCancelled ? "bg-red-50 border-red-200 text-red-700" : "bg-amber-50 border-amber-200 text-amber-700"}`}>
             {isCancelled ? "⚠️ ใบสั่งซื้อนี้ถูกยกเลิกแล้ว" : "ℹ️ ใบสั่งซื้อนี้ถูกออกใบใหม่แทนไปแล้ว"}
           </div>
         </div>
       )}
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 grid grid-cols-1 xl:grid-cols-2 gap-6">
+      <div className={`max-w-[1560px] mx-auto px-4 sm:px-6 py-6 ${isReadOnly ? "flex flex-col items-center" : "grid grid-cols-1 xl:grid-cols-[380px_1fr] 2xl:grid-cols-[400px_1fr]"} gap-6 items-start`}>
         {/* ══ LEFT: form ══ */}
         {!isReadOnly && (
           <div className="space-y-5">
@@ -888,14 +888,17 @@ export default function PurchaseOrderPage() {
                   <label className={labelCls}>ส่วนลดท้ายใบ</label>
                   <NumberInput className={inputCls} value={po.discount} onChange={(v) => set("discount", v)} />
                 </div>
-                <select
-                  className={inputCls}
+                <SearchableDropdown
+                  searchable={false}
+                  className="w-full"
+                  buttonClassName={`${inputCls} h-[38px]`}
                   value={po.discountType}
-                  onChange={(e) => set("discountType", e.target.value as "amount" | "percent")}
-                >
-                  <option value="amount">บาท (฿)</option>
-                  <option value="percent">เปอร์เซ็นต์ (%)</option>
-                </select>
+                  options={[
+                    { value: "amount", label: "บาท (฿)" },
+                    { value: "percent", label: "เปอร์เซ็นต์ (%)" },
+                  ]}
+                  onChange={(val) => set("discountType", val as "amount" | "percent")}
+                />
               </div>
               <label className="flex items-center gap-2 text-sm font-medium text-gray-700">
                 <input type="checkbox" checked={po.vatEnabled} onChange={(e) => set("vatEnabled", e.target.checked)} />
@@ -922,8 +925,8 @@ export default function PurchaseOrderPage() {
         )}
 
         {/* ══ RIGHT: A4 sheet + recent list (view mode uses the full width) ══ */}
-        <div className={isReadOnly ? "xl:col-span-2" : ""}>
-          <div className="overflow-x-auto rounded-sm">
+        <div className={isReadOnly ? "w-full max-w-[210mm]" : "min-w-0 w-full"}>
+          <div className="overflow-x-auto rounded-sm pb-2">
             <div
               id="po-sheet"
               className="bg-white shadow-lg border border-gray-200 rounded-sm mx-auto text-gray-900"
