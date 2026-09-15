@@ -84,6 +84,13 @@ export default function DashboardActions() {
       color: "bg-amber-50 text-amber-600 border-amber-200 hover:border-amber-400 hover:shadow-amber-100",
     },
     {
+      href: "/purchase-order",
+      title: "ใบสั่งซื้อ (Purchase Order)",
+      description: "ออกใบสั่งซื้อให้ซัพพลายเออร์ พร้อมดาวน์โหลด PDF/Excel",
+      icon: "📝",
+      color: "bg-orange-50 text-orange-600 border-orange-200 hover:border-orange-400 hover:shadow-orange-100",
+    },
+    {
       href: "/settings",
       title: "ตั้งค่าระบบ",
       description: "ตั้งค่าเว็บไซต์และข้อมูลผู้ใช้งาน",

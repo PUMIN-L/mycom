@@ -38,11 +38,41 @@ describe('supplierStore', () => {
       const insertCall = vi.mocked(query).mock.calls[0];
       expect(insertCall[0]).toContain('INSERT INTO suppliers');
       const params = insertCall[1] as unknown[];
-      // [id, companyName, contactName, phone, note, createdAt]
+      // [id, companyName, contactName, phone, note, address, taxId, createdAt]
       expect((params[1] as string).length).toBe(255);
       expect(params[2]).toBe('Bob'); // HTML stripped
       expect((params[3] as string).length).toBe(255);
       expect((params[4] as string).length).toBe(5000);
+    });
+
+    it('saves address and taxId for a purchase-order-ready supplier', async () => {
+      vi.mocked(query)
+        .mockResolvedValueOnce([{ affectedRows: 1 }] as any)
+        .mockResolvedValueOnce([[{ id: 's1' }]] as any)
+        .mockResolvedValueOnce([[]] as any);
+
+      await createSupplier({
+        companyName: 'บริษัท เอบีซี จำกัด',
+        address: '123 ถนนสุขุมวิท',
+        taxId: '0105500000000',
+      });
+
+      const insertCall = vi.mocked(query).mock.calls[0];
+      const params = insertCall[1] as unknown[];
+      expect(params[5]).toBe('123 ถนนสุขุมวิท');
+      expect(params[6]).toBe('0105500000000');
+    });
+
+    it('truncates an oversized address to the DB column limit', async () => {
+      vi.mocked(query)
+        .mockResolvedValueOnce([{ affectedRows: 1 }] as any)
+        .mockResolvedValueOnce([[{ id: 's1' }]] as any)
+        .mockResolvedValueOnce([[]] as any);
+
+      await createSupplier({ companyName: 'A', address: 'x'.repeat(3000) });
+
+      const params = vi.mocked(query).mock.calls[0][1] as unknown[];
+      expect((params[5] as string).length).toBe(2000);
     });
   });
 
@@ -59,6 +89,19 @@ describe('supplierStore', () => {
       expect(updateCall[0]).toContain('UPDATE suppliers SET');
       const values = updateCall[1] as unknown[];
       expect((values[0] as string).length).toBe(255);
+    });
+
+    it('updates address/taxId only when they are actually part of the request', async () => {
+      vi.mocked(query)
+        .mockResolvedValueOnce([{ affectedRows: 1 }] as any)
+        .mockResolvedValueOnce([[{ id: 's1' }]] as any)
+        .mockResolvedValueOnce([[]] as any);
+
+      await updateSupplier('s1', { taxId: '0105500000000' });
+
+      const updateCall = vi.mocked(query).mock.calls[0];
+      expect(updateCall[0]).toBe('UPDATE suppliers SET taxId = ? WHERE id = ?');
+      expect(updateCall[1]).toEqual(['0105500000000', 's1']);
     });
   });
 

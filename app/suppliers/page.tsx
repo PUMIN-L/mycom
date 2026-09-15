@@ -110,7 +110,7 @@ function SuppliersInner() {
 
   const openAddModal = () => {
     setSubmitAttempted(false);
-    setEditingSupplier({ companyName: "", contactName: "", phone: "", note: "" });
+    setEditingSupplier({ companyName: "", contactName: "", phone: "", note: "", address: "", taxId: "" });
     setIsModalOpen(true);
   };
 
@@ -293,6 +293,28 @@ function SuppliersInner() {
               </div>
 
               <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">ที่อยู่</label>
+                <textarea
+                  value={editingSupplier.address || ""}
+                  onChange={(e) => setEditingSupplier({ ...editingSupplier, address: e.target.value })}
+                  className="w-full px-4 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 outline-none transition-all"
+                  rows={2}
+                  placeholder="สำหรับพิมพ์บนใบสั่งซื้อ"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">เลขผู้เสียภาษี</label>
+                <input
+                  type="text"
+                  value={editingSupplier.taxId || ""}
+                  onChange={(e) => setEditingSupplier({ ...editingSupplier, taxId: e.target.value })}
+                  className="w-full px-4 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 outline-none transition-all"
+                  placeholder="0-0000-00000-00-0"
+                />
+              </div>
+
+              <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-1">หมายเหตุ</label>
                 <textarea
                   value={editingSupplier.note || ""}
@@ -383,6 +405,17 @@ function SuppliersInner() {
                     <div className="text-center sm:text-left pt-2 sm:pt-0 sm:pl-2">
                       <p className="text-gray-400 uppercase tracking-[0.1em] text-[10px] mb-1.5 font-medium">Phone Number</p>
                       <p className="text-gray-800 font-light text-base">{viewingSupplier.phone || "-"}</p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 sm:gap-10 max-w-md mx-auto mt-6 pt-6 border-t border-gray-100">
+                    <div className="text-center sm:text-right border-b sm:border-b-0 sm:border-r border-gray-100 pb-4 sm:pb-0 sm:pr-10">
+                      <p className="text-gray-400 uppercase tracking-[0.1em] text-[10px] mb-1.5 font-medium">Address</p>
+                      <p className="text-gray-800 font-light text-base whitespace-pre-wrap">{viewingSupplier.address || "-"}</p>
+                    </div>
+                    <div className="text-center sm:text-left pt-2 sm:pt-0 sm:pl-2">
+                      <p className="text-gray-400 uppercase tracking-[0.1em] text-[10px] mb-1.5 font-medium">Tax ID</p>
+                      <p className="text-gray-800 font-light text-base">{viewingSupplier.taxId || "-"}</p>
                     </div>
                   </div>
                 </div>

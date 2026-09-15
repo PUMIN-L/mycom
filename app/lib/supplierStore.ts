@@ -12,6 +12,8 @@ function cleanSupplier(data: Partial<Supplier>) {
     contactName: sanitizePlainText(data.contactName || "").substring(0, 255),
     phone: sanitizePlainText(data.phone || "").substring(0, 255),
     note: sanitizePlainText(data.note || "").substring(0, 5000),
+    address: sanitizePlainText(data.address || "").substring(0, 2000),
+    taxId: sanitizePlainText(data.taxId || "").substring(0, 255),
   };
 }
 
@@ -60,9 +62,9 @@ export async function createSupplier(data: Partial<Supplier>): Promise<Supplier>
   const v = cleanSupplier(data);
 
   await query(
-    `INSERT INTO suppliers (id, companyName, contactName, phone, note, createdAt)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-    [id, v.companyName, v.contactName, v.phone, v.note, now]
+    `INSERT INTO suppliers (id, companyName, contactName, phone, note, address, taxId, createdAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [id, v.companyName, v.contactName, v.phone, v.note, v.address, v.taxId, now]
   );
 
   return (await getSupplier(id))!;
@@ -82,6 +84,8 @@ export async function updateSupplier(id: string, data: Partial<Supplier>): Promi
   if (data.contactName !== undefined) set("contactName", v.contactName);
   if (data.phone !== undefined) set("phone", v.phone);
   if (data.note !== undefined) set("note", v.note);
+  if (data.address !== undefined) set("address", v.address);
+  if (data.taxId !== undefined) set("taxId", v.taxId);
 
   if (sets.length > 0) {
     await query(`UPDATE suppliers SET ${sets.join(", ")} WHERE id = ?`, [...values, id]);

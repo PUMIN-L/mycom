@@ -29,6 +29,7 @@ const ADMIN_PATH_PREFIXES = [
   "/edit-product",
   "/expenses",
   "/product-specs",
+  "/purchase-order",
   "/quotation",
   "/service-job",
   "/settings",

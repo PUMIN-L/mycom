@@ -304,6 +304,7 @@ describe('GlobalAdminBell public pages', () => {
     '/create-product',
     '/edit-product',
     '/product-specs',
+    '/purchase-order',
   ];
 
   for (const path of ADMIN_PATHS) {

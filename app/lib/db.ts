@@ -12,7 +12,7 @@ import type { QueryResult, FieldPacket, RowDataPacket } from "mysql2";
 // did not lower the 33 already written to `settings`, so the next change to
 // reuse 33 was skipped entirely and its tables were never created in
 // production. Reverting a migration means moving FORWARD to a new number.
-const SCHEMA_VERSION = 40;
+const SCHEMA_VERSION = 41;
 
 type DbPool = ReturnType<typeof mysql.createPool>;
 
@@ -244,6 +244,40 @@ async function bootstrapSchemaOnce(): Promise<void> {
       );
     } catch (error) {
       if (!isBenignSchemaError(error)) throw error;
+    }
+
+    // ── Purchase orders (v41) ────────────────────────────────────────────────
+    // One row per PO, `data` holding the whole document (items[], supplier
+    // snapshot, terms) — same "opaque blob" shape as `quotations`, and the
+    // SAME reasoning: no query in this app needs to join across PO line
+    // items, so a separate line-items table would only be a second place for
+    // the two to drift apart.
+    //
+    // `supersededById`/`cancelledAt` mirror `billing_documents`'s columns of
+    // the same name, not `quotations`' looser "just re-save in place" model:
+    // a PO is a commitment already sent to a supplier, so once saved it is
+    // never mutated in place — correcting one means cancelling it
+    // (`cancelledAt`) and issuing a brand-new PO with a brand-new number that
+    // points back at it (`supersededById`), exactly like a corrected invoice.
+    await connection.query(`
+        CREATE TABLE IF NOT EXISTS purchase_orders (
+          id VARCHAR(255) PRIMARY KEY,
+          docNo VARCHAR(255),
+          data JSON NOT NULL,
+          supersededById VARCHAR(36) DEFAULT NULL,
+          cancelledAt VARCHAR(255) DEFAULT NULL,
+          createdAt VARCHAR(255) NOT NULL
+        )
+      `);
+    for (const indexDef of [
+      `CREATE INDEX idx_po_createdAt ON purchase_orders (createdAt)`,
+      `CREATE INDEX idx_po_supersededById ON purchase_orders (supersededById)`,
+    ]) {
+      try {
+        await connection.query(indexDef);
+      } catch (error) {
+        if (!isBenignSchemaError(error)) throw error;
+      }
     }
 
     // ── Product categories table ──────────────────────────────────────────
@@ -501,6 +535,22 @@ async function bootstrapSchemaOnce(): Promise<void> {
           createdAt VARCHAR(255) NOT NULL
         )
       `);
+
+    // v41: address/taxId, added for the purchase-order feature — a PO printed
+    // for a supplier needs both on the header, and picking a supplier in the
+    // PO builder prefills them (the PO document itself then keeps its own
+    // snapshot, same as quotations do for customer fields, so editing a
+    // supplier later never rewrites a PO already issued to them).
+    for (const columnDef of [
+      "ADD COLUMN IF NOT EXISTS address TEXT DEFAULT NULL",
+      "ADD COLUMN IF NOT EXISTS taxId VARCHAR(255) DEFAULT NULL",
+    ]) {
+      try {
+        await connection.query(`ALTER TABLE suppliers ${columnDef}`);
+      } catch (error) {
+        if (!isBenignSchemaError(error)) throw error;
+      }
+    }
 
     // ── Product-Suppliers junction table ─────────────────────────────────────
     await connection.query(`

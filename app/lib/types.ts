@@ -45,6 +45,10 @@ export interface Supplier {
   note: string;
   createdAt: string;
   linkedProducts?: Array<{ id: string; title_th: string; title_en: string }>;
+  /** Printed on a purchase order's header. Optional: added after suppliers
+   *  already existed, so a supplier created before this has neither. */
+  address?: string;
+  taxId?: string;
 }
 
 export interface ProductSpec {

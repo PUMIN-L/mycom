@@ -59,6 +59,8 @@ export const config = {
     '/product-specs/:path*',
     '/suppliers',
     '/suppliers/:path*',
+    '/purchase-order',
+    '/purchase-order/:path*',
     '/billing',
     '/billing/:path*',
     '/crm',

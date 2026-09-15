@@ -40,14 +40,14 @@ process.env.DB_USER = 'tester';
 process.env.DB_PASSWORD = 'pw';
 process.env.DB_NAME = 'testdb';
 
-// A version SELECT result that MATCHES SCHEMA_VERSION (40) → bootstrap fast-path,
+// A version SELECT result that MATCHES SCHEMA_VERSION (41) → bootstrap fast-path,
 // skipping DDL. Value is a string because settings stores VARCHAR values.
 //
 // ⚠️ This constant only ever goes UP, in step with db.ts. The bootstrap's fast
 // path is `stored >= SCHEMA_VERSION`, so a number the live database has already
 // recorded can never trigger a migration again — reusing one silently skips the
 // entire migration in production (that is how v33 was burned).
-const SCHEMA_VERSION = '40';
+const SCHEMA_VERSION = '41';
 const SCHEMA_MATCH: [Array<{ value: string }>, unknown[]] = [[{ value: SCHEMA_VERSION }], []];
 // An empty result → no schema_version row / no admin row → full bootstrap.
 const EMPTY: [unknown[], unknown[]] = [[], []];
