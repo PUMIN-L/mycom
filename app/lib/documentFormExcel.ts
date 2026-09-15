@@ -26,7 +26,7 @@ import { sanitizeExcelCell } from "./xlsxExport";
 
 type BorderStyle = "thin" | "medium" | "thick";
 interface CellStyle {
-  font?: { bold?: boolean; sz?: number; color?: { rgb: string }; italic?: boolean };
+  font?: { name?: string; bold?: boolean; sz?: number; color?: { rgb: string }; italic?: boolean };
   alignment?: { horizontal?: "left" | "center" | "right"; vertical?: "top" | "center" | "bottom"; wrapText?: boolean };
   fill?: { patternType: "solid"; fgColor: { rgb: string } };
   border?: Partial<Record<"top" | "bottom" | "left" | "right", { style: BorderStyle; color: { rgb: string } }>>;
@@ -44,11 +44,18 @@ const DARK = { rgb: "1F2937" };
 const BOX_BORDER = { style: "thin" as BorderStyle, color: { rgb: "9CA3AF" } };
 const boxBorder = (): CellStyle["border"] => ({ top: BOX_BORDER, bottom: BOX_BORDER, left: BOX_BORDER, right: BOX_BORDER });
 
+function withDefaultFont(style?: CellStyle): CellStyle {
+  return {
+    ...style,
+    font: { name: "Sarabun", sz: 12, ...(style?.font || {}) },
+  };
+}
+
 function textCell(value: unknown, style?: CellStyle): StyledCell {
-  return { v: String(sanitizeExcelCell(value ?? "-") ?? "-"), t: "s", s: style };
+  return { v: String(sanitizeExcelCell(value ?? "-") ?? "-"), t: "s", s: withDefaultFont(style) };
 }
 function numberCell(value: number, style?: CellStyle): StyledCell {
-  return { v: Number.isFinite(value) ? value : 0, t: "n", s: { numFmt: "#,##0.00", ...style } };
+  return { v: Number.isFinite(value) ? value : 0, t: "n", s: { numFmt: "#,##0.00", ...withDefaultFont(style) } };
 }
 
 /** One column of the item table — mirrors a column on the printed sheet. */
@@ -246,6 +253,23 @@ export async function downloadDocumentFormExcel(
   const ws = XLSX.utils.aoa_to_sheet(rows as unknown[][]);
   ws["!merges"] = merges;
   ws["!cols"] = columnWidths.map((wch) => ({ wch }));
+
+  // Print settings: A4, fit to 1 page wide, narrow margins
+  ws["!pageSetup"] = {
+    paperSize: 9, // A4
+    orientation: "portrait",
+    fitToPage: true,
+    fitToWidth: 1,
+    fitToHeight: 999, // Let it flow to multiple pages vertically if needed
+  };
+  ws["!margins"] = {
+    left: 0.3,
+    right: 0.3,
+    top: 0.5,
+    bottom: 0.5,
+    header: 0.3,
+    footer: 0.3,
+  };
 
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, sheetName);
