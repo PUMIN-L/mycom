@@ -309,9 +309,11 @@ export async function downloadDocumentFormExcel(
 
       // Alignment
       if (s.alignment) {
+        // exceljs uses "middle" instead of "center" for vertical alignment
+        const vert = s.alignment.vertical === "center" ? "middle" as const : s.alignment.vertical;
         cell.alignment = {
           horizontal: s.alignment.horizontal,
-          vertical: s.alignment.vertical,
+          vertical: vert,
           wrapText: s.alignment.wrapText,
         };
       }
