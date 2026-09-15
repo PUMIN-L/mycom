@@ -176,7 +176,7 @@ export default function ServiceJobPage() {
   const [hydrating, setHydrating] = useState(false);
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
-  const [exportingExcel, setExportingExcel] = useState(false);
+
   const [confirmSwitchParty, setConfirmSwitchParty] = useState<
     { kind: "company"; value: string } | { kind: "customer"; value: string } | null
   >(null);
@@ -847,86 +847,8 @@ export default function ServiceJobPage() {
     }
   }
 
-  // ── Excel — a single styled sheet laid out like the printed sheet (header/
-  // parties/meta, bordered machine table, notes, signature) — see
-  // app/lib/documentFormExcel.ts. No totals block: this document has no
-  // money in it, only equipment serviced. Opening the result in Excel and
-  // using Excel's own Save as PDF / Print → Save as PDF is how this becomes
-  // an actual PDF from the spreadsheet.
-  //
-  // Same rule as the PDF: a sheet printed under a number the ledger never
-  // minted is a sheet nobody can close, so this saves first exactly like
-  // handleDownload does, and refuses under the same conditions.
-  async function generateExcel(docNo: string) {
-    const { downloadDocumentFormExcel } = await import("../lib/documentFormExcel");
-    await downloadDocumentFormExcel(
-      `ServiceJob-${(docNo || "document").replace(/[^\w.-]/g, "_")}.xlsx`,
-      "ใบบันทึกงานบริการ",
-      {
-        titleTh: "ใบบันทึกงานบริการ",
-        titleEn: "SERVICE REPORT",
-        primaryParty: {
-          label: "ผู้ให้บริการ (เรา)",
-          name: COMPANY.name,
-          lines: [profile.address.replace(/\n/g, " "), profile.phone ? `โทร ${profile.phone}` : null],
-        },
-        secondaryParty: {
-          label: "ลูกค้า",
-          name: companyName || customerName,
-          lines: allContacts.map((c) => `${c.name}${c.phone ? ` (โทร ${c.phone})` : ""}`),
-        },
-        metaRows: [
-          { label: "เลขที่เอกสาร (Doc No.)", value: docNo || "-" },
-          { label: "วันที่เข้าบริการ", value: jobDate ? formatDisplayDate(jobDate) : "-" },
-          { label: "ช่างผู้ปฏิบัติงาน", value: technicianName || "-" },
-        ],
-        columns: [
-          { key: "no", header: "ลำดับ", width: 6, align: "center" },
-          { key: "name", header: "ชื่อเครื่อง", width: 30 },
-          { key: "serial", header: "หมายเลขเครื่อง", width: 20, align: "center" },
-          { key: "work", header: "งานที่ทำ", width: 40 },
-        ],
-        items: picked.map((p, idx) => ({
-          no: idx + 1,
-          name: p.productName || "-",
-          serial: p.serialNumber || "-",
-          work: "",
-        })),
-        notes: [
-          {
-            label: "รายละเอียดงานที่ทำ / หมายเหตุ",
-            text: "(เขียนด้วยลายมือในเอกสารต้นฉบับที่พิมพ์ออกไป)",
-          },
-        ],
-        signatures: ["ลูกค้าผู้รับบริการ"],
-      }
-    );
-  }
 
-  /** Same save-first gate as handleDownload — see its comment. */
-  async function handleDownloadExcel() {
-    if (exportingExcel) return;
-    setExportingExcel(true);
-    try {
-      let docNo = jobNo;
-      let savedId = jobId;
-      if (!locked && (isDirty || !jobId)) {
-        const saved = await save();
-        if (!saved) return;
-        docNo = saved.jobNo;
-        savedId = saved.id;
-      }
-      if (!savedId || !docNo) {
-        showToast("ยังไม่มีเลขที่ใบงาน กรุณากดบันทึกก่อนดาวน์โหลด Excel", "error");
-        return;
-      }
-      await generateExcel(docNo);
-    } catch {
-      showToast("สร้างไฟล์ Excel ไม่สำเร็จ กรุณาลองใหม่", "error");
-    } finally {
-      setExportingExcel(false);
-    }
-  }
+
 
   if (isLoading || !isLoggedIn) {
     return (
@@ -1003,13 +925,7 @@ export default function ServiceJobPage() {
                   {saving ? "กำลังบันทึก..." : jobId ? "💾 บันทึกการแก้ไข" : "💾 บันทึกและออกเลขที่ใบ"}
                 </button>
               )}
-              <button
-                onClick={handleDownloadExcel}
-                disabled={generating || saving || exportingExcel}
-                className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {exportingExcel ? "กำลังสร้าง..." : "📊 ดาวน์โหลด Excel"}
-              </button>
+
               <button
                 onClick={handleDownload}
                 disabled={generating || saving}

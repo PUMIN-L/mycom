@@ -176,7 +176,7 @@ export default function PurchaseOrderPage() {
   const [loadingRecord, setLoadingRecord] = useState(false);
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
-  const [exportingExcel, setExportingExcel] = useState(false);
+
   const [cancelling, setCancelling] = useState(false);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -599,81 +599,7 @@ export default function PurchaseOrderPage() {
     }
   }
 
-  // ── Excel — a single styled sheet laid out like the printed document
-  // (header/parties/meta, bordered item table, totals, signatures), not a
-  // flat data dump — see app/lib/documentFormExcel.ts. Opening it in Excel
-  // and using Excel's own Save as PDF / Print → Save as PDF is how this
-  // becomes an actual PDF from the spreadsheet.
-  async function handleDownloadExcel() {
-    if (exportingExcel) return;
-    setExportingExcel(true);
-    try {
-      const { downloadDocumentFormExcel } = await import("../lib/documentFormExcel");
-      await downloadDocumentFormExcel(
-        `PO-${(po.docNo || "document").replace(/[^\w.-]/g, "_")}.xlsx`,
-        "ใบสั่งซื้อ",
-        {
-          titleTh: "ใบสั่งซื้อ",
-          titleEn: "PURCHASE ORDER",
-          primaryParty: {
-            label: "ผู้ซื้อ (เรา)",
-            name: COMPANY.name,
-            lines: [
-              COMPANY.address.replace(/\n/g, " "),
-              po.companyTaxId ? `เลขผู้เสียภาษี ${po.companyTaxId}` : null,
-            ],
-          },
-          secondaryParty: {
-            label: "ผู้ขาย (Supplier)",
-            name: po.supplierCompany,
-            lines: [
-              po.supplierContact ? `ผู้ติดต่อ: ${po.supplierContact}` : null,
-              po.supplierAddress,
-              po.supplierPhone ? `โทร ${po.supplierPhone}` : null,
-              po.supplierTaxId ? `เลขผู้เสียภาษี ${po.supplierTaxId}` : null,
-            ],
-          },
-          metaRows: [
-            { label: "เลขที่ (No.)", value: po.docNo || "-" },
-            { label: "วันที่ (Date)", value: thaiDate(po.docDate) },
-            { label: "กำหนดรับสินค้า", value: po.deliveryDate ? thaiDate(po.deliveryDate) : "-" },
-            ...(po.issuedBy ? [{ label: "ผู้สั่งซื้อ", value: po.issuedBy }] : []),
-          ],
-          columns: [
-            { key: "no", header: "ลำดับ", width: 6, align: "center" },
-            { key: "name", header: "รายการ", width: 32 },
-            { key: "qty", header: "จำนวน", width: 8, numeric: true },
-            { key: "unit", header: "หน่วย", width: 8, align: "center" },
-            { key: "unitPrice", header: "ราคาต่อหน่วย", width: 14, numeric: true },
-            { key: "amount", header: "จำนวนเงิน", width: 14, numeric: true },
-          ],
-          items: po.items.map((it, idx) => ({
-            no: idx + 1,
-            name: [it.name, it.description].filter(Boolean).join(" — ") || "-",
-            qty: it.qty,
-            unit: it.unit,
-            unitPrice: it.unitPrice,
-            amount: lines[idx]?.netAmount ?? it.qty * it.unitPrice,
-          })),
-          totals: [
-            { label: "ยอดรวมก่อนภาษี", value: fmt(afterDiscount) },
-            { label: "ภาษีมูลค่าเพิ่ม 7%", value: fmt(vat) },
-            { label: "ยอดรวมสุทธิ", value: fmt(grandTotal), emphasize: true },
-          ],
-          notes: [
-            { label: "เงื่อนไขการชำระเงิน", text: po.paymentTerms },
-            { label: "เงื่อนไขการส่งมอบ", text: po.deliveryTerms },
-            { label: "หมายเหตุ", text: po.note },
-          ],
-          signatures: ["ผู้สั่งซื้อ", "ผู้อนุมัติ", "ผู้ขาย (รับทราบ)"],
-        }
-      );
-    } catch {
-      showToast("สร้างไฟล์ Excel ไม่สำเร็จ กรุณาลองใหม่", "error");
-    } finally {
-      setExportingExcel(false);
-    }
-  }
+
 
   const supplierOptions = suppliers.map((s) => ({
     value: s.id,
@@ -740,13 +666,7 @@ export default function PurchaseOrderPage() {
                 {saving ? "กำลังบันทึก..." : "บันทึก"}
               </button>
             )}
-            <button
-              onClick={handleDownloadExcel}
-              disabled={exportingExcel}
-              className="px-4 py-2 bg-emerald-50 text-emerald-700 border border-emerald-200 font-semibold rounded-xl hover:bg-emerald-100 text-sm shadow-sm disabled:opacity-50"
-            >
-              {exportingExcel ? "กำลังสร้าง..." : "📊 ดาวน์โหลด Excel"}
-            </button>
+
             <button
               onClick={handleDownloadPdf}
               disabled={generating}
