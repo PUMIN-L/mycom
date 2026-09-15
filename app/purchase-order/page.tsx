@@ -179,6 +179,8 @@ export default function PurchaseOrderPage() {
   const [exportingExcel, setExportingExcel] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
   const hydratedRef = useRef(false);
 
@@ -403,6 +405,34 @@ export default function PurchaseOrderPage() {
       showToast("เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ กรุณาลองใหม่", "error");
     } finally {
       setCancelling(false);
+    }
+  }
+
+  async function handleDelete(id: string) {
+    if (deletingId) return;
+    setDeletingId(id);
+    try {
+      const res = await fetch(`/api/purchase-orders/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        showToast(data?.error || "ลบใบสั่งซื้อไม่สำเร็จ", "error");
+        return;
+      }
+      // Remove from the local list immediately
+      setRecent((prev) => prev.filter((r) => r.id !== id));
+      showToast("ลบใบสั่งซื้อสำเร็จ", "success");
+      setPendingDeleteId(null);
+      // If currently viewing the deleted PO, reset to a fresh form
+      if (po.id === id) {
+        seedFresh();
+        router.replace("/purchase-order");
+      }
+    } catch {
+      showToast("เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ กรุณาลองใหม่", "error");
+    } finally {
+      setDeletingId(null);
     }
   }
 
@@ -1149,13 +1179,14 @@ export default function PurchaseOrderPage() {
                       <th className="py-2 pr-3">ผู้ขาย</th>
                       <th className="py-2 pr-3">ยอดรวม</th>
                       <th className="py-2 pr-3">สถานะ</th>
+                      <th className="py-2"></th>
                     </tr>
                   </thead>
                   <tbody>
                     {filteredRecent.map((r) => (
                       <tr
                         key={r.id}
-                        className="border-b border-gray-50 hover:bg-gray-50 cursor-pointer"
+                        className="border-b border-gray-50 hover:bg-gray-50/50 cursor-pointer"
                         onClick={() => {
                           router.replace(`/purchase-order?id=${encodeURIComponent(r.id)}`);
                           loadExisting(r.id);
@@ -1172,6 +1203,26 @@ export default function PurchaseOrderPage() {
                           ) : (
                             <span className="text-green-600 font-semibold">ใช้งานอยู่</span>
                           )}
+                        </td>
+                        <td className="py-2 text-right">
+                          <button
+                            id={`delete-po-${r.id}`}
+                            aria-label={`ลบใบสั่งซื้อ ${r.docNo}`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setPendingDeleteId(r.id);
+                            }}
+                            disabled={deletingId === r.id}
+                            className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors disabled:opacity-40"
+                          >
+                            {deletingId === r.id ? (
+                              <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-red-400 border-t-transparent" />
+                            ) : (
+                              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                                <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
+                              </svg>
+                            )}
+                          </button>
                         </td>
                       </tr>
                     ))}
@@ -1198,6 +1249,18 @@ export default function PurchaseOrderPage() {
           onConfirm={handleCancel}
           onCancel={() => setShowCancelConfirm(false)}
           loading={cancelling}
+        />
+      )}
+
+      {pendingDeleteId && (
+        <ConfirmDialog
+          title="ลบใบสั่งซื้อ"
+          message={`ต้องการลบใบสั่งซื้อ "${recent.find((r) => r.id === pendingDeleteId)?.docNo || pendingDeleteId}" ออกจากระบบถาวรใช่หรือไม่? การกระทำนี้ไม่สามารถย้อนกลับได้`}
+          confirmText="ลบถาวร"
+          loadingText="กำลังลบ..."
+          onConfirm={() => handleDelete(pendingDeleteId)}
+          onCancel={() => setPendingDeleteId(null)}
+          loading={deletingId === pendingDeleteId}
         />
       )}
     </div>

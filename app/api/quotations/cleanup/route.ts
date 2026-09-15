@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { withRoute } from "../../../lib/apiHelpers";
 import { purgeExpiredQuotations } from "../../../lib/quotationStore";
 import { purgeExpiredAlertSnoozes } from "../../../lib/crmStore";
+import { purgeExpiredPurchaseOrders } from "../../../lib/poStore";
 
 // GET /api/quotations/cleanup — invoked daily by Vercel Cron (see vercel.json)
 // to delete quotations past their retention window (RETENTION_DAYS below) plus
@@ -85,11 +86,15 @@ export const GET = withRoute(
       //   • `used_docnos` — kept forever on purpose for conversion-rate
       //     analytics (see the NOTE at the top of this file).
       const snoozesPurged = await purgeExpiredAlertSnoozes();
+      // Purchase orders older than RETENTION_DAYS are also purged. A printed
+      // paper copy is kept by the office, so the DB row after 2 years is
+      // redundant. Reuses the same retention window as quotations.
+      const posPurged = await purgeExpiredPurchaseOrders(RETENTION_DAYS);
       // Structured success line so a MISSING nightly run is detectable in logs.
       console.log(
-        `[cron:quotations-cleanup] ok deleted=${deleted} billingDeleted=${billingDeleted} docNosPurged=${docNosPurged} snoozesPurged=${snoozesPurged}`
+        `[cron:quotations-cleanup] ok deleted=${deleted} billingDeleted=${billingDeleted} docNosPurged=${docNosPurged} snoozesPurged=${snoozesPurged} posPurged=${posPurged}`
       );
-      return NextResponse.json({ ok: true, deleted, billingDeleted, docNosPurged, snoozesPurged });
+      return NextResponse.json({ ok: true, deleted, billingDeleted, docNosPurged, snoozesPurged, posPurged });
     } catch (err) {
       // Log then rethrow so withRoute returns 500 → Vercel marks the cron run
       // FAILED instead of the failure disappearing silently. (Note: withRoute

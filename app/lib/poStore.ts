@@ -213,6 +213,41 @@ export async function cancelPurchaseOrder(id: string, cancelledAt: string): Prom
 }
 
 /**
+ * ลบใบสั่งซื้อออกจากระบบอย่างถาวร (hard-delete). ทำได้ทุกสถานะ (active /
+ * cancelled / superseded) เพราะระบบมีการปริ๊นเก็บประวัติแยกต่างหากอยู่แล้ว.
+ * Throws PurchaseOrderNotFoundError ถ้าไม่มี row ที่ id นั้น.
+ */
+export async function deletePurchaseOrder(id: string): Promise<void> {
+  const [result] = await query<ResultSetHeader>(
+    "DELETE FROM purchase_orders WHERE id = ?",
+    [id]
+  );
+  if (result.affectedRows === 0) throw new PurchaseOrderNotFoundError(id);
+}
+
+/**
+ * Auto-purge: ลบ PO ทั้งหมดที่ createdAt < cutoffIso ออกจาก DB
+ * (mirror ของ purgeExpiredQuotations ใน quotationStore.ts).
+ * คืนค่าจำนวน row ที่ถูกลบ.
+ * ใช้โดย cron /api/quotations/cleanup เท่านั้น.
+ */
+export async function purgeExpiredPurchaseOrders(retentionDays: number): Promise<number> {
+  // Compute Bangkok-date cutoff the same way purgeExpiredQuotations does
+  const now = new Date();
+  const bangkokOffset = 7 * 60; // UTC+7 in minutes
+  const localMs = now.getTime() + (bangkokOffset - now.getTimezoneOffset()) * 60000;
+  const localDate = new Date(localMs);
+  localDate.setDate(localDate.getDate() - retentionDays);
+  const cutoff = localDate.toISOString().slice(0, 10); // yyyy-mm-dd
+
+  const [result] = await query<ResultSetHeader>(
+    "DELETE FROM purchase_orders WHERE createdAt < ?",
+    [cutoff]
+  );
+  return result.affectedRows;
+}
+
+/**
  * ออกใบใหม่แทนใบเดิม — a full replacement, not an edit: mints a brand-new PO
  * (its own docNo, claimed the same atomic way createPurchaseOrder does) and,
  * in the SAME transaction, stamps the old row's `supersededById` so the two

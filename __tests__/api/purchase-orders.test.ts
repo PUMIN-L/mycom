@@ -2,7 +2,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
 import { GET as listGET, POST as createPOST } from "@/app/api/purchase-orders/route";
-import { GET as oneGET } from "@/app/api/purchase-orders/[id]/route";
+import { GET as oneGET, DELETE as deleteDELETE } from "@/app/api/purchase-orders/[id]/route";
 import { POST as cancelPOST } from "@/app/api/purchase-orders/[id]/cancel/route";
 import { POST as supersedePOST } from "@/app/api/purchase-orders/[id]/supersede/route";
 import { GET as docnosGET } from "@/app/api/purchase-orders/docnos/route";
@@ -14,6 +14,7 @@ vi.mock("@/app/lib/poStore", () => ({
   listPurchaseOrders: vi.fn(),
   createPurchaseOrder: vi.fn(),
   getPurchaseOrder: vi.fn(),
+  deletePurchaseOrder: vi.fn(),
   cancelPurchaseOrder: vi.fn(),
   supersedePurchaseOrder: vi.fn(),
   PoDocNoConflictError: class PoDocNoConflictError extends Error {
@@ -39,6 +40,7 @@ import {
   listPurchaseOrders,
   createPurchaseOrder,
   getPurchaseOrder,
+  deletePurchaseOrder,
   cancelPurchaseOrder,
   supersedePurchaseOrder,
   PoDocNoConflictError,
@@ -170,6 +172,49 @@ describe("GET /api/purchase-orders/[id]", () => {
     const res = await oneGET(new NextRequest("http://localhost/api/purchase-orders/po1"), ctx("po1"));
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual(rec);
+  });
+});
+
+describe("DELETE /api/purchase-orders/[id]", () => {
+  it("rejects anonymous callers with 401, without deleting", async () => {
+    const res = await deleteDELETE(
+      new NextRequest("http://localhost/api/purchase-orders/po1", {
+        method: "DELETE",
+        headers: { origin: "http://localhost", host: "localhost" },
+      }),
+      ctx("po1")
+    );
+    expect(res.status).toBe(401);
+    expect(deletePurchaseOrder).not.toHaveBeenCalled();
+  });
+
+  it("returns 404 when the PO does not exist", async () => {
+    vi.mocked(getSession).mockResolvedValue(adminSession);
+    vi.mocked(deletePurchaseOrder).mockRejectedValue(new (PurchaseOrderNotFoundError as any)("missing"));
+    const res = await deleteDELETE(
+      new NextRequest("http://localhost/api/purchase-orders/missing", {
+        method: "DELETE",
+        headers: { origin: "http://localhost", host: "localhost" },
+      }),
+      ctx("missing")
+    );
+    expect(res.status).toBe(404);
+    expect((await res.json()).error).toBe("ไม่พบใบสั่งซื้อ");
+  });
+
+  it("deletes the PO and returns success for a logged-in admin", async () => {
+    vi.mocked(getSession).mockResolvedValue(adminSession);
+    vi.mocked(deletePurchaseOrder).mockResolvedValue(undefined);
+    const res = await deleteDELETE(
+      new NextRequest("http://localhost/api/purchase-orders/po1", {
+        method: "DELETE",
+        headers: { origin: "http://localhost", host: "localhost" },
+      }),
+      ctx("po1")
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ success: true });
+    expect(deletePurchaseOrder).toHaveBeenCalledWith("po1");
   });
 });
 

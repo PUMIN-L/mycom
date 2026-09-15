@@ -37,6 +37,9 @@ import {
 vi.mock('@/app/lib/crmStore', () => ({ purgeExpiredAlertSnoozes: vi.fn() }));
 import { purgeExpiredAlertSnoozes } from '@/app/lib/crmStore';
 
+vi.mock('@/app/lib/poStore', () => ({ purgeExpiredPurchaseOrders: vi.fn() }));
+import { purgeExpiredPurchaseOrders } from '@/app/lib/poStore';
+
 // Drive the REAL requireAuth/withRoute by controlling getSession (null = anon).
 vi.mock('@/app/lib/session', () => ({ getSession: vi.fn() }));
 import { getSession } from '@/app/lib/session';
@@ -395,10 +398,11 @@ describe('Quotations API', () => {
     it('purges quotations but NEVER touches billing documents (invoices/receipts are permanent records)', async () => {
       vi.mocked(purgeExpiredQuotations).mockResolvedValue(3);
       vi.mocked(purgeExpiredAlertSnoozes).mockResolvedValue(2);
+      vi.mocked(purgeExpiredPurchaseOrders).mockResolvedValue(0);
       const res = await cleanupGET(cleanupReq('Bearer cron-test-secret'));
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual({
-        ok: true, deleted: 3, billingDeleted: 0, docNosPurged: 0, snoozesPurged: 2,
+        ok: true, deleted: 3, billingDeleted: 0, docNosPurged: 0, snoozesPurged: 2, posPurged: 0,
       });
       // Retention widened 30 -> 730 days (2 years): this business's sales cycle
       // runs for months, so the old window purged quotations right when the
@@ -410,6 +414,7 @@ describe('Quotations API', () => {
     it('purges expired alert snoozes in the same nightly run', async () => {
       vi.mocked(purgeExpiredQuotations).mockResolvedValue(0);
       vi.mocked(purgeExpiredAlertSnoozes).mockResolvedValue(7);
+      vi.mocked(purgeExpiredPurchaseOrders).mockResolvedValue(0);
       const res = await cleanupGET(cleanupReq('Bearer cron-test-secret'));
       expect(res.status).toBe(200);
       expect((await res.json()).snoozesPurged).toBe(7);
@@ -427,6 +432,7 @@ describe('Quotations API', () => {
     it('reports the snooze count on the greppable success line, in English like the rest', async () => {
       vi.mocked(purgeExpiredQuotations).mockResolvedValue(1);
       vi.mocked(purgeExpiredAlertSnoozes).mockResolvedValue(5);
+      vi.mocked(purgeExpiredPurchaseOrders).mockResolvedValue(0);
       const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
       try {
         await cleanupGET(cleanupReq('Bearer cron-test-secret'));
