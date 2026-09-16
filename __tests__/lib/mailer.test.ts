@@ -24,7 +24,6 @@ import {
   sendOtpEmail,
   sendCompanyProfileOtpEmail,
   sendOrphanDeleteOtpEmail,
-  sendScheduleDeleteOtpEmail,
   sendEquipmentDeleteOtpEmail,
   type ContactMessage,
 } from '@/app/lib/mailer';
@@ -212,43 +211,6 @@ describe('mailer', () => {
     it('propagates SMTP failures (throws)', async () => {
       sendMailMock.mockRejectedValueOnce(new Error('SMTP down'));
       await expect(sendOrphanDeleteOtpEmail('a@site.com', '11111', 3)).rejects.toThrow('SMTP down');
-    });
-  });
-
-  describe('sendScheduleDeleteOtpEmail', () => {
-    it('sends a single-recipient OTP email mentioning the schedule type/date/equipment', async () => {
-      process.env.SMTP_USER = 'system@example.com';
-      await sendScheduleDeleteOtpEmail('admin@site.com', '222222', {
-        scheduleType: 'service',
-        scheduledDate: '2026-09-10',
-        equipmentName: 'เครื่องชั่ง A',
-      });
-
-      const mail = sendMailMock.mock.calls[0][0];
-      expect(mail.from).toEqual({ name: 'ระบบเว็บไซต์ (Profin Lab Scale)', address: 'system@example.com' });
-      expect(mail.to).toEqual({ name: '', address: 'admin@site.com' });
-      expect(mail.text).toContain('222222');
-      expect(mail.text).toContain('Service');
-      expect(mail.text).toContain('2026-09-10');
-      expect(mail.text).toContain('เครื่องชั่ง A');
-    });
-
-    it('omits the equipment clause when equipmentName is not given', async () => {
-      process.env.SMTP_USER = 'system@example.com';
-      await sendScheduleDeleteOtpEmail('admin@site.com', '222222', {
-        scheduleType: 'follow_up',
-        scheduledDate: '2026-09-10',
-      });
-      const mail = sendMailMock.mock.calls[0][0];
-      expect(mail.text).toContain('โทรติดตามผล');
-      expect(mail.text).not.toContain('สำหรับเครื่อง');
-    });
-
-    it('propagates SMTP failures (throws)', async () => {
-      sendMailMock.mockRejectedValueOnce(new Error('SMTP down'));
-      await expect(
-        sendScheduleDeleteOtpEmail('a@site.com', '222222', { scheduleType: 'service', scheduledDate: '2026-01-01' })
-      ).rejects.toThrow('SMTP down');
     });
   });
 

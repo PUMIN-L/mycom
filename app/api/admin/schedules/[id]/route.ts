@@ -9,8 +9,6 @@ import {
   ScheduleCompletionRequiresLogError,
 } from "../../../../lib/crmStore";
 import { isValidDateString } from "../../../../lib/dateFormat";
-import { getSetting, setSetting } from "../../../../lib/settingsStore";
-import { recordOtpFailure, clearOtpAttempts } from "../../../../lib/otpAttempts";
 
 // GET /api/admin/schedules/[id] — single schedule.
 export const GET = withRoute(
@@ -98,63 +96,15 @@ export const PUT = withRoute(
   }
 );
 
-// DELETE /api/admin/schedules/[id] — remove a schedule.
-// Completed schedules require a valid 6-digit OTP sent to admin contact email.
+// DELETE /api/admin/schedules/[id] — remove a schedule (any status).
 export const DELETE = withRoute(
   "ลบนัดหมายไม่สำเร็จ",
   async (
-    request: NextRequest,
+    _request: NextRequest,
     { params }: { params: Promise<{ id: string }> }
   ) => {
     await requireAuth();
     const { id } = await params;
-
-    const schedule = await getSchedule(id);
-    if (!schedule) return jsonError("ไม่พบนัดหมาย", 404);
-
-    if (schedule.status === "completed") {
-      let otp = "";
-      try {
-        const body = await request.json();
-        otp = String(body.otp ?? "").trim();
-      } catch {
-        otp = request.nextUrl.searchParams.get("otp") || "";
-      }
-
-      if (!otp || otp.length !== 6) {
-        return jsonError("กรุณาระบุรหัส OTP 6 หลักที่ถูกต้องจากอีเมล", 400);
-      }
-
-      const otpKey = `schedule_delete_otp_${id}`;
-      const otpExpiresKey = `schedule_delete_otp_expires_${id}`;
-      const savedOtp = await getSetting(otpKey);
-      const expiresAtStr = await getSetting(otpExpiresKey);
-
-      if (!savedOtp || otp !== savedOtp) {
-        if (savedOtp) {
-          const { locked } = await recordOtpFailure(otpKey, otpExpiresKey);
-          if (locked) {
-            return jsonError(
-              "กรอกรหัส OTP ผิดเกินจำนวนที่กำหนด กรุณาขอรหัสใหม่",
-              400
-            );
-          }
-        }
-        return jsonError("รหัส OTP ไม่ถูกต้อง", 400);
-      }
-
-      const expiresAt = parseInt(expiresAtStr || "0", 10);
-      if (Date.now() > expiresAt) {
-        await setSetting(otpKey, "");
-        await setSetting(otpExpiresKey, "0");
-        return jsonError("รหัส OTP หมดอายุแล้ว กรุณาขอรหัสใหม่", 400);
-      }
-
-      // Clear used OTP
-      await setSetting(otpKey, "");
-      await setSetting(otpExpiresKey, "0");
-      await clearOtpAttempts(otpKey);
-    }
 
     const deleted = await deleteSchedule(id);
     if (!deleted) return jsonError("ไม่พบนัดหมาย", 404);

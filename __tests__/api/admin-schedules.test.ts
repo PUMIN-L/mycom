@@ -42,42 +42,6 @@ import {
 vi.mock('@/app/lib/session', () => ({ getSession: vi.fn() }));
 import { getSession } from '@/app/lib/session';
 
-vi.mock('@/app/lib/settingsStore', () => ({
-  getSetting: vi.fn(),
-  setSetting: vi.fn(),
-  getContactEmail: vi.fn().mockResolvedValue('admin@example.com'),
-}));
-import { getSetting, setSetting, getContactEmail } from '@/app/lib/settingsStore';
-
-// otpAttempts.ts's failure counter reads/writes through a locked db.ts
-// transaction (see otpAttempts.ts) — shares state with the getSetting/
-// setSetting mock above via the module-level `sharedState` used below.
-let sharedState = new Map<string, string>();
-const conn = {
-  query: vi.fn(async (sql: string, params: unknown[] = []) => {
-    if (sql.includes('SELECT value FROM settings')) {
-      const [key] = params as [string];
-      const v = sharedState.get(key);
-      return [v !== undefined ? [{ value: v }] : []];
-    }
-    if (sql.includes('INSERT INTO settings')) {
-      const [key, value] = params as [string, string];
-      sharedState.set(key, value);
-      return [{ affectedRows: 1 }];
-    }
-    throw new Error(`Unhandled SQL in test: ${sql}`);
-  }),
-};
-vi.mock('@/app/lib/db', () => ({
-  withTransaction: vi.fn(async (fn: (c: typeof conn) => Promise<unknown>) => fn(conn)),
-}));
-
-vi.mock('@/app/lib/mailer', () => ({
-  isMailConfigured: vi.fn().mockReturnValue(true),
-  sendScheduleDeleteOtpEmail: vi.fn().mockResolvedValue(undefined),
-}));
-import { isMailConfigured, sendScheduleDeleteOtpEmail } from '@/app/lib/mailer';
-
 const admin = { userId: '1', username: 'admin', expiresAt: new Date() } as any;
 
 const mutReq = (url: string, method: string, body?: any) =>
@@ -94,7 +58,6 @@ const ctx = (id: string) => ({ params: Promise.resolve({ id }) });
 import { GET as listGET, POST as createPOST } from '@/app/api/admin/schedules/route';
 import { GET as getGET, PUT, DELETE } from '@/app/api/admin/schedules/[id]/route';
 import { GET as logsGET, POST as logsPOST } from '@/app/api/admin/schedules/[id]/logs/route';
-import { POST as deleteOtpPOST } from '@/app/api/admin/schedules/[id]/delete-otp/route';
 
 describe('Admin Schedules API', () => {
   beforeEach(() => {
@@ -268,103 +231,39 @@ describe('Admin Schedules API', () => {
 
   // ── DELETE [id] ─────────────────────────────────────────────────────────
 
-  it('DELETE removes pending schedule without OTP', async () => {
+  it('DELETE removes pending schedule', async () => {
     vi.mocked(getSession).mockResolvedValue(admin);
-    vi.mocked(getSchedule).mockResolvedValue({ id: 's1', status: 'pending' } as any);
     vi.mocked(deleteSchedule).mockResolvedValue(true);
 
     const res = await DELETE(
       mutReq('http://localhost:3000/api/admin/schedules/s1', 'DELETE'),
-      ctx('s1')
-    );
-    expect(res.status).toBe(200);
-  });
-
-  it('DELETE completed schedule fails without OTP or with invalid OTP', async () => {
-    vi.mocked(getSession).mockResolvedValue(admin);
-    vi.mocked(getSchedule).mockResolvedValue({ id: 's1', status: 'completed' } as any);
-    vi.mocked(getSetting).mockResolvedValueOnce('123456'); // saved otp
-
-    // Missing OTP
-    const resNoOtp = await DELETE(
-      mutReq('http://localhost:3000/api/admin/schedules/s1', 'DELETE'),
-      ctx('s1')
-    );
-    expect(resNoOtp.status).toBe(400);
-
-    // Wrong OTP
-    const resWrongOtp = await DELETE(
-      mutReq('http://localhost:3000/api/admin/schedules/s1', 'DELETE', { otp: '999999' }),
-      ctx('s1')
-    );
-    expect(resWrongOtp.status).toBe(400);
-  });
-
-  it('DELETE completed schedule succeeds with valid 6-digit OTP', async () => {
-    vi.mocked(getSession).mockResolvedValue(admin);
-    vi.mocked(getSchedule).mockResolvedValue({ id: 's1', status: 'completed' } as any);
-    vi.mocked(getSetting).mockImplementation(async (key: string) => {
-      if (key === 'schedule_delete_otp_s1') return '123456';
-      if (key === 'schedule_delete_otp_expires_s1') return (Date.now() + 100000).toString();
-      return '';
-    });
-    vi.mocked(deleteSchedule).mockResolvedValue(true);
-
-    const res = await DELETE(
-      mutReq('http://localhost:3000/api/admin/schedules/s1', 'DELETE', { otp: '123456' }),
       ctx('s1')
     );
     expect(res.status).toBe(200);
     expect(deleteSchedule).toHaveBeenCalledWith('s1');
-    expect(setSetting).toHaveBeenCalledWith('schedule_delete_otp_s1', '');
   });
 
-  it('locks out the completed-schedule OTP after 5 wrong attempts, even for the right code afterward', async () => {
+  it('DELETE removes completed schedule without any OTP/email step', async () => {
     vi.mocked(getSession).mockResolvedValue(admin);
-    vi.mocked(getSchedule).mockResolvedValue({ id: 's1', status: 'completed' } as any);
+    vi.mocked(deleteSchedule).mockResolvedValue(true);
 
-    sharedState = new Map<string, string>([
-      ['schedule_delete_otp_s1', '123456'],
-      ['schedule_delete_otp_expires_s1', (Date.now() + 100000).toString()],
-    ]);
-    vi.mocked(getSetting).mockImplementation(async (key: string) => sharedState.get(key) ?? '');
-    vi.mocked(setSetting).mockImplementation(async (key: string, value: string) => {
-      sharedState.set(key, value);
-    });
-
-    let lastRes;
-    for (let i = 0; i < 5; i++) {
-      lastRes = await DELETE(
-        mutReq('http://localhost:3000/api/admin/schedules/s1', 'DELETE', { otp: '000000' }),
-        ctx('s1')
-      );
-    }
-    expect(lastRes!.status).toBe(400);
-    expect((await lastRes!.json()).error).toContain('เกินจำนวนที่กำหนด');
-
-    // Even the correct code no longer works once locked out.
-    const afterLockout = await DELETE(
-      mutReq('http://localhost:3000/api/admin/schedules/s1', 'DELETE', { otp: '123456' }),
-      ctx('s1')
-    );
-    expect(afterLockout.status).toBe(400);
-    expect(deleteSchedule).not.toHaveBeenCalled();
-  });
-
-  // ── DELETE OTP POST ─────────────────────────────────────────────────────
-
-  it('POST delete-otp sends 6-digit OTP for completed schedule', async () => {
-    vi.mocked(getSession).mockResolvedValue(admin);
-    vi.mocked(getSchedule).mockResolvedValue({ id: 's1', status: 'completed', scheduleType: 'service', scheduledDate: '2026-09-01' } as any);
-
-    const res = await deleteOtpPOST(
-      mutReq('http://localhost:3000/api/admin/schedules/s1/delete-otp', 'POST'),
+    const res = await DELETE(
+      mutReq('http://localhost:3000/api/admin/schedules/s1', 'DELETE'),
       ctx('s1')
     );
     expect(res.status).toBe(200);
-    const data = await res.json();
-    expect(data.success).toBe(true);
-    expect(sendScheduleDeleteOtpEmail).toHaveBeenCalled();
+    expect(deleteSchedule).toHaveBeenCalledWith('s1');
+  });
+
+  it('DELETE returns 404 when the schedule does not exist', async () => {
+    vi.mocked(getSession).mockResolvedValue(admin);
+    vi.mocked(deleteSchedule).mockResolvedValue(false);
+
+    const res = await DELETE(
+      mutReq('http://localhost:3000/api/admin/schedules/missing', 'DELETE'),
+      ctx('missing')
+    );
+    expect(res.status).toBe(404);
   });
 
   // ── Logs GET ────────────────────────────────────────────────────────────

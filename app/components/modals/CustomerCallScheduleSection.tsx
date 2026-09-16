@@ -54,10 +54,6 @@ export default function CustomerCallScheduleSection({
 
   const [deleteScheduleConfirm, setDeleteScheduleConfirm] = useState<ServiceSchedule | null>(null);
   const [deleteCompletedSchedule, setDeleteCompletedSchedule] = useState<ServiceSchedule | null>(null);
-  const [deleteOtpCode, setDeleteOtpCode] = useState("");
-  const [deleteOtpEmail, setDeleteOtpEmail] = useState<string | null>(null);
-  const [isSendingOtp, setIsSendingOtp] = useState(false);
-  const [otpCountdown, setOtpCountdown] = useState(0);
 
   const [isSaving, setIsSaving] = useState(false);
   const [scheduleFormError, setScheduleFormError] = useState(false);
@@ -65,13 +61,6 @@ export default function CustomerCallScheduleSection({
   useEffect(() => {
     fetchSchedules(customerId);
   }, [customerId]);
-
-  useEffect(() => {
-    if (otpCountdown > 0) {
-      const timer = setTimeout(() => setOtpCountdown(otpCountdown - 1), 1000);
-      return () => clearTimeout(timer);
-    }
-  }, [otpCountdown]);
 
   const fetchSchedules = async (custId: string) => {
     try {
@@ -180,48 +169,17 @@ export default function CustomerCallScheduleSection({
     }
   };
 
-  const handleSendDeleteOtp = async () => {
-    if (!deleteCompletedSchedule || isSendingOtp) return;
-    setIsSendingOtp(true);
-    try {
-      const res = await fetch(`/api/admin/schedules/${deleteCompletedSchedule.id}/delete-otp`, {
-        method: "POST",
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to send OTP");
-      setDeleteOtpEmail(data.email || "อีเมลผู้ดูแลระบบ");
-      setOtpCountdown(60);
-      alert(data.message || "ส่งรหัส OTP เรียบร้อยแล้ว");
-    } catch (err: any) {
-      console.error(err);
-      alert(err.message || "ไม่สามารถส่งรหัส OTP ได้");
-    } finally {
-      setIsSendingOtp(false);
-    }
-  };
-
   const executeDeleteCompletedSchedule = async () => {
     if (!deleteCompletedSchedule || isSaving) return;
-    if (!deleteOtpCode || deleteOtpCode.length !== 6) {
-      alert("กรุณากรอกรหัส OTP 6 หลัก");
-      return;
-    }
     setIsSaving(true);
     try {
-      const res = await fetch(`/api/admin/schedules/${deleteCompletedSchedule.id}`, {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ otp: deleteOtpCode }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to delete schedule");
+      const res = await fetch(`/api/admin/schedules/${deleteCompletedSchedule.id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("Failed to delete schedule");
       setDeleteCompletedSchedule(null);
-      setDeleteOtpCode("");
-      setDeleteOtpEmail(null);
       fetchSchedules(customerId);
-    } catch (err: any) {
+    } catch (err) {
       console.error(err);
-      alert(err.message || "ลบนัดหมายไม่สำเร็จ");
+      alert("ลบนัดหมายไม่สำเร็จ");
     } finally {
       setIsSaving(false);
     }
@@ -294,8 +252,6 @@ export default function CustomerCallScheduleSection({
                         e.stopPropagation();
                         if (s.status === "completed") {
                           setDeleteCompletedSchedule(s);
-                          setDeleteOtpCode("");
-                          setDeleteOtpEmail(null);
                         } else {
                           setDeleteScheduleConfirm(s);
                         }
@@ -478,83 +434,33 @@ export default function CustomerCallScheduleSection({
         <div
           className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[170] flex items-center justify-center p-4 animate-fadeIn"
           onClick={() => {
-            if (!isSaving && !isSendingOtp) {
-              setDeleteCompletedSchedule(null);
-              setDeleteOtpCode("");
-              setDeleteOtpEmail(null);
-            }
+            if (!isSaving) setDeleteCompletedSchedule(null);
           }}
         >
           <div
-            className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 text-center"
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 text-center"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="w-14 h-14 bg-red-100 text-red-600 rounded-full flex items-center justify-center text-2xl mx-auto mb-4">
-              🔒
-            </div>
-            <h3 className="text-xl font-bold text-gray-900 mb-2">ยืนยันการลบนัดหมายที่เสร็จแล้ว</h3>
-            <p className="text-gray-600 text-sm mb-4">
-              นัดหมายวันที่ <span className="font-semibold text-gray-800">{formatDisplayDate(deleteCompletedSchedule.scheduledDate)}</span> ดำเนินการเสร็จแล้ว
-              <br />
-              <span className="text-red-600 text-xs font-medium mt-1 block">
-                ⚠️ การลบจำเป็นต้องยืนยันรหัส OTP 6 หลักที่ส่งไปยังอีเมลผู้ดูแลระบบ
-              </span>
+            <div className="text-5xl mb-4">🗑️</div>
+            <h3 className="text-lg font-bold text-gray-800 mb-2">ลบนัดหมายที่เสร็จแล้วนี้?</h3>
+            <p className="text-gray-500 text-sm mb-6">
+              นัดหมายวันที่ {formatDisplayDate(deleteCompletedSchedule.scheduledDate)} ดำเนินการเสร็จแล้ว
             </p>
-
-            <div className="bg-gray-50 rounded-xl p-4 mb-5 text-left border border-gray-100 space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-gray-700">รหัสยืนยันจากอีเมล</span>
-                <button
-                  type="button"
-                  onClick={handleSendDeleteOtp}
-                  disabled={isSendingOtp || otpCountdown > 0}
-                  className="text-xs font-bold text-blue-600 hover:text-blue-700 disabled:opacity-50 transition"
-                >
-                  {isSendingOtp
-                    ? "กำลังส่งรหัส..."
-                    : otpCountdown > 0
-                    ? `ส่งอีกครั้ง (${otpCountdown}s)`
-                    : deleteOtpEmail
-                    ? "🔄 ส่งรหัสใหม่"
-                    : "📩 ส่งรหัส OTP"}
-                </button>
-              </div>
-
-              {deleteOtpEmail && (
-                <p className="text-xs text-green-600 font-medium">
-                  ✅ ส่งรหัส 6 หลักไปที่ {deleteOtpEmail} แล้ว
-                </p>
-              )}
-
-              <input
-                type="text"
-                maxLength={6}
-                value={deleteOtpCode}
-                onChange={(e) => setDeleteOtpCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
-                placeholder="กรอกรหัส 6 หลัก เช่น 123456"
-                className="w-full px-4 py-2.5 bg-white border border-gray-200 rounded-xl text-center text-xl font-mono tracking-widest font-bold focus:ring-2 focus:ring-red-500/20 focus:border-red-500 outline-none"
-              />
-            </div>
-
             <div className="flex gap-3 justify-center">
               <button
                 type="button"
-                onClick={() => {
-                  setDeleteCompletedSchedule(null);
-                  setDeleteOtpCode("");
-                  setDeleteOtpEmail(null);
-                }}
-                className="px-5 py-2.5 border border-gray-200 text-gray-600 font-semibold rounded-xl hover:bg-gray-50 transition-all text-sm flex-1"
+                onClick={() => setDeleteCompletedSchedule(null)}
+                className="px-5 py-2.5 border border-gray-200 text-gray-600 font-semibold rounded-xl hover:bg-gray-50 transition-all"
               >
                 ยกเลิก
               </button>
               <button
                 type="button"
                 onClick={executeDeleteCompletedSchedule}
-                disabled={isSaving || deleteOtpCode.length !== 6}
-                className="px-5 py-2.5 bg-red-600 text-white font-semibold rounded-xl hover:bg-red-700 transition-all text-sm flex-1 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={isSaving}
+                className="px-5 py-2.5 bg-red-600 text-white font-semibold rounded-xl hover:bg-red-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {isSaving ? "กำลังลบ..." : "🗑️ ยืนยันลบ"}
+                {isSaving ? "กำลังลบ..." : "ลบ"}
               </button>
             </div>
           </div>

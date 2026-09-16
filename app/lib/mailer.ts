@@ -213,21 +213,6 @@ export async function sendOrphanDeleteOtpEmail(
   );
 }
 
-/** Send a 6-digit OTP to `to` to authorize deleting a completed schedule. */
-export async function sendScheduleDeleteOtpEmail(
-  to: string,
-  otp: string,
-  scheduleInfo: { scheduleType: string; scheduledDate: string; equipmentName?: string }
-): Promise<void> {
-  const typeText = scheduleInfo.scheduleType === "service" ? "Service (บำรุงรักษา)" : "โทรติดตามผล";
-  const equipText = scheduleInfo.equipmentName ? ` สำหรับเครื่อง: ${scheduleInfo.equipmentName}` : "";
-  await sendOtpNotification(
-    to,
-    `[รหัสยืนยัน OTP] ขอลบประวัตินัดหมายที่เสร็จสิ้นแล้ว`,
-    `มีการขอลบประวัตินัดหมาย ${typeText} วันที่ ${scheduleInfo.scheduledDate}${equipText} ที่ดำเนินการเสร็จสิ้นแล้ว\n\nเนื่องจากการลบประวัติงานที่เสร็จแล้วส่งผลต่อข้อมูลการรับประกันและการบริการ กรุณานำรหัสยืนยัน 6 หลักด้านล่างนี้ไปกรอกเพื่อยืนยันการลบ:\n\nรหัสยืนยัน: ${otp}\n\n(รหัสนี้มีอายุ 15 นาที)\n\nหากคุณไม่ได้เป็นผู้ดำเนินการ กรุณาเพิกเฉยต่ออีเมลฉบับนี้ และตรวจสอบความปลอดภัยของบัญชีผู้ดูแลระบบทันที`
-  );
-}
-
 /**
  * Send a 6-digit OTP to `to` to authorize deleting equipment that has one or
  * more completed service schedules attached (deleting the equipment cascades
