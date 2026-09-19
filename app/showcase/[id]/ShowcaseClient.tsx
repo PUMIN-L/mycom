@@ -69,6 +69,9 @@ interface ShowcaseClientProps {
   initialProducts: ProductItem[];
   initialCategories: ProductCategory[];
   companyInfo: { email: string; phone: string; address: string };
+  /** Server-read maintenance flag, forwarded to Footer so the contact block is
+   * already hidden in the first paint rather than after a client fetch. */
+  maintenanceOn: boolean;
 }
 
 /**
@@ -242,6 +245,7 @@ export default function ShowcaseClient({
   initialProducts,
   initialCategories,
   companyInfo,
+  maintenanceOn,
 }: ShowcaseClientProps) {
   const router = useRouter();
   const { lang } = useLanguage();
@@ -1364,7 +1368,7 @@ export default function ShowcaseClient({
         .animate-slideUp { animation: slideUp 0.3s ease-out; }
       `}</style>
       </div>
-      <Footer email={companyInfo.email} phone={companyInfo.phone} address={companyInfo.address} />
+      <Footer email={companyInfo.email} phone={companyInfo.phone} address={companyInfo.address} maintenanceOn={maintenanceOn} />
 
       {/* Image deletion confirmation dialog */}
       {orphanedImages.length > 0 && (

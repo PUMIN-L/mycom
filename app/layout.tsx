@@ -13,6 +13,7 @@ import {
 import "./globals.css";
 import GlobalAdminBell from "./components/GlobalAdminBell";
 import MaintenanceOverlay from "./components/MaintenanceOverlay";
+import { isMaintenanceMode } from "./lib/settingsStore";
 import MaintenanceBanner from "./components/MaintenanceBanner";
 
 const cormorant = Cormorant_Garamond({
@@ -87,11 +88,19 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // Read here rather than fetched in the overlay on mount, so the maintenance
+  // screen is part of the delivered HTML instead of appearing a round trip
+  // later. The read is cached and tag-busted by the toggle (settingsStore.ts),
+  // and it touches no dynamic API, so it does not force any page out of static
+  // or ISR rendering — the toggle calls revalidatePath for the two prerendered
+  // paths that would otherwise hold a stale copy.
+  const maintenanceOn = await isMaintenanceMode();
+
   return (
     <html
       lang="th"
@@ -102,7 +111,7 @@ export default function RootLayout({
           <AuthProvider>
             <NavProvider>{children}</NavProvider>
             <GlobalAdminBell />
-            <MaintenanceOverlay />
+            <MaintenanceOverlay initialEnabled={maintenanceOn} />
             <MaintenanceBanner />
           </AuthProvider>
         </LanguageProvider>

@@ -58,6 +58,7 @@ function renderEditor(put: () => Response) {
       initialProducts={[]}
       initialCategories={[]}
       companyInfo={{ email: "x@y.z", phone: "0", address: "ที่อยู่" }}
+      maintenanceOn={false}
     />
   );
   return fetchMock;

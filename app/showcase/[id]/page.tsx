@@ -7,6 +7,7 @@ import {
 } from "../../lib/contentStore";
 import { getAllProducts, getAllCategories, isProductPublic } from "../../lib/productStore";
 import { getSession } from "../../lib/session";
+import { isMaintenanceMode } from "../../lib/settingsStore";
 import { SITE_URL, SITE_NAME } from "../../lib/site";
 import { getCompanyInfo } from "../../lib/companyInfo";
 import { stripHtml } from "../../lib/stripHtml";
@@ -91,13 +92,14 @@ export default async function ShowcaseContentPage({
   // Fetch everything the editor needs on the server, in parallel. allContents is
   // metadata-only (no blocks) — it's used just for the "Other Contents" list and
   // the edit-mode product-link check, never for block bodies.
-  const [content, allContents, products, categories, session, companyInfo] = await Promise.all([
+  const [content, allContents, products, categories, session, companyInfo, maintenanceOn] = await Promise.all([
     getContent(id),
     getAllContentsMeta(),
     getAllProducts(),
     getAllCategories(),
     getSession(),
     getCompanyInfo(),
+    isMaintenanceMode(),
   ]);
 
   if (!content) {
@@ -178,6 +180,7 @@ export default async function ShowcaseContentPage({
         initialProducts={visibleProducts}
         initialCategories={categories}
         companyInfo={{ email: companyInfo.email, phone: companyInfo.phone, address: companyInfo.address }}
+        maintenanceOn={maintenanceOn}
       />
     </>
   );

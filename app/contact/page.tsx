@@ -3,6 +3,7 @@ import Contact from "../components/Contact";
 import Footer from "../components/Footer";
 import { SITE_URL } from "../lib/site";
 import { getCompanyInfo } from "../lib/companyInfo";
+import { isMaintenanceMode } from "../lib/settingsStore";
 
 export const metadata = {
   title: "ติดต่อเรา",
@@ -20,7 +21,10 @@ const breadcrumbLd = {
 };
 
 export default async function ContactPage() {
-  const info = await getCompanyInfo();
+  const [info, maintenanceOn] = await Promise.all([
+    getCompanyInfo(),
+    isMaintenanceMode(),
+  ]);
   return (
     <>
       <script
@@ -36,7 +40,7 @@ export default async function ContactPage() {
           addressMapsQuery={info.addressMapsQuery}
         />
       </main>
-      <Footer email={info.email} phone={info.phone} address={info.address} />
+      <Footer email={info.email} phone={info.phone} address={info.address} maintenanceOn={maintenanceOn} />
     </>
   );
 }

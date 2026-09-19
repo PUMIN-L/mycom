@@ -11,6 +11,7 @@ import Clients from "./components/Clients";
 import Footer from "./components/Footer";
 import { getProductsData } from "./lib/getProductsData";
 import { getCompanyInfo } from "./lib/companyInfo";
+import { isMaintenanceMode } from "./lib/settingsStore";
 
 // Product data is admin-editable, so we use ISR (revalidate) to serve from cache
 // and refresh in the background when needed, instead of force-dynamic.
@@ -37,7 +38,10 @@ export default async function Home() {
   // Company info is cached (unstable_cache) so this resolves near-instantly
   // except on a cold cache — safe to await plainly rather than needing its
   // own Suspense boundary like the (uncached, potentially slow) product data.
-  const companyInfo = await getCompanyInfo();
+  const [companyInfo, maintenanceOn] = await Promise.all([
+    getCompanyInfo(),
+    isMaintenanceMode(),
+  ]);
 
   return (
     <>
@@ -50,7 +54,7 @@ export default async function Home() {
         </Suspense>
         {/* <Clients /> */}
       </main>
-      <Footer email={companyInfo.email} phone={companyInfo.phone} address={companyInfo.address} />
+      <Footer email={companyInfo.email} phone={companyInfo.phone} address={companyInfo.address} maintenanceOn={maintenanceOn} />
       {/* SEO: product/organisation structured data (shares the cached fetch) */}
       <Suspense fallback={null}>
         <ProductsJsonLd />

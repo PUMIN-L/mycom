@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { useState, useEffect } from "react";
 import { useT } from "../i18n/LanguageContext";
 import { translations } from "../i18n/translations";
 import { useAuth } from "../context/AuthContext";
@@ -13,11 +12,16 @@ interface FooterProps {
   email: string;
   phone: string;
   address: string;
+  /** Read on the server by the parent page. It arrives with the first paint, so
+   * the contact block is already hidden in the delivered HTML — it used to be
+   * fetched here on mount, which published the phone and LINE id for a moment
+   * on every page before removing them again. */
+  maintenanceOn: boolean;
 }
 
-export default function Footer({ email, phone, address }: FooterProps) {
+export default function Footer({ email, phone, address, maintenanceOn }: FooterProps) {
   const t = useT();
-  const { isLoggedIn, user, logout } = useAuth();
+  const { isLoggedIn } = useAuth();
 
   // When maintenance mode is on, hide phone/LINE/address from non-admin
   // visitors — the admin still sees everything.
@@ -32,13 +36,6 @@ export default function Footer({ email, phone, address }: FooterProps) {
   // actually reach the company (phone, LINE) disappears from them too. Do
   // not re-add a path check here without asking again; the reasoning
   // changed once already.
-  const [maintenanceOn, setMaintenanceOn] = useState(false);
-  useEffect(() => {
-    fetch("/api/settings/maintenance")
-      .then((r) => r.ok ? r.json() : null)
-      .then((d) => { if (d) setMaintenanceOn(Boolean(d.enabled)); })
-      .catch(() => {});
-  }, []);
   const hideContact = maintenanceOn && !isLoggedIn;
 
   // Home-section anchors need the leading "/" so they work from any page
@@ -62,7 +59,7 @@ export default function Footer({ email, phone, address }: FooterProps) {
         <div className="grid grid-cols-1 md:grid-cols-4 gap-16 mb-20">
           {/* Brand Column */}
           <div className="md:col-span-1">
-            <a href="/" className="flex items-center gap-3 mb-8 group cursor-pointer">
+            <Link href="/" className="flex items-center gap-3 mb-8 group cursor-pointer">
               <div className="w-12 h-12 flex items-center justify-center bg-[var(--accent)] text-white font-serif italic font-bold text-2xl transition-transform group-hover:scale-110">
                 PF
               </div>
@@ -77,7 +74,7 @@ export default function Footer({ email, phone, address }: FooterProps) {
                   Premium Testing Equipments
                 </span>
               </div>
-            </a>
+            </Link>
             <p className="text-white/60 text-base leading-relaxed font-light">
               {t(translations.footer.description)}
             </p>

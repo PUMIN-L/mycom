@@ -1,4 +1,5 @@
 import { query } from "./db";
+import { unstable_cache } from "next/cache";
 import type { RowDataPacket } from "mysql2";
 import { CONTACT_EMAIL } from "./contact";
 import { DEFAULT_CREDIT_TERM_DAYS } from "./alertThresholds";
@@ -156,9 +157,40 @@ export async function updateCompanyProfile(
 
 export const MAINTENANCE_MODE_SETTING = "maintenance_mode";
 
-/** Whether the public site is currently in maintenance mode. */
+const loadMaintenanceMode = unstable_cache(
+  async () => (await getSetting(MAINTENANCE_MODE_SETTING)) === "true",
+  ["maintenance_mode"],
+  // The TTL is a backstop the other catalog caches also carry, and it matters
+  // more here than anywhere else: the likeliest way this row changes WITHOUT
+  // the tag being busted is someone editing the database directly to force the
+  // site back up when the admin UI or its OTP email is not cooperating — which
+  // is exactly the emergency this flag exists for. Without a ceiling that edit
+  // would never take effect.
+  { tags: ["maintenance"], revalidate: 60 }
+);
+
+/**
+ * Whether the public site is currently in maintenance mode.
+ *
+ * Cached because this is now read during server render of every page that shows
+ * the Footer — including /showcase/[id], which is force-dynamic. The toggle
+ * (PUT /api/settings/maintenance) busts the "maintenance" tag, so the flag still
+ * flips immediately; without that tag this would be stale for as long as the
+ * cache lived, and the whole point of the flag is that it takes effect at once.
+ *
+ * The try/catch sits OUTSIDE the cache for the same reason it does in
+ * companyInfo.ts: a failure must never be stored. It returns false — the site
+ * stays visible — because a settings-table blip is not a reason to show every
+ * visitor a maintenance screen, and because that matches what the old
+ * client-side fetch did when it errored.
+ */
 export async function isMaintenanceMode(): Promise<boolean> {
-  return (await getSetting(MAINTENANCE_MODE_SETTING)) === "true";
+  try {
+    return await loadMaintenanceMode();
+  } catch (error) {
+    console.error("Error reading maintenance mode:", error);
+    return false;
+  }
 }
 
 /** Single-line address for a Google Maps text-search query / embed. */

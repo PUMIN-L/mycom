@@ -4,6 +4,7 @@ import Footer from "../components/Footer";
 import AboutSection from "../components/AboutSection";
 import { SITE_URL } from "../lib/site";
 import { getCompanyInfo } from "../lib/companyInfo";
+import { isMaintenanceMode } from "../lib/settingsStore";
 
 export const metadata: Metadata = {
   title: "เกี่ยวกับเรา",
@@ -22,7 +23,10 @@ const breadcrumbLd = {
 };
 
 export default async function AboutPage() {
-  const info = await getCompanyInfo();
+  const [info, maintenanceOn] = await Promise.all([
+    getCompanyInfo(),
+    isMaintenanceMode(),
+  ]);
   return (
     <>
       <script
@@ -33,7 +37,7 @@ export default async function AboutPage() {
       <main className="bg-white">
         <AboutSection />
       </main>
-      <Footer email={info.email} phone={info.phone} address={info.address} />
+      <Footer email={info.email} phone={info.phone} address={info.address} maintenanceOn={maintenanceOn} />
     </>
   );
 }

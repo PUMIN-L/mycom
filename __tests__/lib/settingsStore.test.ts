@@ -9,6 +9,10 @@ vi.mock('@/app/lib/db', () => ({
 }));
 import { query } from '@/app/lib/db';
 
+// isMaintenanceMode wraps its read in unstable_cache; make it pass-through so
+// each test re-runs the real query against the mock above.
+vi.mock('next/cache', () => ({ unstable_cache: (fn: any) => fn }));
+
 import {
   getSetting,
   setSetting,
@@ -22,6 +26,8 @@ import {
   setCreditTermDays,
   BILLING_CREDIT_TERM_SETTING,
   MAX_CREDIT_TERM_DAYS,
+  isMaintenanceMode,
+  MAINTENANCE_MODE_SETTING,
   type CompanyProfile,
 } from '@/app/lib/settingsStore';
 import { DEFAULT_CREDIT_TERM_DAYS } from '@/app/lib/alertThresholds';
@@ -223,5 +229,49 @@ describe('credit term setting', () => {
     expect(mockQuery.mock.calls[0][1]).toEqual([BILLING_CREDIT_TERM_SETTING, '45']);
     expect(await setCreditTermDays(9999)).toBe(MAX_CREDIT_TERM_DAYS);
     expect(await setCreditTermDays(-5)).toBe(0);
+  });
+});
+
+// Every component that can block the public site takes this function's answer
+// on trust, and every other test mocks it — so a wrong answer here would hide
+// the whole site while the suite stayed green. These pin the one thing that
+// decides whether a visitor gets the page or the maintenance screen.
+describe('isMaintenanceMode', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const rowValue = (value: string) =>
+    vi.mocked(query).mockResolvedValue([[{ value }]] as any);
+
+  it('is true only for the exact string "true"', async () => {
+    rowValue('true');
+    expect(await isMaintenanceMode()).toBe(true);
+    expect(vi.mocked(query).mock.calls[0][1]).toEqual([MAINTENANCE_MODE_SETTING]);
+  });
+
+  it.each(['false', 'FALSE', 'True', '1', '0', 'yes', ''])(
+    'is false for %o — nothing but "true" may block the site',
+    async (value) => {
+      rowValue(value);
+      expect(await isMaintenanceMode()).toBe(false);
+    }
+  );
+
+  it('is false when the row does not exist yet', async () => {
+    // A fresh database has never had the toggle used. Reading "no row" as
+    // anything but "not in maintenance" would black out a brand new deploy.
+    vi.mocked(query).mockResolvedValue([[]] as any);
+    expect(await isMaintenanceMode()).toBe(false);
+  });
+
+  it('fails OPEN when the database errors, and does not throw', async () => {
+    // This read now happens during server render of every public page. Letting
+    // it throw would turn a settings-table blip into a 500 on the whole site,
+    // and returning true would black the site out for a reason unrelated to
+    // maintenance. Neither is acceptable, so it logs and says "not blocked".
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.mocked(query).mockRejectedValue(new Error('db down'));
+    await expect(isMaintenanceMode()).resolves.toBe(false);
   });
 });
