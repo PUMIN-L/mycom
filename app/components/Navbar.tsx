@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { useLanguage, useT } from "../i18n/LanguageContext";
@@ -34,6 +34,18 @@ export default function Navbar({ isHomePage: forceIsHome }: NavbarProps = {}) {
   const { mobileOpen, setMobileOpen } = useNav();
   const [scrolled, setScrolled] = useState(false);
   const [langDropdown, setLangDropdown] = useState(false);
+  const langDropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!langDropdown) return;
+    function handleClickOutside(event: MouseEvent) {
+      if (!langDropdownRef.current?.contains(event.target as Node)) {
+        setLangDropdown(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [langDropdown]);
 
   useEffect(() => {
     // Force scroll to top on page load if no hash is present in URL
@@ -127,9 +139,8 @@ export default function Navbar({ isHomePage: forceIsHome }: NavbarProps = {}) {
           ))}
 
           {/* Language Switcher */}
-          <div className="relative">
+          <div className="relative" ref={langDropdownRef}>
             <button
-              onMouseEnter={() => setLangDropdown(true)}
               onClick={() => setLangDropdown(!langDropdown)}
               className={`flex items-center gap-2 px-4 py-2 text-[15px] font-bold uppercase tracking-widest transition-all
                 ${scrolled || !isHome
@@ -152,10 +163,7 @@ export default function Navbar({ isHomePage: forceIsHome }: NavbarProps = {}) {
               </svg>
             </button>
             {langDropdown && (
-              <div
-                onMouseLeave={() => setLangDropdown(false)}
-                className="absolute right-0 mt-0 w-32 bg-white shadow-2xl border border-gray-100 animate-fade-in rounded"
-              >
+              <div className="absolute right-0 mt-0 w-32 bg-white shadow-2xl border border-gray-100 animate-fade-in rounded">
                 {(["th", "en", "zh"] as Language[]).map((l) => (
                   <button
                     key={l}
