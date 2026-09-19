@@ -252,6 +252,10 @@ export const POST = withRoute(
           return NextResponse.json({ error: "Document no longer exists" }, { status: 404 });
         }
         await updateDocument(rev.entityId, data);
+        // Same reason as the content branch above: this writes the documents
+        // table from outside app/api/documents/**, so the cached catalog list
+        // and the sitemap would otherwise keep serving the pre-restore title.
+        revalidateTag("documents", { expire: 0 });
         break;
       }
       case "customer": {

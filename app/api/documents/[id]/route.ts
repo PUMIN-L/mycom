@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { revalidateTag } from "next/cache";
 import { requireAuth, withRoute } from "../../../lib/apiHelpers";
 import { getDocument, deleteDocument, updateDocument } from "../../../lib/documentStore";
 
@@ -27,6 +28,7 @@ export const DELETE = withRoute(
     
     // Delete from database
     await deleteDocument(id);
+    revalidateTag("documents", { expire: 0 });
 
     return NextResponse.json({ success: true, orphanedImages });
   }
@@ -50,6 +52,7 @@ export const PUT = withRoute(
     }
 
     await updateDocument(id, { title, description });
+    revalidateTag("documents", { expire: 0 });
 
     return NextResponse.json({ success: true });
   }

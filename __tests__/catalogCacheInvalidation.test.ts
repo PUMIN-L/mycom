@@ -25,8 +25,18 @@ vi.mock('@/app/lib/revisionStore', () => ({ saveRevision: vi.fn() }));
 
 import '@/app/lib/productStore';
 import '@/app/lib/contentStore';
+import '@/app/lib/documentStore';
 
-const CACHED_READS = ['products_all', 'categories_all', 'contents_meta'];
+// Which tag each cached whole-table read hangs off. contents_meta shares
+// "products" on purpose (hard-deleting a product cascades into deleting its
+// content, and that route only busts "products"); documents has no such
+// coupling — nothing links the two tables — so it gets its own.
+const CACHED_READS = [
+  { key: 'products_all', tag: 'products' },
+  { key: 'categories_all', tag: 'products' },
+  { key: 'contents_meta', tag: 'products' },
+  { key: 'documents_all', tag: 'documents' },
+];
 
 const registrationFor = (key: string) =>
   cacheRegistrations.find((c) => c.keys.includes(key));
@@ -34,17 +44,17 @@ const registrationFor = (key: string) =>
 // The catalog reads are cached across requests, which is only safe because every
 // write busts the same tag. These tests guard the two halves of that bargain.
 describe('catalog cache registration', () => {
-  it('caches every whole-table read under the "products" tag', () => {
+  it('registers every whole-table read under the tag its writers bust', () => {
     // A wrong/missing tag is the dangerous failure: the admin saves, the public
     // page keeps serving the old catalog, and nothing looks broken until a
     // customer points it out.
-    //
-    // contents_meta shares this tag on purpose — hard-deleting a product
-    // cascades into deleting its content, and that route only busts "products".
-    for (const key of CACHED_READS) {
+    for (const { key, tag } of CACHED_READS) {
       const registration = registrationFor(key);
       expect(registration, `no unstable_cache registration for ${key}`).toBeDefined();
-      expect(registration!.options.tags).toContain('products');
+      expect(
+        registration!.options.tags,
+        `${key} must be tagged "${tag}" — that is the tag its write paths revalidate`
+      ).toContain(tag);
     }
   });
 
@@ -60,7 +70,7 @@ describe('catalog cache registration', () => {
   it('sets a TTL so a missed invalidation cannot go stale forever', () => {
     // Backstop for writes that never reach the API routes (direct SQL) or a
     // future route that forgets revalidateTag.
-    for (const key of CACHED_READS) {
+    for (const { key } of CACHED_READS) {
       expect(registrationFor(key)!.options.revalidate).toBeTypeOf('number');
     }
   });
@@ -98,16 +108,19 @@ describe('every catalog write invalidates the catalog cache', () => {
   // Scans ALL of app/api, not just app/api/products or app/api/contents: two of
   // the five content write paths live elsewhere (the revision-restore route, and
   // the product hard-delete that cascades into deleting content).
-  it('calls revalidateTag("products") in every route that writes catalog data', () => {
-    const mutators = [
-      ...exportedMutatorNames(repoFile('app', 'lib', 'productStore.ts')),
-      ...exportedMutatorNames(repoFile('app', 'lib', 'contentStore.ts')),
-      ...exportedMutatorNames(repoFile('app', 'lib', 'productDeleter.ts')),
-    ];
+  it('busts the right tag in every route that writes catalog data', () => {
+    const groups = [
+      { tag: 'products', mutators: ['productStore.ts', 'contentStore.ts', 'productDeleter.ts'] },
+      { tag: 'documents', mutators: ['documentStore.ts'] },
+    ].map((g) => ({
+      tag: g.tag,
+      names: g.mutators.flatMap((f) => exportedMutatorNames(repoFile('app', 'lib', f))),
+    }));
+
     // Guard the derivation itself: a regex that silently stopped matching would
-    // leave this whole scan passing vacuously. Naming a few known mutators means
-    // a broken pattern fails here instead of going quiet.
-    expect(mutators).toEqual(
+    // leave this whole scan passing vacuously. Naming known mutators means a
+    // broken pattern fails here instead of going quiet.
+    expect(groups.find((g) => g.tag === 'products')!.names).toEqual(
       expect.arrayContaining([
         'addContent',
         'updateContent',
@@ -117,6 +130,9 @@ describe('every catalog write invalidates the catalog cache', () => {
         'deleteProduct',
       ])
     );
+    expect(groups.find((g) => g.tag === 'documents')!.names).toEqual(
+      expect.arrayContaining(['addDocument', 'updateDocument', 'deleteDocument'])
+    );
 
     const routes = routeFilesUnder(repoFile('app', 'api'));
     expect(routes.length).toBeGreaterThan(0);
@@ -124,10 +140,12 @@ describe('every catalog write invalidates the catalog cache', () => {
     const offenders: string[] = [];
     for (const file of routes) {
       const source = readFileSync(file, 'utf8');
-      const called = mutators.filter((name) => source.includes(`${name}(`));
-      if (called.length === 0) continue;
-      if (!source.includes('revalidateTag("products"')) {
-        offenders.push(`${file} calls ${called.join(', ')}`);
+      for (const { tag, names } of groups) {
+        const called = names.filter((name) => source.includes(`${name}(`));
+        if (called.length === 0) continue;
+        if (!source.includes(`revalidateTag("${tag}"`)) {
+          offenders.push(`${file} calls ${called.join(', ')} but never busts "${tag}"`);
+        }
       }
     }
 
@@ -157,22 +175,30 @@ describe('revision-restore invalidates per branch, not per file', () => {
     const blocks = source.split(/^\s*case "/m).slice(1);
     expect(blocks.length).toBeGreaterThan(1);
 
-    const catalogMutators = ['updateProduct(', 'updateContent('];
+    // Each branch writes a different table, so each owes a different tag.
+    const branchMutators = [
+      { call: 'updateProduct(', tag: 'products' },
+      { call: 'updateContent(', tag: 'products' },
+      { call: 'updateDocument(', tag: 'documents' },
+    ];
     const checked: string[] = [];
 
     for (const block of blocks) {
       const name = block.slice(0, block.indexOf('"'));
-      if (!catalogMutators.some((m) => block.includes(m))) continue;
+      const writes = branchMutators.filter((m) => block.includes(m.call));
+      if (writes.length === 0) continue;
       checked.push(name);
-      expect(
-        block.includes('revalidateTag("products"'),
-        `restore route's case "${name}" writes catalog data but does not bust ` +
-          'the cache inside that branch'
-      ).toBe(true);
+      for (const { tag } of writes) {
+        expect(
+          block.includes(`revalidateTag("${tag}"`),
+          `restore route's case "${name}" writes catalog data but does not bust ` +
+            `"${tag}" inside that branch`
+        ).toBe(true);
+      }
     }
 
     // Guard the guard: if the switch is refactored and these branches vanish,
     // the loop above would pass vacuously.
-    expect(checked).toEqual(expect.arrayContaining(['product', 'content']));
+    expect(checked).toEqual(expect.arrayContaining(['product', 'content', 'document']));
   });
 });

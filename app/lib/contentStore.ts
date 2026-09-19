@@ -202,6 +202,20 @@ export const getAllContentsMeta = cache(
   )
 );
 
+// Every content linked to a product, bodies included. Unlike
+// getContentByProductId this has no LIMIT: "one content per product" is an
+// invariant the write paths enforce, but a deleter that trusted it would leave
+// orphan rows behind if it were ever violated. Served by idx_contents_productId.
+export async function getContentsByProductId(
+  productId: string
+): Promise<ContentData[]> {
+  const [rows] = await query<RowDataPacket[]>(
+    "SELECT * FROM contents WHERE productId = ? ORDER BY createdAt DESC",
+    [productId]
+  );
+  return rows.map(rowToContent);
+}
+
 export async function getContentByProductId(
   productId: string
 ): Promise<ContentData | undefined> {

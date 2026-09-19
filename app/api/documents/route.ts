@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { revalidateTag } from "next/cache";
 import { requireAuth, withRoute } from "../../lib/apiHelpers";
 import { addDocument, getAllDocuments } from "../../lib/documentStore";
 
@@ -33,6 +34,8 @@ export const POST = withRoute(
     };
 
     await addDocument(newDoc);
+    // The catalog list and sitemap read this table from a cross-request cache.
+    revalidateTag("documents", { expire: 0 });
     return NextResponse.json(newDoc, { status: 201 });
   }
 );

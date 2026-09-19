@@ -20,7 +20,7 @@ vi.mock('@/app/lib/contentStore', () => {
   return {
     addContent: vi.fn(),
     getContent: vi.fn(),
-    getAllContents: vi.fn(),
+    getAllContentsMeta: vi.fn(),
     getContentByProductId: vi.fn(),
     updateContent: vi.fn(),
     deleteContent: vi.fn(),
@@ -30,7 +30,7 @@ vi.mock('@/app/lib/contentStore', () => {
 import {
   addContent,
   getContent,
-  getAllContents,
+  getAllContentsMeta,
   getContentByProductId,
   updateContent,
   deleteContent,
@@ -70,6 +70,16 @@ const sampleContent = {
   id: 'c-1',
   title: 'Sample',
   blocks: [],
+  createdAt: '2026-01-01',
+  productId: 'p-1',
+} as any;
+
+// What id="all" serves: metadata, no `blocks`. The list exists so the admin
+// editor can see which products are already linked, and shipping every row's
+// rich-text body to answer that cost megabytes per page load.
+const sampleMeta = {
+  id: 'c-1',
+  title: 'Sample',
   createdAt: '2026-01-01',
   productId: 'p-1',
 } as any;
@@ -143,13 +153,18 @@ describe('Contents API Routes', () => {
   });
 
   describe('GET /api/contents/[id]', () => {
-    it('returns all contents when id === "all" (public)', async () => {
-      const all = [sampleContent];
-      vi.mocked(getAllContents).mockResolvedValue(all);
+    it('returns content METADATA when id === "all" (public), never the blocks', async () => {
+      const all = [sampleMeta];
+      vi.mocked(getAllContentsMeta).mockResolvedValue(all);
       const res = await getById(getRequest(), { params: Promise.resolve({ id: 'all' }) });
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual(all);
       expect(getContent).not.toHaveBeenCalled();
+      // The actual invariant: the route reads the metadata function, so no row's
+      // `blocks` is ever loaded to build this list. Asserting the response has no
+      // "blocks" key would prove nothing here — the fixture above has none either
+      // way, so it would pass whichever store function the route called.
+      expect(getAllContentsMeta).toHaveBeenCalledTimes(1);
     });
 
     it('returns a single content when found (public)', async () => {
@@ -167,24 +182,24 @@ describe('Contents API Routes', () => {
     });
 
     it('filters out content linked to unpublished products for anonymous callers (id="all")', async () => {
-      const hiddenContent = { ...sampleContent, id: 'c-2', productId: 'p-hidden' };
-      vi.mocked(getAllContents).mockResolvedValue([sampleContent, hiddenContent]);
+      const hiddenMeta = { ...sampleMeta, id: 'c-2', productId: 'p-hidden' };
+      vi.mocked(getAllContentsMeta).mockResolvedValue([sampleMeta, hiddenMeta]);
       vi.mocked(getAllProducts).mockResolvedValue([
         { id: 'p-1', isPublished: true, pendingDeleteAt: null } as any,
         { id: 'p-hidden', isPublished: false, pendingDeleteAt: null } as any,
       ]);
       const res = await getById(getRequest(), { params: Promise.resolve({ id: 'all' }) });
       expect(res.status).toBe(200);
-      expect(await res.json()).toEqual([sampleContent]);
+      expect(await res.json()).toEqual([sampleMeta]);
     });
 
     it('does not filter content for a logged-in admin (id="all")', async () => {
-      const hiddenContent = { ...sampleContent, id: 'c-2', productId: 'p-hidden' };
+      const hiddenMeta = { ...sampleMeta, id: 'c-2', productId: 'p-hidden' };
       vi.mocked(getSession).mockResolvedValue(adminSession);
-      vi.mocked(getAllContents).mockResolvedValue([sampleContent, hiddenContent]);
+      vi.mocked(getAllContentsMeta).mockResolvedValue([sampleMeta, hiddenMeta]);
       const res = await getById(getRequest(), { params: Promise.resolve({ id: 'all' }) });
       expect(res.status).toBe(200);
-      expect(await res.json()).toEqual([sampleContent, hiddenContent]);
+      expect(await res.json()).toEqual([sampleMeta, hiddenMeta]);
       expect(getAllProducts).not.toHaveBeenCalled();
     });
 

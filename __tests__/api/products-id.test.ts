@@ -22,10 +22,10 @@ import { getProduct, updateProduct, deleteProduct, BestSellerRankConflictError }
 
 // DELETE also cascades into linked contents + Cloudinary; keep those inert.
 vi.mock('@/app/lib/contentStore', () => ({
-  getAllContents: vi.fn(),
+  getContentsByProductId: vi.fn(),
   deleteContent: vi.fn(),
 }));
-import { getAllContents } from '@/app/lib/contentStore';
+import { getContentsByProductId } from '@/app/lib/contentStore';
 
 vi.mock('@/app/lib/cloudinaryHelper', () => ({
   deleteCloudinaryImage: vi.fn(),
@@ -222,7 +222,7 @@ describe('Products [id] API Route', () => {
         image: 'https://example.com/local.png', // not Cloudinary → no image cleanup
         pendingDeleteAt: '2026-07-25T00:00:00.000Z',
       } as any);
-      vi.mocked(getAllContents).mockResolvedValue([]); // no linked contents
+      vi.mocked(getContentsByProductId).mockResolvedValue([]); // no linked contents
       vi.mocked(deleteProduct).mockResolvedValue(true);
 
       const res = await DELETE(mutatingRequest('DELETE'), ctx('1'));

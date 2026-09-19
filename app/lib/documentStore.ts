@@ -1,4 +1,5 @@
 import { cache } from "react";
+import { unstable_cache } from "next/cache";
 import { query } from "./db";
 import type { DocumentData } from "./types";
 import type { RowDataPacket } from "mysql2";
@@ -19,12 +20,24 @@ function mapDocumentRow(row: any): DocumentData {
   };
 }
 
-export async function getAllDocuments(): Promise<DocumentData[]> {
-  const [rows] = await query<RowDataPacket[]>(
-    "SELECT * FROM documents ORDER BY sortOrder ASC, createdAt DESC"
-  );
-  return rows.map(mapDocumentRow);
-}
+// Cached across requests, like the product/category/content catalog reads.
+// Its own "documents" tag rather than the shared "products" one: nothing
+// cascades between the two tables (documents carry no productId), so there is
+// no write that would bust one and silently leave the other stale — the very
+// coupling that made contents share a tag. Every write path below calls
+// revalidateTag("documents").
+export const getAllDocuments = cache(
+  unstable_cache(
+    async function fetchAllDocuments(): Promise<DocumentData[]> {
+      const [rows] = await query<RowDataPacket[]>(
+        "SELECT * FROM documents ORDER BY sortOrder ASC, createdAt DESC"
+      );
+      return rows.map(mapDocumentRow);
+    },
+    ["documents_all"],
+    { tags: ["documents"], revalidate: 300 }
+  )
+);
 
 // cache() de-dupes calls with the same id within a single request/render —
 // generateMetadata and the page component on /document/[id] both need it.

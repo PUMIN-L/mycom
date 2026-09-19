@@ -1,25 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { uploadImage } from "../../lib/cloudinaryHelper";
 import { requireAuth, withRoute } from "../../lib/apiHelpers";
+import { createRateLimiter } from "../../lib/rateLimit";
 
-const UPLOAD_LIMIT = 60; // 60 uploads per block window
-const BLOCK_MS = 60 * 1000; // 1 minute window
-const MAX_TRACKED = 10_000;
-
-const uploadRateMap = new Map<string, { count: number; expiresAt: number }>();
-
-function prune(now: number) {
-  for (const [key, rec] of uploadRateMap) {
-    if (rec.expiresAt <= now) uploadRateMap.delete(key);
-  }
-  if (uploadRateMap.size > MAX_TRACKED) {
-    let excess = uploadRateMap.size - MAX_TRACKED;
-    for (const key of uploadRateMap.keys()) {
-      if (excess-- <= 0) break;
-      uploadRateMap.delete(key);
-    }
-  }
-}
+// Keyed on the user id, not an IP: this route requires a session, so the thing
+// worth throttling is the account. Per-instance like every in-memory limiter
+// here — see app/lib/rateLimit.ts for what that does and does not guarantee.
+const rateLimiter = createRateLimiter({
+  limit: 60,
+  windowMs: 60 * 1000,
+});
 
 // POST — upload an image or document to Cloudinary (login required)
 export const POST = withRoute(
@@ -29,21 +19,12 @@ export const POST = withRoute(
     
     // Rate Limiting: Prevent a compromised admin session from spamming uploads
     // and exhausting Cloudinary quotas or bandwidth.
-    const now = Date.now();
-    prune(now);
-    
-    const limitRecord = uploadRateMap.get(session.userId);
-    if (limitRecord && limitRecord.expiresAt > now && limitRecord.count >= UPLOAD_LIMIT) {
+    const limit = rateLimiter.check(session.userId);
+    if (!limit.allowed) {
       return NextResponse.json(
         { error: "อัปโหลดบ่อยเกินไป กรุณารอสักครู่ (Rate limit exceeded)" },
         { status: 429 }
       );
-    }
-    
-    if (limitRecord && limitRecord.expiresAt > now) {
-      limitRecord.count++;
-    } else {
-      uploadRateMap.set(session.userId, { count: 1, expiresAt: now + BLOCK_MS });
     }
 
     // Prevent DoS: Reject oversized payloads before parsing the body.

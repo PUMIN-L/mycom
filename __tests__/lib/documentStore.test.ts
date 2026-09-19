@@ -15,6 +15,11 @@ vi.mock('@/app/lib/db', () => ({
 }));
 import { query } from '@/app/lib/db';
 
+// getAllDocuments is wrapped in next/cache's unstable_cache. Make it
+// pass-through so each call re-runs the real query against the mock above —
+// otherwise the second call in a test would be served the first call's rows.
+vi.mock('next/cache', () => ({ unstable_cache: (fn: any) => fn }));
+
 import {
   getAllDocuments,
   getDocument,

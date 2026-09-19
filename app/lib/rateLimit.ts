@@ -1,8 +1,16 @@
-// Small in-memory rate limiter, extracted from the copy-pasted Map + prune
-// block that app/api/contact/route.ts, app/api/auth/login/route.ts and
-// app/api/upload/route.ts each carry their own version of. Those three are
-// deliberately NOT migrated yet (login's copy sits next to the security-critical
-// lockout); this is the shared implementation new call sites should use.
+// Small in-memory rate limiter, extracted from a Map + prune block that several
+// routes used to carry their own copy of. Used by app/api/documents/proxy and
+// app/api/upload; new call sites should use it rather than hand-rolling another.
+//
+// Two routes deliberately do NOT use it:
+//   * app/api/auth/login — its throttle is DB-backed (a settings row), because
+//     a per-instance counter lets a distributed attacker get FAILURE_LIMIT
+//     guesses per warm instance instead of in total. Credential guessing needs
+//     a real global limit; see that file.
+//   * app/api/contact — it counts an attempt only AFTER the payload validates,
+//     so a visitor who fumbles the phone format five times is not locked out of
+//     the contact form. check() below consumes on every call by design, which
+//     is the right shape for the routes above and the wrong one for that.
 //
 // ── THE HONEST LIMITATION ───────────────────────────────────────────────────
 // This counts in the process's own memory. On Vercel every serverless instance

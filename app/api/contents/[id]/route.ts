@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { revalidateTag } from "next/cache";
 import {
   getContent,
-  getAllContents,
+  getAllContentsMeta,
   deleteContent,
   updateContent,
   getContentByProductId,
@@ -35,7 +35,12 @@ export const GET = withRoute(
     const session = await getSession();
 
     if (id === "all") {
-      const contents = await getAllContents();
+      // Metadata only, never the `blocks` of every row. The one caller
+      // (app/create-content/page.tsx) reads nothing but `productId` off these,
+      // and blocks is the rich-text document — HTML, images, tables — so
+      // serving it here shipped megabytes to build a Set of ids. Fetch a single
+      // content by its own id when the body is actually needed.
+      const contents = await getAllContentsMeta();
       if (session) return NextResponse.json(contents);
       const products = await getAllProducts();
       const hiddenProductIds = new Set(

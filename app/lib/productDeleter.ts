@@ -1,5 +1,5 @@
 import { getProduct, deleteProduct } from "./productStore";
-import { getAllContents, deleteContent } from "./contentStore";
+import { getContentsByProductId, deleteContent } from "./contentStore";
 import { collectContentImageUrls } from "./cloudinaryHelper";
 
 /**
@@ -16,8 +16,7 @@ export async function hardDeleteProduct(id: string): Promise<string[] | null> {
   const orphanedImages: string[] = [];
 
   // 1. Delete linked contents first (collect their images)
-  const allContents = await getAllContents();
-  const linkedContents = allContents.filter((c) => c.productId === id);
+  const linkedContents = await getContentsByProductId(id);
   for (const content of linkedContents) {
     const imageUrls = collectContentImageUrls(content);
     for (const url of imageUrls) {

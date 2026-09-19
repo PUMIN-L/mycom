@@ -34,6 +34,7 @@ import {
   getAllContents,
   getAllContentsMeta,
   getContentByProductId,
+  getContentsByProductId,
   deleteContent,
   updateContent,
   ContentProductConflictError,
@@ -318,6 +319,40 @@ describe('contentStore', () => {
     it('returns undefined when the product has no content', async () => {
       mockedQuery.mockResolvedValue([[]] as any);
       expect(await getContentByProductId('none')).toBeUndefined();
+    });
+  });
+
+  describe('getContentsByProductId', () => {
+    it('filters in SQL on productId instead of reading the whole table', async () => {
+      // hardDeleteProduct used to load every content row — bodies included —
+      // just to keep the few matching this product. The WHERE is what makes
+      // idx_contents_productId usable; losing it silently restores the old
+      // full-table read.
+      const row = { id: 'c', title: 't', blocks: '[]', createdAt: 'd', productId: 'p-1' };
+      mockedQuery.mockResolvedValue([[row]] as any);
+
+      const result = await getContentsByProductId('p-1');
+      expect(callArgs(0)[0]).toContain('WHERE productId = ?');
+      expect(callArgs(0)[1]).toEqual(['p-1']);
+      expect(result).toHaveLength(1);
+      expect(result[0].blocks).toEqual([]);
+    });
+
+    it('has no LIMIT, so a violated one-content-per-product invariant still cleans up fully', async () => {
+      const rows = [
+        { id: 'c-1', title: 't', blocks: '[]', createdAt: 'd', productId: 'p-1' },
+        { id: 'c-2', title: 't', blocks: '[]', createdAt: 'd', productId: 'p-1' },
+      ];
+      mockedQuery.mockResolvedValue([rows] as any);
+
+      const result = await getContentsByProductId('p-1');
+      expect(callArgs(0)[0]).not.toContain('LIMIT');
+      expect(result.map((c) => c.id)).toEqual(['c-1', 'c-2']);
+    });
+
+    it('returns an empty list when the product has no content', async () => {
+      mockedQuery.mockResolvedValue([[]] as any);
+      expect(await getContentsByProductId('none')).toEqual([]);
     });
   });
 
