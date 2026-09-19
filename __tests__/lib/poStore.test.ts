@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const conn = { query: vi.fn() };
 vi.mock("@/app/lib/db", () => ({
@@ -17,6 +17,7 @@ import {
   PoDocNoConflictError,
   PurchaseOrderNotFoundError,
   PurchaseOrderFinalizedError,
+  purgeExpiredPurchaseOrders,
 } from "@/app/lib/poStore";
 
 beforeEach(() => {
@@ -191,5 +192,57 @@ describe("supersedePurchaseOrder", () => {
     expect(
       conn.query.mock.calls.some(([sql]) => String(sql).includes("UPDATE purchase_orders SET supersededById"))
     ).toBe(false);
+  });
+});
+
+// The cutoff decides what gets DELETED, and it used to be computed from
+// getTimezoneOffset() — correct on Vercel (UTC), off by seven hours on a host
+// already set to Bangkok time. Nothing would have reported that: the purge does
+// not fail, it just picks a slightly different day. These pin the shape and the
+// timezone-independence instead.
+describe("purgeExpiredPurchaseOrders — cutoff date", () => {
+  const RETENTION = 730;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(query).mockResolvedValue([{ affectedRows: 0 }] as any);
+  });
+
+  /** The cutoff string the purge passed to the DELETE. */
+  async function cutoffFor(now: string): Promise<string> {
+    vi.setSystemTime(new Date(now));
+    await purgeExpiredPurchaseOrders(RETENTION);
+    const [sql, params] = vi.mocked(query).mock.calls.at(-1) as [string, unknown[]];
+    expect(sql).toContain("DELETE FROM purchase_orders WHERE createdAt < ?");
+    return String(params[0]);
+  }
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("is a plain YYYY-MM-DD Bangkok date, retentionDays back", async () => {
+    vi.useFakeTimers();
+    // 2026-09-19 12:00 UTC = 19:00 Bangkok, same calendar day either way.
+    const cutoff = await cutoffFor("2026-09-19T12:00:00Z");
+    expect(cutoff).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(cutoff).toBe("2024-09-19"); // 730 days back, no leap day in that span
+  });
+
+  it("uses Bangkok's calendar day, not the server's, just after UTC midnight", async () => {
+    vi.useFakeTimers();
+    // 2026-09-19 00:30 UTC is already 07:30 on the 19th in Bangkok. A UTC-based
+    // cutoff would still be on the 18th and purge a day too much.
+    expect(await cutoffFor("2026-09-19T00:30:00Z")).toBe("2024-09-19");
+  });
+
+  it("follows Bangkok over the date line, not UTC", async () => {
+    vi.useFakeTimers();
+    // 18:00 UTC is already 01:00 the NEXT day in Bangkok, so the cutoff must
+    // advance with it. A UTC-based calculation would still be on the 19th and
+    // keep a day it was asked to purge — the mirror of the earlier case, and the
+    // pair of them is what proves the offset is applied once and in one
+    // direction.
+    expect(await cutoffFor("2026-09-19T18:00:00Z")).toBe("2024-09-20");
   });
 });

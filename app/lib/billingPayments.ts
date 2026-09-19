@@ -140,6 +140,14 @@ export async function recomputePaidAmount(
   return paid;
 }
 
+/** Thrown when a payment amount is not a positive, finite number of baht. */
+export class InvalidPaymentAmountError extends Error {
+  constructor(public readonly amount: number) {
+    super(`payment amount ${amount} must be a positive number`);
+    this.name = "InvalidPaymentAmountError";
+  }
+}
+
 export interface NewBillingPayment {
   id: string;
   billingDocumentId: string;
@@ -161,6 +169,18 @@ export interface NewBillingPayment {
 export async function addBillingPayment(
   payment: NewBillingPayment
 ): Promise<{ paidAmount: number }> {
+  // Checked here and not only in the route. `amount` lands in a DECIMAL(12,2)
+  // and is summed into the document's paidAmount, so a negative or NaN value
+  // does not fail loudly — it quietly makes an invoice look part-paid, or
+  // unpaid, or paid twice over, and the row that did it looks like any other in
+  // the history. The one caller today validates before getting here; this is so
+  // the second one cannot skip it.
+  //
+  // Overpayment stays allowed on purpose — see the route for why a customer who
+  // pays too much must still be recordable.
+  if (!Number.isFinite(payment.amount) || payment.amount <= 0) {
+    throw new InvalidPaymentAmountError(payment.amount);
+  }
   return withTransaction(async (conn) => {
     await conn.query(
       `INSERT INTO billing_payments
@@ -504,22 +524,3 @@ export async function syncCancelledReceiptPayment(
   await recomputePaidAmount(conn, billingDocumentId);
 }
 
-/**
- * Repair path for the cache: re-sum every document that has payment rows.
- * Bounded and idempotent, so it is safe to run at any time — the point of
- * `paidAmount` being a pure re-sum is that drift is fixable without a
- * hand-written UPDATE against production.
- */
-export async function repairPaidAmounts(limit = 500): Promise<number> {
-  const [rows] = await query<RowDataPacket[]>(
-    `SELECT DISTINCT billingDocumentId FROM billing_payments LIMIT ${Math.max(1, Math.trunc(limit))}`
-  );
-  let repaired = 0;
-  for (const row of rows) {
-    await withTransaction(async (conn) => {
-      await recomputePaidAmount(conn, String(row.billingDocumentId));
-    });
-    repaired += 1;
-  }
-  return repaired;
-}

@@ -14,6 +14,7 @@ vi.mock('@/app/lib/db', () => ({
 import { withTransaction } from '@/app/lib/db';
 import {
   addBillingPayment,
+  InvalidPaymentAmountError,
   voidBillingPayment,
   recomputePaidAmount,
   syncReceiptPayment,
@@ -437,5 +438,38 @@ describe('voidSupersededReceiptPayment — แก้ไข (New Ver.) takes the 
     ]);
     await voidSupersededReceiptPayment(conn as never, 'rc-1', 'now');
     expect(conn.query).toHaveBeenCalledTimes(1);
+  });
+});
+
+// The route that exists today validates before calling in, so these exercise the
+// guard the store now carries for the caller that does not yet exist. A bad
+// amount here does not throw on its own — it sums into the document's
+// paidAmount and quietly makes an invoice look part-paid, unpaid, or settled
+// twice, from a row that reads like any other in the history.
+describe('addBillingPayment — amount guard', () => {
+  it.each([0, -1, -0.01, NaN, Infinity, -Infinity])(
+    'refuses %p and writes nothing',
+    async (amount) => {
+      await expect(
+        addBillingPayment({ ...payment, amount: amount as number })
+      ).rejects.toBeInstanceOf(InvalidPaymentAmountError);
+      // The point: it fails BEFORE opening a transaction, so there is no partial
+      // write and no recomputed total to undo.
+      expect(withTransaction).not.toHaveBeenCalled();
+      expect(conn.query).not.toHaveBeenCalled();
+    }
+  );
+
+  it('still accepts a payment larger than the invoice', async () => {
+    // Overpayment is deliberately allowed — a customer who transfers too much
+    // has to be recordable, or the admin is forced to enter a false figure.
+    conn.query
+      .mockResolvedValueOnce([{ affectedRows: 1 }])
+      .mockResolvedValueOnce([[{ paid: '999999.00' }]])
+      .mockResolvedValueOnce([{ affectedRows: 1 }]);
+
+    await expect(
+      addBillingPayment({ ...payment, amount: 999999 })
+    ).resolves.toEqual({ paidAmount: 999999 });
   });
 });

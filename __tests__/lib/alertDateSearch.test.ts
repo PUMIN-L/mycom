@@ -8,6 +8,8 @@ import {
   DATE_SEARCH_ROW_CAP,
   IMMOVABLE_REASONS,
   computeTargetDate,
+  DATED_ALERT_KINDS,
+  MOVABLE_ALERT_KINDS,
   evaluateMovability,
   immovableReasonFor,
   isRowMovable,
@@ -467,5 +469,43 @@ describe('caps', () => {
     expect(DATE_SEARCH_MAX_RANGE_DAYS).toBe(366);
     expect(BULK_RESCHEDULE_MAX_ITEMS).toBe(200);
     expect(BULK_RESCHEDULE_MAX_SHIFT_DAYS).toBe(3650);
+  });
+});
+
+// MOVABLE_ALERT_KINDS documents which alerts carry a date the owner may move,
+// but evaluateMovability decides it with its own if-branches and never reads the
+// constant. Two statements of one rule, free to drift: add a seventh kind and
+// update only one of them and the constant becomes a comment that lies. This
+// ties them together so the pair has to move as one.
+describe('MOVABLE_ALERT_KINDS matches what evaluateMovability actually allows', () => {
+  /** An open row of `kind`, with a date — nothing else standing in the way, so
+   *  the only thing left to decide the outcome is the kind itself. "pending" is
+   *  the open status for every movable kind. */
+  const openRow = (kind: string) => ({
+    kind,
+    status: 'pending',
+    matchedDate: '2026-09-19',
+  });
+
+  it('every listed kind can be movable', () => {
+    for (const kind of MOVABLE_ALERT_KINDS) {
+      expect(
+        evaluateMovability(openRow(kind) as never).movable,
+        `${kind} is listed as movable but evaluateMovability refuses it`
+      ).toBe(true);
+    }
+  });
+
+  it('every kind NOT listed is refused even when open and dated', () => {
+    const immovable = DATED_ALERT_KINDS.filter(
+      (k) => !(MOVABLE_ALERT_KINDS as readonly string[]).includes(k)
+    );
+    expect(immovable.length).toBeGreaterThan(0); // guard against a vacuous pass
+    for (const kind of immovable) {
+      expect(
+        evaluateMovability(openRow(kind) as never).movable,
+        `${kind} is not listed as movable but evaluateMovability allows it`
+      ).toBe(false);
+    }
   });
 });

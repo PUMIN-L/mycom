@@ -1,4 +1,5 @@
 import { query, withTransaction } from "./db";
+import { bangkokDateString, bangkokDateAtHourFromNow } from "./dateFormat";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { computeQuoteTotals } from "./quotationTotals";
 
@@ -236,13 +237,18 @@ export async function deletePurchaseOrder(id: string): Promise<void> {
  * ใช้โดย cron /api/quotations/cleanup เท่านั้น.
  */
 export async function purgeExpiredPurchaseOrders(retentionDays: number): Promise<number> {
-  // Compute Bangkok-date cutoff the same way purgeExpiredQuotations does
-  const now = new Date();
-  const bangkokOffset = 7 * 60; // UTC+7 in minutes
-  const localMs = now.getTime() + (bangkokOffset - now.getTimezoneOffset()) * 60000;
-  const localDate = new Date(localMs);
-  localDate.setDate(localDate.getDate() - retentionDays);
-  const cutoff = localDate.toISOString().slice(0, 10); // yyyy-mm-dd
+  // A Bangkok calendar date, through the shared helpers. This used to derive the
+  // offset from getTimezoneOffset() and then mix local getters with a UTC read:
+  // right on Vercel (UTC), wrong anywhere else, because on a host already set to
+  // Bangkok time it applied the seven hours twice. The helpers shift the epoch
+  // and read UTC fields, so the host clock does not enter into it. Midday keeps
+  // the instant clear of either midnight.
+  //
+  // `createdAt` is a full ISO timestamp in a VARCHAR column, so comparing it
+  // against a 10-character date sorts that entire day AFTER the cutoff: a PO
+  // created on the boundary day is kept rather than purged. Deleting a day less
+  // than asked is the safe direction here, and is left as it is.
+  const cutoff = bangkokDateString(bangkokDateAtHourFromNow(-retentionDays, 12));
 
   const [result] = await query<ResultSetHeader>(
     "DELETE FROM purchase_orders WHERE createdAt < ?",

@@ -1,6 +1,6 @@
 // @vitest-environment node
 // Targeted branch-coverage tests for route handlers — the error/cascade/guard
-// paths the per-route suites didn't reach (product-delete cascade, the
+// paths the per-route suites did not reach (the
 // quotation uploaded-image safety filter, isNaN/500 guards, extra validation).
 // One file mocks every store it needs; each case drives the REAL withRoute +
 // requireAuth. Keeps the logic-surface coverage honest without duplicating the
@@ -8,7 +8,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
 
-import { DELETE as deleteProductRoute } from '@/app/api/products/[id]/route';
 import { POST as postProduct } from '@/app/api/products/route';
 import { POST as postQuotation } from '@/app/api/quotations/route';
 import {
@@ -28,8 +27,6 @@ vi.mock('@/app/lib/productStore', () => ({
   getProductsByCategory: vi.fn(),
 }));
 import {
-  getProduct,
-  deleteProduct,
   addProduct,
   deleteCategory,
   reorderCategories,
@@ -41,7 +38,7 @@ vi.mock('@/app/lib/contentStore', () => ({
   getContent: vi.fn(),
   deleteContent: vi.fn(),
 }));
-import { getAllContents, getContent, deleteContent } from '@/app/lib/contentStore';
+import { getContent, deleteContent } from '@/app/lib/contentStore';
 
 vi.mock('@/app/lib/cloudinaryHelper', () => ({
   deleteCloudinaryImage: vi.fn(),
@@ -49,7 +46,6 @@ vi.mock('@/app/lib/cloudinaryHelper', () => ({
   collectContentImageUrls: vi.fn(() => []),
 }));
 import {
-  deleteCloudinaryImage,
   deleteCloudinaryImages,
   collectContentImageUrls,
 } from '@/app/lib/cloudinaryHelper';
@@ -91,44 +87,6 @@ const ctx = (id: string) => ({ params: Promise.resolve({ id }) });
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(getSession).mockResolvedValue(admin); // default: logged in
-});
-
-describe.skip('DELETE /api/products/[id] — cascade branches', () => {
-  it('deletes only the linked content (filter predicate), purges its images, and the product image', async () => {
-    vi.mocked(getProduct).mockResolvedValue({
-      id: 'p1',
-      image: 'https://res.cloudinary.com/x/image/upload/v1/prod.png',
-    } as any);
-    vi.mocked(getAllContents).mockResolvedValue([
-      { id: 'c1', productId: 'p1' },
-      { id: 'c2', productId: 'other' },
-    ] as any);
-    vi.mocked(collectContentImageUrls).mockReturnValue(['https://res.cloudinary.com/x/a.png']);
-    vi.mocked(deleteProduct).mockResolvedValue(true);
-
-    const res = await deleteProductRoute(req('DELETE') as any, ctx('p1'));
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ success: true });
-    // Only the linked content (c1) is touched — c2 is filtered out.
-    expect(deleteContent).toHaveBeenCalledTimes(1);
-    expect(deleteContent).toHaveBeenCalledWith('c1');
-    expect(deleteCloudinaryImages).toHaveBeenCalledWith(['https://res.cloudinary.com/x/a.png']);
-    // The product's own Cloudinary image is purged too.
-    expect(deleteCloudinaryImage).toHaveBeenCalledWith(
-      'https://res.cloudinary.com/x/image/upload/v1/prod.png'
-    );
-  });
-
-  it('returns 500 when deleteProduct reports the row was not removed', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => { });
-    vi.mocked(getProduct).mockResolvedValue({ id: 'p1', image: '' } as any);
-    vi.mocked(getAllContents).mockResolvedValue([]);
-    vi.mocked(deleteProduct).mockResolvedValue(false);
-
-    const res = await deleteProductRoute(req('DELETE') as any, ctx('p1'));
-    expect(res.status).toBe(500);
-    expect(deleteCloudinaryImage).not.toHaveBeenCalled();
-  });
 });
 
 describe('POST /api/quotations — uploadedImages safety filter', () => {
