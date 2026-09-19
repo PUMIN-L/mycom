@@ -446,13 +446,13 @@ export default function TaskFormModal({
       }}
     >
       <div
-        className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto"
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col"
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
         aria-label={isEdit ? "แก้ไขงาน" : "สร้างงานใหม่"}
       >
-        <div className="p-6 border-b border-gray-100 flex justify-between items-center sticky top-0 bg-white z-10">
+        <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-white">
           <div>
             <h3 className="text-xl font-bold text-gray-800">
               {isEdit ? "แก้ไขงาน" : "สร้างงานใหม่"}
@@ -474,7 +474,7 @@ export default function TaskFormModal({
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-6 space-y-5">
+        <form onSubmit={handleSubmit} className="p-6 space-y-5 overflow-y-auto min-h-0">
           {/* หัวข้อ (บังคับ) */}
           <div>
             <label className="block text-sm font-semibold text-gray-700 mb-1.5">
