@@ -141,12 +141,13 @@ function CreateContentInner() {
           .filter((p) => p.categoryId === cat.id)
           .map((p) => {
             const isLinked = linkedProductIds.has(p.id);
+            const title = stripHtml(p.title_en);
             return {
               value: p.id,
               label: isLinked
-                ? `${p.title_en} (มี Content แล้ว - ต้องลบของเก่าก่อน)`
-                : p.title_en,
-              subLabel: cat.name_en,
+                ? `${title} (มี Content แล้ว - ต้องลบของเก่าก่อน)`
+                : title,
+              subLabel: stripHtml(cat.name_en),
               disabled: isLinked && p.id !== preselectedProductId,
             };
           })
@@ -472,7 +473,7 @@ function CreateContentInner() {
           />
           {selectedProductId && (
             <p className="mt-2 text-xs text-orange-600 font-medium">
-              ✅ จะผูก content นี้กับ: {allProducts.find((p) => p.id === selectedProductId)?.title_en}
+              ✅ จะผูก content นี้กับ: {stripHtml(allProducts.find((p) => p.id === selectedProductId)?.title_en || "")}
             </p>
           )}
         </div>
