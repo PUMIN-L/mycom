@@ -203,6 +203,39 @@ server-side with [`sanitizeRichText`](./app/lib/sanitizeHtml.ts), which uses
 > tried and reverted. The same rule applies to any new server dependency with
 > native/ESM-loader quirks (see `mailer.ts`'s note).
 
+### 5a. Customer note search-and-replace
+`GET /api/customers/note-search` + `POST /api/customers/note-replace`
+(`app/lib/customerNoteSearchStore.ts`, matcher/regex-safety rules in
+`app/lib/noteSearch.ts`) — the search block on `/customers`, separate from the
+existing name/company filter on that page, which this feature does not touch.
+
+- **What this path may write: exactly `customers.note`, plus a `revisions`
+  row.** Nothing here ever touches `companyId`, `name`, `department`, `phone`
+  or `email` — `__tests__/lib/customerNoteSearchStore.test.ts` asserts that
+  from the SQL actually issued, not from a comment, precisely because a bulk
+  path is the one place a scope-creeping write is most dangerous.
+- **The matcher is a value, not a raw term.** The only way to get a
+  `NoteMatcher` is `buildMatcher()` in `noteSearch.ts`, which refuses an empty
+  term, a broken pattern, and — the one that actually matters — any pattern
+  that can match the empty string (a term-less "match" would replace between
+  every character). Refusal codes for search are
+  `NOTE_SEARCH_REFUSAL_CODES`; the store takes a `NoteMatcher`, never a string,
+  so there is no code path from a dangerous pattern to an `UPDATE`.
+- **Snippets are rendered as plain text — no `dangerouslySetInnerHTML`
+  anywhere in this feature.** A customer note is a years-long hand-typed call
+  log and may contain `<`, `>`, or anything else that reads as a tag.
+- **Optimistic concurrency, not a lock.** Each search row's `note` doubles as
+  the value shown and the concurrency token: the client echoes it back as
+  `expectedNote` on replace, and the store refuses (`"stale"` in
+  `NOTE_REPLACE_REFUSAL_CODES`) if the stored value has moved on since the
+  search ran — no `SELECT ... FOR UPDATE` held across a request. Other refusal
+  codes: `not_found` (customer deleted since the search), `too_long` (result
+  would pass 2000 chars and be silently truncated — refused instead), and
+  `unsafe_match` (should be unreachable, since `buildMatcher` already refuses
+  these — it exists to fail loudly rather than write something odd).
+- No schema change — `customers.note` already existed; nothing here bumped
+  `SCHEMA_VERSION`.
+
 ### 6. Security headers & CSRF
 - [`next.config.ts`](./next.config.ts) sets `Content-Security-Policy-Report-Only`
   (tune, then flip to enforcing `Content-Security-Policy`), `X-Frame-Options: DENY`,
@@ -882,3 +915,66 @@ decision.
 > worth a look after that — `status = 'Expired'` (also excluded), a live row in
 > `alert_snoozes` for `('warranty', <equipmentId>)`, or simply no
 > `warrantyEndDate`.
+
+**5. Alert date search + bulk reschedule — no schema change**
+Two routes let an admin see everything dated on/around a chosen day, past or
+future, and move several dates at once. `SCHEMA_VERSION` is untouched by this
+feature — do not go looking for a migration.
+
+- `GET /api/admin/alerts/search` (`app/lib/alertSearchStore.ts`,
+  `searchDatedAlerts`) and `POST /api/admin/alerts/reschedule`
+  (`rescheduleDatedAlerts`). The proposal that designed this
+  (`openspec/changes/add-alert-date-search`) named them `date-search` and
+  `bulk-reschedule`; the routes were built under these shorter names instead,
+  and the code — not the proposal — is the source of truth.
+- Six sources, each matched on the date that means something for it, never the
+  first date column in its table (`DATED_ALERT_KINDS` in `app/lib/alertDateSearch.ts`):
+
+  | Kind | Table | Date matched |
+  | --- | --- | --- |
+  | `schedule` | `service_schedules` (`equipmentId IS NOT NULL`) | `scheduledDate` |
+  | `customer_call` | `service_schedules` (`equipmentId IS NULL`) | `scheduledDate` |
+  | `task` | `tasks` | `dueDate` |
+  | `warranty` | `customer_equipments` | `warrantyEndDate` |
+  | `calibration` | `customer_equipments` | `calibrationDate + CALIBRATION_VALIDITY_MONTHS` — the due date, not the date of the last calibration |
+  | `receivable` | `billing_documents` | `dueDate`, same `debtCarrier`/not-superseded rule the feed and `listOpenInvoices` use |
+
+- **Calibration searches on 12 months, the feed alerts at 10 — this is not a
+  bug.** The feed asks "has the reminder started ringing yet?" (a lead-time
+  artifact, `CALIBRATION_VALIDITY_MONTHS − CALIBRATION_ALERT_LEAD_MONTHS` =
+  `12 − 2`, §1 above). The search asks "what falls due on that day?" — the
+  anniversary itself. Searching 12 Jun 2026 must return machines *due* that
+  day, not machines calibrated that day.
+- `evaluateMovability()` (`alertDateSearch.ts`) is the single place that
+  decides whether a found row's date may move, and returns the Thai refusal
+  reason alongside the verdict. The results table greys a checkbox with it and
+  the reschedule route refuses with it **against the status it re-read from the
+  database**, never against what the client claimed — so a stale screen can
+  disable the wrong checkbox but can never talk the server into moving a date
+  it shouldn't. `schedule` and `customer_call` are movable while `pending`;
+  `task` is movable while `pending` and dated; `warranty`, `calibration` and
+  `receivable` are never movable — their dates are facts, not reminders someone
+  set. Debugging "why won't this date move" starts at `movable`/
+  `immovableReason` on that row, not in the UI.
+- The reschedule route writes at most two columns per row inside one
+  transaction (the date column plus, for `schedule`/`customer_call`, nothing
+  else — no side effects on `status` or `notes`).
+- Four caps, all in `app/lib/alertDateSearch.ts`. The proposal had put them in
+  `alertThresholds.ts` instead, but this feature owns neither that file nor
+  `types.ts` (where the proposal put its result types), so both live in
+  `alertDateSearch.ts` — still with no imports, same reason `alertThresholds.ts`
+  has none: the in-page guide (a client component) has to read the exact
+  numbers the queries run on. Rendered into the guide from those constants
+  rather than typed a second time as numbers in copy: `DATE_SEARCH_ROW_CAP`
+  (200 rows per category — matches the bulk-move
+  cap on purpose, so a category you can see in full is one you can act on in
+  full), `DATE_SEARCH_MAX_RANGE_DAYS` (366 — a year is the longest span that
+  still means something operationally here; wider is a report, not a search),
+  `BULK_RESCHEDULE_MAX_ITEMS` (200 — refuses the whole request over the cap,
+  never truncates), `BULK_RESCHEDULE_MAX_SHIFT_DAYS` (3650, ≈10 years — catches
+  a fat-fingered shift and keeps every result inside a 4-digit year, which the
+  lexical `YYYY-MM-DD` comparisons these VARCHAR date columns depend on require).
+- `getAlerts()` and the default feed are untouched by any of this — same
+  thresholds, same snooze keys, same number on the bell. A row reschedule does
+  not touch `alert_snoozes`; a snoozed item can still turn up in a search and
+  moving its date does not un-snooze it.
