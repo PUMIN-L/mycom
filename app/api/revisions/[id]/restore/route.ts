@@ -238,6 +238,10 @@ export const POST = withRoute(
         if (!updated) {
           return NextResponse.json({ error: "Content no longer exists" }, { status: 404 });
         }
+        // Restoring a revision WRITES the contents table, so the cached catalog
+        // reads must be busted here too — this branch lives outside
+        // app/api/contents/**, which is exactly why it is easy to miss.
+        revalidateTag("products", { expire: 0 });
         break;
       }
       case "document": {

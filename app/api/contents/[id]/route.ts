@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { revalidateTag } from "next/cache";
 import {
   getContent,
   getAllContents,
@@ -91,6 +92,8 @@ export const PUT = withRoute(
     if (!updated) {
       return NextResponse.json({ error: "Content not found" }, { status: 404 });
     }
+    // Cached catalog reads hang off this tag — see app/lib/contentStore.ts.
+    revalidateTag("products", { expire: 0 });
     return NextResponse.json(updated);
   }
 );
@@ -118,6 +121,7 @@ export const DELETE = withRoute(
     // We no longer auto-delete from Cloudinary.
     const orphanedImages = imageUrls.filter((u) => u.includes("cloudinary.com"));
 
+    revalidateTag("products", { expire: 0 });
     return NextResponse.json({ success: true, deletedImages: imageUrls.length, orphanedImages });
   }
 );

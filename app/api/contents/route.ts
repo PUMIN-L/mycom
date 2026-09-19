@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { revalidateTag } from "next/cache";
 import {
   addContent,
   ContentData,
@@ -29,6 +30,9 @@ export const POST = withRoute(
 
     try {
       const newContent = await addContent(data);
+      // Cached catalog reads (getAllContentsMeta + the product/category lists)
+      // all hang off this one tag — see app/lib/contentStore.ts.
+      revalidateTag("products", { expire: 0 });
       return NextResponse.json(newContent, { status: 201 });
     } catch (err) {
       if (err instanceof ContentProductConflictError) {

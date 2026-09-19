@@ -19,6 +19,12 @@ vi.mock('@/app/lib/db', () => ({
 }));
 import { query } from '@/app/lib/db';
 
+// getAllContentsMeta is wrapped in next/cache's unstable_cache (see
+// contentStore.ts). Make it pass-through so each call re-runs the real query
+// against the mock above — otherwise the second call in a test would be served
+// the first call's cached rows.
+vi.mock('next/cache', () => ({ unstable_cache: (fn: any) => fn }));
+
 // NOTE: sanitizeHtml is deliberately NOT mocked. It is `server-only` (mocked to
 // {} in setup.ts) but otherwise pure JS (sanitize-html), so we let the REAL
 // sanitizer run and assert it strips <script> from stored/returned block HTML.

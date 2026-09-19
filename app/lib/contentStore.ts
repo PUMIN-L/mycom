@@ -1,4 +1,5 @@
 import { cache } from "react";
+import { unstable_cache } from "next/cache";
 import { query, withTransaction } from "./db";
 import { RowDataPacket, ResultSetHeader } from "mysql2";
 import type { ContentBlock, ContentData, ContentMeta } from "./types";
@@ -168,29 +169,38 @@ export async function getAllContents(): Promise<ContentData[]> {
   return rows.map(rowToContent);
 }
 
-// Like getAllContents but returns metadata only (block counts computed
-// server-side) — used by the showcase list and the related-content list, which
-// never render block bodies. Avoids serializing ~120KB of blocks JSON to the
-// client. Note: still reads blocks from the DB to count them; the win is the
-// client payload, not the query.
-export const getAllContentsMeta = cache(async function getAllContentsMeta(): Promise<
-  ContentMeta[]
-> {
-  // `blocks` is deliberately NOT selected. This runs on every /showcase/[id]
-  // view (force-dynamic) and every sitemap fetch, so reading the whole block
-  // JSON of every row — then parsing each one — meant a full-table blob scan
-  // per public pageview. Nothing renders block counts, which is what that
-  // parse used to compute.
-  const [rows] = await query<RowDataPacket[]>(
-    "SELECT id, title, createdAt, productId FROM contents ORDER BY createdAt DESC"
-  );
-  return rows.map((row) => ({
-    id: row.id,
-    title: row.title,
-    createdAt: row.createdAt,
-    productId: row.productId ?? null,
-  }));
-});
+// Like getAllContents but returns metadata only — used by the showcase list,
+// the related-content list and the sitemap, none of which render block bodies.
+//
+// `blocks` is deliberately NOT selected: this runs on every /showcase/[id] view
+// and every sitemap fetch (both force-dynamic), so reading and parsing the whole
+// block JSON of every row meant a full-table blob scan per public pageview.
+//
+// Cached across requests under the "products" tag. That tag is shared with the
+// product/category reads rather than given a "contents" name of its own, on
+// purpose: hard-deleting a product CASCADES into deleting its linked content
+// (app/lib/productDeleter.ts), and that route only ever busts "products". A
+// separate tag would leave this cache holding a content row the database no
+// longer has — and the sitemap would then advertise a /showcase/{id} that 404s,
+// which is the exact bug commit 5b0f220 fixed. Sharing the tag makes that
+// failure structurally impossible; the price is some over-invalidation.
+export const getAllContentsMeta = cache(
+  unstable_cache(
+    async function fetchAllContentsMeta(): Promise<ContentMeta[]> {
+      const [rows] = await query<RowDataPacket[]>(
+        "SELECT id, title, createdAt, productId FROM contents ORDER BY createdAt DESC"
+      );
+      return rows.map((row) => ({
+        id: row.id,
+        title: row.title,
+        createdAt: row.createdAt,
+        productId: row.productId ?? null,
+      }));
+    },
+    ["contents_meta"],
+    { tags: ["products"], revalidate: 300 }
+  )
+);
 
 export async function getContentByProductId(
   productId: string

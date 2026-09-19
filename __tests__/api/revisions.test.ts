@@ -195,7 +195,13 @@ describe('POST /api/revisions/[id]/restore', () => {
     expect(revalidateTag).toHaveBeenCalledWith('products', { expire: 0 });
   });
 
-  it('restores a content revision (no products revalidate)', async () => {
+  // This used to assert revalidateTag was NOT called: before getAllContentsMeta
+  // was cached there was no content cache to bust, so busting one would have
+  // been pointless. It now must be called — the cached content list lives under
+  // the "products" tag (shared on purpose: hard-deleting a product cascades into
+  // deleting its content, and that route only busts "products"). Skipping it
+  // here would leave the sitemap advertising a restored-away /showcase/{id}.
+  it('restores a content revision and revalidates the catalog cache', async () => {
     vi.mocked(getRevision).mockResolvedValue({
       id: 'r2', entityType: 'content', entityId: 'c1', data: { title: 'old' }, createdAt: 't',
     } as any);
@@ -203,7 +209,7 @@ describe('POST /api/revisions/[id]/restore', () => {
     const res = await restorePOST(postReq() as any, ctx('r2'));
     expect(res.status).toBe(200);
     expect(updateContent).toHaveBeenCalledWith('c1', { title: 'old' });
-    expect(revalidateTag).not.toHaveBeenCalled();
+    expect(revalidateTag).toHaveBeenCalledWith('products', { expire: 0 });
   });
 
   it('restores a document revision (checks existence first)', async () => {
