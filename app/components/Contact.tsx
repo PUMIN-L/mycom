@@ -105,9 +105,12 @@ export default function Contact({ email, phone, address, addressMapsQuery }: Con
           <span className="inline-block text-xl font-bold uppercase tracking-[0.4em] text-[var(--accent)] mb-4">
             {t(translations.contact.sectionTag)}
           </span>
-          <h2 className="text-4xl md:text-5xl font-bold text-[var(--brand-navy)] mb-6">
+          {/* h1, not h2: this component renders only on /contact, where this is
+              the page's main heading. Starting the document at h2 left that page
+              with no h1 at all. */}
+          <h1 className="text-4xl md:text-5xl font-bold text-[var(--brand-navy)] mb-6">
             {t(translations.contact.title)}
-          </h2>
+          </h1>
           <div className="w-20 h-[1px] bg-[var(--accent)] mx-auto mb-8" />
           <p className="text-[var(--text-secondary)] max-w-2xl mx-auto text-lg md:text-xl font-normal leading-relaxed">
             {t(translations.contact.subtitle)}

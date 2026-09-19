@@ -40,11 +40,16 @@ export default async function ProductsJsonLd() {
       contentByProduct.set(c.productId, c.id);
     }
   }
+  // undefined when the product has no content page yet. The only other URL it
+  // could carry is /showcase/product/{id}, and that gateway sets
+  // robots: noindex — naming it here tells Google "this item lives at a URL you
+  // may not index", which is a contradiction, not a lead. `url` is optional on
+  // a Thing, so the item still contributes its name, description and image;
+  // it just stops pointing at a door marked closed. Writing a content page for
+  // the product is what gives it a real destination.
   const productUrl = (id: string) => {
     const contentId = contentByProduct.get(id);
-    return contentId
-      ? `${SITE_URL}/showcase/${contentId}`
-      : `${SITE_URL}/showcase/product/${id}`;
+    return contentId ? `${SITE_URL}/showcase/${contentId}` : undefined;
   };
 
   // Rich Organization + Store (a LocalBusiness subtype) node: logo, physical
