@@ -176,20 +176,20 @@ export async function getAllContents(): Promise<ContentData[]> {
 export const getAllContentsMeta = cache(async function getAllContentsMeta(): Promise<
   ContentMeta[]
 > {
+  // `blocks` is deliberately NOT selected. This runs on every /showcase/[id]
+  // view (force-dynamic) and every sitemap fetch, so reading the whole block
+  // JSON of every row — then parsing each one — meant a full-table blob scan
+  // per public pageview. Nothing renders block counts, which is what that
+  // parse used to compute.
   const [rows] = await query<RowDataPacket[]>(
-    "SELECT id, title, blocks, createdAt, productId FROM contents ORDER BY createdAt DESC"
+    "SELECT id, title, createdAt, productId FROM contents ORDER BY createdAt DESC"
   );
-  return rows.map((row) => {
-    const blocks = parseBlocks(row.blocks, row.id);
-    return {
-      id: row.id,
-      title: row.title,
-      createdAt: row.createdAt,
-      productId: row.productId ?? null,
-      textCount: blocks.filter((b) => b.type === "text").length,
-      imageCount: blocks.filter((b) => b.type === "image").length,
-    };
-  });
+  return rows.map((row) => ({
+    id: row.id,
+    title: row.title,
+    createdAt: row.createdAt,
+    productId: row.productId ?? null,
+  }));
 });
 
 export async function getContentByProductId(

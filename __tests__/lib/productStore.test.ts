@@ -16,6 +16,12 @@ vi.mock('@/app/lib/db', () => ({
 }));
 import { query, withTransaction } from '@/app/lib/db';
 
+// getAllProducts / getAllCategories are wrapped in next/cache's unstable_cache
+// (see productStore.ts). Make it pass-through so each call re-runs the real
+// query against the mock above — otherwise the second call in a test would be
+// served the first call's cached rows.
+vi.mock('next/cache', () => ({ unstable_cache: (fn: any) => fn }));
+
 import {
   getAllCategories,
   addCategory,

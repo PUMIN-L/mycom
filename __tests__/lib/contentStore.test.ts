@@ -262,21 +262,19 @@ describe('contentStore', () => {
   });
 
   describe('getAllContentsMeta', () => {
-    it('returns lightweight meta with block COUNTS and does NOT ship full blocks', async () => {
-      const blocks = [
-        { id: '1', type: 'text', content: '<p>a</p>' },
-        { id: '2', type: 'text', content: '<p>b</p>' },
-        { id: '3', type: 'image', imageUrl: 'u' },
-      ];
+    it('returns lightweight meta and never reads the heavy blocks column', async () => {
       const rows = [
-        { id: 'c-1', title: 'T', blocks: JSON.stringify(blocks), createdAt: '2026-01-01', productId: 'p-1' },
+        { id: 'c-1', title: 'T', createdAt: '2026-01-01', productId: 'p-1' },
       ];
       mockedQuery.mockResolvedValue([rows] as any);
 
       const result = await getAllContentsMeta();
 
-      // Reads only the meta columns, not SELECT * (blocks still read to count).
-      expect(callArgs(0)[0]).toContain('SELECT id, title, blocks, createdAt, productId');
+      // The blocks column must stay out of the projection: this query runs on
+      // every public /showcase/[id] view and every sitemap fetch, so selecting
+      // it means a full-table blob scan per pageview.
+      expect(callArgs(0)[0]).toContain('SELECT id, title, createdAt, productId');
+      expect(callArgs(0)[0]).not.toContain('blocks');
       expect(callArgs(0)[0]).toContain('ORDER BY createdAt DESC');
 
       expect(result[0]).toEqual({
@@ -284,40 +282,17 @@ describe('contentStore', () => {
         title: 'T',
         createdAt: '2026-01-01',
         productId: 'p-1',
-        textCount: 2,
-        imageCount: 1,
       });
-      // The heavy blocks payload is NOT included in the projection.
       expect(result[0]).not.toHaveProperty('blocks');
     });
 
-    it('counts blocks when the driver hands back an already-parsed array', async () => {
-      const rows = [
-        {
-          id: 'c-2',
-          title: 'X',
-          blocks: [
-            { id: '1', type: 'image' },
-            { id: '2', type: 'image' },
-            { id: '3', type: 'text' },
-          ],
-          createdAt: '2026-01-02',
-          productId: null,
-        },
-      ];
-      mockedQuery.mockResolvedValue([rows] as any);
+    it('normalises a missing productId to null', async () => {
+      mockedQuery.mockResolvedValue([
+        [{ id: 'c-2', title: 'X', createdAt: '2026-01-02', productId: null }],
+      ] as any);
 
       const [meta] = await getAllContentsMeta();
-      expect(meta.textCount).toBe(1);
-      expect(meta.imageCount).toBe(2);
       expect(meta.productId).toBeNull();
-    });
-
-    it('treats a null blocks column as zero counts', async () => {
-      mockedQuery.mockResolvedValue([[{ id: 'c', title: 't', blocks: null, createdAt: 'd', productId: null }]] as any);
-      const [meta] = await getAllContentsMeta();
-      expect(meta.textCount).toBe(0);
-      expect(meta.imageCount).toBe(0);
     });
   });
 

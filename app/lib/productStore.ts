@@ -1,4 +1,5 @@
 import { cache } from "react";
+import { unstable_cache } from "next/cache";
 import { query, withTransaction } from "./db";
 import { RowDataPacket, ResultSetHeader } from "mysql2";
 import type { PoolConnection } from "mysql2/promise";
@@ -29,12 +30,34 @@ export class BestSellerRankConflictError extends Error {
 
 // ── Categories ────────────────────────────────────────────────────────────────
 
-export async function getAllCategories(): Promise<ProductCategory[]> {
-  const [rows] = await query<RowDataPacket[]>(
-    "SELECT * FROM product_categories ORDER BY sortOrder ASC"
-  );
-  return rows as ProductCategory[];
-}
+// Whole-table reads, cached across requests under the "products" tag.
+//
+// WHY THAT TAG: every route that writes a product or a category already calls
+// `revalidateTag("products", { expire: 0 })` (10 call sites across
+// app/api/products/**, plus the revision-restore route), because that is the
+// tag getProductsData.ts uses for the homepage. Reusing it means an admin's
+// save busts these caches too — there is no window where the CMS shows one
+// thing and the public page another.
+//
+// `revalidate` is a backstop, not the mechanism: a write that never goes
+// through those routes (a direct SQL edit, or a future route that forgets the
+// tag) would otherwise leave a cache nothing ever invalidates.
+const CATALOG_CACHE_TTL_SECONDS = 300;
+
+export const getAllCategories = cache(
+  unstable_cache(
+    async function fetchAllCategories(): Promise<ProductCategory[]> {
+      const [rows] = await query<RowDataPacket[]>(
+        "SELECT * FROM product_categories ORDER BY sortOrder ASC"
+      );
+      return rows as ProductCategory[];
+    },
+    // Distinct from getProductsData's ["products_data"] — same tag, different
+    // payload shape, so they must not share a cache entry.
+    ["categories_all"],
+    { tags: ["products"], revalidate: CATALOG_CACHE_TTL_SECONDS }
+  )
+);
 
 export async function addCategory(
   category: Omit<ProductCategory, "id" | "sortOrder">
@@ -310,14 +333,20 @@ export async function getProduct(id: string): Promise<ProductData | undefined> {
 // cache() de-dupes calls within a single request/render — pages like
 // /showcase/[id] call this from several places (visibility checks, the
 // visible-products list) and would otherwise re-scan the whole table each time.
-export const getAllProducts = cache(async function getAllProducts(): Promise<
-  ProductData[]
-> {
-  const [rows] = await query<RowDataPacket[]>(
-    "SELECT * FROM products ORDER BY categoryId ASC, sortOrder ASC, createdAt ASC"
-  );
-  return rows.map(rowToProduct);
-});
+// Cached across requests under the "products" tag — see the note above
+// getAllCategories for why that tag, and why there is a TTL as well.
+export const getAllProducts = cache(
+  unstable_cache(
+    async function fetchAllProducts(): Promise<ProductData[]> {
+      const [rows] = await query<RowDataPacket[]>(
+        "SELECT * FROM products ORDER BY categoryId ASC, sortOrder ASC, createdAt ASC"
+      );
+      return rows.map(rowToProduct);
+    },
+    ["products_all"],
+    { tags: ["products"], revalidate: CATALOG_CACHE_TTL_SECONDS }
+  )
+);
 
 export async function getProductsByCategory(categoryId: number): Promise<ProductData[]> {
   const [rows] = await query<RowDataPacket[]>(
