@@ -1,26 +1,14 @@
 "use client";
-import React, { useState } from "react";
+import { useLineContact } from "../hooks/useLineContact";
+import React from "react";
 import { useT } from "../i18n/LanguageContext";
 import { translations } from "../i18n/translations";
 import Image from "next/image";
 import LineQrModal from "./LineQrModal";
-import { LINE_APP_URL } from "../lib/contact";
 
 export default function Hero() {
   const t = useT();
-  const [isLineModalOpen, setIsLineModalOpen] = useState(false);
-
-  const handleLineClick = (e: React.MouseEvent) => {
-    e.preventDefault();
-    const isMobile =
-      typeof navigator !== "undefined" &&
-      /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-    if (isMobile) {
-      window.location.href = LINE_APP_URL;
-    } else {
-      setIsLineModalOpen(true);
-    }
-  };
+  const { isLineModalOpen, closeLineModal, handleLineClick } = useLineContact();
 
   return (
     <section
@@ -103,7 +91,7 @@ export default function Hero() {
 
           <LineQrModal
             isOpen={isLineModalOpen}
-            onClose={() => setIsLineModalOpen(false)}
+            onClose={closeLineModal}
           />
 
           {/* Stats */}

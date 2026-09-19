@@ -10,9 +10,10 @@
  * open. The owner corrected that: the intent is the opposite.)
  */
 
-import { render, screen, cleanup, waitFor } from "@testing-library/react";
+import { render, screen, cleanup, waitFor, fireEvent } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import Footer from "@/app/components/Footer";
+import { LINE_APP_URL } from "@/app/lib/contact";
 
 let mockPathname = "/";
 vi.mock("next/navigation", () => ({
@@ -116,5 +117,50 @@ describe("Footer — maintenance-mode contact hiding is site-wide", () => {
       expect(screen.getByText(PROPS.phone)).toBeInTheDocument();
       unmount();
     }
+  });
+});
+
+// The LINE icon in the Connect column used to be a bare line:// link, which does
+// nothing at all on a desktop — the visitor clicked and got silence. It now
+// behaves like the buttons on the home and contact pages.
+describe("Footer — LINE button", () => {
+  beforeEach(() => {
+    PROPS = { ...BASE_PROPS, maintenanceOn: false };
+    mockIsLoggedIn = false;
+  });
+
+  it("opens the QR modal on a desktop", async () => {
+    vi.stubGlobal("navigator", { userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" });
+    render(<Footer {...PROPS} />);
+
+    fireEvent.click(screen.getByLabelText("LINE"));
+
+    // The modal's own copy — asserting on it proves the shared component opened,
+    // not just that some state flipped.
+    expect(await screen.findByText(/สแกน QR Code/)).toBeInTheDocument();
+  });
+
+  it("goes straight to the LINE app on a phone, without opening the modal", () => {
+    // A phone can handle the line:// scheme, so the QR would be useless there.
+    vi.stubGlobal("navigator", { userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0)" });
+    const assign = vi.fn();
+    vi.stubGlobal("location", { get href() { return ""; }, set href(v: string) { assign(v); } });
+
+    render(<Footer {...PROPS} />);
+    fireEvent.click(screen.getByLabelText("LINE"));
+
+    expect(assign).toHaveBeenCalledWith(LINE_APP_URL);
+    expect(screen.queryByText(/สแกน QR Code/)).not.toBeInTheDocument();
+  });
+
+  it("offers neither button nor modal while maintenance mode is on", () => {
+    // The modal is mounted unconditionally in Footer, so this checks the thing
+    // that actually matters: with the button hidden there is no way to reach it,
+    // and nothing renders on its own.
+    PROPS = { ...BASE_PROPS, maintenanceOn: true };
+    render(<Footer {...PROPS} />);
+
+    expect(screen.queryByLabelText("LINE")).not.toBeInTheDocument();
+    expect(screen.queryByText(/สแกน QR Code/)).not.toBeInTheDocument();
   });
 });

@@ -1,9 +1,11 @@
 "use client";
 
+import { useLineContact } from "../hooks/useLineContact";
 import { useEffect, useRef, useState } from "react";
 import { useT } from "../i18n/LanguageContext";
 import { translations } from "../i18n/translations";
-import { LINE_ID, LINE_URL, LINE_APP_URL } from "../lib/contact";
+import Image from "next/image";
+import { LINE_ID, LINE_URL, lineQrUrl } from "../lib/contact";
 
 import LineQrModal from "./LineQrModal";
 
@@ -19,7 +21,7 @@ interface ContactProps {
 
 export default function Contact({ email, phone, address, addressMapsQuery }: ContactProps) {
   const t = useT();
-  const [isLineModalOpen, setIsLineModalOpen] = useState(false);
+  const { isLineModalOpen, closeLineModal, handleLineClick } = useLineContact();
   const [formState, setFormState] = useState({
     name: "",
     email: "",
@@ -37,17 +39,6 @@ export default function Contact({ email, phone, address, addressMapsQuery }: Con
   // and re-enable the button for a duplicate send.
   const resetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const handleLineClick = (e: React.MouseEvent) => {
-    e.preventDefault();
-    const isMobile =
-      typeof navigator !== "undefined" &&
-      /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-    if (isMobile) {
-      window.location.href = LINE_APP_URL;
-    } else {
-      setIsLineModalOpen(true);
-    }
-  };
   useEffect(() => {
     return () => {
       if (resetTimerRef.current) clearTimeout(resetTimerRef.current);
@@ -165,6 +156,27 @@ export default function Contact({ email, phone, address, addressMapsQuery }: Con
                 >
                   {LINE_ID}
                 </button>
+
+                {/* Shown inline, not only behind the modal: a visitor already on
+                    the contact page is there to make contact, and on a desktop
+                    the QR is the step they need next — their phone is in reach,
+                    the browser is not. Same lineQrUrl() the modal uses. */}
+                <a
+                  href={LINE_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-block rounded-xl border border-gray-200 bg-white p-2 transition-colors hover:border-[#06C755]"
+                  aria-label={`LINE QR Code ${LINE_ID}`}
+                >
+                  <Image
+                    src={lineQrUrl(200)}
+                    alt={`LINE QR Code ${LINE_ID}`}
+                    width={140}
+                    height={140}
+                    unoptimized
+                    className="rounded-lg"
+                  />
+                </a>
               </div>
             </div>
 
@@ -281,7 +293,7 @@ export default function Contact({ email, phone, address, addressMapsQuery }: Con
 
       <LineQrModal
         isOpen={isLineModalOpen}
-        onClose={() => setIsLineModalOpen(false)}
+        onClose={closeLineModal}
       />
     </section>
   );
