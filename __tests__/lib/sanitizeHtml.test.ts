@@ -102,4 +102,17 @@ describe("sanitizeRichText", () => {
     expect(out).not.toContain("script");
     expect(out).not.toContain("alert(1)");
   });
+
+  it("replaces non-breaking spaces (U+00A0) with regular ones", () => {
+    // Content pasted from Word or a spec-sheet page routinely carries &nbsp;
+    // in place of normal spaces. A browser never treats U+00A0 as a line-break
+    // opportunity — that is what the character is FOR — so a run of words
+    // joined only by nbsp reads to the layout engine as one unbreakable token,
+    // and overflow-wrap:break-word (used everywhere this content is shown)
+    // then chops every word mid-letter to avoid overflowing its column. No
+    // amount of CSS fixes that; the character has to go before it's stored.
+    const out = sanitizeRichText("<p>Your Workplace uses RS232</p>");
+    expect(out).not.toMatch(/ /);
+    expect(out).toContain("Your Workplace uses RS232");
+  });
 });

@@ -11,7 +11,7 @@ import Footer from "../../components/Footer";
 import ColorPickerDropdown from "../../components/ColorPickerDropdown";
 import Toast from "../../components/Toast";
 import type { OrphanedImage } from "../../components/ImageDeleteConfirmDialog";
-import { stripHtml } from "../../lib/stripHtml";
+import { stripHtml, normalizeNbsp } from "../../lib/stripHtml";
 import type { ContentBlock } from "../../lib/types";
 import type { SearchableDropdownOption } from "../../components/SearchableDropdown";
 import YoutubeEmbed from "../../components/YoutubeEmbed";
@@ -1062,7 +1062,7 @@ export default function ShowcaseClient({
                     </div>
                   ) : (
                     <div
-                      className="w-full break-words [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:mb-1 [&_ul]:my-2 [&_ol]:my-2"
+                      className="w-full break-words [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:mb-1 [&_ul]:my-2 [&_ol]:my-2 [&_p]:mb-3 [&_p:last-child]:mb-0"
                       style={{
                         fontSize: `${block.fontSize}px`,
                         fontWeight: block.fontWeight as any,
@@ -1070,7 +1070,7 @@ export default function ShowcaseClient({
                         color: block.textColor,
                         lineHeight: "1.6",
                       }}
-                      dangerouslySetInnerHTML={{ __html: block.content ?? "" }}
+                      dangerouslySetInnerHTML={{ __html: normalizeNbsp(block.content ?? "") }}
                     />
                   )
                 ) : block.type === "image" ? (
@@ -1130,7 +1130,7 @@ export default function ShowcaseClient({
                         </div>
                       ) : (
                         <div
-                          className="w-full break-words [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:mb-1 [&_ul]:my-2 [&_ol]:my-2"
+                          className="w-full break-words [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:mb-1 [&_ul]:my-2 [&_ol]:my-2 [&_p]:mb-3 [&_p:last-child]:mb-0"
                           style={{
                             fontSize: `${block.fontSize}px`,
                             fontWeight: block.fontWeight as any,
@@ -1138,7 +1138,7 @@ export default function ShowcaseClient({
                             color: block.textColor,
                             lineHeight: "1.6",
                           }}
-                          dangerouslySetInnerHTML={{ __html: block.content ?? "" }}
+                          dangerouslySetInnerHTML={{ __html: normalizeNbsp(block.content ?? "") }}
                         />
                       )}
                     </div>

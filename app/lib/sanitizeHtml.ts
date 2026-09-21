@@ -1,5 +1,6 @@
 import "server-only";
 import sanitize from "sanitize-html";
+import { normalizeNbsp } from "./stripHtml";
 
 // Server-side HTML sanitizer. Previously DOMPurify via isomorphic-dompurify,
 // whose jsdom backend failed to LOAD on Vercel's serverless runtime
@@ -66,7 +67,15 @@ const SANITIZE_OPTIONS: sanitize.IOptions = {
  */
 export function sanitizeRichText(html: string | null | undefined): string {
   if (!html) return "";
-  return sanitize(html, SANITIZE_OPTIONS);
+  // Runs before the tag/attribute allowlist below — this is a plain character
+  // substitution in text content, not a markup concern, and doing it first
+  // means every new save is clean regardless of where the editor put the
+  // nbsp. See normalizeNbsp for why the character has to go, not just be
+  // styled around. Existing rows saved before this landed are handled
+  // separately at render time (ShowcaseClient.tsx) rather than by a migration
+  // — there is no better source of truth for "what did the admin actually
+  // write" than the row itself, and rewriting it isn't needed to fix display.
+  return sanitize(normalizeNbsp(html), SANITIZE_OPTIONS);
 }
 
 /**
