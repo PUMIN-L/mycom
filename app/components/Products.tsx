@@ -13,10 +13,24 @@ import { useRouter } from "next/navigation";
 import type { ProductCategory, ProductData } from "../lib/types";
 import { pageList } from "../lib/pagination";
 import { reorderVisible } from "../lib/reorderVisible";
-import RichTextEditor from "./RichTextEditor";
+import dynamic from "next/dynamic";
 import { stripHtml } from "../lib/stripHtml";
 import ImageDeleteConfirmDialog, { type OrphanedImage } from "./ImageDeleteConfirmDialog";
 import SearchableDropdown from "./SearchableDropdown";
+
+// Loaded via next/dynamic, not a static import, even though Products itself is
+// a client component and already ships to every visitor: RichTextEditor pulls
+// in react-quill-new's CSS at module scope (`import '.../quill.snow.css'` in
+// RichTextEditor.tsx), and Next.js bundles a CSS import into the page's
+// stylesheet based on the static module graph — dynamic() on the JS side
+// doesn't defer it. A static import here put that ~24KB stylesheet, and
+// nothing else, on `/` for every visitor, even though only the category-rename
+// admin form four hundred lines down ever renders it. This is the only place
+// in the file that used it.
+const RichTextEditor = dynamic(() => import("./RichTextEditor"), {
+  ssr: false,
+  loading: () => <div className="h-24 bg-gray-50 animate-pulse rounded border border-gray-200" />,
+});
 
 interface ProductsProps {
   // Promise created on the server and passed down so the data is fetched during
