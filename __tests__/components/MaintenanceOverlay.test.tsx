@@ -7,6 +7,11 @@
  * `Footer`'s contact-info hiding does NOT use this list — that hiding is
  * deliberately site-wide, unlike the overlay. See
  * __tests__/components/Footer.test.tsx.
+ *
+ * /catalog is in the blocked list too (added after an earlier version left
+ * it open on purpose, with a link to it from the overlay itself — that link
+ * was removed along with it, since it would otherwise point back at the same
+ * overlay).
  */
 
 import { render, screen, cleanup, waitFor } from "@testing-library/react";
@@ -71,12 +76,11 @@ describe("MaintenanceOverlay", () => {
     await waitFor(() => expect(screen.getByText(OVERLAY_HEADING)).toBeInTheDocument());
   });
 
-  it("does NOT show the overlay on /catalog — that page stays accessible during maintenance", async () => {
+  it("shows the overlay on /catalog when maintenance is on", async () => {
     mockPathname = "/catalog";
     mockMaintenance(true);
     render(<MaintenanceOverlay initialEnabled={initialEnabled} />);
-    await waitFor(() => expect(global.fetch).toHaveBeenCalled());
-    expect(screen.queryByText(OVERLAY_HEADING)).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText(OVERLAY_HEADING)).toBeInTheDocument());
   });
 
   it("never shows the overlay to a logged-in admin, even on /", async () => {
@@ -139,12 +143,9 @@ describe("MaintenanceOverlay — content served during a long maintenance window
     expect(screen.getByText(/ห้องปฏิบัติการ/)).toBeInTheDocument();
   });
 
-  it("offers a way through to the pages that stay open", () => {
-    // /catalog is not blocked during maintenance and is in the sitemap. Linking
-    // it lets the home page's authority reach the pages that actually rank.
+  it("links to no page — /catalog is blocked too, so there is no page left to escape to", () => {
     render(<MaintenanceOverlay initialEnabled={initialEnabled} />);
-    const link = screen.getByRole("link", { name: /แคตตาล็อก/ });
-    expect(link).toHaveAttribute("href", "/catalog");
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
   });
 
   it("opens no contact channel — the owner does not want enquiries yet", () => {

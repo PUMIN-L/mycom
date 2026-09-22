@@ -2,7 +2,6 @@
 import { useState, useEffect } from "react";
 import { usePathname } from "next/navigation";
 import { useAuth } from "../context/AuthContext";
-import Link from "next/link";
 import { SITE_LEGAL_NAME, SITE_NAME } from "../lib/site";
 import { MAINTENANCE_BLOCKED_PATHS } from "../lib/maintenanceConfig";
 
@@ -58,8 +57,8 @@ export default function MaintenanceOverlay({
   // mode and knows why the screen is there; the visitor is the one it is for.
   if (isLoggedIn) return null;
 
-  // Only block specific pages (/, /contact). Other public pages like
-  // /catalog, /about, /showcase remain accessible during maintenance.
+  // Only block specific pages (/, /contact, /catalog). Other public pages
+  // like /about, /showcase remain accessible during maintenance.
   if (!MAINTENANCE_BLOCKED_PATHS.includes(pathname as typeof MAINTENANCE_BLOCKED_PATHS[number])) return null;
 
   // Maintenance mode is off — nothing to show.
@@ -127,17 +126,6 @@ export default function MaintenanceOverlay({
           ขณะนี้เว็บไซต์อยู่ระหว่างปรับปรุงและงดรับการติดต่อชั่วคราว
           ขออภัยในความไม่สะดวก
         </p>
-
-        {/* The one way out. /catalog stays open during maintenance and is in the
-            sitemap, so this does not expose anything new — it just makes a path
-            that already exists visible, and lets the home page's authority reach
-            the pages that actually rank. */}
-        <Link
-          href="/catalog"
-          className="inline-flex items-center gap-2 px-6 py-3 mb-8 bg-orange-500 text-white font-bold rounded-xl hover:bg-orange-600 transition"
-        >
-          ดูแคตตาล็อกสินค้า
-        </Link>
 
         <div className="inline-flex items-center gap-2 px-5 py-3 bg-orange-50 border border-orange-200 rounded-xl text-orange-700 text-sm font-medium">
           <svg className="w-5 h-5 animate-pulse" fill="currentColor" viewBox="0 0 20 20">
