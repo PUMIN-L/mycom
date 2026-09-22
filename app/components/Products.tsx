@@ -14,7 +14,7 @@ import type { ProductCategory, ProductData } from "../lib/types";
 import { pageList } from "../lib/pagination";
 import { reorderVisible } from "../lib/reorderVisible";
 import dynamic from "next/dynamic";
-import { stripHtml } from "../lib/stripHtml";
+import { stripHtml, normalizeNbsp } from "../lib/stripHtml";
 import ImageDeleteConfirmDialog, { type OrphanedImage } from "./ImageDeleteConfirmDialog";
 import SearchableDropdown from "./SearchableDropdown";
 
@@ -1124,7 +1124,7 @@ export default function Products({ dataPromise }: ProductsProps) {
                       )}
                       <div
                         className="text-gray-500 leading-relaxed font-light text-sm line-clamp-2 mb-6 [&_p]:inline [&_p]:m-0"
-                        dangerouslySetInnerHTML={{ __html: getDesc(item) }}
+                        dangerouslySetInnerHTML={{ __html: normalizeNbsp(getDesc(item)) }}
                       />
                       <div className="mt-auto flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-[var(--accent)] group/btn">
                         <span className={`border-b border-transparent transition-all duration-300 ${item.isPublished === false ? "" : "group-hover/btn:border-[var(--accent)]"}`}>
