@@ -2137,16 +2137,23 @@ export default function QuotationPage() {
             {/* Signatures */}
             <div id="quote-signatures" className="grid grid-cols-3 gap-6 mt-10 text-center text-[12px]">
               {[
-                { title: "ผู้เสนอราคา", name: q.sellerName },
+                // ผู้เสนอราคา is us — the doc's own docDate already says when it was
+                // issued, so a blank hand-filled date under our own signature was
+                // asking for a second, redundant (and usually never filled-in) date.
+                // ผู้สั่งซื้อ still gets one: that's the customer's actual signing
+                // date, which nothing else on the page records.
+                { title: "ผู้เสนอราคา", name: q.sellerName, showDate: false },
                 null,
-                { title: "ผู้สั่งซื้อ (ลูกค้า)", name: "" },
-              ].map((s, idx) => 
+                { title: "ผู้สั่งซื้อ (ลูกค้า)", name: "", showDate: true },
+              ].map((s, idx) =>
                 s ? (
                   <div key={s.title}>
                     <div className="border-b border-gray-400 h-12 mb-2" />
                     <div className="min-h-[18px] mt-2 text-gray-800">{s.name}</div>
                     <div className="font-bold mt-2">{s.title}</div>
-                    <div className="text-gray-500 mt-2">วันที่ ______ / ______ / ______</div>
+                    {s.showDate && (
+                      <div className="text-gray-500 mt-2">วันที่ ______ / ______ / ______</div>
+                    )}
                   </div>
                 ) : (
                   <div key={`empty-${idx}`} />
