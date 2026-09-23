@@ -10,12 +10,14 @@ vi.mock('@/app/lib/productStore', () => ({
   isProductPublic: (p: { isPublished?: boolean; pendingDeleteAt?: string | null }) =>
     p.isPublished !== false && !p.pendingDeleteAt,
 }));
+vi.mock('@/app/lib/settingsStore', () => ({ isMaintenanceMode: vi.fn() }));
 
 import sitemap from '@/app/sitemap';
 import { SITE_URL } from '@/app/lib/site';
 import { getAllContentsMeta } from '@/app/lib/contentStore';
 import { getAllDocuments } from '@/app/lib/documentStore';
 import { getAllProducts } from '@/app/lib/productStore';
+import { isMaintenanceMode } from '@/app/lib/settingsStore';
 
 const urls = (entries: { url: string }[]) => entries.map((e) => e.url);
 
@@ -23,6 +25,7 @@ describe('sitemap content routes vs product visibility', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(getAllDocuments).mockResolvedValue([]);
+    vi.mocked(isMaintenanceMode).mockResolvedValue(false);
   });
 
   // The bug this file exists to prevent: the sitemap listed EVERY content,
@@ -78,4 +81,46 @@ describe('sitemap content routes vs product visibility', () => {
     // Static routes still ship — a partial sitemap beats a 500 ("couldn't fetch").
     expect(found).toContain(SITE_URL);
   });
+});
+
+// /catalog is one of MAINTENANCE_BLOCKED_PATHS, so while maintenance mode is on
+// a crawler following it only reaches the "กำลังปรับปรุง" overlay. Asking Google
+// to keep coming back weekly for that is what turns a long maintenance window
+// into a ranking problem.
+describe('sitemap /catalog vs maintenance mode', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(getAllContentsMeta).mockResolvedValue([] as never);
+    vi.mocked(getAllProducts).mockResolvedValue([] as never);
+    vi.mocked(getAllDocuments).mockResolvedValue([]);
+    vi.mocked(isMaintenanceMode).mockResolvedValue(false);
+  });
+
+  // false is also what isMaintenanceMode() returns when the settings read
+  // FAILS — it never rejects, and that fail-open is asserted in
+  // __tests__/lib/settingsStore.test.ts rather than re-mocked here. So this
+  // case doubles as "a settings-table blip leaves /catalog listed".
+  it('lists /catalog while maintenance mode is off', async () => {
+    expect(urls(await sitemap())).toContain(`${SITE_URL}/catalog`);
+  });
+
+  it('drops /catalog while maintenance mode is on', async () => {
+    vi.mocked(isMaintenanceMode).mockResolvedValue(true);
+
+    expect(urls(await sitemap())).not.toContain(`${SITE_URL}/catalog`);
+  });
+
+  it('keeps / and /contact listed during maintenance', async () => {
+    // Blocked by the same overlay, but deliberately still indexed: the overlay
+    // itself carries the business name and service list for exactly this window
+    // (MaintenanceOverlay.tsx), so those URLs still return something worth
+    // indexing. /catalog has no such copy, which is why only it is dropped.
+    vi.mocked(isMaintenanceMode).mockResolvedValue(true);
+
+    const found = urls(await sitemap());
+
+    expect(found).toContain(SITE_URL);
+    expect(found).toContain(`${SITE_URL}/contact`);
+  });
+
 });

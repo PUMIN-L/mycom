@@ -3,6 +3,7 @@ import { SITE_URL } from "./lib/site";
 import { getAllContentsMeta } from "./lib/contentStore";
 import { getAllDocuments } from "./lib/documentStore";
 import { getAllProducts, isProductPublic } from "./lib/productStore";
+import { isMaintenanceMode } from "./lib/settingsStore";
 
 // Generated at request time so newly-added content/documents appear without a rebuild.
 export const dynamic = "force-dynamic";
@@ -10,11 +11,38 @@ export const dynamic = "force-dynamic";
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const now = new Date();
 
+  // /catalog is covered by the maintenance overlay (MAINTENANCE_BLOCKED_PATHS),
+  // so while that is on there is nothing for a crawler to index there — asking
+  // Google to come back weekly for a page that only shows "กำลังปรับปรุง" is
+  // what turns a maintenance window into a ranking problem.
+  //
+  // `/` and `/contact` are blocked by the same overlay but stay listed on
+  // purpose — the overlay itself carries the business name and services for
+  // exactly this case (see MaintenanceOverlay.tsx), so those URLs still return
+  // something worth indexing. /catalog has no such copy.
+  //
+  // Deliberately NOT wrapped in a try/catch, unlike the reads below:
+  // isMaintenanceMode() cannot reject — it catches a failed read itself and
+  // returns false, with that catch kept OUTSIDE its cache so a failure is
+  // never stored (see settingsStore.ts). A settings-table blip therefore
+  // leaves /catalog listed rather than quietly shrinking the sitemap on an
+  // ordinary day, which is the behaviour we want here anyway.
+  const maintenanceOn = await isMaintenanceMode();
+
   const staticRoutes: MetadataRoute.Sitemap = [
     { url: SITE_URL, lastModified: now, changeFrequency: "weekly", priority: 1 },
     { url: `${SITE_URL}/about`, lastModified: now, changeFrequency: "monthly", priority: 0.7 },
     { url: `${SITE_URL}/contact`, lastModified: now, changeFrequency: "monthly", priority: 0.7 },
-    { url: `${SITE_URL}/catalog`, lastModified: now, changeFrequency: "weekly", priority: 0.7 },
+    ...(maintenanceOn
+      ? []
+      : [
+          {
+            url: `${SITE_URL}/catalog`,
+            lastModified: now,
+            changeFrequency: "weekly" as const,
+            priority: 0.7,
+          },
+        ]),
   ];
 
   // PUBLIC content pages /showcase/{id} — the ones with Article JSON-LD that

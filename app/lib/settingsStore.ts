@@ -151,9 +151,12 @@ export async function updateCompanyProfile(
 }
 
 // ── Maintenance mode ─────────────────────────────────────────────────────────
-// Site-wide flag toggled from /settings (OTP-gated). When "true", public pages
-// (/, /contact) show a full-screen maintenance overlay and hide contact details
-// (phone, LINE). Admins who are logged in bypass the overlay and see a banner.
+// Site-wide flag toggled from /settings (OTP-gated). When "true", the public
+// pages listed in MAINTENANCE_BLOCKED_PATHS (app/lib/maintenanceConfig.ts) show
+// a full-screen maintenance overlay, and contact details (phone, LINE) are
+// hidden site-wide — that hiding is deliberately NOT limited to those paths,
+// see Footer.tsx. /catalog is also dropped from the sitemap while this is on.
+// Admins who are logged in bypass the overlay and see a banner.
 
 export const MAINTENANCE_MODE_SETTING = "maintenance_mode";
 
