@@ -32,12 +32,12 @@ afterEach(() => {
   cleanup();
 });
 
-function makeProduct(desc_th: string): ProductData {
+function makeProduct(desc_th: string, title_th = "OHUAS เครื่องชั่งวิเคราะห์"): ProductData {
   return {
     id: "p1",
     categoryId: 1,
     image: "/img.png",
-    title_th: "OHUAS เครื่องชั่งวิเคราะห์",
+    title_th,
     title_en: "",
     title_zh: "",
     desc_th,
@@ -71,5 +71,36 @@ describe("Products grid card — description text", () => {
 
     expect(container.textContent).not.toContain(NBSP);
     expect(container.textContent).toContain("เครื่องชั่งไฟฟ้า ละเอียด 0.1 ถึง 0.0001 กรัม");
+  });
+
+  it("strips them from the product title and category name too", async () => {
+    // The title carries `line-clamp-1` + `wrap-break-word` and the category
+    // name `lg:break-words`, so an nbsp-glued run there wraps badly the same
+    // way the description did — these render sites were left unnormalized when
+    // the description was fixed.
+    const title_th = `<p>OHUAS${NBSP}เครื่องชั่งวิเคราะห์</p>`;
+    const withNbspCategory: ProductCategory[] = [
+      { id: 1, name_th: `เครื่องชั่ง${NBSP}วิเคราะห์`, name_en: "", name_zh: "", sortOrder: 0 },
+    ];
+    const dataPromise = Promise.resolve({
+      categories: withNbspCategory,
+      products: [makeProduct("<p>รายละเอียด</p>", title_th)],
+    });
+
+    let container!: HTMLElement;
+    await act(async () => {
+      ({ container } = render(
+        <Suspense fallback={null}>
+          <Products dataPromise={dataPromise} />
+        </Suspense>
+      ));
+      await dataPromise;
+    });
+
+    await waitFor(() => expect(container.textContent).toContain("View Details"));
+
+    expect(container.textContent).not.toContain(NBSP);
+    expect(container.textContent).toContain("OHUAS เครื่องชั่งวิเคราะห์");
+    expect(container.textContent).toContain("เครื่องชั่ง วิเคราะห์");
   });
 });

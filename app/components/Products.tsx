@@ -856,7 +856,7 @@ export default function Products({ dataPromise }: ProductsProps) {
                           </div>
                         ) : (
                           <span className="relative py-2 font-serif text-base md:text-lg tracking-wide inline-block whitespace-nowrap lg:whitespace-normal lg:break-words leading-tight">
-                            <span dangerouslySetInnerHTML={{ __html: getCatName(category) }} className="[&_p]:inline [&_p]:m-0" />
+                            <span dangerouslySetInnerHTML={{ __html: normalizeNbsp(getCatName(category)) }} className="[&_p]:inline [&_p]:m-0" />
                             <div
                               className={`absolute bottom-0 left-0 h-[2px] bg-[var(--accent)] transition-all duration-500 ${category.id === selectedCategory ? "w-full" : "w-0 group-hover:w-full opacity-30"
                                 }`}
@@ -1109,7 +1109,7 @@ export default function Products({ dataPromise }: ProductsProps) {
                         // then clips well short of the card's edge, wasting
                         // the space that word would have occupied.
                         className={`text-lg font-bold text-[var(--text-primary)] mb-1 transition-colors wrap-break-word [&_p]:m-0 [&_p]:line-clamp-1 [&_p:nth-child(n+3)]:hidden ${item.isPublished === false ? "" : "group-hover:text-[var(--accent)]"}`}
-                        dangerouslySetInnerHTML={{ __html: getTitle(item) }}
+                        dangerouslySetInnerHTML={{ __html: normalizeNbsp(getTitle(item)) }}
                       />
                       {/* Show the English name too when viewing another language:
                           Thai B2B buyers search equipment by its English name, so
@@ -1201,7 +1201,7 @@ export default function Products({ dataPromise }: ProductsProps) {
                             </div>
                           </td>
                           <td className="py-3 px-4 min-w-[200px] whitespace-normal">
-                            <div className={`font-bold wrap-break-word [&_p]:m-0 [&_p]:line-clamp-1 [&_p:nth-child(n+3)]:hidden ${item.isPublished === false ? "text-gray-400" : "text-gray-800"}`} dangerouslySetInnerHTML={{ __html: getTitle(item) }} />
+                            <div className={`font-bold wrap-break-word [&_p]:m-0 [&_p]:line-clamp-1 [&_p:nth-child(n+3)]:hidden ${item.isPublished === false ? "text-gray-400" : "text-gray-800"}`} dangerouslySetInnerHTML={{ __html: normalizeNbsp(getTitle(item)) }} />
                             {item.pendingDeleteAt && (
                               <span className="inline-block mt-1 px-2 py-0.5 bg-red-100 text-red-600 text-[10px] font-bold rounded-full">รอยืนยันการลบ</span>
                             )}
@@ -1210,7 +1210,7 @@ export default function Products({ dataPromise }: ProductsProps) {
                             )}
                           </td>
                           <td className="py-3 px-4 text-sm text-gray-500 max-w-[150px] truncate">
-                            {cat ? <span dangerouslySetInnerHTML={{ __html: getCatName(cat) }} /> : "Unknown"}
+                            {cat ? <span dangerouslySetInnerHTML={{ __html: normalizeNbsp(getCatName(cat)) }} /> : "Unknown"}
                           </td>
                           <td className="py-3 px-4">
                             {item.isPublished !== false ? (
