@@ -119,13 +119,40 @@ describe('addMonthsToDateString', () => {
     expect(addMonthsToDateString('2026-06-01', 10)).toBe('2027-04-01');
   });
 
-  it('overflows into the following month when the target month is shorter (matches MySQL DATE_ADD)', () => {
-    // Jan 31 + 1 month: February has no 31st, so it rolls into March.
-    expect(addMonthsToDateString('2026-01-31', 1)).toBe('2026-03-03');
+  // These pin the helper to MySQL's DATE_ADD(..., INTERVAL n MONTH), which the
+  // alert queries filter with server-side while the alerts page displays this.
+  // MySQL CLAMPS a day that does not exist in the target month to that month's
+  // last day; plain Date.UTC(y, m + n, d) instead rolls the overflow into the
+  // NEXT month, which is up to three days past what the SQL side computes for
+  // the same row. These two must not drift apart.
+  it('clamps to the last day when the target month is shorter (matches MySQL DATE_ADD)', () => {
+    // MySQL: DATE_ADD('2026-01-31', INTERVAL 1 MONTH) = '2026-02-28'.
+    // Date.UTC rollover would give '2026-03-03' — three days late.
+    expect(addMonthsToDateString('2026-01-31', 1)).toBe('2026-02-28');
   });
 
-  it('handles a leap-year February correctly', () => {
+  it('clamps the 10-month calibration offset the same way crmStore inverts it', () => {
+    // crmStore.ts's CALIBRATION_WHERE documents exactly this case in the
+    // comment explaining why its index-usable bound is widened by 3 days:
+    // "31 Jan + 10 months = 30 Nov".
+    expect(addMonthsToDateString('2026-01-31', 10)).toBe('2026-11-30');
+  });
+
+  it('clamps a leap day landing on a non-leap February', () => {
+    // The one case that actually reached the alerts page: equipment calibrated
+    // on 29 Feb, displayed with CALIBRATION_VALIDITY_MONTHS (12). MySQL gives
+    // '2029-02-28'; rollover gave '2029-03-01', so the due date shown was a day
+    // later than the date the SQL-driven search matched on.
+    expect(addMonthsToDateString('2028-02-29', 12)).toBe('2029-02-28');
+  });
+
+  it('keeps a day that still exists in a leap-year February', () => {
     expect(addMonthsToDateString('2027-04-29', 10)).toBe('2028-02-29'); // 2028 is a leap year
+  });
+
+  it('leaves a day that exists in the target month untouched', () => {
+    expect(addMonthsToDateString('2026-01-30', 1)).toBe('2026-02-28'); // clamped
+    expect(addMonthsToDateString('2026-03-30', 1)).toBe('2026-04-30'); // not clamped
   });
 });
 

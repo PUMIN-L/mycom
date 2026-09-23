@@ -153,14 +153,24 @@ export function daysBetweenDateStrings(
  * `dateStr` ("YYYY-MM-DD") shifted forward by `months` calendar months — for
  * "N months after X" reminders (e.g. calibration due 10 months after the last
  * calibration date). Uses UTC internally so the result never shifts by a day
- * from the caller's own timezone. A day that overflows the target month (e.g.
- * Jan 31 + 1 month) rolls into the following month, matching MySQL's
- * DATE_ADD(..., INTERVAL n MONTH) — the two must agree since the alert query
- * filters with DATE_ADD server-side while callers may also display this.
+ * from the caller's own timezone.
+ *
+ * A day that does not exist in the target month is CLAMPED to that month's
+ * last day (Jan 31 + 1 month = Feb 28), which is what MySQL's
+ * DATE_ADD(..., INTERVAL n MONTH) does. The two must agree: the alert queries
+ * filter with DATE_ADD server-side while callers display this.
+ *
+ * Plain `Date.UTC(y, m + months, d)` does NOT do this — it rolls the overflow
+ * into the following month (Jan 31 + 1 = Mar 3), which is three days past what
+ * the SQL side computes for the same input. crmStore.ts's calibration query
+ * already documents the clamping behaviour it has to invert ("31 Jan + 10
+ * months = 30 Nov"); this function is the display side of that same rule.
  */
 export function addMonthsToDateString(dateStr: string, months: number): string {
   const [y, m, d] = dateStr.split("-").map(Number);
-  const shifted = new Date(Date.UTC(y, m - 1 + months, d));
+  // Day 0 of the month AFTER the target month is the target month's last day.
+  const lastDayOfTarget = new Date(Date.UTC(y, m - 1 + months + 1, 0)).getUTCDate();
+  const shifted = new Date(Date.UTC(y, m - 1 + months, Math.min(d, lastDayOfTarget)));
   const yyyy = shifted.getUTCFullYear();
   const mm = String(shifted.getUTCMonth() + 1).padStart(2, "0");
   const dd = String(shifted.getUTCDate()).padStart(2, "0");
