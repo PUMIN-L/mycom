@@ -20,6 +20,8 @@ import {
 } from "../lib/customerOrder";
 import { displayDateTimeParts } from "../lib/dateFormat";
 
+const CUSTOMERS_PER_PAGE = 50;
+
 /**
  * "อัปเดตล่าสุด" cell. Laid out in parts so every row's date lines up: the day
  * is zero-padded and the digits are tabular (the cell sets `tabular-nums`;
@@ -447,6 +449,20 @@ function CustomersInner() {
     [customers, searchCustomerName]
   );
 
+  // Paged: ~2,000 customers as one table was tens of thousands of DOM nodes,
+  // all re-rendered on every keystroke in the edit form (its state lives on
+  // this page). Only the RENDERED rows are paged — sorting, the count, Excel
+  // export and deep links all still work from the full `filteredCustomers`.
+  // The clamp is derived, not stored, so a shrinking list (delete, search)
+  // can never strand the view on an empty page.
+  const [customerPage, setCustomerPage] = useState(1);
+  const customerTotalPages = Math.max(1, Math.ceil(filteredCustomers.length / CUSTOMERS_PER_PAGE));
+  const safeCustomerPage = Math.min(customerPage, customerTotalPages);
+  const pagedCustomers = filteredCustomers.slice(
+    (safeCustomerPage - 1) * CUSTOMERS_PER_PAGE,
+    safeCustomerPage * CUSTOMERS_PER_PAGE
+  );
+
   // "Now" for the recently-updated highlight. Held in state and ticked once a
   // minute, so a row stops being highlighted when its 12 hours run out without
   // a reload — and so render stays pure (no Date.now() in the row loop).
@@ -734,7 +750,10 @@ function CustomersInner() {
                   placeholder="ค้นหาชื่อลูกค้า หรือ ชื่อบริษัท..."
                   className="w-full md:w-1/3 bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 focus:bg-white focus:ring-2 focus:ring-orange-500 outline-none transition-all"
                   value={searchCustomerName}
-                  onChange={(e) => setSearchCustomerName(e.target.value)}
+                  onChange={(e) => {
+                    setSearchCustomerName(e.target.value);
+                    setCustomerPage(1);
+                  }}
                 />
               </div>
               
@@ -770,7 +789,7 @@ function CustomersInner() {
                           <td className="px-6 py-5 text-right"><div className="h-5 bg-gray-200 rounded w-24 ml-auto"></div></td>
                         </tr>
                       ))
-                    ) : filteredCustomers.map(c => (
+                    ) : pagedCustomers.map(c => (
                       <tr
                         key={c.id}
                         onClick={() => setViewingCustomer(c)}
@@ -815,6 +834,34 @@ function CustomersInner() {
                   </tbody>
                 </table>
               </div>
+              {!isLoadingData && customerTotalPages > 1 && (
+                <div className="flex justify-between items-center mt-6" data-testid="customer-pagination">
+                  <div className="text-sm text-gray-500">
+                    แสดง {(safeCustomerPage - 1) * CUSTOMERS_PER_PAGE + 1} ถึง {Math.min(safeCustomerPage * CUSTOMERS_PER_PAGE, filteredCustomers.length)} จาก {filteredCustomers.length} รายการ
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      disabled={safeCustomerPage === 1}
+                      onClick={() => setCustomerPage(Math.max(1, safeCustomerPage - 1))}
+                      className="px-3 py-1.5 text-sm bg-white border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      ก่อนหน้า
+                    </button>
+                    <div className="px-4 text-sm font-medium text-gray-700">
+                      หน้า {safeCustomerPage} / {customerTotalPages}
+                    </div>
+                    <button
+                      type="button"
+                      disabled={safeCustomerPage === customerTotalPages}
+                      onClick={() => setCustomerPage(Math.min(customerTotalPages, safeCustomerPage + 1))}
+                      className="px-3 py-1.5 text-sm bg-white border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      ถัดไป
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
