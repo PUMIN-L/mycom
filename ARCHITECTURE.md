@@ -118,6 +118,22 @@ scratch/                 One-off maintenance scripts (NOT part of the app).
 3. `<Products>` (Client Component) seeds local state from the resolved data so
    admin add/delete can update the UI optimistically.
 
+**Page weight — what not to undo:**
+- **Props into a Client Component are serialized into every page.** Structural
+  typing lets a full DB row satisfy a narrow prop type, and every extra field
+  then ships to every visitor. `/showcase/[id]` passed full product rows
+  (three-language descriptions, images, flags) where `ShowcaseClient` reads
+  only id, category and titles — ~55 KB of JSON per view, the bulk of the page.
+  `page.tsx` now projects to `ShowcaseClient`'s exported `ProductItem` /
+  `ProductCategory` with annotated `.map((p): ProductItem => …)` callbacks, so
+  an extra field is a compile error (`__tests__/pages/showcasePayload.test.tsx`).
+- **`IBM_Plex_Sans_Thai` is `preload: false` in `app/layout.tsx`.** It is the
+  Thai fallback for every `h1`–`h6` (`globals.css`) and the Navbar's font, at
+  five weights × two subsets — preloading made it 10 of the 12 font files every
+  page fetched at high priority. Keep all five weights (headings render Thai
+  at 300–700; a missing one is faked by the browser); do not turn the preload
+  back on.
+
 ### Mutations (admin)
 Client components call the `/api/**` Route Handlers with `fetch`. Handlers
 validate, check auth (`requireAuth()`), pass the same-origin CSRF guard, call a
@@ -260,6 +276,17 @@ highlight expires without a reload.
   note-replace (§5a), and the customer restore (§9a). Emptying a note sets it
   NULL. A new writer of `note` must stamp it too, or that customer silently
   stops moving up the list.
+- **Pickers load `GET /api/customers?fields=list` — every column but `note`.**
+  The call log is the bulk of the full list and none of the pickers read it
+  (task links, equipment/sales forms, quotation, service job, dashboard,
+  EquipmentTab). ⚠️ Never write a row from that list back through
+  `PUT /api/customers/[id]` — the route treats a missing `note` as empty and
+  would erase the log. Only `/customers` (full list) and
+  `CustomerDetailsModal` (full row) write customers.
+- **The `/customers` table is paged, 50 rows** (`CUSTOMERS_PER_PAGE`). Only
+  the rendered rows are sliced — sort order, the count, Excel export and deep
+  links use the full `filteredCustomers`; searching resets to page 1, and the
+  page is clamped by derivation (no setState-in-effect).
 - **Sorted on the client, on `/customers` only.** `GET /api/customers` keeps
   `ORDER BY createdAt DESC` because the same list feeds dropdowns in
   `EquipmentEditModal`, `SalesRecordEditModal`, `EquipmentTab`,
