@@ -19,6 +19,8 @@
 - [x] 3.2 `compareCustomersByNoteActivity()` — มีบันทึกก่อน → ล่าสุดก่อน → วันที่สร้าง
 - [x] 3.3 `/customers` — คอลัมน์ "อัปเดตล่าสุด" + เรียงฝั่ง client (ไม่แตะ API order)
 - [x] 3.4 `CustomerDetailsModal` ใช้ `noteUpdatedAt` จาก response ของ PUT
+- [x] 3.5 จัดวันที่ให้ตรงกันทุกแถว (เติม 0 หน้าวัน, `tabular-nums`, เดือนกว้างคงที่)
+- [x] 3.6 แถวที่แก้บันทึกภายใน 12 ชม. พื้นหลังเขียวพาสเทล (`isNoteRecentlyUpdated`)
 
 ## 4. เทสต์
 - [x] 4.1 unit: formatDisplayDateTime, compareCustomersByNoteActivity

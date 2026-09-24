@@ -37,22 +37,46 @@ export function formatDisplayDate(value?: string | null): string {
   return `${Number(m[3])} ${DISPLAY_MONTHS[monthIndex]} ${m[1]}`;
 }
 
+export interface DisplayDateTimeParts {
+  /** Zero-padded ("05"), so a column of these lines up. */
+  day: string;
+  month: string;
+  year: string;
+  /** "HH:MM", 24-hour. */
+  time: string;
+}
+
 /**
- * An ISO-8601 instant -> "24 Sep 2026 14:30" in Asia/Bangkok time, whatever
- * timezone the viewer's device is set to — for timestamps the user reads
- * (e.g. when a customer's note was last updated). Stored values stay ISO UTC.
+ * An ISO-8601 instant split into the Asia/Bangkok parts formatDisplayDateTime
+ * prints, whatever timezone the viewer's device is set to — for a table that
+ * lays the parts out itself to keep rows aligned. null for a missing or
+ * unparseable value.
+ */
+export function displayDateTimeParts(value?: string | null): DisplayDateTimeParts | null {
+  if (!value) return null;
+  const t = Date.parse(String(value));
+  if (isNaN(t)) return null;
+  const shifted = new Date(t + BANGKOK_OFFSET_HOURS * 60 * 60 * 1000);
+  return {
+    day: String(shifted.getUTCDate()).padStart(2, "0"),
+    month: DISPLAY_MONTHS[shifted.getUTCMonth()],
+    year: String(shifted.getUTCFullYear()),
+    time: `${String(shifted.getUTCHours()).padStart(2, "0")}:${String(shifted.getUTCMinutes()).padStart(2, "0")}`,
+  };
+}
+
+/**
+ * An ISO-8601 instant -> "24 Sep 2026 14:30" in Asia/Bangkok time — for
+ * timestamps the user reads (e.g. when a customer's note was last updated).
+ * Stored values stay ISO UTC. The day is zero-padded ("05 Sep") so that one-
+ * and two-digit days are the same width in a column.
  *
  * Returns "" for a missing or unparseable value, so the caller decides what an
  * absent timestamp looks like.
  */
 export function formatDisplayDateTime(value?: string | null): string {
-  if (!value) return "";
-  const t = Date.parse(String(value));
-  if (isNaN(t)) return "";
-  const shifted = new Date(t + BANGKOK_OFFSET_HOURS * 60 * 60 * 1000);
-  const hh = String(shifted.getUTCHours()).padStart(2, "0");
-  const mm = String(shifted.getUTCMinutes()).padStart(2, "0");
-  return `${shifted.getUTCDate()} ${DISPLAY_MONTHS[shifted.getUTCMonth()]} ${shifted.getUTCFullYear()} ${hh}:${mm}`;
+  const p = displayDateTimeParts(value);
+  return p ? `${p.day} ${p.month} ${p.year} ${p.time}` : "";
 }
 
 /**

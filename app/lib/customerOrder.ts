@@ -18,6 +18,25 @@ export function customerNoteActivityAt(c: NoteActivityFields): string | null {
   return c.noteUpdatedAt || c.createdAt || null;
 }
 
+/** How long a customer's row stays highlighted on /customers after its note
+ *  changes. */
+export const NOTE_RECENT_WINDOW_MS = 12 * 60 * 60 * 1000;
+
+/**
+ * True when this customer's note changed within the last 12 hours of `now`.
+ * A stamp slightly AHEAD of `now` also counts: it is written by the server's
+ * clock and compared against the browser's, and `now` on the page only ticks
+ * once a minute — a note saved a moment ago must not miss its highlight.
+ */
+export function isNoteRecentlyUpdated(
+  c: NoteActivityFields,
+  now: number,
+  windowMs: number = NOTE_RECENT_WINDOW_MS
+): boolean {
+  const at = timeOf(customerNoteActivityAt(c));
+  return at !== -Infinity && now - at < windowMs;
+}
+
 // Parsed rather than compared as strings: createdAt of imported rows is not
 // guaranteed to share toISOString()'s exact shape, and a lexical compare of
 // two different shapes is silently wrong rather than loudly so. Unparseable

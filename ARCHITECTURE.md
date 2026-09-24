@@ -240,8 +240,17 @@ existing name/company filter on that page, which this feature does not touch.
 ### 5b. Customer list order — "อัปเดตล่าสุด"
 `customers.noteUpdatedAt` (VARCHAR ISO-8601 UTC, schema v42) is when the
 **note** last changed — not when the row was last saved. `/customers` shows it
-as "อัปเดตล่าสุด" (`formatDisplayDateTime`, Bangkok time) and sorts by it,
-newest first, empty notes last (`app/lib/customerOrder.ts`).
+as "อัปเดตล่าสุด" (`displayDateTimeParts`, Bangkok time, e.g.
+`05 Sep 2026 20:25`) and sorts by it, newest first, empty notes last
+(`app/lib/customerOrder.ts`). A row whose note changed in the last 12 hours
+(`isNoteRecentlyUpdated`, `NOTE_RECENT_WINDOW_MS`) gets a pastel green
+background (`bg-green-100`); the page's `now` ticks once a minute so the
+highlight expires without a reload.
+
+- **The date column is laid out in parts so rows line up:** zero-padded day,
+  `tabular-nums` on the cell (Inter has tabular figures), and the month in a
+  fixed-width `inline-block` because month names differ in width (`Jul` vs
+  `Sep`). A plain string put "5 Sep" and "13 Sep" rows visibly out of line.
 
 - **Every writer of `customers.note` stamps it in the same statement:**
   `POST /api/customers` (note given → creation time, else NULL),

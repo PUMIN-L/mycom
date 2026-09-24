@@ -51,11 +51,14 @@ const CALLED_TODAY = {
   noteUpdatedAt: "2026-09-24T07:30:00.000Z", // 14:30 Bangkok
 };
 
-function mockFetch(putResponse?: { noteUpdatedAt: string | null }) {
+function mockFetch(
+  putResponse?: { noteUpdatedAt: string | null },
+  list: unknown[] = [NEWEST_NO_NOTE, CALLED_LAST_WEEK, CALLED_TODAY]
+) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url === "/api/customers") {
-      return { ok: true, status: 200, json: async () => [NEWEST_NO_NOTE, CALLED_LAST_WEEK, CALLED_TODAY] };
+      return { ok: true, status: 200, json: async () => list };
     }
     if (url.startsWith("/api/customers/") && init?.method === "PUT") {
       return { ok: true, status: 200, json: async () => ({ success: true, ...putResponse }) };
@@ -99,6 +102,39 @@ describe("/customers — อัปเดตล่าสุด", () => {
 
     const cells = screen.getAllByTestId("customer-note-updated-at").map((c) => c.textContent);
     expect(cells).toEqual(["24 Sep 2026 14:30", "16 Sep 2026 10:00", "-"]);
+  });
+
+  it("lays the date out so one- and two-digit days line up", async () => {
+    // "5 Sep" was narrower than "13 Sep", pushing that row's month, year and
+    // time out of line. Zero-padded day + tabular digits + a fixed-width month.
+    const ONE_DIGIT_DAY = { ...CALLED_LAST_WEEK, id: "c-5th", name: "วันที่ห้า", noteUpdatedAt: "2026-09-05T13:25:00.000Z" };
+    mockFetch(undefined, [CALLED_TODAY, ONE_DIGIT_DAY]);
+    render(<Customers />);
+    await screen.findByText("วันที่ห้า");
+
+    const cells = screen.getAllByTestId("customer-note-updated-at");
+    expect(cells.map((c) => c.textContent)).toEqual(["24 Sep 2026 14:30", "05 Sep 2026 20:25"]);
+    for (const cell of cells) {
+      expect(cell.className).toContain("tabular-nums");
+      const month = cell.querySelector("span.inline-block");
+      expect(month?.className).toMatch(/w-\[/);
+    }
+  });
+
+  it("gives a row whose note changed in the last 12 hours a pastel green background", async () => {
+    const hoursAgo = (h: number) => new Date(Date.now() - h * 3600_000).toISOString();
+    mockFetch(undefined, [
+      { ...CALLED_TODAY, id: "c-2h", name: "แก้เมื่อ 2 ชม.", noteUpdatedAt: hoursAgo(2) },
+      { ...CALLED_TODAY, id: "c-13h", name: "แก้เมื่อ 13 ชม.", noteUpdatedAt: hoursAgo(13) },
+      NEWEST_NO_NOTE,
+    ]);
+    render(<Customers />);
+    await screen.findByText("แก้เมื่อ 2 ชม.");
+
+    const rowOf = (name: string) => screen.getByText(name).closest("tr")!;
+    expect(rowOf("แก้เมื่อ 2 ชม.").className).toContain("bg-green-100");
+    expect(rowOf("แก้เมื่อ 13 ชม.").className).not.toContain("bg-green-100");
+    expect(rowOf("ไม่มีบันทึก").className).not.toContain("bg-green-100");
   });
 
   it("moves a customer to the top the moment their note is saved from the detail modal", async () => {

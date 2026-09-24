@@ -7,6 +7,7 @@ import {
   compareCustomersByNoteActivity,
   customerNoteActivityAt,
   hasCustomerNote,
+  isNoteRecentlyUpdated,
   sortCustomersByNoteActivity,
 } from '@/app/lib/customerOrder';
 
@@ -111,6 +112,36 @@ describe('sortCustomersByNoteActivity', () => {
     const sorted = sortCustomersByNoteActivity(mixed);
     expect(sorted).not.toBe(mixed);
     expect(mixed.map((r) => r.id)).toEqual(before);
+  });
+});
+
+// The pastel-green row on /customers: note changed within the last 12 hours.
+describe('isNoteRecentlyUpdated', () => {
+  const NOW = Date.parse('2026-09-24T12:00:00.000Z');
+  const hoursAgo = (h: number) => new Date(NOW - h * 3600_000).toISOString();
+
+  it('is true inside 12 hours and false from 12 hours on', () => {
+    expect(isNoteRecentlyUpdated(row('x', { noteUpdatedAt: hoursAgo(0.5) }), NOW)).toBe(true);
+    expect(isNoteRecentlyUpdated(row('x', { noteUpdatedAt: hoursAgo(11.99) }), NOW)).toBe(true);
+    expect(isNoteRecentlyUpdated(row('x', { noteUpdatedAt: hoursAgo(12) }), NOW)).toBe(false);
+    expect(isNoteRecentlyUpdated(row('x', { noteUpdatedAt: hoursAgo(30) }), NOW)).toBe(false);
+  });
+
+  it('counts a stamp slightly ahead of the page clock — a note saved a moment ago', () => {
+    // Server clock vs browser clock, and a `now` that only ticks each minute.
+    expect(isNoteRecentlyUpdated(row('x', { noteUpdatedAt: hoursAgo(-0.02) }), NOW)).toBe(true);
+  });
+
+  it('is false with no note, however recent the stamp', () => {
+    expect(isNoteRecentlyUpdated(row('x', { note: '', noteUpdatedAt: hoursAgo(1) }), NOW)).toBe(false);
+  });
+
+  it('is false for an unparseable stamp rather than highlighting garbage', () => {
+    expect(isNoteRecentlyUpdated(row('x', { noteUpdatedAt: 'x', createdAt: 'y' }), NOW)).toBe(false);
+  });
+
+  it('falls back to createdAt like the column does', () => {
+    expect(isNoteRecentlyUpdated(row('x', { noteUpdatedAt: null, createdAt: hoursAgo(2) }), NOW)).toBe(true);
   });
 });
 

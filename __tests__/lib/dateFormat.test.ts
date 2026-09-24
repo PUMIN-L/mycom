@@ -10,6 +10,7 @@ import {
   daysBetweenDateStrings,
   formatDisplayDate,
   formatDisplayDateTime,
+  displayDateTimeParts,
 } from '@/app/lib/dateFormat';
 
 describe('toLocalDateString', () => {
@@ -169,8 +170,22 @@ describe('formatDisplayDateTime', () => {
     expect(formatDisplayDateTime('2026-09-23T20:15:00.000Z')).toBe('24 Sep 2026 03:15');
   });
 
-  it('zero-pads hours and minutes', () => {
-    expect(formatDisplayDateTime('2026-01-01T00:05:00.000Z')).toBe('1 Jan 2026 07:05');
+  it('zero-pads the day, hours and minutes', () => {
+    // "01 Jan", not "1 Jan": in a column, a one-digit day pushed the month,
+    // year and time of that row out of line with a two-digit day's row.
+    expect(formatDisplayDateTime('2026-01-01T00:05:00.000Z')).toBe('01 Jan 2026 07:05');
+    expect(formatDisplayDateTime('2026-09-05T13:25:00.000Z')).toBe('05 Sep 2026 20:25');
+  });
+
+  it('exposes the same parts for a table that lays them out itself', () => {
+    expect(displayDateTimeParts('2026-09-05T13:25:00.000Z')).toEqual({
+      day: '05',
+      month: 'Sep',
+      year: '2026',
+      time: '20:25',
+    });
+    expect(displayDateTimeParts(null)).toBeNull();
+    expect(displayDateTimeParts('not-a-date')).toBeNull();
   });
 
   it('returns "" for a missing or unparseable value, so the caller picks the placeholder', () => {

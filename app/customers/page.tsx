@@ -13,8 +13,29 @@ import SearchableDropdown from "../components/SearchableDropdown";
 import CustomerNoteSearchPanel from "../components/CustomerNoteSearchPanel";
 import { downloadExcel } from "../lib/xlsxExport";
 import type { Customer } from "../lib/types";
-import { sortCustomersByNoteActivity, customerNoteActivityAt } from "../lib/customerOrder";
-import { formatDisplayDateTime } from "../lib/dateFormat";
+import {
+  sortCustomersByNoteActivity,
+  customerNoteActivityAt,
+  isNoteRecentlyUpdated,
+} from "../lib/customerOrder";
+import { displayDateTimeParts } from "../lib/dateFormat";
+
+/**
+ * "อัปเดตล่าสุด" cell. Laid out in parts so every row's date lines up: the day
+ * is zero-padded and the digits are tabular (the cell sets `tabular-nums`;
+ * Inter supports it), and the month — the one part whose LETTERS differ in
+ * width, `Jul` vs `Sep` — sits in a fixed-width box, so the year and time
+ * start at the same x on every row.
+ */
+function NoteUpdatedAt({ value }: { value: string | null }) {
+  const p = displayDateTimeParts(value);
+  if (!p) return <>-</>;
+  return (
+    <>
+      {p.day} <span className="inline-block w-[2.2em]">{p.month}</span> {p.year} {p.time}
+    </>
+  );
+}
 // The Viewing Customer modal itself — extracted (spec:
 // open-customer-profile-in-place) so /crm/alerts can open the exact same
 // view (department/email/phone, บันทึกลูกค้า, นัดโทรลูกค้า, and the
@@ -426,6 +447,15 @@ function CustomersInner() {
     [customers, searchCustomerName]
   );
 
+  // "Now" for the recently-updated highlight. Held in state and ticked once a
+  // minute, so a row stops being highlighted when its 12 hours run out without
+  // a reload — and so render stays pure (no Date.now() in the row loop).
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(id);
+  }, []);
+
   const filteredSalespeople = salespeople.filter(s =>
     s.name.toLowerCase().includes(searchSalespersonName.toLowerCase())
   );
@@ -741,7 +771,13 @@ function CustomersInner() {
                         </tr>
                       ))
                     ) : filteredCustomers.map(c => (
-                      <tr key={c.id} onClick={() => setViewingCustomer(c)} className="hover:bg-gray-50/50 transition-colors group cursor-pointer">
+                      <tr
+                        key={c.id}
+                        onClick={() => setViewingCustomer(c)}
+                        // Note changed in the last 12 hours → pastel green
+                        // (green-100; green-50 was near-invisible on a white table).
+                        className={`${isNoteRecentlyUpdated(c, now) ? "bg-green-100 hover:bg-green-200/60" : "hover:bg-gray-50/50"} transition-colors group cursor-pointer`}
+                      >
                         <td className="px-6 py-5">
                           <div className="flex items-center gap-3">
                             <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-orange-200 to-orange-100 flex items-center justify-center text-orange-700 font-bold">
@@ -756,8 +792,8 @@ function CustomersInner() {
                         <td className="px-6 py-5 text-gray-700 font-medium">{c.companyName}</td>
                         <td className="px-6 py-5 text-gray-600">{c.department || "-"}</td>
                         <td className="px-6 py-5 text-gray-600">{c.phone || "-"}</td>
-                        <td className="px-6 py-5 text-gray-600" data-testid="customer-note-updated-at">
-                          {formatDisplayDateTime(customerNoteActivityAt(c)) || "-"}
+                        <td className="px-6 py-5 text-gray-600 tabular-nums" data-testid="customer-note-updated-at">
+                          <NoteUpdatedAt value={customerNoteActivityAt(c)} />
                         </td>
                         <td className="px-6 py-5 text-right space-x-3">
                           <button onClick={(e) => { e.stopPropagation(); setViewingCustomer(c); }} className="text-gray-400 hover:text-gray-800 font-medium text-sm transition-colors">ดูข้อมูล</button>
