@@ -214,12 +214,16 @@ describe('replaceInNotes — one transaction, history first, one column', () => 
     expect(JSON.parse(revisionParams[3]).note).toBe('10/9/26 ตามเรื่องเวอร์เนีย');
     expect(topQuery).not.toHaveBeenCalled(); // never the pool-level query()
 
-    // The narrowest possible write: one column, and the note we read repeated
-    // in the WHERE.
+    // The narrowest possible write: the note plus the stamp of when it changed
+    // (add-customer-note-updated-at), and the note we read repeated in the
+    // WHERE.
     const updateCall = conn.query.mock.calls.find((c) => /^UPDATE\b/i.test(sqlOf(c)))!;
-    expect(sqlOf(updateCall)).toBe('UPDATE customers SET note = ? WHERE id = ? AND note = ?');
+    expect(sqlOf(updateCall)).toBe(
+      'UPDATE customers SET note = ?, noteUpdatedAt = ? WHERE id = ? AND note = ?'
+    );
     expect(updateCall[1]).toEqual([
       '10/9/26 ตามเรื่องเวอร์เนียดิจิตอล',
+      expect.stringMatching(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/),
       'c1',
       '10/9/26 ตามเรื่องเวอร์เนีย',
     ]);
@@ -545,7 +549,7 @@ describe('replaceInNotes — the staleness guard compares the note to itself', (
     // Only the term moved. The `&` and the `<ด่วน>` are copied through byte for
     // byte — the replace does not quietly entity-encode the rest of the log.
     expect(update[1][0]).toBe('6/9/26 ส่งของให้ A & B <ด่วน> เรื่องคาลิปเปอร์');
-    expect(update[1][2]).toBe(RAW_MARKUP_NOTE);
+    expect(update[1][3]).toBe(RAW_MARKUP_NOTE); // [note, noteUpdatedAt, id, WHERE note]
   });
 
   it('reproduces the exact note the PUT route leaves behind, and replaces it', async () => {

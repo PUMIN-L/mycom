@@ -128,6 +128,11 @@ export interface Customer {
   phone: string;
   email: string;
   note: string;
+  // Present on reads (the list/detail routes select `customers.*`).
+  createdAt?: string;
+  /** ISO-8601 UTC — when `note` last CHANGED (not when the row was last saved).
+   *  NULL for a customer with no note. */
+  noteUpdatedAt?: string | null;
 }
 
 // ── CRM: Sold Equipment & Warranty Tracking ─────────────────────────────────

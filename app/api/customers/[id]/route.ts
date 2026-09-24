@@ -79,9 +79,9 @@ export const PUT = withRoute(
     // it re-reads inside the attempt, and `saveRevision` mints its UUID inside
     // the attempt too, so a rolled-back attempt cannot leave a stray snapshot
     // behind.
-    await withTransaction(async (conn) => {
+    const noteUpdatedAt = await withTransaction(async (conn) => {
       const [rows] = await conn.query<RowDataPacket[]>(
-        `SELECT id, companyId, name, department, phone, email, note
+        `SELECT id, companyId, name, department, phone, email, note, noteUpdatedAt
          FROM customers WHERE id = ? FOR UPDATE`,
         [id]
       );
@@ -107,19 +107,31 @@ export const PUT = withRoute(
       // cap) still looks like a change, and still writes a snapshot identical
       // to the live row. A stored NULL and an incoming "" are the same empty
       // note, so neither is treated as an edit.
+      let noteChanged = false;
       if (rows.length > 0) {
         const storedNote =
           rows[0].note === null || rows[0].note === undefined
             ? ""
             : String(rows[0].note);
         if (storedNote !== note) {
+          noteChanged = true;
           await saveRevision("customer", id, rows[0], conn);
         }
       }
 
+      // `noteUpdatedAt` moves on exactly the same condition as the snapshot
+      // above — the note really changed — so re-saving a customer to fix a phone
+      // number does not bump them to the top of /customers. Clearing the note
+      // clears the stamp: no note, nothing to date (it sorts to the bottom).
+      // Minted inside the attempt, like the snapshot's UUID, so a retried
+      // attempt stamps its own commit time.
+      const stamp = noteChanged ? (note ? new Date().toISOString() : null) : undefined;
+
       await conn.query(
         `UPDATE customers SET
-          companyId = ?, name = ?, department = ?, phone = ?, email = ?, note = ?
+          companyId = ?, name = ?, department = ?, phone = ?, email = ?, note = ?${
+            stamp !== undefined ? ", noteUpdatedAt = ?" : ""
+          }
          WHERE id = ?`,
         [
           companyId,
@@ -128,12 +140,17 @@ export const PUT = withRoute(
           phone,
           email,
           note,
+          ...(stamp !== undefined ? [stamp] : []),
           id,
         ]
       );
+
+      return stamp !== undefined ? stamp : ((rows[0]?.noteUpdatedAt as string | null | undefined) ?? null);
     });
 
-    return NextResponse.json({ success: true });
+    // Returned so a caller that patches its list in place (CustomerDetailsModal)
+    // shows the server's timestamp instead of guessing one.
+    return NextResponse.json({ success: true, noteUpdatedAt });
   }
 );
 

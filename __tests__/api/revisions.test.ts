@@ -337,16 +337,23 @@ describe('POST /api/revisions/[id]/restore', () => {
 // `companyId` back from an old snapshot would revert edits nobody asked to
 // revert, and could point the customer at a company that has since been
 // deleted.
+//
+// ...plus `noteUpdatedAt` (add-customer-note-updated-at), which is not customer
+// DATA but the record of when `note` changed — a restore IS a change, so it
+// moves with the note, and it is never taken from the snapshot.
+const RESTORE_SQL = 'UPDATE customers SET note = ?, noteUpdatedAt = ? WHERE id = ?';
+const STAMP = expect.stringMatching(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+
 describe('POST /api/revisions/[id]/restore — customer notes', () => {
-  it('writes back ONLY the note column', async () => {
+  it('writes back ONLY the note column (and when it changed)', async () => {
     vi.mocked(getRevision).mockResolvedValue(customerRevision());
     const res = await restorePOST(postReq() as any, ctx('rev-c1'));
 
     expect(res.status).toBe(200);
     const updates = customerUpdates();
     expect(updates).toHaveLength(1);
-    expect(sqlOf(updates[0])).toBe('UPDATE customers SET note = ? WHERE id = ?');
-    expect(updates[0][1]).toEqual(['บันทึกเดิมก่อนถูกแทนที่', 'cust-1']);
+    expect(sqlOf(updates[0])).toBe(RESTORE_SQL);
+    expect(updates[0][1]).toEqual(['บันทึกเดิมก่อนถูกแทนที่', STAMP, 'cust-1']);
     // Asserted from the SQL actually issued, not from a comment: none of the
     // other columns in the snapshot is in the statement's column list.
     for (const column of ['companyId', 'name', 'department', 'phone', 'email']) {
@@ -423,8 +430,8 @@ describe('POST /api/revisions/[id]/restore — customer notes', () => {
     expect(res.status).toBe(200);
     const updates = customerUpdates();
     expect(updates).toHaveLength(1);
-    expect(sqlOf(updates[0])).toBe('UPDATE customers SET note = ? WHERE id = ?');
-    expect(updates[0][1]).toEqual(['บันทึกเก่าจากสแนปชอตเต็มแถว', 'cust-1']);
+    expect(sqlOf(updates[0])).toBe(RESTORE_SQL);
+    expect(updates[0][1]).toEqual(['บันทึกเก่าจากสแนปชอตเต็มแถว', STAMP, 'cust-1']);
     // The stale companyId/name/phone in that old snapshot stay exactly where
     // they are — read, never written.
     expect(sqlOf(updates[0])).not.toContain('companyId');
@@ -437,7 +444,7 @@ describe('POST /api/revisions/[id]/restore — customer notes', () => {
     const res = await restorePOST(postReq() as any, ctx('rev-c1'));
 
     expect(res.status).toBe(200);
-    expect(customerUpdates()[0][1]).toEqual(['บันทึกจากสแนปชอตแบบใหม่', 'cust-1']);
+    expect(customerUpdates()[0][1]).toEqual(['บันทึกจากสแนปชอตแบบใหม่', STAMP, 'cust-1']);
   });
 
   it('NO HISTORY MEANS NO WRITE: a failed snapshot leaves the note alone', async () => {
@@ -485,14 +492,15 @@ describe('POST /api/revisions/[id]/restore — customer notes', () => {
 
     const res = await restorePOST(postReq() as any, ctx('rev-c1'));
     expect(res.status).toBe(200);
-    expect(customerUpdates()[0][1]).toEqual([atLimit, 'cust-1']);
+    expect(customerUpdates()[0][1]).toEqual([atLimit, STAMP, 'cust-1']);
   });
 
   it('restores an empty note stored as SQL NULL', async () => {
     vi.mocked(getRevision).mockResolvedValue(customerRevision({ ...currentCustomer, note: null }));
     const res = await restorePOST(postReq() as any, ctx('rev-c1'));
     expect(res.status).toBe(200);
-    expect(customerUpdates()[0][1]).toEqual(['', 'cust-1']);
+    // Restored to empty → no note to date, so the stamp is cleared too.
+    expect(customerUpdates()[0][1]).toEqual(['', null, 'cust-1']);
   });
 
   it('refuses a snapshot with no note key — will not write "" over a live log', async () => {

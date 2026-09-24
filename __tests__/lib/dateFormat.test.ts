@@ -9,6 +9,7 @@ import {
   addDaysToDateString,
   daysBetweenDateStrings,
   formatDisplayDate,
+  formatDisplayDateTime,
 } from '@/app/lib/dateFormat';
 
 describe('toLocalDateString', () => {
@@ -153,6 +154,30 @@ describe('addMonthsToDateString', () => {
   it('leaves a day that exists in the target month untouched', () => {
     expect(addMonthsToDateString('2026-01-30', 1)).toBe('2026-02-28'); // clamped
     expect(addMonthsToDateString('2026-03-30', 1)).toBe('2026-04-30'); // not clamped
+  });
+});
+
+describe('formatDisplayDateTime', () => {
+  it('renders an ISO instant as Bangkok date and time', () => {
+    // 07:30 UTC = 14:30 in Bangkok (UTC+7).
+    expect(formatDisplayDateTime('2026-09-24T07:30:00.000Z')).toBe('24 Sep 2026 14:30');
+  });
+
+  it('rolls over to the next Bangkok day when UTC is still the day before', () => {
+    // 20:15 UTC on the 23rd is 03:15 on the 24th in Bangkok — the day a
+    // toISOString().slice(0, 10) would get wrong.
+    expect(formatDisplayDateTime('2026-09-23T20:15:00.000Z')).toBe('24 Sep 2026 03:15');
+  });
+
+  it('zero-pads hours and minutes', () => {
+    expect(formatDisplayDateTime('2026-01-01T00:05:00.000Z')).toBe('1 Jan 2026 07:05');
+  });
+
+  it('returns "" for a missing or unparseable value, so the caller picks the placeholder', () => {
+    expect(formatDisplayDateTime(null)).toBe('');
+    expect(formatDisplayDateTime(undefined)).toBe('');
+    expect(formatDisplayDateTime('')).toBe('');
+    expect(formatDisplayDateTime('not-a-date')).toBe('');
   });
 });
 

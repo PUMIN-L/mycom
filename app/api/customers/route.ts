@@ -43,8 +43,8 @@ export const POST = withRoute(
     const note = sanitizePlainText(data.note || "").substring(0, 2000);
 
     await query(
-      `INSERT INTO customers (id, companyId, name, department, phone, email, note, createdAt)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO customers (id, companyId, name, department, phone, email, note, createdAt, noteUpdatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
         companyId,
@@ -54,6 +54,9 @@ export const POST = withRoute(
         email,
         note,
         now,
+        // A note typed in at creation is the note's first update; no note, no
+        // stamp — an empty note sorts to the bottom of /customers.
+        note ? now : null,
       ]
     );
 

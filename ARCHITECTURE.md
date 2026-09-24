@@ -209,11 +209,12 @@ server-side with [`sanitizeRichText`](./app/lib/sanitizeHtml.ts), which uses
 `app/lib/noteSearch.ts`) — the search block on `/customers`, separate from the
 existing name/company filter on that page, which this feature does not touch.
 
-- **What this path may write: exactly `customers.note`, plus a `revisions`
-  row.** Nothing here ever touches `companyId`, `name`, `department`, `phone`
-  or `email` — `__tests__/lib/customerNoteSearchStore.test.ts` asserts that
-  from the SQL actually issued, not from a comment, precisely because a bulk
-  path is the one place a scope-creeping write is most dangerous.
+- **What this path may write: exactly `customers.note` (with its
+  `noteUpdatedAt` stamp, §5b), plus a `revisions` row.** Nothing here ever
+  touches `companyId`, `name`, `department`, `phone` or `email` —
+  `__tests__/lib/customerNoteSearchStore.test.ts` asserts that from the SQL
+  actually issued, not from a comment, precisely because a bulk path is the one
+  place a scope-creeping write is most dangerous.
 - **The matcher is a value, not a raw term.** The only way to get a
   `NoteMatcher` is `buildMatcher()` in `noteSearch.ts`, which refuses an empty
   term, a broken pattern, and — the one that actually matters — any pattern
@@ -235,6 +236,33 @@ existing name/company filter on that page, which this feature does not touch.
   these — it exists to fail loudly rather than write something odd).
 - No schema change — `customers.note` already existed; nothing here bumped
   `SCHEMA_VERSION`.
+
+### 5b. Customer list order — "อัปเดตล่าสุด"
+`customers.noteUpdatedAt` (VARCHAR ISO-8601 UTC, schema v42) is when the
+**note** last changed — not when the row was last saved. `/customers` shows it
+as "อัปเดตล่าสุด" (`formatDisplayDateTime`, Bangkok time) and sorts by it,
+newest first, empty notes last (`app/lib/customerOrder.ts`).
+
+- **Every writer of `customers.note` stamps it in the same statement:**
+  `POST /api/customers` (note given → creation time, else NULL),
+  `PUT /api/customers/[id]` (only when the sanitized note differs from the
+  stored one — the same condition as its revision snapshot; returns the stored
+  `noteUpdatedAt` so `CustomerDetailsModal` can patch the list in place),
+  note-replace (§5a), and the customer restore (§9a). Emptying a note sets it
+  NULL. A new writer of `note` must stamp it too, or that customer silently
+  stops moving up the list.
+- **Sorted on the client, on `/customers` only.** `GET /api/customers` keeps
+  `ORDER BY createdAt DESC` because the same list feeds dropdowns in
+  `EquipmentEditModal`, `SalesRecordEditModal`, `EquipmentTab`,
+  `TaskLinkChips` and `QuotationPickerSection`. The page sorts inside a
+  `useMemo` with `sortCustomersByNoteActivity` (parses each timestamp once) —
+  a plain `.sort(comparator)` over ~6,000 rows cost ~40–70 ms per render.
+- **Backfill (db.ts bootstrap):** rows with a note and no stamp take the newest
+  `revisions.createdAt` whose snapshot note DIFFERS from the current note (old
+  phone-only saves wrote snapshots too, so "newest snapshot" alone would be
+  wrong), else `createdAt`. A failure is logged
+  (`noteUpdatedAt backfill FAILED`) and does not abort bootstrap; the page
+  falls back to `createdAt` for a NULL stamp.
 
 ### 6. Security headers & CSRF
 - [`next.config.ts`](./next.config.ts) sets `Content-Security-Policy-Report-Only`
@@ -511,8 +539,9 @@ update, so it too is undoable.
 
 **Customers** (`entityType: "customer"`) are in the same history: every write to
 `customers.note` — the ✏️ hand edit and the bulk search-and-replace alike —
-snapshots the previous note first. Their restore writes **one column,
-`note`**, and says so in the response (`restoredFields: ["note"]`), because
+snapshots the previous note first. Their restore writes **one column of data,
+`note`** (plus a fresh `noteUpdatedAt` stamp, §5b — never taken from the
+snapshot), and says so in the response (`restoredFields: ["note"]`), because
 `note` is the only field those writers ever overwrite; putting `name` / `phone`
 / `email` / `companyId` back from an old snapshot would revert edits nobody asked
 to revert and could point a customer at a deleted company. It refuses, in Thai,

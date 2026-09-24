@@ -65,7 +65,9 @@ type Queryable = { query: (sql: string, params?: unknown[]) => Promise<unknown> 
 // A "customer" snapshot used to be the whole row — `id, companyId, name,
 // department, phone, email, note`. Every column but `note` was dead weight:
 // `POST /api/revisions/[id]/restore` restores customers with exactly ONE
-// statement, `UPDATE customers SET note = ? WHERE id = ?`, and does so
+// statement, `UPDATE customers SET note = ?, noteUpdatedAt = ? WHERE id = ?`
+// — `note` is the only data it puts back (`noteUpdatedAt` is a fresh stamp of
+// when the note changed, never read from the snapshot) — and does so
 // deliberately (putting a stale `companyId` back could point a customer at a
 // deleted company). Bytes that can never be restored are bytes that should
 // never have been written — and with ~6,000 customers whose notes run to the

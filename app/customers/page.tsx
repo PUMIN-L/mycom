@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useRef, Suspense } from "react";
+import { useState, useEffect, useRef, useMemo, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "../context/AuthContext";
 import Toast from "../components/Toast";
@@ -13,6 +13,8 @@ import SearchableDropdown from "../components/SearchableDropdown";
 import CustomerNoteSearchPanel from "../components/CustomerNoteSearchPanel";
 import { downloadExcel } from "../lib/xlsxExport";
 import type { Customer } from "../lib/types";
+import { sortCustomersByNoteActivity, customerNoteActivityAt } from "../lib/customerOrder";
+import { formatDisplayDateTime } from "../lib/dateFormat";
 // The Viewing Customer modal itself — extracted (spec:
 // open-customer-profile-in-place) so /crm/alerts can open the exact same
 // view (department/email/phone, บันทึกลูกค้า, นัดโทรลูกค้า, and the
@@ -403,9 +405,25 @@ function CustomersInner() {
     (c.district || "").toLowerCase().includes(searchDistrict.toLowerCase())
   );
 
-  const filteredCustomers = customers.filter(c => 
-    c.name.toLowerCase().includes(searchCustomerName.toLowerCase()) || 
-    (c.companyName?.toLowerCase() || "").includes(searchCustomerName.toLowerCase())
+  // Sorted HERE rather than by GET /api/customers: that route feeds several
+  // dropdowns elsewhere that keep its createdAt order. Deriving the order from
+  // `customers` also means a note saved from CustomerDetailsModal — which
+  // patches this list in place instead of refetching — moves that customer to
+  // the top at once.
+  //
+  // Memoized on exactly what it reads. Every keystroke anywhere on this page
+  // (the edit-customer form, the company search on another tab) re-renders it,
+  // and re-sorting ~6,000 customers on each of those is tens of milliseconds
+  // of typing lag for a list that did not change.
+  const filteredCustomers = useMemo(
+    () =>
+      sortCustomersByNoteActivity(
+        customers.filter(c =>
+          c.name.toLowerCase().includes(searchCustomerName.toLowerCase()) ||
+          (c.companyName?.toLowerCase() || "").includes(searchCustomerName.toLowerCase())
+        )
+      ),
+    [customers, searchCustomerName]
   );
 
   const filteredSalespeople = salespeople.filter(s =>
@@ -698,6 +716,7 @@ function CustomersInner() {
                       <th className="px-6 py-4 font-semibold">บริษัท</th>
                       <th className="px-6 py-4 font-semibold">แผนก</th>
                       <th className="px-6 py-4 font-semibold">เบอร์โทร</th>
+                      <th className="px-6 py-4 font-semibold">อัปเดตล่าสุด</th>
                       <th className="px-6 py-4 font-semibold text-right rounded-r-xl">จัดการ</th>
                     </tr>
                   </thead>
@@ -717,6 +736,7 @@ function CustomersInner() {
                           <td className="px-6 py-5"><div className="h-5 bg-gray-200 rounded w-32"></div></td>
                           <td className="px-6 py-5"><div className="h-5 bg-gray-200 rounded w-24"></div></td>
                           <td className="px-6 py-5"><div className="h-5 bg-gray-200 rounded w-24"></div></td>
+                          <td className="px-6 py-5"><div className="h-5 bg-gray-200 rounded w-32"></div></td>
                           <td className="px-6 py-5 text-right"><div className="h-5 bg-gray-200 rounded w-24 ml-auto"></div></td>
                         </tr>
                       ))
@@ -736,6 +756,9 @@ function CustomersInner() {
                         <td className="px-6 py-5 text-gray-700 font-medium">{c.companyName}</td>
                         <td className="px-6 py-5 text-gray-600">{c.department || "-"}</td>
                         <td className="px-6 py-5 text-gray-600">{c.phone || "-"}</td>
+                        <td className="px-6 py-5 text-gray-600" data-testid="customer-note-updated-at">
+                          {formatDisplayDateTime(customerNoteActivityAt(c)) || "-"}
+                        </td>
                         <td className="px-6 py-5 text-right space-x-3">
                           <button onClick={(e) => { e.stopPropagation(); setViewingCustomer(c); }} className="text-gray-400 hover:text-gray-800 font-medium text-sm transition-colors">ดูข้อมูล</button>
                           <button onClick={(e) => { e.stopPropagation(); setEditingCustomer(c); setCustomerSubmitAttempted(false); setIsCustomerModalOpen(true); }} className="text-blue-500 hover:text-blue-700 font-medium text-sm transition-colors">แก้ไข</button>
@@ -745,7 +768,7 @@ function CustomersInner() {
                     ))}
                     {!isLoadingData && filteredCustomers.length === 0 && (
                       <tr>
-                        <td colSpan={5} className="px-6 py-12 text-center text-gray-500">
+                        <td colSpan={6} className="px-6 py-12 text-center text-gray-500">
                           <div className="flex flex-col items-center justify-center">
                             <svg className="w-12 h-12 text-gray-300 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path></svg>
                             <p>ยังไม่มีข้อมูลลูกค้า</p>

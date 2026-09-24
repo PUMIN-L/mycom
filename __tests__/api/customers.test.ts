@@ -64,6 +64,9 @@ function scriptTx(rows: unknown[]) {
 
 const revisionInserts = () => connSql().filter((s) => /INSERT INTO revisions/i.test(s));
 
+/** A toISOString() stamp, as written to customers.noteUpdatedAt. */
+const ISO = expect.stringMatching(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+
 const existingCustomer = {
   id: 'cust-1',
   companyId: 'co-1',
@@ -159,7 +162,7 @@ describe('PUT /api/customers/[id]', () => {
     expect(res.status).toBe(200);
     const updateCall = conn.query.mock.calls.find((c) => /^UPDATE\b/i.test(sqlOf(c)))!;
     expect(String(updateCall[0])).toContain('UPDATE customers SET');
-    expect(updateCall[1]).toEqual(['co-1', 'สมชาย', '', '', '', 'อัปเดตบันทึก', 'cust-1']);
+    expect(updateCall[1]).toEqual(['co-1', 'สมชาย', '', '', '', 'อัปเดตบันทึก', ISO, 'cust-1']);
   });
 
   // ── The undo. `customers.note` is the "บันทึกลูกค้า" call log: dated lines
@@ -299,6 +302,64 @@ describe('PUT /api/customers/[id]', () => {
     const res = await PUT(putReq('ghost', { companyId: 'co-1', name: 'สมชาย' }), ctx('ghost'));
     expect(res.status).toBe(200);
     expect(connSql().some((s) => /INSERT INTO revisions/i.test(s))).toBe(false);
+  });
+});
+
+// add-customer-note-updated-at — /customers sorts by when the NOTE last
+// changed, so the stamp must move on exactly the "note really changed"
+// condition the snapshot already uses, and on nothing else.
+describe('customers.noteUpdatedAt', () => {
+  const insertParams = () => vi.mocked(query).mock.calls[0][1] as unknown[];
+
+  it('POST stamps a customer created WITH a note', async () => {
+    vi.mocked(query).mockResolvedValueOnce([{ affectedRows: 1 }] as never);
+    await POST(postReq({ companyId: 'co-1', name: 'สมชาย', note: 'โทรครั้งแรก' }));
+    const [sql] = vi.mocked(query).mock.calls[0];
+    expect(String(sql)).toContain('noteUpdatedAt');
+    const params = insertParams();
+    // Created and first-updated at the same instant.
+    expect(params[params.length - 1]).toEqual(ISO);
+    expect(params[params.length - 1]).toBe(params[params.length - 2]);
+  });
+
+  it('POST leaves it NULL for a customer created with no note', async () => {
+    vi.mocked(query).mockResolvedValueOnce([{ affectedRows: 1 }] as never);
+    await POST(postReq({ companyId: 'co-1', name: 'สมชาย' }));
+    const params = insertParams();
+    expect(params[params.length - 1]).toBeNull();
+  });
+
+  it('PUT stamps it when the note changes, and returns the stored value', async () => {
+    const res = await PUT(putReq('cust-1', { ...existingCustomer, note: 'บรรทัดใหม่' }), ctx('cust-1'));
+    const body = await res.json();
+
+    const [update] = customerUpdates();
+    expect(update).toContain('note = ?, noteUpdatedAt = ?');
+    expect(body.noteUpdatedAt).toEqual(ISO);
+    const params = conn.query.mock.calls.find((c) => /^UPDATE\b/i.test(sqlOf(c)))![1] as unknown[];
+    expect(params).toContain(body.noteUpdatedAt);
+  });
+
+  it('PUT does NOT touch it when only other fields change — a phone fix is not activity', async () => {
+    const stored = { ...existingCustomer, noteUpdatedAt: '2026-09-01T03:00:00.000Z' };
+    scriptTx([stored]);
+    const res = await PUT(
+      putReq('cust-1', { ...existingCustomer, phone: '081-999-9999' }),
+      ctx('cust-1')
+    );
+
+    const [update] = customerUpdates();
+    expect(update).not.toContain('noteUpdatedAt');
+    // The response still carries the (unchanged) stored stamp, so a caller
+    // patching its list in place keeps the right position.
+    expect((await res.json()).noteUpdatedAt).toBe('2026-09-01T03:00:00.000Z');
+  });
+
+  it('PUT clears it when the note is emptied — no note, nothing to date', async () => {
+    const res = await PUT(putReq('cust-1', { ...existingCustomer, note: '' }), ctx('cust-1'));
+    const params = conn.query.mock.calls.find((c) => /^UPDATE\b/i.test(sqlOf(c)))![1] as unknown[];
+    expect(params).toEqual(['co-1', 'สมชาย', '', '', '', '', null, 'cust-1']);
+    expect((await res.json()).noteUpdatedAt).toBeNull();
   });
 });
 

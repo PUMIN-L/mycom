@@ -500,13 +500,15 @@ export async function replaceInNotes(
       //    snapshot is the thing this whole change exists to prevent.
       await saveRevision("customer", item.customerId, row, conn);
 
-      // 7. The narrowest possible write: ONE column, with the note we read
+      // 7. The narrowest possible write: the note, plus the stamp of WHEN it
+      //    changed (it only ever moves with the note), with the note we read
       //    repeated in the WHERE. Nothing else on the customer row is touched,
       //    and a row that changed between the read and this statement matches
-      //    nothing and is refused rather than overwritten.
+      //    nothing and is refused rather than overwritten. A replace that
+      //    empties the note clears the stamp, as the hand edit does.
       const [result] = await conn.query(
-        "UPDATE customers SET note = ? WHERE id = ? AND note = ?",
-        [next, item.customerId, current]
+        "UPDATE customers SET note = ?, noteUpdatedAt = ? WHERE id = ? AND note = ?",
+        [next, next ? new Date().toISOString() : null, item.customerId, current]
       );
 
       if ((result as ResultSetHeader)?.affectedRows === 0) {

@@ -254,7 +254,7 @@ describe('POST /api/customers/note-replace — the happy path still keeps histor
     expect(revision[1][1]).toBe('customer');
     expect(JSON.parse(revision[1][3]).note).toBe('10/9/26 ตามเรื่องเวอร์เนีย');
 
-    expect(updates()).toEqual(['UPDATE customers SET note = ? WHERE id = ? AND note = ?']);
+    expect(updates()).toEqual(['UPDATE customers SET note = ?, noteUpdatedAt = ? WHERE id = ? AND note = ?']);
   });
 
   // ── The screen and the server must measure the SAME string ───────────────
@@ -497,7 +497,7 @@ describe('POST /api/customers/note-replace — the term is the needle the screen
     // times in this one note and the stored result was unrecognisable.
     const update = conn.query.mock.calls.find((c) => /^UPDATE\b/i.test(sqlOf(c)))!;
     expect(update[1][0]).toBe('6/9/26 สูตร สูตรใหม่ ที่ลูกค้าถาม a b c');
-    expect(update[1][2]).toBe(note);
+    expect(update[1][3]).toBe(note); // [note, noteUpdatedAt, id, WHERE note]
   });
 
   it('refuses a term with a control character before opening a transaction', async () => {
@@ -553,7 +553,7 @@ describe('POST /api/customers/note-replace — expectedNote is an identity check
     // The `&` survives untouched — the replace rewrote the term and nothing
     // else, and did not quietly entity-encode the rest of the call log.
     expect(update[1][0]).toBe('6/9/26 ส่งของให้ บริษัท A & B จำกัด เรื่องคาลิปเปอร์');
-    expect(update[1][2]).toBe(RAW_AMP_NOTE);
+    expect(update[1][3]).toBe(RAW_AMP_NOTE); // [note, noteUpdatedAt, id, WHERE note]
   });
 
   it('still REFUSES a note that really was edited between the search and the replace', async () => {

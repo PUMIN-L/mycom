@@ -136,12 +136,14 @@ async function restoreCustomerNote(rev: Revision): Promise<Response> {
     // and an undo you cannot undo is its own trap.
     await saveRevision("customer", rev.entityId, rows[0], conn);
 
-    // The narrowest possible write: ONE column. No `companyId`, `name`,
+    // The narrowest possible write: the note, and the stamp of when it changed
+    // (restoring IS a change — see above). No `companyId`, `name`,
     // `department`, `phone` or `email` appears in this statement, and
     // `__tests__/api/revisions.test.ts` asserts that from the SQL actually
     // issued rather than from this comment.
-    await conn.query("UPDATE customers SET note = ? WHERE id = ?", [
+    await conn.query("UPDATE customers SET note = ?, noteUpdatedAt = ? WHERE id = ?", [
       note,
+      note ? new Date().toISOString() : null,
       rev.entityId,
     ]);
     return true;

@@ -100,7 +100,16 @@ export default function CustomerDetailsModal({
         body: JSON.stringify({ ...customer, note: noteDraft }),
       });
       if (!res.ok) throw new Error("Failed to save");
-      const updated = { ...customer, note: noteDraft };
+      // The server decides whether the note actually changed and when; the
+      // host re-sorts /customers by this, so it must be the stored value, not a
+      // client clock's guess.
+      const body = await res.json().catch(() => null);
+      const updated: Customer = {
+        ...customer,
+        note: noteDraft,
+        noteUpdatedAt:
+          body && "noteUpdatedAt" in body ? body.noteUpdatedAt : customer.noteUpdatedAt,
+      };
       setIsEditingNote(false);
       showToast("บันทึกข้อมูลลูกค้าสำเร็จ", "success");
       onSaved(updated);

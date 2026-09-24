@@ -12,7 +12,7 @@ import type { QueryResult, FieldPacket, RowDataPacket } from "mysql2";
 // did not lower the 33 already written to `settings`, so the next change to
 // reuse 33 was skipped entirely and its tables were never created in
 // production. Reverting a migration means moving FORWARD to a new number.
-const SCHEMA_VERSION = 41;
+const SCHEMA_VERSION = 42;
 
 type DbPool = ReturnType<typeof mysql.createPool>;
 
@@ -510,6 +510,55 @@ async function bootstrapSchemaOnce(): Promise<void> {
       );
     } catch (error) {
       if (!isBenignSchemaError(error)) throw error;
+    }
+
+    // When `note` (บันทึกลูกค้า) last CHANGED — not when the row was last saved.
+    // Every writer of `note` stamps it in the same UPDATE (see
+    // add-customer-note-updated-at); editing a phone number does not.
+    try {
+      await connection.query(
+        `ALTER TABLE customers ADD COLUMN IF NOT EXISTS noteUpdatedAt VARCHAR(255) NULL`
+      );
+    } catch (error) {
+      if (!isBenignSchemaError(error)) throw error;
+    }
+
+    // Backfill rows that have a note but no stamp yet, from `revisions`: every
+    // note change writes a snapshot of the PREVIOUS value, so a snapshot's
+    // createdAt is the moment the note changed.
+    //
+    // NOT simply the newest snapshot: before the "no change, no snapshot" rule
+    // in PUT /api/customers/[id], saving a phone-number edit wrote one too. So
+    // only snapshots whose note DIFFERS from the current note count — the
+    // newest of those is exactly when the note became what it is now. No such
+    // snapshot (never edited, or the real one was trimmed past
+    // REVISION_KEEP.customer) falls back to createdAt.
+    //
+    // Both sides are forced to utf8mb4_bin: an exact, case-sensitive match is
+    // the point, and comparing a JSON function's result against a TEXT column
+    // of a different collation is an "Illegal mix of collations" error on
+    // MySQL. `WHERE noteUpdatedAt IS NULL` keeps a later re-run a no-op.
+    //
+    // Logged, not thrown: a backfill that fails must not take the whole site's
+    // bootstrap down with it. The page falls back to createdAt for a NULL
+    // stamp, which is the documented fallback anyway.
+    try {
+      await connection.query(
+        `UPDATE customers c
+            SET c.noteUpdatedAt = COALESCE(
+              (SELECT MAX(r.createdAt)
+                 FROM revisions r
+                WHERE r.entityType = 'customer'
+                  AND r.entityId = c.id
+                  AND CONVERT(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(r.data, '$.note')), '') USING utf8mb4) COLLATE utf8mb4_bin
+                      <> CONVERT(c.note USING utf8mb4) COLLATE utf8mb4_bin),
+              c.createdAt)
+          WHERE c.noteUpdatedAt IS NULL
+            AND c.note IS NOT NULL
+            AND c.note <> ''`
+      );
+    } catch (error) {
+      console.error("[db:bootstrap] customers.noteUpdatedAt backfill FAILED — /customers will fall back to createdAt:", error);
     }
 
     // ── Salespeople table ────────────────────────────────────────────────────

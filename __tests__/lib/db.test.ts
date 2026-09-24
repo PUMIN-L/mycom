@@ -40,14 +40,14 @@ process.env.DB_USER = 'tester';
 process.env.DB_PASSWORD = 'pw';
 process.env.DB_NAME = 'testdb';
 
-// A version SELECT result that MATCHES SCHEMA_VERSION (41) → bootstrap fast-path,
+// A version SELECT result that MATCHES SCHEMA_VERSION (42) → bootstrap fast-path,
 // skipping DDL. Value is a string because settings stores VARCHAR values.
 //
 // ⚠️ This constant only ever goes UP, in step with db.ts. The bootstrap's fast
 // path is `stored >= SCHEMA_VERSION`, so a number the live database has already
 // recorded can never trigger a migration again — reusing one silently skips the
 // entire migration in production (that is how v33 was burned).
-const SCHEMA_VERSION = '41';
+const SCHEMA_VERSION = '42';
 const SCHEMA_MATCH: [Array<{ value: string }>, unknown[]] = [[{ value: SCHEMA_VERSION }], []];
 // An empty result → no schema_version row / no admin row → full bootstrap.
 const EMPTY: [unknown[], unknown[]] = [[], []];
@@ -253,6 +253,58 @@ describe('db.ts', () => {
         [SCHEMA_VERSION],
       );
       expect(mockConnection.release).toHaveBeenCalledTimes(1);
+    });
+
+    // add-customer-note-updated-at: the backfill reads `revisions` and writes the
+    // new column, so both have to exist by the time it runs.
+    it('adds customers.noteUpdatedAt and backfills it from revisions, in that order', async () => {
+      const db = await freshImport();
+      mockConnection.query.mockResolvedValue(EMPTY);
+
+      await db.getDbConnection();
+
+      const revisionsIdx = indexOfSql('CREATE TABLE IF NOT EXISTS revisions');
+      const addColumnIdx = indexOfSql('ADD COLUMN IF NOT EXISTS noteUpdatedAt');
+      const backfillIdx = indexOfSql(/UPDATE customers c\s+SET c\.noteUpdatedAt/);
+
+      expect(revisionsIdx).toBeGreaterThanOrEqual(0);
+      expect(addColumnIdx).toBeGreaterThan(revisionsIdx);
+      expect(backfillIdx).toBeGreaterThan(addColumnIdx);
+
+      const backfill = bootstrapSql()[backfillIdx];
+      // Only rows that have a note and no stamp yet — a re-run is a no-op and an
+      // empty note stays NULL (it sorts to the bottom).
+      expect(backfill).toContain('WHERE c.noteUpdatedAt IS NULL');
+      expect(backfill).toContain("c.note <> ''");
+      // A snapshot only counts when its note DIFFERS from the current one: an
+      // old phone-number save used to write a snapshot too.
+      expect(backfill).toMatch(/JSON_EXTRACT\(r\.data, '\$\.note'\)/);
+      expect(backfill).toContain('<>');
+      // Never edited → falls back to when the customer was created.
+      expect(backfill).toMatch(/COALESCE\([\s\S]*c\.createdAt\)/);
+    });
+
+    it('does not fail the whole bootstrap when the noteUpdatedAt backfill fails', async () => {
+      const db = await freshImport();
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      mockConnection.query.mockImplementation((sql: string) =>
+        /UPDATE customers c\s+SET c\.noteUpdatedAt/.test(String(sql))
+          ? Promise.reject(Object.assign(new Error('Illegal mix of collations'), { code: 'ER_CANT_AGGREGATE_2COLLATIONS' }))
+          : Promise.resolve(EMPTY),
+      );
+
+      await expect(db.getDbConnection()).resolves.toBe(mockPool);
+      // It still finishes and records the version, so the site keeps serving —
+      // /customers falls back to createdAt for a NULL stamp.
+      expect(mockConnection.query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO settings'),
+        [SCHEMA_VERSION],
+      );
+      expect(errSpy).toHaveBeenCalledWith(
+        expect.stringContaining('noteUpdatedAt backfill FAILED'),
+        expect.anything(),
+      );
+      errSpy.mockRestore();
     });
 
     it('creates `products` BEFORE anything with a foreign key referencing it (fresh-DB bootstrap must not throw ER_FK_CANNOT_OPEN_PARENT)', async () => {

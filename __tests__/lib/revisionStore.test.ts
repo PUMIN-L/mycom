@@ -48,8 +48,9 @@ describe('revisionStore', () => {
 
   // ── What a customer snapshot actually stores ────────────────────────────
   //
-  // The restore route puts back ONE column, `note`
-  // (`UPDATE customers SET note = ? WHERE id = ?`), deliberately — a stale
+  // The restore route puts back ONE column of data, `note`
+  // (`UPDATE customers SET note = ?, noteUpdatedAt = ? WHERE id = ?` — the
+  // stamp is minted fresh, not restored), deliberately — a stale
   // `companyId` could point a customer at a deleted company. Every other
   // column the old full-row snapshot carried was therefore bytes that could
   // never be restored, in the largest table in the database.

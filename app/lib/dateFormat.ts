@@ -38,6 +38,24 @@ export function formatDisplayDate(value?: string | null): string {
 }
 
 /**
+ * An ISO-8601 instant -> "24 Sep 2026 14:30" in Asia/Bangkok time, whatever
+ * timezone the viewer's device is set to — for timestamps the user reads
+ * (e.g. when a customer's note was last updated). Stored values stay ISO UTC.
+ *
+ * Returns "" for a missing or unparseable value, so the caller decides what an
+ * absent timestamp looks like.
+ */
+export function formatDisplayDateTime(value?: string | null): string {
+  if (!value) return "";
+  const t = Date.parse(String(value));
+  if (isNaN(t)) return "";
+  const shifted = new Date(t + BANGKOK_OFFSET_HOURS * 60 * 60 * 1000);
+  const hh = String(shifted.getUTCHours()).padStart(2, "0");
+  const mm = String(shifted.getUTCMinutes()).padStart(2, "0");
+  return `${shifted.getUTCDate()} ${DISPLAY_MONTHS[shifted.getUTCMonth()]} ${shifted.getUTCFullYear()} ${hh}:${mm}`;
+}
+
+/**
  * True for a syntactically valid "YYYY-MM-DD" calendar date. Several date
  * columns (warranty/schedule dates) are plain VARCHAR compared and sorted
  * LEXICALLY in SQL — that only sorts chronologically if every stored value is
