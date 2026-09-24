@@ -48,7 +48,11 @@ interface ContentMeta {
   productId?: string | null;
 }
 
-interface ProductItem {
+// Exported so page.tsx projects its rows to EXACTLY these fields. The server
+// used to pass full product rows (three languages of description, image,
+// flags…) — structural typing allowed it, and every extra field was serialized
+// into every visitor's page even though nothing here reads it.
+export interface ProductItem {
   id: string;
   categoryId: number;
   title_th: string;
@@ -56,7 +60,7 @@ interface ProductItem {
   title_zh: string;
 }
 
-interface ProductCategory {
+export interface ProductCategory {
   id: number;
   name_th: string;
   name_en: string;

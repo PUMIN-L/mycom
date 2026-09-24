@@ -11,7 +11,10 @@ import { isMaintenanceMode } from "../../lib/settingsStore";
 import { SITE_URL, SITE_NAME } from "../../lib/site";
 import { getCompanyInfo } from "../../lib/companyInfo";
 import { stripHtml } from "../../lib/stripHtml";
-import ShowcaseClient from "./ShowcaseClient";
+import ShowcaseClient, {
+  type ProductItem as ShowcaseProductItem,
+  type ProductCategory as ShowcaseCategoryItem,
+} from "./ShowcaseClient";
 
 export const dynamic = "force-dynamic";
 
@@ -115,6 +118,26 @@ export default async function ShowcaseContentPage({
   // every visitor regardless of what the UI happens to render.
   const visibleProducts = session ? products : products.filter(isProductPublic);
 
+  // ...and of what IS shipped, only the fields ShowcaseClient reads (the
+  // product badge and the edit-mode picker: id, category, three titles).
+  // Passing the full rows serialized every product's three-language
+  // description, image and flags into each of these pages — ~55 KB of JSON
+  // per view at 85 products, the bulk of the page — for nothing. The type
+  // annotations make any extra field here a compile error.
+  const productItems: ShowcaseProductItem[] = visibleProducts.map((p): ShowcaseProductItem => ({
+    id: p.id,
+    categoryId: p.categoryId,
+    title_th: p.title_th,
+    title_en: p.title_en,
+    title_zh: p.title_zh,
+  }));
+  const categoryItems: ShowcaseCategoryItem[] = categories.map((c): ShowcaseCategoryItem => ({
+    id: c.id,
+    name_th: c.name_th,
+    name_en: c.name_en,
+    name_zh: c.name_zh,
+  }));
+
   // Same reasoning for the "other contents" metadata list: content linked to
   // a hidden product must not appear in an anonymous visitor's RSC payload.
   const visibleAllContents = session
@@ -177,8 +200,8 @@ export default async function ShowcaseContentPage({
       <ShowcaseClient
         initialContent={content}
         initialAllContents={visibleAllContents}
-        initialProducts={visibleProducts}
-        initialCategories={categories}
+        initialProducts={productItems}
+        initialCategories={categoryItems}
         companyInfo={{ email: companyInfo.email, phone: companyInfo.phone, address: companyInfo.address }}
         maintenanceOn={maintenanceOn}
       />
