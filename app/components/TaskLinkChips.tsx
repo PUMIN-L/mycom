@@ -252,7 +252,7 @@ const text = (value: unknown): string => String(value ?? "").trim();
 /** Existing list endpoints only — this feature adds no search endpoints. */
 const KIND_SOURCES: Record<TaskLinkTarget, KindSource> = {
   customer: {
-    url: "/api/customers",
+    url: "/api/customers?fields=list",
     toOptions: (rows) =>
       rows
         .map((r) => ({

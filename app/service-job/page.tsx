@@ -264,7 +264,7 @@ export default function ServiceJobPage() {
       .then((r) => (r.ok ? r.json() : []))
       .then((list) => setCompanies(Array.isArray(list) ? list : []))
       .catch(() => { });
-    fetch("/api/customers")
+    fetch("/api/customers?fields=list")
       .then((r) => (r.ok ? r.json() : []))
       .then((list) => setCustomers(Array.isArray(list) ? list : []))
       .catch(() => { });
@@ -416,7 +416,7 @@ export default function ServiceJobPage() {
         const eqRes = await fetch(`/api/admin/equipments/${encodeURIComponent(equipmentId)}`);
         if (!eqRes.ok) throw new Error("equipment");
         const eq = await eqRes.json();
-        const custRes = await fetch("/api/customers");
+        const custRes = await fetch("/api/customers?fields=list");
         const custList: CustomerRow[] = custRes.ok ? await custRes.json() : [];
         const owner = custList.find((c) => c.id === eq.customerId);
         setCustomerId(String(eq.customerId || ""));

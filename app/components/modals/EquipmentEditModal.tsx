@@ -71,7 +71,7 @@ export default function EquipmentEditModal({
     // If we didn't get them from props, fetch them
     if (!initialCustomers || !initialCompanies || !initialProducts) {
       Promise.all([
-        !initialCustomers ? fetch("/api/customers").then((r) => r.json()) : Promise.resolve(initialCustomers),
+        !initialCustomers ? fetch("/api/customers?fields=list").then((r) => r.json()) : Promise.resolve(initialCustomers),
         !initialCompanies ? fetch("/api/companies").then((r) => r.json()) : Promise.resolve(initialCompanies),
         !initialProducts ? fetch("/api/products").then((r) => r.json()) : Promise.resolve(initialProducts),
       ]).then(([cData, compData, pData]) => {

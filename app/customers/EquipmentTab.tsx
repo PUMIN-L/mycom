@@ -268,7 +268,7 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
     try {
       const [eqRes, custRes, compRes, prodRes] = await Promise.all([
         fetch("/api/admin/equipments"),
-        fetch("/api/customers"),
+        fetch("/api/customers?fields=list"),
         fetch("/api/companies"),
         fetch("/api/products"),
       ]);

@@ -79,7 +79,8 @@ function mockFetch() {
   const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
     if (url === '/api/companies')
       return { ok: true, json: async () => [COMPANY, OTHER_COMPANY] };
-    if (url === '/api/customers')
+    // The note-less list: this page never reads a customer's call log.
+    if (url === '/api/customers?fields=list')
       return { ok: true, json: async () => [CONTACT, OTHER_CONTACT] };
     if (url.startsWith('/api/admin/equipments'))
       return { ok: true, json: async () => [MACHINE, MACHINE_2] };

@@ -464,7 +464,7 @@ export default function QuotationPage() {
       .then((list) => setDbCompanies(Array.isArray(list) ? list : []))
       .catch(() => {});
 
-    fetch("/api/customers")
+    fetch("/api/customers?fields=list")
       .then((r) => (r.ok ? r.json() : []))
       .then((list) => setDbCustomers(Array.isArray(list) ? list : []))
       .catch(() => {});

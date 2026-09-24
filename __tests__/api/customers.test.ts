@@ -23,7 +23,7 @@ const customerUpdates = () => connSql().filter((s) => /^UPDATE\b/i.test(s.trim()
 vi.mock('@/app/lib/session', () => ({ getSession: vi.fn() }));
 import { getSession } from '@/app/lib/session';
 
-import { POST } from '@/app/api/customers/route';
+import { POST, GET as LIST } from '@/app/api/customers/route';
 import { GET, PUT, DELETE } from '@/app/api/customers/[id]/route';
 
 const admin = { userId: '1', username: 'admin', expiresAt: new Date() } as any;
@@ -302,6 +302,42 @@ describe('PUT /api/customers/[id]', () => {
     const res = await PUT(putReq('ghost', { companyId: 'co-1', name: 'สมชาย' }), ctx('ghost'));
     expect(res.status).toBe(200);
     expect(connSql().some((s) => /INSERT INTO revisions/i.test(s))).toBe(false);
+  });
+});
+
+// GET /api/customers?fields=list — the pickers' list, without the call log.
+// `note` is up to 2000 Thai characters per customer and was the bulk of every
+// picker's download, while none of them reads it.
+describe('GET /api/customers', () => {
+  const listReq = (qs = '') =>
+    new NextRequest(`http://localhost:3000/api/customers${qs}`, { headers: { host: 'localhost:3000' } });
+  const selectOf = () => String(vi.mocked(query).mock.calls[0][0]).replace(/\s+/g, ' ');
+
+  it('?fields=list selects every column the pickers use — and not the note', async () => {
+    vi.mocked(query).mockResolvedValueOnce([[]] as never);
+    const res = await LIST(listReq('?fields=list'));
+    expect(res.status).toBe(200);
+
+    const sql = selectOf();
+    expect(sql).not.toMatch(/customers\.\*/);
+    expect(sql).not.toMatch(/\bnote\b/);
+    for (const col of ['id', 'companyId', 'name', 'department', 'phone', 'email', 'createdAt', 'noteUpdatedAt']) {
+      expect(sql).toContain(`customers.${col}`);
+    }
+    expect(sql).toContain('companies.name as companyName');
+  });
+
+  it('without it still returns the full row — /customers needs the note', async () => {
+    vi.mocked(query).mockResolvedValueOnce([[]] as never);
+    await LIST(listReq());
+    expect(selectOf()).toContain('customers.*');
+  });
+
+  it('401s before any query', async () => {
+    vi.mocked(getSession).mockResolvedValueOnce(null as never);
+    const res = await LIST(listReq('?fields=list'));
+    expect(res.status).toBe(401);
+    expect(query).not.toHaveBeenCalled();
   });
 });
 

@@ -111,7 +111,7 @@ export default function SalesRecordEditModal({
     async function loadData() {
       try {
         const promises = [];
-        if (!initialCustomers) promises.push(fetch("/api/customers").then((r) => r.json()).then(d => setCustomers(d)));
+        if (!initialCustomers) promises.push(fetch("/api/customers?fields=list").then((r) => r.json()).then(d => setCustomers(d)));
         if (!initialCompanies) promises.push(fetch("/api/companies").then((r) => r.json()).then(d => setCompanies(d)));
         if (!initialProducts) promises.push(fetch("/api/products").then((r) => r.json()).then(d => setProducts(Array.isArray(d) ? d : d.products || [])));
         if (!initialSalespeople) promises.push(fetch("/api/salespeople").then((r) => r.json()).then(d => setSalespeople(d.salespeople || [])));

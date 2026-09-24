@@ -200,7 +200,7 @@ export default function DashboardPage() {
   const fetchLookups = useCallback(async () => {
     try {
       const [pRes, cRes, coRes, spRes] = await Promise.all([
-        fetch("/api/products"), fetch("/api/customers"), fetch("/api/companies"), fetch("/api/salespeople"),
+        fetch("/api/products"), fetch("/api/customers?fields=list"), fetch("/api/companies"), fetch("/api/salespeople"),
       ]);
       if (pRes.ok) { const d = await pRes.json(); setProducts(Array.isArray(d) ? d : d.products || []); }
       if (cRes.ok) setCustomers(await cRes.json());
