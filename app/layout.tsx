@@ -27,10 +27,22 @@ const inter = Inter({
   subsets: ["latin"],
 });
 
+// Not preloaded. Five weights × two subsets made this ten of the twelve font
+// files every page fetched at high priority (~108 KB), ahead of the hero
+// image — yet a page only ever needs the few whose weight and character range
+// it actually renders (Thai glyphs in h1–h6 fall back to it from Cormorant,
+// see globals.css; the Navbar menu uses it directly). Without the preload the
+// @font-face rules are unchanged, so the browser fetches exactly those files
+// on demand; text shows in the size-adjusted fallback until they arrive
+// (display: swap and adjustFontFallback are next/font's defaults).
+//
+// Every weight is kept on purpose: headings across the site render Thai at
+// 300–700, and dropping one would make the browser fake it instead.
 const ibmPlexThai = IBM_Plex_Sans_Thai({
   variable: "--font-thai",
   subsets: ["thai", "latin"],
   weight: ["300", "400", "500", "600", "700"],
+  preload: false,
 });
 
 export const metadata: Metadata = {
