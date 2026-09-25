@@ -49,6 +49,7 @@ import { createSession } from '@/app/lib/session';
 
 vi.mock('@/app/lib/settingsStore', () => ({
   getSetting: vi.fn(async (key: string) => state.get(key) ?? null),
+  getSessionEpoch: vi.fn(async () => 0),
   setSetting: vi.fn(async (key: string, value: string) => {
     state.set(key, value);
   }),
@@ -102,6 +103,7 @@ describe('login rate limiting (settings-table backed, shared across instances)',
     }
     expect(state.get('login_fail_admin')?.startsWith('5|')).toBe(true);
 
+    vi.mocked(query).mockResolvedValue([[{ id: '2', username: 'someone-else', passwordHash }]] as never);
     const res = await login(req({ username: 'someone-else', password: 'correct-horse' }));
     expect(res.status).toBe(200);
   });

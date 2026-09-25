@@ -1,5 +1,9 @@
 // @vitest-environment node
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+// getSession()/createSession() read the session epoch ("log out other devices").
+// Pinned here so these tests never reach the real settings store.
+vi.mock('@/app/lib/settingsStore', () => ({ getSessionEpoch: vi.fn(async () => 0) }));
 import { ApiError, jsonError, requireAuth, withRoute } from '@/app/lib/apiHelpers';
 import * as sessionModule from '@/app/lib/session';
 

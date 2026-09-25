@@ -28,6 +28,9 @@ import {
   MAX_CREDIT_TERM_DAYS,
   isMaintenanceMode,
   MAINTENANCE_MODE_SETTING,
+  getSessionEpoch,
+  bumpSessionEpoch,
+  SESSION_EPOCH_SETTING,
   type CompanyProfile,
 } from '@/app/lib/settingsStore';
 import { DEFAULT_CREDIT_TERM_DAYS } from '@/app/lib/alertThresholds';
@@ -273,5 +276,50 @@ describe('isMaintenanceMode', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     vi.mocked(query).mockRejectedValue(new Error('db down'));
     await expect(isMaintenanceMode()).resolves.toBe(false);
+  });
+});
+
+// The session epoch behind "ออกจากระบบอุปกรณ์อื่นทั้งหมด": sessions and
+// login-device tokens issued under an older epoch are void.
+describe('session epoch', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('reads the stored epoch as a number', async () => {
+    vi.mocked(query).mockResolvedValue([[{ value: '4' }], []] as never);
+    await expect(getSessionEpoch()).resolves.toBe(4);
+    expect(vi.mocked(query).mock.calls[0][1]).toEqual([SESSION_EPOCH_SETTING]);
+  });
+
+  it('is 0 before anyone has ever pressed the button (no row)', async () => {
+    vi.mocked(query).mockResolvedValue([[], []] as never);
+    await expect(getSessionEpoch()).resolves.toBe(0);
+  });
+
+  it('is 0 for a garbage value rather than NaN (NaN would reject every session)', async () => {
+    vi.mocked(query).mockResolvedValue([[{ value: 'abc' }], []] as never);
+    await expect(getSessionEpoch()).resolves.toBe(0);
+  });
+
+  it('fails OPEN on a read error — a DB blip must not log every admin out', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.mocked(query).mockRejectedValue(new Error('db down'));
+    await expect(getSessionEpoch()).resolves.toBe(0);
+  });
+
+  it('bumps atomically in one upsert and returns the new value', async () => {
+    vi.mocked(query)
+      .mockResolvedValueOnce([{ affectedRows: 1 }, []] as never)
+      .mockResolvedValueOnce([[{ value: '5' }], []] as never);
+
+    await expect(bumpSessionEpoch()).resolves.toBe(5);
+
+    const [sql, params] = vi.mocked(query).mock.calls[0];
+    const flat = String(sql).replace(/\s+/g, ' ');
+    // One statement, so two concurrent bumps both land (no read-modify-write).
+    expect(flat).toContain("INSERT INTO settings (name, value) VALUES (?, '1')");
+    expect(flat).toContain('ON DUPLICATE KEY UPDATE value = CAST(value AS UNSIGNED) + 1');
+    expect(params).toEqual([SESSION_EPOCH_SETTING]);
   });
 });

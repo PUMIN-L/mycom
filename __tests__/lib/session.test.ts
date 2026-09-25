@@ -1,6 +1,10 @@
 // @vitest-environment node
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+// getSession()/createSession() read the session epoch ("log out other devices").
+// Pinned here so these tests never reach the real settings store.
+vi.mock('@/app/lib/settingsStore', () => ({ getSessionEpoch: vi.fn(async () => 0) }));
+
 // We must set the env variable BEFORE importing session.ts
 process.env.SESSION_SECRET = 'test-secret-key-12345678901234567890';
 const { encrypt, decrypt, createSession, deleteSession, getSession } = await import('@/app/lib/session');

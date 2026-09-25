@@ -196,6 +196,55 @@ export async function isMaintenanceMode(): Promise<boolean> {
   }
 }
 
+// ── Session epoch ("ออกจากระบบอุปกรณ์อื่นทั้งหมด") ───────────────────────────
+// Sessions are stateless JWTs, so one cannot be revoked by itself. Every
+// session — and every login-device token (loginDevice.ts) — carries the epoch
+// it was issued under; getSession() rejects one older than the current epoch.
+// Bumping it (POST /api/auth/logout-others) voids every session at once, and
+// the route then re-issues the caller's own session under the new epoch.
+//
+// Tokens issued before this existed carry no epoch and read as 0, so they stay
+// valid until the first bump.
+
+export const SESSION_EPOCH_SETTING = "session_epoch";
+export const SESSION_EPOCH_TAG = "session_epoch";
+
+const loadSessionEpoch = unstable_cache(
+  async () => Number(await getSetting(SESSION_EPOCH_SETTING)) || 0,
+  ["session_epoch"],
+  // Busted by tag on every bump; the TTL only covers a direct database edit.
+  { tags: [SESSION_EPOCH_TAG], revalidate: 60 }
+);
+
+/**
+ * The current session epoch. Read on every authenticated request (never for a
+ * visitor with no session cookie), hence cached.
+ *
+ * A failed read returns 0 — "accept" — like isMaintenanceMode()'s fail-open,
+ * with the catch outside the cache so the failure is never stored: a
+ * settings-table blip must not log every admin out. The cost is that a session
+ * revoked by a bump is accepted again for the length of that blip.
+ */
+export async function getSessionEpoch(): Promise<number> {
+  try {
+    return await loadSessionEpoch();
+  } catch (error) {
+    console.error("Error reading session epoch:", error);
+    return 0;
+  }
+}
+
+/** Increment the epoch in one statement (safe against a concurrent bump) and
+ *  return the new value. The caller must bust SESSION_EPOCH_TAG. */
+export async function bumpSessionEpoch(): Promise<number> {
+  await query(
+    `INSERT INTO settings (name, value) VALUES (?, '1')
+     ON DUPLICATE KEY UPDATE value = CAST(value AS UNSIGNED) + 1`,
+    [SESSION_EPOCH_SETTING]
+  );
+  return Number(await getSetting(SESSION_EPOCH_SETTING)) || 0;
+}
+
 /** Single-line address for a Google Maps text-search query / embed. */
 export function companyAddressQuery(profile: CompanyProfile): string {
   return `${profile.addressStreet}, ${profile.addressLocality}, ${profile.addressRegion} ${profile.addressPostalCode}, ${profile.addressCountry}`;

@@ -1,5 +1,5 @@
 "use client";
-import { createContext, useContext, useEffect, useState, ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useState, ReactNode } from "react";
 import { useRouter } from "next/navigation";
 
 interface AuthUser {
@@ -13,6 +13,10 @@ interface AuthContextType {
   isLoading: boolean;
   login: (username: string, password: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
+  // Re-ask the server whether the session is still good. `user` is read once,
+  // when the app loads, and "log out other devices" can revoke it after that.
+  // Resolves true only when the server confirms the session.
+  refresh: () => Promise<boolean>;
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -21,6 +25,7 @@ const AuthContext = createContext<AuthContextType>({
   isLoading: true,
   login: async () => ({ success: false }),
   logout: async () => {},
+  refresh: async () => false,
 });
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -37,6 +42,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       })
       .catch(() => setUser(null))
       .finally(() => setIsLoading(false));
+  }, []);
+
+  const refresh = useCallback(async () => {
+    try {
+      const data = await (await fetch("/api/auth/me")).json();
+      const fresh: AuthUser | null = data.user ?? null;
+      setUser(fresh);
+      return fresh !== null;
+    } catch {
+      return false; // network trouble: change nothing, claim nothing
+    }
   }, []);
 
   async function login(username: string, password: string) {
@@ -64,7 +80,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, isLoggedIn: !!user, isLoading, login, logout }}>
+    <AuthContext.Provider value={{ user, isLoggedIn: !!user, isLoading, login, logout, refresh }}>
       {children}
     </AuthContext.Provider>
   );

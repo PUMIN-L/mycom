@@ -4,6 +4,12 @@ import { query, withTransaction } from "../../../lib/db";
 import { createSession } from "../../../lib/session";
 import { withRoute } from "../../../lib/apiHelpers";
 import { getSetting, setSetting } from "../../../lib/settingsStore";
+import {
+  LOGIN_DEVICE_COOKIE,
+  LOGIN_DEVICE_COOKIE_OPTIONS,
+  issueLoginDeviceToken,
+  loginDeviceIdFor,
+} from "../../../lib/loginDevice";
 import { RowDataPacket } from "mysql2";
 
 // Login throttle keyed on the *username* being targeted, persisted in the
@@ -81,9 +87,19 @@ async function clearLoginFailures(lockKey: string): Promise<void> {
 export const POST = withRoute(
   "เกิดข้อผิดพลาด กรุณาลองใหม่",
   async (request: NextRequest) => {
-    const { username, password } = await request.json();
+    const body: unknown = await request.json();
+    const username = (body as { username?: unknown } | null)?.username;
+    const password = (body as { password?: unknown } | null)?.password;
 
-    if (!username || !password) {
+    // Strings only, checked before the lock or the database is touched. The
+    // driver's `query()` inlines a non-string parameter into the SQL as-is, so
+    // `"username": [0]` (truthy, so it passed a plain `!username` check) became
+    // `WHERE username = 0` — which MySQL/TiDB evaluate by casting every
+    // non-numeric username to 0, i.e. it matched EVERY user — while
+    // String([0]) filed its failures under the lock key "0", not the
+    // username's. Each such shape was a separate 5-guess allowance against
+    // whichever user the database returned first.
+    if (typeof username !== "string" || typeof password !== "string" || !username || !password) {
       return NextResponse.json(
         { error: "กรุณากรอก username และ password" },
         { status: 400 }
@@ -91,7 +107,12 @@ export const POST = withRoute(
     }
 
     const now = Date.now();
-    const lockKey = loginLockKey(String(username));
+    // A browser that has logged in as this user before (a valid device
+    // cookie) is counted in its own bucket, so failures by anyone else —
+    // which lock the username's bucket — cannot lock it out. Its own failures
+    // stay in its own bucket too. See app/lib/loginDevice.ts.
+    const deviceId = await loginDeviceIdFor(request.cookies.get(LOGIN_DEVICE_COOKIE)?.value, username);
+    const lockKey = deviceId ? `login_fail_dev_${deviceId}` : loginLockKey(username);
 
     if (await isLockedOut(lockKey, now)) {
       return NextResponse.json(
@@ -105,7 +126,16 @@ export const POST = withRoute(
       [username]
     );
 
-    const user = rows[0];
+    // The database decides "equal" by its collation, which is looser than the
+    // lock key: TiDB's default (utf8mb4_bin) is PAD SPACE, so "admin",
+    // "admin ", "admin  "… all find the admin row, while each is counted under
+    // its own lock key — five more guesses per trailing space (an _ai_
+    // collation does the same with accents). Only an input that IS the
+    // username, case aside (the lock key is lowercased), may log in; a row the
+    // database stretched to match is treated as no user at all.
+    const found = rows[0];
+    const user =
+      found && String(found.username).toLowerCase() === username.toLowerCase() ? found : undefined;
     // Always run a bcrypt comparison (against a dummy hash when the user is not
     // found) so the response time is the same for existing and non-existing
     // usernames.
@@ -123,11 +153,20 @@ export const POST = withRoute(
       );
     }
 
-    // Clear failed attempts on success.
+    // Clear failed attempts on success — only the bucket this attempt was
+    // counted in. A login from a trusted device must not clear the username's
+    // bucket, or it would reopen a lock someone else is still hammering.
     await clearLoginFailures(lockKey);
 
     // Create JWT session cookie.
     await createSession(user.id, user.username);
-    return NextResponse.json({ success: true, username: user.username });
+    const response = NextResponse.json({ success: true, username: user.username });
+    // Trust this browser for future lockouts (a fresh id each login).
+    response.cookies.set(
+      LOGIN_DEVICE_COOKIE,
+      await issueLoginDeviceToken(user.username),
+      LOGIN_DEVICE_COOKIE_OPTIONS
+    );
+    return response;
   }
 );

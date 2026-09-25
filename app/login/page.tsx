@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "../context/AuthContext";
 
 export default function LoginPage() {
-  const { login, isLoggedIn, isLoading } = useAuth();
+  const { login, isLoggedIn, isLoading, refresh } = useAuth();
   const router = useRouter();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -12,9 +12,19 @@ export default function LoginPage() {
   const [submitting, setSubmitting] = useState(false);
   const [showPass, setShowPass] = useState(false);
 
+  // `isLoggedIn` was read when the app loaded. A tab whose session was revoked
+  // since ("log out other devices") is sent here by a 401 — trusting the stale
+  // flag would bounce it straight back to /adminpanel, never showing the form.
   useEffect(() => {
-    if (!isLoading && isLoggedIn) router.replace("/adminpanel");
-  }, [isLoggedIn, isLoading]);
+    if (isLoading || !isLoggedIn) return;
+    let cancelled = false;
+    refresh().then((stillIn) => {
+      if (!cancelled && stillIn) router.replace("/adminpanel");
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [isLoggedIn, isLoading, refresh]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();

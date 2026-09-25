@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "../context/AuthContext";
 import Toast from "../components/Toast";
+import ConfirmDialog from "../components/ConfirmDialog";
 
 interface OrphanAsset {
   publicId: string;
@@ -16,6 +17,76 @@ interface OrphanAsset {
 
 // Admin settings (CMS). Client-side redirect gates the UI like the create
 // pages; the real protection is requireAuth() on /api/settings/* server-side.
+
+// ── Log out other devices ──────────────────────────────────────────────────
+// Sessions are 3-day JWTs that logging out on one device cannot revoke on
+// another. This bumps the session epoch (POST /api/auth/logout-others): every
+// other browser is logged out on its next request and stops being a trusted
+// login device; this one is re-issued a session and stays logged in. No OTP —
+// nothing is lost by it, everyone just logs in again.
+function SessionsSection({ showToast }: { showToast: (msg: string, type: "success" | "error") => void }) {
+  const [confirming, setConfirming] = useState(false);
+  const [working, setWorking] = useState(false);
+
+  const logoutOthers = async () => {
+    setWorking(true);
+    try {
+      const res = await fetch("/api/auth/logout-others", { method: "POST" });
+      if (!res.ok) {
+        // 401 first: requireAuth() answers the English "Unauthorized" — e.g.
+        // when another device already logged THIS one out.
+        const data = await res.json().catch(() => null);
+        showToast(
+          res.status === 401
+            ? "เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่แล้วลองอีกครั้ง"
+            : typeof data?.error === "string" && data.error
+              ? data.error
+              : "ออกจากระบบอุปกรณ์อื่นไม่สำเร็จ",
+          "error"
+        );
+        return;
+      }
+      showToast("ออกจากระบบอุปกรณ์อื่นทั้งหมดแล้ว (เครื่องนี้ยังเข้าสู่ระบบอยู่)", "success");
+    } catch {
+      showToast("เกิดข้อผิดพลาด กรุณาลองใหม่", "error");
+    } finally {
+      setWorking(false);
+      setConfirming(false);
+    }
+  };
+
+  return (
+    <div className="mt-8 bg-white rounded-lg shadow p-6 space-y-4">
+      <div>
+        <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+          🔐 ความปลอดภัยของบัญชี
+        </h2>
+        <p className="text-sm text-gray-600 mt-1">
+          ออกจากระบบทุกเครื่องที่เคยเข้าสู่ระบบไว้ ยกเว้นเครื่องนี้ — ใช้เมื่อสงสัยว่ามีคนอื่นเข้าบัญชี
+          หรือเคยเข้าสู่ระบบไว้ในเครื่องที่ไม่ใช่ของตัวเอง
+        </p>
+      </div>
+      <button
+        type="button"
+        onClick={() => setConfirming(true)}
+        disabled={working}
+        className="w-full px-6 py-3 bg-red-600 text-white font-bold rounded-lg hover:bg-red-700 transition disabled:opacity-50"
+      >
+        {working ? "กำลังดำเนินการ..." : "ออกจากระบบอุปกรณ์อื่นทั้งหมด"}
+      </button>
+      {confirming && (
+        <ConfirmDialog
+          message={"ออกจากระบบอุปกรณ์อื่นทั้งหมด?\n(ทุกเครื่องยกเว้นเครื่องนี้จะต้องเข้าสู่ระบบใหม่)"}
+          confirmText="ออกจากระบบ"
+          loadingText="กำลังออกจากระบบ..."
+          onConfirm={logoutOthers}
+          onCancel={() => setConfirming(false)}
+          loading={working}
+        />
+      )}
+    </div>
+  );
+}
 
 // ── Maintenance Mode sub-section ───────────────────────────────────────────
 // Extracted to keep the main SettingsPage component manageable. The OTP flow
@@ -920,6 +991,9 @@ export default function SettingsPage() {
 
         {/* ── โหมดปรับปรุงเว็บไซต์ (Maintenance Mode) ─────────────────── */}
         <MaintenanceModeSection showToast={showToast} />
+
+        {/* ── ออกจากระบบอุปกรณ์อื่น ─────────────────────────────────────── */}
+        <SessionsSection showToast={showToast} />
 
         {/* Cloudinary Orphan Scanner */}
         <div className="mt-8 bg-white rounded-lg shadow p-6 space-y-4">
