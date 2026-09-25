@@ -51,6 +51,7 @@ app/
 ├── page.tsx              Home. Streams <Products> via Suspense (force-dynamic).
 ├── globals.css           Tailwind + CSS variables (--accent, --bg-*, fonts).
 ├── robots.ts / sitemap.ts   SEO route handlers (use lib/site.ts).
+├── products/ services/  Public catalog + service pages (§14).
 │
 ├── api/                  ── Route Handlers (the backend) ──
 │   ├── auth/             login · logout · me  (session lifecycle)
@@ -787,6 +788,72 @@ shrinks so a one-machine sheet does not print a third of an A4 page as unusable
 white. `scheduleId` is a plain id + index, **never an FK**: deleting the
 appointment must leave the sheet whole (`getJob` LEFT JOINs it and reports
 `scheduleExists: false`).
+
+### 14. SEO — public pages, links and metadata
+
+**Metadata: every public page uses [`pageMetadata()`](./app/lib/pageMetadata.ts).**
+Next merges metadata *shallowly*: a page without its own `openGraph` shares the
+root layout's — og:url and og:title of the **home page**, which is what LINE and
+Facebook showed when someone shared /about — and a page *with* its own
+`openGraph` loses the file-based image (`app/opengraph-image.tsx` is merged only
+at the segment it lives in). `pageMetadata` sets title, description, canonical,
+Open Graph (with the image) and Twitter together. Give it the bare title: the
+root template appends " | Profin Lab Scale" (writing the brand too gave /catalog
+and /document a doubled brand). Keep descriptions ≤ 160 characters — Google
+drops the rest; the home page's is `SITE_META_DESCRIPTION` (the long
+`SITE_DESCRIPTION` is for JSON-LD). There is no `keywords` meta: Google ignores it.
+
+**Rich text in plain-text places goes through `htmlToText()`** (`lib/stripHtml.ts`),
+not `stripHtml`: sanitize-html stores `&` as `&amp;`, so stripHtml alone put
+"&amp;" into `<title>`, descriptions, alt text and slugs. Structured data is
+rendered with `jsonLdHtml()` (`lib/jsonLd.ts`, escapes `<`).
+
+**Product links go straight to the content page** — `productHref()` in
+[`lib/productLinks.ts`](./app/lib/productLinks.ts), fed by
+`getProductsData().contentIdByProduct` (public products only; built per request
+from `getAllContentsMeta`, cached under the `products` tag every content write
+busts). `getProductsData` catches failures **outside** its cache, like
+`getCompanyInfo`: its entry has no TTL, so a cached fallback used to pin an
+empty catalog until someone edited a product. `/showcase/product/[id]` is
+only a gateway for products without a content page; its redirect stays
+**temporary (307) on purpose** — where a product leads can change, and browsers
+cache a 308 forever.
+
+**The crawlable catalog.** The home grid shows 9 products at a time and filters
+in the browser, so before these pages most product pages had no link from
+anywhere but the sitemap:
+- `/products` — every category and product; linked from the footer on every page.
+- `/products/{id}-{slug}` — one per category with ≥ 1 public product (else 404).
+  The id identifies the page; the slug (English name, `lib/catalogPaths.ts`) is
+  for reading, and a stale slug **308s** to the current one. ISR with
+  `generateStaticParams() → []`, so the build needs no database.
+- `/services/{slug}` — one per home-page service card. The copy lives in
+  `translations.ts` (`servicePages.pages`), the list in `lib/servicePages.ts`.
+  Every claim in it is taken from copy the site already made (the service cards,
+  `SITE_DESCRIPTION`, the Organization JSON-LD) — **add facts only from the
+  owner**, never invent certifications, years or numbers.
+- Each `/showcase` page links "สินค้าที่เกี่ยวข้อง" (same category first,
+  `lib/showcaseSeo.ts`) and its category page — built from **public products
+  only**, even for an admin. Its title adds the product's Thai/English names
+  when the content title is only a model number; image alt text is that title.
+- Data for these pages is converted to plain text and clipped on the server
+  (`lib/catalogPages.ts`) — see "Page weight" above.
+
+**Sitemap.** No `lastModified` on static pages (it was "now" on every fetch,
+which Google learns to ignore). Content pages use **`contents.updatedAt`**
+(schema v43) — stamped by `updateContent` only when a column it writes actually
+changes (the same rule as its revision snapshot), backfilled from `revisions`,
+NULL = fall back to `createdAt`. It is also the Article's `dateModified`.
+
+**PDF catalogs.** `robots.ts` allows `/api/documents/proxy` (the rest of `/api/`
+stays disallowed) so the catalogs' text can be indexed; `/document/[id]` links
+the PDF plainly for crawlers, and the `download=1` copy sends
+`X-Robots-Tag: noindex` (same file, second URL).
+
+**Content images** render through `ResponsiveImage`: Cloudinary resizes and
+re-encodes them from the URL (`lib/cloudinaryUrl.ts`, `f_auto,q_auto,c_limit,w_…`
++ srcset), the stored URL never changes, and if the resized URL fails (an
+account with strict transformations) the image falls back to the original.
 
 ---
 
