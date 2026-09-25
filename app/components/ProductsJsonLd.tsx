@@ -1,11 +1,12 @@
 import { getProductsData } from "../lib/getProductsData";
-import { getAllContentsMeta } from "../lib/contentStore";
+import { contentIdFor } from "../lib/productLinks";
 import {
   SITE_NAME,
   SITE_URL,
   SITE_DESCRIPTION,
   SITE_LEGAL_NAME,
   BRAND_ALT_NAMES,
+  OPENING_HOURS,
 } from "../lib/site";
 import { LINE_URL } from "../lib/contact";
 import { toThaiE164 } from "../lib/settingsStore";
@@ -24,22 +25,14 @@ function absUrl(u: string): string {
 // buyers — search equipment by its English name, and the JSON-LD is the reliable
 // crawlable channel (the visible grid streams in client-side).
 export default async function ProductsJsonLd() {
-  // getContentsMeta is best-effort enrichment (deep-links); a failure must never
-  // break the page, so fall back to an empty map (→ gateway URLs).
-  const [{ products }, contentsMeta, companyInfo] = await Promise.all([
+  // contentIdByProduct maps each product to its canonical, INDEXABLE content
+  // page — the same map the home grid links with. It is best-effort inside
+  // getProductsData: a failed content read leaves it empty, never breaks this.
+  const [{ products, contentIdByProduct }, companyInfo] = await Promise.all([
     getProductsData(),
-    getAllContentsMeta().catch(() => []),
     getCompanyInfo(),
   ]);
 
-  // Map each product to its canonical, INDEXABLE content page so the ItemList
-  // links to a real destination instead of the noindex /showcase/product gateway.
-  const contentByProduct = new Map<string, string>();
-  for (const c of contentsMeta) {
-    if (c.productId && !contentByProduct.has(c.productId)) {
-      contentByProduct.set(c.productId, c.id);
-    }
-  }
   // undefined when the product has no content page yet. The only other URL it
   // could carry is /showcase/product/{id}, and that gateway sets
   // robots: noindex — naming it here tells Google "this item lives at a URL you
@@ -48,7 +41,7 @@ export default async function ProductsJsonLd() {
   // it just stops pointing at a door marked closed. Writing a content page for
   // the product is what gives it a real destination.
   const productUrl = (id: string) => {
-    const contentId = contentByProduct.get(id);
+    const contentId = contentIdFor(id, contentIdByProduct);
     return contentId ? `${SITE_URL}/showcase/${contentId}` : undefined;
   };
 
@@ -82,6 +75,19 @@ export default async function ProductsJsonLd() {
       addressCountry: companyInfo.profile.addressCountry,
     },
     areaServed: "TH",
+    // The same Google Maps search the Contact page links to, from the address
+    // in Settings — a location signal for local results.
+    hasMap: companyInfo.addressMapsQuery
+      ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(companyInfo.addressMapsQuery)}`
+      : undefined,
+    openingHoursSpecification: [
+      {
+        "@type": "OpeningHoursSpecification",
+        dayOfWeek: [...OPENING_HOURS.days],
+        opens: OPENING_HOURS.opens,
+        closes: OPENING_HOURS.closes,
+      },
+    ],
     sameAs: [LINE_URL],
     // Expertise areas — tells Google what this business knows about
     knowsAbout: [

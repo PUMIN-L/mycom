@@ -4,13 +4,21 @@ import { getAllContentsMeta } from "./lib/contentStore";
 import { getAllDocuments } from "./lib/documentStore";
 import { getAllProducts, isProductPublic } from "./lib/productStore";
 import { isMaintenanceMode } from "./lib/settingsStore";
+import { getProductsData } from "./lib/getProductsData";
+import { PRODUCTS_PATH, categoryPath } from "./lib/catalogPaths";
+import { SERVICE_PAGES, servicePath } from "./lib/servicePages";
 
 // Generated at request time so newly-added content/documents appear without a rebuild.
 export const dynamic = "force-dynamic";
 
-export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
-  const now = new Date();
+// { lastModified } for a stored ISO date, or nothing — an entry without a
+// lastmod is better than a wrong one (an unparseable date, or "now").
+function lastModified(iso: string | null | undefined): { lastModified?: Date } {
+  const date = iso ? new Date(iso) : null;
+  return date && !Number.isNaN(date.getTime()) ? { lastModified: date } : {};
+}
 
+export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   // /catalog is covered by the maintenance overlay (MAINTENANCE_BLOCKED_PATHS),
   // so while that is on there is nothing for a crawler to index there — asking
   // Google to come back weekly for a page that only shows "กำลังปรับปรุง" is
@@ -29,21 +37,42 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   // ordinary day, which is the behaviour we want here anyway.
   const maintenanceOn = await isMaintenanceMode();
 
+  // No lastModified on these. It used to be "now" on every fetch, which tells
+  // Google nothing — it learns to ignore a lastmod that always changes — and
+  // these pages change when the code does, not on a clock.
   const staticRoutes: MetadataRoute.Sitemap = [
-    { url: SITE_URL, lastModified: now, changeFrequency: "weekly", priority: 1 },
-    { url: `${SITE_URL}/about`, lastModified: now, changeFrequency: "monthly", priority: 0.7 },
-    { url: `${SITE_URL}/contact`, lastModified: now, changeFrequency: "monthly", priority: 0.7 },
+    { url: SITE_URL, changeFrequency: "weekly", priority: 1 },
+    { url: `${SITE_URL}${PRODUCTS_PATH}`, changeFrequency: "weekly", priority: 0.8 },
+    ...SERVICE_PAGES.map((s) => ({
+      url: `${SITE_URL}${servicePath(s.slug)}`,
+      changeFrequency: "monthly" as const,
+      priority: 0.8,
+    })),
+    { url: `${SITE_URL}/about`, changeFrequency: "monthly", priority: 0.7 },
+    { url: `${SITE_URL}/contact`, changeFrequency: "monthly", priority: 0.7 },
     ...(maintenanceOn
       ? []
       : [
           {
             url: `${SITE_URL}/catalog`,
-            lastModified: now,
             changeFrequency: "weekly" as const,
             priority: 0.7,
           },
         ]),
   ];
+
+  // Category pages /products/{id}-{slug} — only categories with at least one
+  // PUBLIC product: the others 404 (app/products/[slug]). getProductsData
+  // returns public products only and never throws (an empty catalog on a
+  // failed read), so a DB hiccup drops these entries rather than the sitemap.
+  const catalog = await getProductsData();
+  const categoryRoutes: MetadataRoute.Sitemap = catalog.categories
+    .filter((c) => catalog.products.some((p) => p.categoryId === c.id))
+    .map((c) => ({
+      url: `${SITE_URL}${categoryPath(c)}`,
+      changeFrequency: "weekly",
+      priority: 0.8,
+    }));
 
   // PUBLIC content pages /showcase/{id} — the ones with Article JSON-LD that
   // actually rank. (The admin hub now lives at /adminpanel — robots-blocked and
@@ -72,7 +101,9 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       .filter((c) => !c.productId || !hiddenProductIds.has(c.productId))
       .map((c) => ({
         url: `${SITE_URL}/showcase/${c.id}`,
-        lastModified: c.createdAt ? new Date(c.createdAt) : now,
+        // When it last CHANGED (contents.updatedAt, v43), else when it was
+        // created — never "now", which says nothing.
+        ...lastModified(c.updatedAt || c.createdAt),
         changeFrequency: "monthly",
         priority: 0.7,
       }));
@@ -88,7 +119,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     const documents = await getAllDocuments();
     documentRoutes = documents.map((d) => ({
       url: `${SITE_URL}/document/${d.id}`,
-      lastModified: d.createdAt ? new Date(d.createdAt) : now,
+      ...lastModified(d.createdAt),
       changeFrequency: "monthly",
       priority: 0.5,
     }));
@@ -96,5 +127,5 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     console.error("sitemap: failed to load documents:", err);
   }
 
-  return [...staticRoutes, ...contentRoutes, ...documentRoutes];
+  return [...staticRoutes, ...categoryRoutes, ...contentRoutes, ...documentRoutes];
 }

@@ -164,3 +164,13 @@ describe("Footer — LINE button", () => {
     expect(screen.queryByText(/สแกน QR Code/)).not.toBeInTheDocument();
   });
 });
+
+describe("Footer — quick links", () => {
+  it("links 'สินค้า' to the full catalog page, not the home grid", () => {
+    // /products is what puts every product one click from any page; the
+    // home grid (/#products) shows 9 at a time and filters in the browser.
+    PROPS = { ...BASE_PROPS, maintenanceOn: false };
+    render(<Footer {...PROPS} />);
+    expect(screen.getByRole("link", { name: "สินค้า" }).getAttribute("href")).toBe("/products");
+  });
+});

@@ -45,6 +45,8 @@ const mockedQuery = vi.mocked(query);
 
 // Helper: last SQL + params passed to query on a given (0-based) call.
 const callArgs = (i = 0) => mockedQuery.mock.calls[i] as [string, unknown[]];
+// An ISO-8601 timestamp — what updateContent stamps into contents.updatedAt.
+const ISO = /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$/;
 
 // addContent always runs its productId-conflict check first (via conn.query)
 // before the INSERT — stub that check to "no conflict" and route conn.query
@@ -196,6 +198,7 @@ describe('contentStore', () => {
         blocks: [{ id: 'b', type: 'text', content: '<p>hi</p>' }],
         createdAt: '2026-01-01',
         productId: 'p-1',
+        updatedAt: null, // not edited since the column existed (v43)
       });
     });
 
@@ -280,7 +283,7 @@ describe('contentStore', () => {
       // The blocks column must stay out of the projection: this query runs on
       // every public /showcase/[id] view and every sitemap fetch, so selecting
       // it means a full-table blob scan per pageview.
-      expect(callArgs(0)[0]).toContain('SELECT id, title, createdAt, productId');
+      expect(callArgs(0)[0]).toContain('SELECT id, title, createdAt, productId, updatedAt');
       expect(callArgs(0)[0]).not.toContain('blocks');
       expect(callArgs(0)[0]).toContain('ORDER BY createdAt DESC');
 
@@ -289,6 +292,7 @@ describe('contentStore', () => {
         title: 'T',
         createdAt: '2026-01-01',
         productId: 'p-1',
+        updatedAt: null,
       });
       expect(result[0]).not.toHaveProperty('blocks');
     });
@@ -396,11 +400,12 @@ describe('contentStore', () => {
 
       const result = await updateContent('c-1', { title: 'New Title' });
 
-      // 2nd call is the UPDATE, touching ONLY the title column.
+      // 2nd call is the UPDATE, touching ONLY the title column — plus the
+      // updatedAt stamp, since the title really changed.
       const [sql, params] = callArgs(1);
-      expect(sql).toContain('UPDATE contents SET title = ? WHERE id = ?');
+      expect(sql).toContain('UPDATE contents SET title = ?, updatedAt = ? WHERE id = ?');
       expect(sql).not.toContain('blocks =');
-      expect(params).toEqual(['New Title', 'c-1']);
+      expect(params).toEqual(['New Title', expect.stringMatching(ISO), 'c-1']);
 
       expect(result).toEqual({
         id: 'c-1',
@@ -408,6 +413,7 @@ describe('contentStore', () => {
         blocks: [{ id: 'b', type: 'text', content: '<p>old</p>' }], // kept + re-sanitized
         createdAt: '2026-01-01',
         productId: 'p-old',
+        updatedAt: params[1],
       });
     });
 
@@ -436,7 +442,7 @@ describe('contentStore', () => {
       const result = await updateContent('c-1', { productId: null });
       const [sql, params] = callArgs(1);
       expect(sql).toContain('productId = ?');
-      expect(params).toEqual([null, 'c-1']);
+      expect(params).toEqual([null, expect.stringMatching(ISO), 'c-1']);
       expect(result?.productId).toBeNull();
     });
 
@@ -486,7 +492,38 @@ describe('contentStore', () => {
         blocks: [{ id: 'b', type: 'text', content: '<p>old</p>' }],
         createdAt: '2026-01-01',
         productId: 'p-old',
+        updatedAt: null,
       });
+    });
+
+    // contents.updatedAt (v43) is the sitemap's <lastmod> and the page's
+    // dateModified: it must move when the content changes, and ONLY then.
+    it('does not stamp updatedAt when a save changes nothing', async () => {
+      const stamped = { ...existingRow, updatedAt: '2026-03-01T00:00:00.000Z' };
+      mockedQuery
+        .mockResolvedValueOnce([[stamped]] as never)
+        .mockResolvedValueOnce([{ affectedRows: 1 }] as never);
+
+      // The same title the row already holds — what the edit form sends when
+      // someone opens a content and presses save.
+      const result = await updateContent('c-1', { title: 'Old' });
+
+      expect(callArgs(1)[0]).not.toContain('updatedAt');
+      expect(result?.updatedAt).toBe('2026-03-01T00:00:00.000Z');
+    });
+
+    it('stamps updatedAt when the blocks change', async () => {
+      mockedQuery
+        .mockResolvedValueOnce([[existingRow]] as never)
+        .mockResolvedValueOnce([{ affectedRows: 1 }] as never);
+
+      const before = Date.now();
+      const result = await updateContent('c-1', {
+        blocks: [{ id: 'b', type: 'text', content: '<p>new</p>' }],
+      });
+
+      expect(callArgs(1)[0]).toContain('updatedAt = ?');
+      expect(Date.parse(result!.updatedAt!)).toBeGreaterThanOrEqual(before);
     });
   });
 

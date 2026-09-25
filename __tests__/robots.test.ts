@@ -28,3 +28,12 @@ describe('robots.ts disallow list vs middleware matcher', () => {
     }
   });
 });
+
+describe('robots.ts — PDF catalogs', () => {
+  it('lets crawlers read the PDF proxy while the rest of /api/ stays blocked', () => {
+    const rules = robots().rules;
+    const rule = Array.isArray(rules) ? rules[0] : rules;
+    expect(([] as string[]).concat(rule?.allow ?? [])).toContain('/api/documents/proxy');
+    expect(([] as string[]).concat(rule?.disallow ?? [])).toContain('/api/');
+  });
+});

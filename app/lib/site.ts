@@ -53,125 +53,35 @@ export const BRAND_ALT_NAMES = [
 export const SITE_TITLE =
   "โปรฟิน แล็บสเกล (Profinlab) | จำหน่ายเครื่องมือวัด เครื่องทดสอบ สอบเทียบ สร้างห้องปฏิบัติการ";
 
+// The long form, for structured data (the Organization JSON-LD) and the web
+// manifest — places that are read, not truncated. NOT for <meta description>:
+// see SITE_META_DESCRIPTION.
 export const SITE_DESCRIPTION =
   "บริษัท โปรฟิน แล็บ สเกล จำกัด (Profinlab) — จำหน่าย ซ่อมบำรุง สอบเทียบ และติดตั้งเครื่องมือวัดและเครื่องทดสอบ" +
   "ในห้องปฏิบัติการอุตสาหกรรม พร้อมสอนการใช้งาน บริการออกแบบและสร้างห้อง Lab " +
   "เครื่อง tensile tester เครื่องทดสอบฟิล์ม เครื่องทดสอบพลาสติก เครื่องทดสอบ COF " +
   "เครื่องชั่ง เครื่องวัดสี เครื่องวัดความหนืด — นนทบุรี ประเทศไทย";
 
-export const SITE_KEYWORDS = [
-  // ── ชื่อแบรนด์ / Brand ──
-  "profinlab",
-  "profin",
-  "โปรฟินแลป",
-  "โปรฟินแล็บ",
-  "โปรฟิน แล็บ สเกล",
-  "profin lab scale",
-  // ── คำค้นหาภาษาไทย: เครื่องมือวัดและทดสอบ ──
-  "เครื่องทดสอบ",
-  "เครื่องมือวัด",
-  "เครื่องมือทดสอบ",
-  "เครื่องมือห้องปฏิบัติการ",
-  "อุปกรณ์ห้องแลป",
-  "เครื่องมือ QC",
-  // ── เครื่องทดสอบแรงดึง / Tensile ──
-  "เครื่องทดสอบแรงดึง",
-  "เครื่อง tensile",
-  "เครื่องดึงยืด",
-  "เครื่องวัดแรงดึง",
-  "เครื่องทดสอบแรงดึงพลาสติก",
-  "เครื่อง UTM",
-  "Universal Testing Machine",
-  // ── เครื่องทดสอบฟิล์ม / บรรจุภัณฑ์ ──
-  "เครื่องทดสอบฟิล์ม",
-  "เครื่องทดสอบพลาสติก",
-  "เครื่องทดสอบบรรจุภัณฑ์",
-  "เครื่องวัดความหนาฟิล์ม",
-  "เครื่องทดสอบการหดตัวของฟิล์ม",
-  "เครื่องทดสอบแรงปิดผนึก",
-  "เครื่องทดสอบ heat seal",
-  "เครื่องทดสอบแรงลอก",
-  "เครื่องทดสอบ peel strength",
-  "เครื่องทดสอบแรงฉีกขาด",
-  // ── COF / แรงเสียดทาน ──
-  "เครื่องทดสอบ COF",
-  "เครื่องวัดค่า COF",
-  "เครื่องวัดแรงเสียดทาน",
-  "เครื่องวัดค่าสัมประสิทธิ์แรงเสียดทาน",
-  // ── แรงกระแทก / Impact ──
-  "เครื่องทดสอบแรงกระแทก",
-  "เครื่องทดสอบแรงกระแทกพลาสติก",
-  "Dart Impact Tester",
-  // ── เครื่องวัดต่างๆ ──
-  "เครื่องวัดความหนืด",
-  "เครื่องวัดสี",
-  "เครื่องวัดความเงา",
-  "เครื่องวัดความแข็ง",
-  "เครื่องวัดความชื้น",
-  // ── เครื่องชั่ง ──
-  "เครื่องชั่งดิจิตอล",
-  "เครื่องชั่งวิเคราะห์",
-  "เครื่องชั่งความละเอียดสูง",
-  // ── ตู้อบ ──
-  "ตู้อบลมร้อน",
-  "ตู้อบห้องแล็บ",
-  "ตู้อบสุญญากาศ",
-  // ── เครื่องทดสอบอื่นๆ ──
-  "เครื่องทดสอบการรั่วซึม",
-  "เครื่องทดสอบการรั่วของบรรจุภัณฑ์",
-  "เครื่องทดสอบ Melt Flow Index",
-  "เครื่องทดสอบ MFI",
-  "เครื่องทดสอบค่าดัชนีการไหล",
-  // ── บริการ ──
-  "สอบเทียบเครื่องมือวัด",
-  "สอบเทียบ",
-  "ซ่อมเครื่องทดสอบ",
-  "ซ่อมเครื่องมือวัด",
-  "ติดตั้งเครื่องทดสอบ",
-  "สอนการใช้งานเครื่องทดสอบ",
-  "สร้างห้องปฏิบัติการ",
-  "สร้างห้อง lab",
-  "ห้องปฏิบัติการมาตรฐาน",
-  "ห้อง QC",
-  "ห้องแลปโรงงาน",
-  // ── อุตสาหกรรมเป้าหมาย ──
-  "ตัวแทนจำหน่ายเครื่องทดสอบ",
-  "เครื่องทดสอบวัสดุ",
-  "เครื่องทดสอบยาง",
-  "เครื่องทดสอบสิ่งทอ",
-  "เครื่องทดสอบกระดาษ",
-  // ── English keywords ──
-  "testing equipment Thailand",
-  "tensile tester",
-  "universal testing machine",
-  "UTM machine",
-  "film testing machine",
-  "plastic testing equipment",
-  "packaging testing equipment",
-  "COF tester",
-  "coefficient of friction tester",
-  "peel strength tester",
-  "seal strength tester",
-  "heat seal tester",
-  "dart impact tester",
-  "melt flow index tester",
-  "film thickness gauge",
-  "shrinkage tester",
-  "viscometer",
-  "colorimeter",
-  "spectrophotometer",
-  "gloss meter",
-  "hardness tester",
-  "durometer",
-  "leak tester",
-  "precision balance",
-  "analytical balance",
-  "laboratory oven",
-  "vacuum oven",
-  "calibration service Thailand",
-  "lab construction Thailand",
-  "QC laboratory equipment",
-  "quality control instruments",
-  "Nonthaburi",
-];
+// The <meta name="description"> of the home page (and the default for any page
+// that sets none). Google shows roughly 150–160 characters and drops the rest,
+// so this stays inside that: the home page used to send SITE_DESCRIPTION plus
+// a list of equipment — 625 characters, most of it never displayed.
+export const SITE_META_DESCRIPTION =
+  "โปรฟิน แล็บสเกล (Profinlab) จำหน่าย ซ่อม และสอบเทียบเครื่องมือวัด เครื่องทดสอบ " +
+  "เช่น Tensile Tester, Viscometer, เครื่องวัดสี พร้อมออกแบบสร้างห้องแล็บ — นนทบุรี";
+
+// Business hours, as the owner gave them (Sept 2026): Monday–Friday,
+// 08:30–17:00. In the Organization JSON-LD (openingHoursSpecification) for
+// local results. Change it here if the hours change.
+export const OPENING_HOURS = {
+  days: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"],
+  opens: "08:30",
+  closes: "17:00",
+} as const;
+
+// Alt text of the site-wide Open Graph image (app/opengraph-image.tsx).
+export const OG_IMAGE_ALT = `${SITE_NAME} — Testing Instruments & Laboratory Solutions`;
+
+// No `keywords` list: Google has ignored <meta name="keywords"> for years, and
+// the 120-term list it used to render only told other engines "stuffed".
 

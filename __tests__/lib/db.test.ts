@@ -40,14 +40,14 @@ process.env.DB_USER = 'tester';
 process.env.DB_PASSWORD = 'pw';
 process.env.DB_NAME = 'testdb';
 
-// A version SELECT result that MATCHES SCHEMA_VERSION (42) → bootstrap fast-path,
+// A version SELECT result that MATCHES SCHEMA_VERSION (43) → bootstrap fast-path,
 // skipping DDL. Value is a string because settings stores VARCHAR values.
 //
 // ⚠️ This constant only ever goes UP, in step with db.ts. The bootstrap's fast
 // path is `stored >= SCHEMA_VERSION`, so a number the live database has already
 // recorded can never trigger a migration again — reusing one silently skips the
 // entire migration in production (that is how v33 was burned).
-const SCHEMA_VERSION = '42';
+const SCHEMA_VERSION = '43';
 const SCHEMA_MATCH: [Array<{ value: string }>, unknown[]] = [[{ value: SCHEMA_VERSION }], []];
 // An empty result → no schema_version row / no admin row → full bootstrap.
 const EMPTY: [unknown[], unknown[]] = [[], []];
@@ -282,6 +282,51 @@ describe('db.ts', () => {
       expect(backfill).toContain('<>');
       // Never edited → falls back to when the customer was created.
       expect(backfill).toMatch(/COALESCE\([\s\S]*c\.createdAt\)/);
+    });
+
+    // v43: contents.updatedAt — the sitemap's <lastmod> and the page's
+    // dateModified. Backfilled from `revisions`, so that table must exist first.
+    it('adds contents.updatedAt, to new tables too, and backfills it from revisions after they exist', async () => {
+      const db = await freshImport();
+      mockConnection.query.mockResolvedValue(EMPTY);
+
+      await db.getDbConnection();
+
+      const createContents = bootstrapSql()[indexOfSql('CREATE TABLE IF NOT EXISTS contents')];
+      expect(createContents).toContain('updatedAt VARCHAR(255) NULL');
+
+      const revisionsIdx = indexOfSql('CREATE TABLE IF NOT EXISTS revisions');
+      const addColumnIdx = indexOfSql('ALTER TABLE contents ADD COLUMN IF NOT EXISTS updatedAt');
+      const backfillIdx = indexOfSql(/UPDATE contents c\s+SET c\.updatedAt/);
+      expect(addColumnIdx).toBeGreaterThan(revisionsIdx);
+      expect(backfillIdx).toBeGreaterThan(addColumnIdx);
+
+      const backfill = bootstrapSql()[backfillIdx];
+      expect(backfill).toContain("r.entityType = 'content'");
+      expect(backfill).toContain('MAX(r.createdAt)');
+      // Only unstamped rows — a re-run changes nothing.
+      expect(backfill).toContain('WHERE c.updatedAt IS NULL');
+    });
+
+    it('does not fail the whole bootstrap when the contents.updatedAt backfill fails', async () => {
+      const db = await freshImport();
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      mockConnection.query.mockImplementation((sql: string) =>
+        /UPDATE contents c\s+SET c\.updatedAt/.test(String(sql))
+          ? Promise.reject(Object.assign(new Error('lock wait timeout'), { code: 'ER_LOCK_WAIT_TIMEOUT' }))
+          : Promise.resolve(EMPTY),
+      );
+
+      await expect(db.getDbConnection()).resolves.toBe(mockPool);
+      expect(mockConnection.query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO settings'),
+        [SCHEMA_VERSION],
+      );
+      expect(errSpy).toHaveBeenCalledWith(
+        expect.stringContaining('contents.updatedAt backfill FAILED'),
+        expect.anything(),
+      );
+      errSpy.mockRestore();
     });
 
     it('does not fail the whole bootstrap when the noteUpdatedAt backfill fails', async () => {

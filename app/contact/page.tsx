@@ -1,15 +1,17 @@
 import Navbar from "../components/Navbar";
 import Contact from "../components/Contact";
 import Footer from "../components/Footer";
+import type { Metadata } from "next";
 import { SITE_URL } from "../lib/site";
+import { pageMetadata } from "../lib/pageMetadata";
 import { getCompanyInfo } from "../lib/companyInfo";
 import { isMaintenanceMode } from "../lib/settingsStore";
 
-export const metadata = {
+export const metadata: Metadata = pageMetadata({
   title: "ติดต่อเรา",
   description: "ติดต่อบริษัท Profin Lab Scale — จำหน่ายและบริการเครื่องมือทดสอบ, นนทบุรี ประเทศไทย — Contact us for testing instruments, calibration & lab solutions in Thailand",
-  alternates: { canonical: "/contact" },
-};
+  path: "/contact",
+});
 
 const breadcrumbLd = {
   "@context": "https://schema.org",

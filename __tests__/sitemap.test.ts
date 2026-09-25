@@ -11,6 +11,11 @@ vi.mock('@/app/lib/productStore', () => ({
     p.isPublished !== false && !p.pendingDeleteAt,
 }));
 vi.mock('@/app/lib/settingsStore', () => ({ isMaintenanceMode: vi.fn() }));
+// The catalog pages read the PUBLIC catalog (it never throws). Empty unless a
+// test says otherwise, so the content tests above see no category routes.
+vi.mock('@/app/lib/getProductsData', () => ({
+  getProductsData: vi.fn(async () => ({ categories: [], products: [], contentIdByProduct: {} })),
+}));
 
 import sitemap from '@/app/sitemap';
 import { SITE_URL } from '@/app/lib/site';
@@ -18,6 +23,7 @@ import { getAllContentsMeta } from '@/app/lib/contentStore';
 import { getAllDocuments } from '@/app/lib/documentStore';
 import { getAllProducts } from '@/app/lib/productStore';
 import { isMaintenanceMode } from '@/app/lib/settingsStore';
+import { getProductsData } from '@/app/lib/getProductsData';
 
 const urls = (entries: { url: string }[]) => entries.map((e) => e.url);
 
@@ -123,4 +129,73 @@ describe('sitemap /catalog vs maintenance mode', () => {
     expect(found).toContain(`${SITE_URL}/contact`);
   });
 
+});
+
+describe('sitemap — catalog and service pages', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(getAllContentsMeta).mockResolvedValue([] as never);
+    vi.mocked(getAllProducts).mockResolvedValue([] as never);
+    vi.mocked(getAllDocuments).mockResolvedValue([]);
+    vi.mocked(isMaintenanceMode).mockResolvedValue(false);
+    vi.mocked(getProductsData).mockResolvedValue({
+      categories: [
+        { id: 1, name_th: 'เครื่องชั่ง', name_en: 'Balances', name_zh: '', sortOrder: 0 },
+        { id: 2, name_th: 'ว่าง', name_en: 'Empty', name_zh: '', sortOrder: 1 },
+      ],
+      products: [{ id: 'p1', categoryId: 1 }],
+      contentIdByProduct: {},
+    } as never);
+  });
+
+  it('lists /products, every service page, and each category with public products', async () => {
+    const found = urls(await sitemap());
+    expect(found).toContain(`${SITE_URL}/products`);
+    expect(found).toContain(`${SITE_URL}/services/equipment-sales`);
+    expect(found).toContain(`${SITE_URL}/services/calibration-repair`);
+    expect(found).toContain(`${SITE_URL}/services/lab-design-construction`);
+    expect(found).toContain(`${SITE_URL}/products/1-balances`);
+    // No public products → the page 404s, so it must not be listed.
+    expect(found.some((u) => u.includes('/products/2'))).toBe(false);
+  });
+
+  it('gives static pages no lastModified — "now" on every fetch told Google nothing', async () => {
+    const entries = await sitemap();
+    for (const path of ['', '/products', '/about', '/contact', '/catalog']) {
+      const entry = entries.find((e) => e.url === `${SITE_URL}${path}`);
+      expect(entry, path).toBeDefined();
+      expect(entry!.lastModified, path).toBeUndefined();
+    }
+  });
+
+  it('lists the catalog pages exactly once each', async () => {
+    const found = urls(await sitemap());
+    expect(new Set(found).size).toBe(found.length);
+  });
+});
+
+describe('sitemap — lastmod of content pages', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(getAllProducts).mockResolvedValue([] as never);
+    vi.mocked(getAllDocuments).mockResolvedValue([]);
+    vi.mocked(isMaintenanceMode).mockResolvedValue(false);
+  });
+
+  it('uses when the content last changed, else when it was created, never "now"', async () => {
+    vi.mocked(getAllContentsMeta).mockResolvedValue([
+      { id: 'edited', title: '', createdAt: '2026-01-01T00:00:00.000Z', productId: null, updatedAt: '2026-06-15T08:00:00.000Z' },
+      { id: 'never-edited', title: '', createdAt: '2026-02-01T00:00:00.000Z', productId: null, updatedAt: null },
+      { id: 'no-dates', title: '', createdAt: '', productId: null },
+      { id: 'garbled', title: '', createdAt: 'not a date', productId: null },
+    ] as never);
+
+    const entries = await sitemap();
+    const lastmod = (id: string) => entries.find((e) => e.url === `${SITE_URL}/showcase/${id}`)?.lastModified;
+
+    expect(lastmod('edited')).toEqual(new Date('2026-06-15T08:00:00.000Z'));
+    expect(lastmod('never-edited')).toEqual(new Date('2026-02-01T00:00:00.000Z'));
+    expect(lastmod('no-dates')).toBeUndefined();
+    expect(lastmod('garbled')).toBeUndefined();
+  });
 });

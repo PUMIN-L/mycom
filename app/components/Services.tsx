@@ -3,6 +3,8 @@
 import { useT } from "../i18n/LanguageContext";
 import { translations } from "../i18n/translations";
 import Image from "next/image";
+import Link from "next/link";
+import { serviceByIcon, servicePath } from "../lib/servicePages";
 
 const serviceIcons = {
   sales: "/images/service-sales.png",
@@ -35,7 +37,9 @@ export default function Services() {
 
         {/* Service Cards */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-12">
-          {translations.services.items.map((item, i) => (
+          {translations.services.items.map((item, i) => {
+            const page = serviceByIcon(item.icon);
+            return (
             <div
               key={i}
               className="premium-card flex flex-col items-start group overflow-hidden border border-[var(--border-color)] hover:shadow-xl transition-all duration-500"
@@ -53,15 +57,26 @@ export default function Services() {
 
               <div className="p-8 md:p-10 flex flex-col flex-grow">
                 <h3 className="text-2xl font-serif text-[var(--brand-navy)] mb-4 group-hover:text-[var(--accent)] transition-colors">
-                  {t(item.title)}
+                  {page ? <Link href={servicePath(page.slug)}>{t(item.title)}</Link> : t(item.title)}
                 </h3>
                 <p className="text-[var(--text-muted)] leading-relaxed font-light mb-8">
                   {t(item.desc)}
                 </p>
+                {/* Each service has a page of its own (app/services) — the
+                    card is where people and crawlers find it. */}
+                {page && (
+                  <Link
+                    href={servicePath(page.slug)}
+                    className="mt-auto text-sm font-bold uppercase tracking-wider text-[var(--accent)] hover:underline"
+                  >
+                    {t(translations.servicePages.learnMore)} →
+                  </Link>
+                )}
 
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       </div>
     </section>

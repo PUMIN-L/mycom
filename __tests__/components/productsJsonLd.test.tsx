@@ -2,12 +2,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('@/app/lib/getProductsData', () => ({ getProductsData: vi.fn() }));
-vi.mock('@/app/lib/contentStore', () => ({ getAllContentsMeta: vi.fn() }));
 vi.mock('@/app/lib/companyInfo', () => ({ getCompanyInfo: vi.fn() }));
 
 import ProductsJsonLd from '@/app/components/ProductsJsonLd';
 import { getProductsData } from '@/app/lib/getProductsData';
-import { getAllContentsMeta } from '@/app/lib/contentStore';
 import { getCompanyInfo } from '@/app/lib/companyInfo';
 import { SITE_URL } from '@/app/lib/site';
 
@@ -54,10 +52,8 @@ describe('ProductsJsonLd — ItemList URLs', () => {
     vi.mocked(getProductsData).mockResolvedValue({
       products: [product('p-with'), product('p-without')],
       categories: [],
+      contentIdByProduct: { 'p-with': 'c-1' },
     } as any);
-    vi.mocked(getAllContentsMeta).mockResolvedValue([
-      { id: 'c-1', title: 'A', createdAt: '2026-01-01', productId: 'p-with' },
-    ] as any);
 
     const payloads = await renderedJsonLd();
     const itemList = payloads.map((p) => JSON.parse(p)).find((j) => j['@type'] === 'ItemList');
@@ -72,10 +68,8 @@ describe('ProductsJsonLd — ItemList URLs', () => {
     vi.mocked(getProductsData).mockResolvedValue({
       products: [product('p-with'), product('p-without')],
       categories: [],
+      contentIdByProduct: { 'p-with': 'c-1' },
     } as any);
-    vi.mocked(getAllContentsMeta).mockResolvedValue([
-      { id: 'c-1', title: 'A', createdAt: '2026-01-01', productId: 'p-with' },
-    ] as any);
 
     const payloads = await renderedJsonLd();
     const itemList: any = payloads
@@ -89,16 +83,63 @@ describe('ProductsJsonLd — ItemList URLs', () => {
     expect(withoutContent.item.name).toBe('Tester p-without');
   });
 
-  it('survives a failed content read by emitting items without urls', async () => {
-    // getAllContentsMeta is best-effort enrichment — a DB hiccup must not put
-    // gateway URLs back into the payload.
+  it('emits items without urls when no product has a content page', async () => {
+    // Also what a failed content read looks like: getProductsData degrades to
+    // an empty map (tested there). It must not put gateway URLs back in.
     vi.mocked(getProductsData).mockResolvedValue({
       products: [product('p-1')],
       categories: [],
+      contentIdByProduct: {},
     } as any);
-    vi.mocked(getAllContentsMeta).mockRejectedValue(new Error('db down'));
 
     const payloads = await renderedJsonLd();
     expect(payloads.join(' ')).not.toContain('/showcase/product/');
+  });
+});
+
+describe('ProductsJsonLd — Organization location', () => {
+  const company = (addressMapsQuery: string) => ({
+    email: 'info@example.com',
+    addressMapsQuery,
+    profile: {
+      phone: '021234567',
+      addressStreet: '93 ซอยงามวงศ์วาน 6',
+      addressLocality: 'บางเขน',
+      addressRegion: 'นนทบุรี',
+      addressPostalCode: '11000',
+      addressCountry: 'TH',
+    },
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(getProductsData).mockResolvedValue({ products: [], categories: [], contentIdByProduct: {} } as never);
+  });
+
+  it('links the Google Maps search for the address in Settings (hasMap)', async () => {
+    vi.mocked(getCompanyInfo).mockResolvedValue(company('93 ซอยงามวงศ์วาน 6, บางเขน, นนทบุรี 11000, TH') as never);
+    const org = (await renderedJsonLd()).map((p) => JSON.parse(p)).find((j) => j['@id']?.endsWith('#organization'));
+    expect(org.hasMap).toBe(
+      `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent('93 ซอยงามวงศ์วาน 6, บางเขน, นนทบุรี 11000, TH')}`
+    );
+  });
+
+  it('states the business hours: Monday to Friday, 08:30 to 17:00', async () => {
+    vi.mocked(getCompanyInfo).mockResolvedValue(company('') as never);
+    const org = (await renderedJsonLd()).map((p) => JSON.parse(p)).find((j) => j['@id']?.endsWith('#organization'));
+    expect(org.openingHoursSpecification).toEqual([
+      {
+        '@type': 'OpeningHoursSpecification',
+        dayOfWeek: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
+        opens: '08:30',
+        closes: '17:00',
+      },
+    ]);
+  });
+
+  it('leaves hasMap out when there is no address', async () => {
+    vi.mocked(getCompanyInfo).mockResolvedValue(company('') as never);
+    const org = (await renderedJsonLd()).map((p) => JSON.parse(p)).find((j) => j['@id']?.endsWith('#organization'));
+    expect(org).not.toHaveProperty('hasMap');
   });
 });

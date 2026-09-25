@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
-import { SITE_DESCRIPTION } from "./lib/site";
+import { SITE_META_DESCRIPTION } from "./lib/site";
 import Navbar from "./components/Navbar";
 import Hero from "./components/Hero";
 import Services from "./components/Services";
@@ -18,16 +18,13 @@ import { isMaintenanceMode } from "./lib/settingsStore";
 export const revalidate = 60;
 
 // The homepage owns the site-root canonical (moved off the layout so other pages
-// don't inherit it). The description keeps the Thai brand line but appends the
-// ENGLISH equipment categories customers actually search for, so the homepage
-// itself ranks for "hardness tester", "viscometer", etc. — not just Thai terms.
+// don't inherit it). Its Open Graph tags are the root layout's, which already
+// describe the home page. The description is SITE_META_DESCRIPTION — short
+// enough that Google shows all of it (see site.ts); the equipment names that
+// used to be appended here live on /products and the category pages instead.
 export const metadata: Metadata = {
   alternates: { canonical: "/" },
-  description:
-    `${SITE_DESCRIPTION} — เครื่องทดสอบแรงดึง (Tensile tester), เครื่องทดสอบฟิล์ม, ` +
-    `เครื่องทดสอบพลาสติก, เครื่องวัดค่า COF, เครื่องวัดความหนืด (Viscometer), ` +
-    `เครื่องวัดสี (Colorimeter), เครื่องชั่งวิเคราะห์, ตู้อบลมร้อน, เครื่องวัดความแข็ง (Hardness tester), ` +
-    `เครื่องทดสอบการรั่วซึม (Leak tester) — สอบเทียบ ติดตั้ง สอนการใช้งาน`,
+  description: SITE_META_DESCRIPTION,
 };
 
 export default async function Home() {

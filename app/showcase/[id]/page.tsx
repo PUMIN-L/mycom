@@ -10,19 +10,26 @@ import { getSession } from "../../lib/session";
 import { isMaintenanceMode } from "../../lib/settingsStore";
 import { SITE_URL, SITE_NAME } from "../../lib/site";
 import { getCompanyInfo } from "../../lib/companyInfo";
-import { stripHtml } from "../../lib/stripHtml";
+import { htmlToText, clipText } from "../../lib/stripHtml";
+import { pageMetadata } from "../../lib/pageMetadata";
+import { showcasePageTitle, relatedShowcaseItems } from "../../lib/showcaseSeo";
+import { categoryPath } from "../../lib/catalogPaths";
 import ShowcaseClient, {
   type ProductItem as ShowcaseProductItem,
   type ProductCategory as ShowcaseCategoryItem,
+  type RelatedItem as ShowcaseRelatedItem,
+  type RelatedCategory as ShowcaseRelatedCategory,
 } from "./ShowcaseClient";
 
 export const dynamic = "force-dynamic";
 
 // Pull readable text out of the content blocks for the meta description.
+// Block content is rich text: it goes through htmlToText, or the description
+// carried the tags ("<p>…</p>") and entities ("&amp;") verbatim.
 function plainTextFromBlocks(blocks: ContentBlock[]): string {
   return blocks
     .filter((b) => (b.type === "text" || b.type === "text-image") && b.content)
-    .map((b) => b.content as string)
+    .map((b) => htmlToText(b.content as string))
     .join(" ")
     .replace(/\s+/g, " ")
     .trim();
@@ -55,34 +62,32 @@ export async function generateMetadata({
     return { title: "ไม่พบเนื้อหา", robots: { index: false, follow: false } };
   }
 
-  const description =
-    plainTextFromBlocks(content.blocks).slice(0, 160) || SITE_NAME;
-  const image = firstImage(content.blocks);
-  const canonical = `/showcase/${content.id}`;
+  // Read only when there is a product to name (cached; isHiddenFromAnonymous
+  // above has usually read it already).
+  const product = content.productId
+    ? (await getAllProducts()).find((p) => p.id === content.productId)
+    : undefined;
+
   // `content.title` is rich text (sanitizeRichText, not plain text) — the
   // page itself renders it with dangerouslySetInnerHTML, but <title>/OG/
   // Twitter tags are plain-text contexts, so a title saved as e.g.
   // `<p>GM-4</p>` was showing up on Google literally with the tags still in
-  // it. Strip it here; ShowcaseClient.tsx's own on-page heading is untouched.
-  const title = stripHtml(content.title).trim() || SITE_NAME;
+  // it. showcasePageTitle reads it as text, and adds the product's names when
+  // the title is only a model number (lib/showcaseSeo.ts).
+  const title = showcasePageTitle(content.title, product) || SITE_NAME;
+  const description = clipText(
+    plainTextFromBlocks(content.blocks) ||
+      (product ? htmlToText(product.desc_th || product.desc_en) : "") ||
+      title
+  );
 
-  return {
+  return pageMetadata({
     title,
     description,
-    alternates: { canonical },
-    openGraph: {
-      type: "article",
-      title,
-      description,
-      url: `${SITE_URL}${canonical}`,
-      images: image ? [{ url: image }] : undefined,
-    },
-    twitter: {
-      card: "summary_large_image",
-      title,
-      description,
-    },
-  };
+    path: `/showcase/${content.id}`,
+    image: firstImage(content.blocks),
+    type: "article",
+  });
 }
 
 export default async function ShowcaseContentPage({
@@ -148,11 +153,45 @@ export default async function ShowcaseContentPage({
         return !product || isProductPublic(product);
       });
 
-  const description = plainTextFromBlocks(content.blocks).slice(0, 200);
+  // ── Links to other product pages (lib/showcaseSeo.ts) ──
+  // Built from PUBLIC products only, whoever is looking: this list is for
+  // visitors and crawlers, and a hidden product must never be linked from a
+  // public page. A content page used to link nowhere but the site nav, so
+  // most of them were reachable only through the sitemap.
+  const publicProducts = products.filter(isProductPublic);
+  const relatedItems: ShowcaseRelatedItem[] = relatedShowcaseItems({
+    currentContentId: content.id,
+    currentProductId: content.productId,
+    products: publicProducts,
+    contents: visibleAllContents,
+  }).map(({ contentId, product }): ShowcaseRelatedItem => ({
+    contentId,
+    image: product.image,
+    title_th: product.title_th,
+    title_en: product.title_en,
+    title_zh: product.title_zh,
+  }));
+  // The linked product's category page — "see everything in this category".
+  // Only for a public product: its category then has at least one public
+  // product, so the page exists.
+  const linkedProduct = publicProducts.find((p) => p.id === content.productId);
+  const linkedCategory = linkedProduct
+    ? categories.find((c) => c.id === linkedProduct.categoryId)
+    : undefined;
+  const relatedCategory: ShowcaseRelatedCategory | null = linkedCategory
+    ? {
+        path: categoryPath(linkedCategory),
+        name_th: linkedCategory.name_th,
+        name_en: linkedCategory.name_en,
+        name_zh: linkedCategory.name_zh,
+      }
+    : null;
+
+  const description = clipText(plainTextFromBlocks(content.blocks), 200);
   const image = firstImage(content.blocks);
   // Same rich-text-title issue as generateMetadata above: schema.org's
   // `headline`/breadcrumb `name` are plain-text fields, not HTML.
-  const plainTitle = stripHtml(content.title).trim() || SITE_NAME;
+  const plainTitle = htmlToText(content.title) || SITE_NAME;
 
   const logo = { "@type": "ImageObject", url: `${SITE_URL}/icon.png` };
   const articleLd = {
@@ -162,29 +201,29 @@ export default async function ShowcaseContentPage({
     description: description || undefined,
     image: image ? [image] : undefined,
     datePublished: content.createdAt || undefined,
-    // No updatedAt column yet, so modified == published; Google's Article
-    // guidelines still want the field present.
-    dateModified: content.createdAt || undefined,
+    // When the content last changed (contents.updatedAt, v43); a content not
+    // edited since the column existed reads as modified == published.
+    dateModified: content.updatedAt || content.createdAt || undefined,
     author: { "@type": "Organization", name: SITE_NAME, url: SITE_URL },
     publisher: { "@type": "Organization", name: SITE_NAME, url: SITE_URL, logo },
     mainEntityOfPage: `${SITE_URL}/showcase/${content.id}`,
   };
 
-  // Breadcrumb trail (Home › Showcase › Title) for rich results.
+  // Breadcrumb trail for rich results: Home › {category} › Title when the
+  // content belongs to a public product, else Home › Title. Never the
+  // /showcase list URL — that is the admin panel now (redirects to
+  // /adminpanel), so it must not appear in a public breadcrumb.
+  const crumbs = [
+    { name: "Home", item: SITE_URL },
+    ...(linkedCategory
+      ? [{ name: htmlToText(linkedCategory.name_th || linkedCategory.name_en), item: `${SITE_URL}${categoryPath(linkedCategory)}` }]
+      : []),
+    { name: plainTitle, item: `${SITE_URL}/showcase/${content.id}` },
+  ];
   const breadcrumbLd = {
     "@context": "https://schema.org",
     "@type": "BreadcrumbList",
-    // Two levels only — the /showcase list URL is now the admin panel
-    // (redirects to /adminpanel), so it must not appear in a public breadcrumb.
-    itemListElement: [
-      { "@type": "ListItem", position: 1, name: "Home", item: SITE_URL },
-      {
-        "@type": "ListItem",
-        position: 2,
-        name: plainTitle,
-        item: `${SITE_URL}/showcase/${content.id}`,
-      },
-    ],
+    itemListElement: crumbs.map((crumb, i) => ({ "@type": "ListItem", position: i + 1, ...crumb })),
   };
 
   return (
@@ -202,6 +241,8 @@ export default async function ShowcaseContentPage({
         initialAllContents={visibleAllContents}
         initialProducts={productItems}
         initialCategories={categoryItems}
+        relatedItems={relatedItems}
+        relatedCategory={relatedCategory}
         companyInfo={{ email: companyInfo.email, phone: companyInfo.phone, address: companyInfo.address }}
         maintenanceOn={maintenanceOn}
       />

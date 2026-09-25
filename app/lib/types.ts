@@ -87,6 +87,9 @@ export interface ContentData {
   blocks: ContentBlock[];
   createdAt: string;
   productId?: string | null;
+  /** When the content last CHANGED (schema v43); null = not since the column
+   *  existed — read `updatedAt || createdAt`. Set by updateContent only. */
+  updatedAt?: string | null;
 }
 
 // Lightweight projection for list / related-content views: everything those
@@ -97,6 +100,8 @@ export interface ContentMeta {
   title: string;
   createdAt: string;
   productId: string | null;
+  /** See ContentData.updatedAt. The sitemap's <lastmod>. */
+  updatedAt?: string | null;
 }
 
 // ── Documents ───────────────────────────────────────────────────────────────

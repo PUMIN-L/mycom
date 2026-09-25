@@ -5,7 +5,11 @@ export default function robots(): MetadataRoute.Robots {
   return {
     rules: {
       userAgent: "*",
-      allow: "/",
+      // The one API path crawlers may read: the PDF catalogs, served inline by
+      // the proxy (/document/[id] shows them). Their text — product names and
+      // specs — is worth indexing, and "/api/" below would block it. The
+      // longer, more specific rule wins over "Disallow: /api/" in robots.txt.
+      allow: ["/", "/api/documents/proxy"],
       // Keep admin/auth, internal tools, and API endpoints out of the index.
       disallow: [
         "/api/",

@@ -47,7 +47,9 @@ export default function Footer({ email, phone, address, maintenanceOn }: FooterP
   const quickLinks = [
     { href: "/", label: t(translations.nav.home) },
     { href: "/#services", label: t(translations.nav.services) },
-    { href: "/#products", label: t(translations.nav.products) },
+    // The full catalog page, not the home grid: on every page, this is the
+    // link that puts every product one click from anywhere (app/products).
+    { href: "/products", label: t(translations.nav.products) },
     { href: "/catalog", label: t(translations.nav.catalog) },
     { href: "/about", label: t(translations.nav.about) },
     // { href: "/#clients", label: t(translations.nav.clients) },

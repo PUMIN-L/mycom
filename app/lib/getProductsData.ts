@@ -7,31 +7,60 @@ import {
   ProductCategory,
   ProductData,
 } from "./productStore";
+import { getAllContentsMeta } from "./contentStore";
+import { mapContentIdByProduct } from "./productLinks";
 
 export interface ProductsData {
   categories: ProductCategory[];
   products: ProductData[];
+  /** Public product id → id of its /showcase content page (productLinks.ts).
+   *  Products with no content page have no entry. */
+  contentIdByProduct: Record<string, string>;
 }
 
-const fetchProductsData = async (): Promise<ProductsData> => {
-  try {
-    const [categories, products] = await Promise.all([
-      getAllCategories(),
-      getAllProducts(),
-    ]);
-    // This result is cached and served to the PUBLIC (home grid SSR, JSON-LD,
-    // sitemap). Unpublished products must never leak here — the admin UI
-    // re-fetches the full list from the authenticated /api/products instead.
-    const publicProducts = products.filter(isProductPublic);
-    return { categories, products: publicProducts };
-  } catch (error) {
-    console.error("Error fetching products data:", error);
-    return { categories: [], products: [] };
-  }
-};
-
-// Use Next.js Data Cache (unstable_cache) to cache across requests,
-// and React.cache to deduplicate within a single request.
-export const getProductsData = cache(
-  unstable_cache(fetchProductsData, ["products_data"], { tags: ["products"] })
+// The public catalog, cached across requests (Next.js Data Cache). This result
+// is served to the PUBLIC (home grid SSR, JSON-LD, sitemap, /products).
+// Unpublished products must never leak here — the admin UI re-fetches the full
+// list from the authenticated /api/products instead.
+//
+// It THROWS when a read fails, and that is what keeps a failure out of the
+// cache: unstable_cache stores only what resolves, and this entry has no
+// revalidate window — only the "products" tag — so a stored fallback would pin
+// an empty catalog on the site until someone happened to edit a product (the
+// same reason getCompanyInfo catches outside its cache).
+const loadCatalog = unstable_cache(
+  async (): Promise<Omit<ProductsData, "contentIdByProduct">> => {
+    const [categories, products] = await Promise.all([getAllCategories(), getAllProducts()]);
+    return { categories, products: products.filter(isProductPublic) };
+  },
+  ["products_data"],
+  { tags: ["products"] }
 );
+
+// React.cache deduplicates within one request. Failures degrade here, outside
+// every cache, so the next request retries the database:
+//  - the catalog read failing → an empty catalog for this request;
+//  - only the content read failing → the catalog as usual, every product
+//    linking through the gateway (which still works).
+// The content map is built per request from getAllContentsMeta (itself cached,
+// under the same "products" tag every content write busts), and from the
+// PUBLIC products only — it would otherwise name hidden products' pages.
+export const getProductsData = cache(async (): Promise<ProductsData> => {
+  const [catalog, contents] = await Promise.all([
+    loadCatalog().catch((error) => {
+      console.error("Error fetching products data:", error);
+      return { categories: [], products: [] };
+    }),
+    getAllContentsMeta().catch((error) => {
+      console.error("Error fetching content links for products:", error);
+      return [];
+    }),
+  ]);
+  return {
+    ...catalog,
+    contentIdByProduct: mapContentIdByProduct(
+      catalog.products.map((p) => p.id),
+      contents
+    ),
+  };
+});

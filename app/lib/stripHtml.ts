@@ -3,6 +3,59 @@ export function stripHtml(html: string): string {
   return html.replace(/<[^>]*>?/gm, '');
 }
 
+const NAMED_ENTITIES: Record<string, string> = {
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: '"',
+  apos: "'",
+  nbsp: " ",
+};
+
+/**
+ * Rich text → the plain text a reader sees, for places that are NOT HTML:
+ * <title>, meta descriptions, alt text, JSON-LD, URL slugs.
+ *
+ * stripHtml alone leaves entities behind, and sanitize-html (every stored
+ * rich-text field, §5) escapes `&` `<` `>` `"` in text — so a category named
+ * "Hardness & Durometer" is stored as "Hardness &amp; Durometer", and a title
+ * built with stripHtml showed "&amp;" to Google. Tags go first — a line or
+ * paragraph break becomes a space, so "<p>A</p><p>B</p>" reads "A B", not
+ * "AB" — then entities are decoded ONCE (so "&amp;lt;" reads "&lt;", as the
+ * author typed it), then whitespace — including non-breaking spaces —
+ * collapses to single spaces.
+ *
+ * The result is text: render it as a React text node or attribute (escaped),
+ * never back into dangerouslySetInnerHTML.
+ */
+export function htmlToText(html: string): string {
+  if (!html) return "";
+  return stripHtml(html.replace(/<(?:br|\/p|\/div|\/li|\/h[1-6]|\/tr|\/td|\/th)\b[^>]*>/gi, " "))
+    .replace(/&(#x[0-9a-f]{1,6}|#[0-9]{1,7}|[a-z]{2,6});/gi, (entity, body: string) => {
+      const lower = body.toLowerCase();
+      if (lower.startsWith("#")) {
+        const code = lower.startsWith("#x") ? parseInt(lower.slice(2), 16) : parseInt(lower.slice(1), 10);
+        return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : entity;
+      }
+      return NAMED_ENTITIES[lower] ?? entity;
+    })
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Plain text cut to at most `max` characters (code points), at a word when
+ * one ends reasonably close, and marked with "…" when anything was cut.
+ * For meta descriptions — Google shows ~160 characters — and card blurbs.
+ */
+export function clipText(text: string, max = 160): string {
+  const chars = [...text];
+  if (chars.length <= max) return text;
+  const cut = chars.slice(0, max - 1).join("");
+  const atSpace = cut.lastIndexOf(" ");
+  return `${(atSpace > cut.length * 0.6 ? cut.slice(0, atSpace) : cut).trimEnd()}…`;
+}
+
 /**
  * Replace non-breaking spaces (U+00A0 / `&nbsp;`) with regular ones.
  *

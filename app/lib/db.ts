@@ -12,7 +12,7 @@ import type { QueryResult, FieldPacket, RowDataPacket } from "mysql2";
 // did not lower the 33 already written to `settings`, so the next change to
 // reuse 33 was skipped entirely and its tables were never created in
 // production. Reverting a migration means moving FORWARD to a new number.
-const SCHEMA_VERSION = 42;
+const SCHEMA_VERSION = 43;
 
 type DbPool = ReturnType<typeof mysql.createPool>;
 
@@ -94,7 +94,8 @@ async function bootstrapSchemaOnce(): Promise<void> {
           title VARCHAR(255) NOT NULL,
           blocks JSON NOT NULL,
           createdAt VARCHAR(255) NOT NULL,
-          productId VARCHAR(255) NULL
+          productId VARCHAR(255) NULL,
+          updatedAt VARCHAR(255) NULL
         )
       `);
     // Migration: add productId if it doesn't exist (for existing tables)
@@ -202,6 +203,44 @@ async function bootstrapSchemaOnce(): Promise<void> {
     } catch (error) {
       // Only "index already exists" is benign here — rethrow anything real.
       if (!isBenignSchemaError(error)) throw error;
+    }
+
+    // ── v43: contents.updatedAt — when a content last CHANGED ──────────────
+    // For the sitemap's <lastmod> and the Article JSON-LD's dateModified,
+    // which both used createdAt, so an edited page looked untouched to Google.
+    // updateContent stamps it only when something it writes differs from the
+    // row — the same rule that gates its revision snapshot — so opening a
+    // content and saving it unchanged does not move it. NULL = not edited since
+    // the column existed; readers fall back to createdAt.
+    try {
+      await connection.query(
+        `ALTER TABLE contents ADD COLUMN IF NOT EXISTS updatedAt VARCHAR(255) NULL`
+      );
+    } catch (error) {
+      if (!isBenignSchemaError(error)) throw error;
+    }
+
+    // Backfill from `revisions` (created just above): every content update that
+    // changed something wrote a snapshot at that moment, so the newest snapshot
+    // is the last edit. Approximate for old rows — before "no change, no
+    // snapshot" an unchanged save wrote one too, so a stamp can be a little
+    // later than the real last change; for a <lastmod> that errs the right way.
+    // No snapshot at all leaves NULL (MAX of nothing) → createdAt. Logged, not
+    // thrown: a failed backfill must not take the site down, and NULL is the
+    // documented fallback anyway. `WHERE updatedAt IS NULL` keeps a re-run a
+    // no-op.
+    try {
+      await connection.query(
+        `UPDATE contents c
+            SET c.updatedAt = (
+              SELECT MAX(r.createdAt)
+                FROM revisions r
+               WHERE r.entityType = 'content'
+                 AND r.entityId = c.id)
+          WHERE c.updatedAt IS NULL`
+      );
+    } catch (error) {
+      console.error("[db:bootstrap] contents.updatedAt backfill FAILED — the sitemap will fall back to createdAt:", error);
     }
 
     // ── Quotations table (saved quotations; auto-purged after 30 days) ────

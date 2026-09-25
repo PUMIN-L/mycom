@@ -7,8 +7,7 @@ import {
   SITE_URL,
   SITE_NAME,
   SITE_TITLE,
-  SITE_DESCRIPTION,
-  SITE_KEYWORDS,
+  SITE_META_DESCRIPTION,
 } from "./lib/site";
 import "./globals.css";
 import GlobalAdminBell from "./components/GlobalAdminBell";
@@ -51,8 +50,7 @@ export const metadata: Metadata = {
     default: SITE_TITLE,
     template: `%s | ${SITE_NAME}`,
   },
-  description: SITE_DESCRIPTION,
-  keywords: SITE_KEYWORDS,
+  description: SITE_META_DESCRIPTION,
   applicationName: SITE_NAME,
   authors: [{ name: SITE_NAME }],
   creator: SITE_NAME,
@@ -65,7 +63,7 @@ export const metadata: Metadata = {
     type: "website",
     siteName: SITE_NAME,
     title: SITE_TITLE,
-    description: SITE_DESCRIPTION,
+    description: SITE_META_DESCRIPTION,
     url: SITE_URL,
     locale: "th_TH",
     alternateLocale: ["en_US", "zh_CN"],
@@ -73,7 +71,7 @@ export const metadata: Metadata = {
   twitter: {
     card: "summary_large_image",
     title: SITE_TITLE,
-    description: SITE_DESCRIPTION,
+    description: SITE_META_DESCRIPTION,
   },
   robots: {
     index: true,

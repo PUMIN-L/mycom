@@ -295,6 +295,15 @@ describe('Documents API Route', () => {
       const res = await PROXY_GET(proxyRequest(cloudUrl, true));
       expect(res.status).toBe(200);
       expect(res.headers.get('content-disposition')).toBe('attachment; filename="document.pdf"');
+      // The same file as the inline URL — only that one may be indexed.
+      expect(res.headers.get('x-robots-tag')).toBe('noindex');
+    });
+
+    it('leaves the inline PDF indexable (robots.txt allows crawling it)', async () => {
+      fetchMock.mockResolvedValue({ status: 200, ok: true, body: null } as never);
+
+      const res = await PROXY_GET(proxyRequest(cloudUrl));
+      expect(res.headers.get('x-robots-tag')).toBeNull();
     });
 
     it('refuses to follow an upstream redirect (502)', async () => {

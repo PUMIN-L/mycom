@@ -12,6 +12,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { ProductCategory, ProductData } from "../lib/types";
 import { pageList } from "../lib/pagination";
+import { productHref } from "../lib/productLinks";
+import { PRODUCTS_PATH } from "../lib/catalogPaths";
 import { reorderVisible } from "../lib/reorderVisible";
 import dynamic from "next/dynamic";
 import { stripHtml, normalizeNbsp } from "../lib/stripHtml";
@@ -39,6 +41,9 @@ interface ProductsProps {
   dataPromise: Promise<{
     categories: ProductCategory[];
     products: ProductData[];
+    /** productId → content page id (see lib/productLinks.ts). Optional so a
+     *  product added in this session, with no entry, links to the gateway. */
+    contentIdByProduct?: Record<string, string>;
   }>;
 }
 
@@ -126,8 +131,11 @@ export default function Products({ dataPromise }: ProductsProps) {
 
   // Suspends until the server data resolves; the resolved value seeds local
   // state so admin mutations (add/delete) can update the UI optimistically.
-  const { categories: initialCategories, products: initialProducts } =
-    use(dataPromise);
+  const {
+    categories: initialCategories,
+    products: initialProducts,
+    contentIdByProduct,
+  } = use(dataPromise);
 
   const [categories, setCategories] =
     useState<ProductCategory[]>(initialCategories);
@@ -746,6 +754,16 @@ export default function Products({ dataPromise }: ProductsProps) {
           <h2 className="text-xl md:text-4xl font-serif text-[var(--accent)] mb-6">
             {t(translations.products.title)}
           </h2>
+          {/* A crawlable way to every product: this grid shows 9 at a time
+              and filters in the browser, so pages 2+ and the category
+              filters have no URL of their own. /products lists them all. */}
+          <Link
+            href={PRODUCTS_PATH}
+            className="text-sm font-semibold text-[var(--accent)] hover:underline"
+          >
+            {t(translations.productPages.browseByCategory)} →
+          </Link>
+
 
           {/* Admin Controls */}
           {isLoggedIn && (
@@ -997,7 +1015,9 @@ export default function Products({ dataPromise }: ProductsProps) {
                 return (
                   <Link
                     key={`${selectedCategory}-${item.id}`}
-                    href={`/showcase/product/${item.id}`}
+                    // Straight to the content page when there is one — not
+                    // through the redirecting gateway (lib/productLinks.ts).
+                    href={productHref(item.id, contentIdByProduct)}
                     draggable={canDrag}
                     onDragStart={(e) => handleProdDragStart(e, item.id)}
                     onDragEnter={(e) => handleProdDragEnter(e, item.id)}

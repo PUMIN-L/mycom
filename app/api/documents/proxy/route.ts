@@ -113,6 +113,10 @@ export async function GET(request: NextRequest) {
         ? 'attachment; filename="document.pdf"'
         : 'inline; filename="document.pdf"'
     );
+    // robots.txt lets crawlers read the catalogs through here — their text is
+    // mostly product names and specs — but only the inline copy should be
+    // indexed: the download variant is the same file under a second URL.
+    if (isDownload) headers.set("X-Robots-Tag", "noindex");
 
     return new NextResponse(response.body, { headers });
   } catch (error) {

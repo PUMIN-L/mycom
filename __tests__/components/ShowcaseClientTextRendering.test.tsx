@@ -39,6 +39,7 @@ vi.mock("@/app/context/AuthContext", () => ({
 }));
 vi.mock("@/app/i18n/LanguageContext", () => ({
   useLanguage: () => ({ lang: "th", setLang: vi.fn() }),
+  useT: () => (o: { th: string } | undefined) => o?.th ?? "",
 }));
 vi.mock("@/app/components/Navbar", () => ({ default: () => null }));
 vi.mock("@/app/components/Footer", () => ({ default: () => null }));

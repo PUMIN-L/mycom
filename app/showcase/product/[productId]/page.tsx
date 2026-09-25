@@ -35,6 +35,13 @@ export default async function ProductContentGateway({
 
   // Do a real (server) redirect so crawlers follow it and there is no
   // client-side fetch → redirect → fetch hop.
+  //
+  // Deliberately TEMPORARY (307), not permanentRedirect (308): where a product
+  // leads can change — its content deleted, or re-created under a new id —
+  // and browsers cache a permanent redirect indefinitely, so a 308 would keep
+  // sending people to a deleted page. The site's own links no longer come
+  // through here when a content page exists (lib/productLinks.ts), so the hop
+  // costs nothing in SEO terms.
   if (content && productVisible) {
     redirect(`/showcase/${content.id}`);
   }

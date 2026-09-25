@@ -83,16 +83,23 @@ describe('site', () => {
   });
 
   describe('static metadata constants', () => {
-    it('exposes the site name, title, description and keywords', async () => {
+    it('exposes the site name, title and descriptions', async () => {
       const mod = await loadSite({});
       expect(mod.SITE_NAME).toBe('Profin Lab Scale');
       // The <title> now leads with the Thai brand (+ English) for brand-search SEO.
       expect(mod.SITE_TITLE).toContain('โปรฟิน แล็บสเกล');
       expect(mod.SITE_TITLE).toContain('Profinlab');
       expect(mod.SITE_DESCRIPTION).toContain('Profinlab');
-      expect(Array.isArray(mod.SITE_KEYWORDS)).toBe(true);
-      expect(mod.SITE_KEYWORDS).toContain('เครื่องวัดความแข็ง');
-      expect(mod.SITE_KEYWORDS.length).toBeGreaterThanOrEqual(50);
+      // No keywords list any more: Google ignores <meta name="keywords">.
+      expect('SITE_KEYWORDS' in mod).toBe(false);
+    });
+
+    it('keeps the meta description short enough for Google to show whole', async () => {
+      const mod = await loadSite({});
+      // Google displays ~150–160 characters; the home page used to send 625.
+      expect([...mod.SITE_META_DESCRIPTION].length).toBeLessThanOrEqual(160);
+      expect(mod.SITE_META_DESCRIPTION).toContain('Profinlab');
+      expect(mod.SITE_META_DESCRIPTION).toContain('โปรฟิน แล็บสเกล');
     });
 
     it('exposes the Thai brand name, legal name, and every spelling variant', async () => {

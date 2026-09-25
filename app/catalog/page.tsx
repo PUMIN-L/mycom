@@ -1,22 +1,20 @@
 import type { Metadata } from "next";
 import CatalogClient from "./CatalogClient";
 import { getAllDocuments } from "../lib/documentStore";
-import { SITE_URL } from "../lib/site";
+import { pageMetadata } from "../lib/pageMetadata";
 
 export const revalidate = 60;
 
-const title = "แคตตาล๊อคสินค้า (Product Catalogs) | Profin Lab Scale";
-const description =
-  "แคตตาล๊อคสินค้า โบรชัวร์ และเอกสารข้อมูลสำหรับเครื่องมือทดสอบคุณภาพจาก Profin Lab Scale — Download product catalogs, brochures & datasheets for testing instruments";
-
-export const metadata: Metadata = {
-  title,
-  description,
-  // Without this the page inherits the root layout's canonical ("/") and tells
-  // Google it's a duplicate of the homepage — dropping /catalog from the index.
-  alternates: { canonical: "/catalog" },
-  openGraph: { url: `${SITE_URL}/catalog`, title, description },
-};
+// The canonical matters: without one the page inherits the root layout's ("/")
+// and tells Google it's a duplicate of the homepage — dropping /catalog from
+// the index. No brand in the title: the root template appends it (it used to
+// be written here too, so <title> ended "| Profin Lab Scale | Profin Lab Scale").
+export const metadata: Metadata = pageMetadata({
+  title: "แคตตาล็อกสินค้า (Product Catalogs)",
+  description:
+    "แคตตาล็อกสินค้า โบรชัวร์ และเอกสารข้อมูลเครื่องมือทดสอบจาก Profin Lab Scale — Download product catalogs, brochures & datasheets",
+  path: "/catalog",
+});
 
 export default async function CatalogPage() {
   const documents = await getAllDocuments();

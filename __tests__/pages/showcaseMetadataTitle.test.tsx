@@ -50,8 +50,10 @@ describe("/showcase/[id] generateMetadata — strips HTML from the rich-text tit
 
     expect(metadata.title).toBe("GM-4");
     expect(String(metadata.title)).not.toMatch(/[<>]/);
-    expect(metadata.openGraph?.title).toBe("GM-4");
-    expect(metadata.twitter?.title).toBe("GM-4");
+    // og/twitter titles carry the brand by hand — the root <title> template
+    // does not reach them (lib/pageMetadata.ts).
+    expect(metadata.openGraph?.title).toBe("GM-4 | Profin Lab Scale");
+    expect(metadata.twitter?.title).toBe("GM-4 | Profin Lab Scale");
   });
 
   it("a title that is HTML-only after stripping (e.g. an empty <p></p>) falls back to the site name, never an empty <title>", async () => {

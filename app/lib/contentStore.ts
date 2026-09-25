@@ -110,6 +110,7 @@ function rowToContent(row: RowDataPacket): ContentData {
     blocks: parseBlocks(row.blocks, row.id),
     createdAt: row.createdAt,
     productId: row.productId ?? null,
+    updatedAt: row.updatedAt ?? null,
   };
 }
 
@@ -188,13 +189,14 @@ export const getAllContentsMeta = cache(
   unstable_cache(
     async function fetchAllContentsMeta(): Promise<ContentMeta[]> {
       const [rows] = await query<RowDataPacket[]>(
-        "SELECT id, title, createdAt, productId FROM contents ORDER BY createdAt DESC"
+        "SELECT id, title, createdAt, productId, updatedAt FROM contents ORDER BY createdAt DESC"
       );
       return rows.map((row) => ({
         id: row.id,
         title: row.title,
         createdAt: row.createdAt,
         productId: row.productId ?? null,
+        updatedAt: row.updatedAt ?? null,
       }));
     },
     ["contents_meta"],
@@ -313,6 +315,15 @@ export async function updateContent(
     set("productId", productId, productId !== (existing.productId ?? null));
   }
 
+  // When the content last CHANGED (schema v43): stamped on the same condition
+  // as the revision snapshot, so a save that changes nothing does not move
+  // it. It is the sitemap's <lastmod> and the page's dateModified.
+  const updatedAt = changed ? new Date().toISOString() : existing.updatedAt ?? null;
+  if (changed) {
+    sets.push("updatedAt = ?");
+    values.push(updatedAt);
+  }
+
   if (sets.length > 0) {
     if (productId && productId !== existing.productId) {
       // Same race guard as addContent — re-linking an EXISTING content to a
@@ -366,5 +377,5 @@ export async function updateContent(
     }
   }
 
-  return { id, title, blocks, createdAt, productId };
+  return { id, title, blocks, createdAt, productId, updatedAt };
 }

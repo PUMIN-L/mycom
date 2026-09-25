@@ -5,16 +5,20 @@ import Link from "next/link";
 import Image from "next/image";
 import dynamic from "next/dynamic";
 import { useAuth } from "../../context/AuthContext";
-import { useLanguage } from "../../i18n/LanguageContext";
+import { useLanguage, useT } from "../../i18n/LanguageContext";
+import { translations } from "../../i18n/translations";
+import { localize } from "../../lib/localize";
+import { showcasePageTitle } from "../../lib/showcaseSeo";
 import Navbar from "../../components/Navbar";
 import Footer from "../../components/Footer";
 import ColorPickerDropdown from "../../components/ColorPickerDropdown";
 import Toast from "../../components/Toast";
 import type { OrphanedImage } from "../../components/ImageDeleteConfirmDialog";
-import { stripHtml, normalizeNbsp } from "../../lib/stripHtml";
+import { stripHtml, normalizeNbsp, htmlToText } from "../../lib/stripHtml";
 import type { ContentBlock } from "../../lib/types";
 import type { SearchableDropdownOption } from "../../components/SearchableDropdown";
 import YoutubeEmbed from "../../components/YoutubeEmbed";
+import ResponsiveImage from "../../components/ResponsiveImage";
 
 // These are only ever rendered inside admin-only states (isEditing,
 // showDeleteContentConfirm, pendingDeleteBlock, orphanedImages) that stay
@@ -67,11 +71,31 @@ export interface ProductCategory {
   name_zh: string;
 }
 
+/** One card in "สินค้าที่เกี่ยวข้อง": another product, linking to its own
+ *  content page. Projected by page.tsx to exactly these fields. */
+export interface RelatedItem {
+  contentId: string;
+  image: string;
+  title_th: string;
+  title_en: string;
+  title_zh: string;
+}
+
+/** The linked product's category page, for "ดูสินค้าทั้งหมดในหมวด …". */
+export interface RelatedCategory {
+  path: string;
+  name_th: string;
+  name_en: string;
+  name_zh: string;
+}
+
 interface ShowcaseClientProps {
   initialContent: ContentData;
   initialAllContents: ContentMeta[];
   initialProducts: ProductItem[];
   initialCategories: ProductCategory[];
+  relatedItems?: RelatedItem[];
+  relatedCategory?: RelatedCategory | null;
   companyInfo: { email: string; phone: string; address: string };
   /** Server-read maintenance flag, forwarded to Footer so the contact block is
    * already hidden in the first paint rather than after a client fetch. */
@@ -117,6 +141,7 @@ function GalleryViewer({
   contentId,
   onImageOrphaned,
   isFirstBlock,
+  imageAlt,
 }: {
   block: ContentBlock;
   isEditing: boolean;
@@ -127,6 +152,8 @@ function GalleryViewer({
   contentId: string;
   onImageOrphaned?: (url: string, reason: string) => void;
   isFirstBlock?: boolean;
+  /** What the page is about — the alt text of its images. */
+  imageAlt: string;
 }) {
   const [localIndex, setLocalIndex] = useState(block.selectedImageIndex || 0);
   const activeIndex = isEditing ? (block.selectedImageIndex || 0) : localIndex;
@@ -149,7 +176,7 @@ function GalleryViewer({
           <div className="relative w-full h-100">
             <Image
               src={images[activeIndex]}
-              alt="Main Gallery"
+              alt={images.length > 1 ? `${imageAlt} – รูปที่ ${activeIndex + 1}` : imageAlt}
               fill
               sizes="(max-width: 768px) 100vw, 700px"
               className="object-contain rounded-lg shadow-sm"
@@ -186,7 +213,7 @@ function GalleryViewer({
               >
                 <Image
                   src={url}
-                  alt={`Thumbnail ${idx}`}
+                  alt={`${imageAlt} – รูปที่ ${idx + 1}`}
                   fill
                   sizes="96px"
                   className="object-cover"
@@ -248,11 +275,14 @@ export default function ShowcaseClient({
   initialAllContents,
   initialProducts,
   initialCategories,
+  relatedItems = [],
+  relatedCategory = null,
   companyInfo,
   maintenanceOn,
 }: ShowcaseClientProps) {
   const router = useRouter();
   const { lang } = useLanguage();
+  const t = useT();
 
   // Seeded from server-fetched data (no client loading spinner / waterfall).
   const [content, setContent] = useState<ContentData>(initialContent);
@@ -772,6 +802,15 @@ export default function ShowcaseClient({
 
   const displayBlocks = isEditing ? editBlocks : content.blocks;
 
+  // Alt text for this page's images: what the page is about — the content
+  // title plus its product's names (lib/showcaseSeo.ts) — rather than the
+  // "Content" / "Main Gallery" it used to be. Image search reads it, and so
+  // does a screen reader.
+  const linkedProductItem = allProducts.find((p) => p.id === content.productId);
+  const imageAlt =
+    showcasePageTitle(content.title, linkedProductItem) ||
+    "Profin Lab Scale";
+
   return (
     <>
       <Navbar />
@@ -883,6 +922,17 @@ export default function ShowcaseClient({
                         })()
                       }} />
                     </span>
+                    {/* The English name too when the page is in another
+                        language, as on the home grid: buyers search
+                        equipment by it, and this is crawlable text. */}
+                    {(() => {
+                      if (!linkedProductItem || lang === "en") return null;
+                      const en = htmlToText(linkedProductItem.title_en);
+                      const shown = htmlToText(localize(linkedProductItem, "title", lang));
+                      return en && en.toLowerCase() !== shown.toLowerCase() ? (
+                        <span className="ml-2 text-xs font-medium text-gray-500">{en}</span>
+                      ) : null;
+                    })()}
                   </div>
                 ) : null}
               </div>
@@ -1061,6 +1111,7 @@ export default function ShowcaseClient({
                     galleryInputRef={galleryInputRef}
                     contentId={content.id}
                     isFirstBlock={blockIndex === 0}
+                    imageAlt={imageAlt}
                     onImageOrphaned={(url, reason) => {
                       setOrphanedImages((prev) => [...prev, { url, reason }]);
                     }}
@@ -1097,16 +1148,18 @@ export default function ShowcaseClient({
                             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                           </svg>
                         </div>
-                      ) : (
-                        <img
+                      ) : block.imageUrl ? (
+                        // Resized by Cloudinary to the width it is shown at:
+                        // imageWidth % of the ~864px content column.
+                        <ResponsiveImage
                           src={block.imageUrl}
-                          alt="Content"
+                          alt={imageAlt}
+                          sizes={`(max-width: 896px) ${block.imageWidth ?? 100}vw, ${Math.round((864 * (block.imageWidth ?? 100)) / 100)}px`}
                           loading={blockIndex === 0 ? "eager" : "lazy"}
-                          decoding="async"
                           className="h-auto"
                           style={{ width: `${block.imageWidth ?? 100}%` }}
                         />
-                      )}
+                      ) : null}
                     </div>
                     {isEditing && (
                       <div className="flex flex-wrap gap-2 justify-center items-center">
@@ -1163,11 +1216,12 @@ export default function ShowcaseClient({
                             <span className="text-sm text-gray-500">กำลังอัปโหลด...</span>
                           </div>
                         ) : block.imageUrl ? (
-                          <img
+                          // Half of the content column on desktop.
+                          <ResponsiveImage
                             src={block.imageUrl}
-                            alt="Content"
+                            alt={imageAlt}
+                            sizes={`(max-width: 768px) ${block.imageWidth ?? 100}vw, ${Math.round((432 * (block.imageWidth ?? 100)) / 100)}px`}
                             loading={blockIndex === 0 ? "eager" : "lazy"}
-                            decoding="async"
                             className="h-auto object-cover mx-auto"
                             style={{ width: `${block.imageWidth ?? 100}%` }}
                           />
@@ -1272,6 +1326,61 @@ export default function ShowcaseClient({
           </div>
 
 
+
+          {/* ── Related products ──
+              Links to other product pages, same category first
+              (lib/showcaseSeo.ts). Before this a content page linked
+              nowhere but the site nav, so most were reachable only through
+              the sitemap. Built from public products only (page.tsx). */}
+          {!isEditing && relatedItems.length > 0 && (
+            <section aria-labelledby="related-heading" className="mt-16 border-t border-gray-100 pt-10">
+              <h2 id="related-heading" className="text-2xl font-bold text-gray-900 mb-6">
+                {t(translations.productPages.related)}
+              </h2>
+              <ul className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                {relatedItems.map((item) => {
+                  const title = htmlToText(localize(item, "title", lang));
+                  const en = htmlToText(item.title_en);
+                  return (
+                    <li key={item.contentId}>
+                      <Link
+                        href={`/showcase/${encodeURIComponent(item.contentId)}`}
+                        className="group block h-full overflow-hidden rounded-xl border border-gray-100 bg-white transition hover:border-gray-200 hover:shadow-md"
+                      >
+                        <div className="relative aspect-square bg-white">
+                          {item.image && (
+                            <Image
+                              src={item.image}
+                              alt={title}
+                              fill
+                              sizes="(max-width: 768px) 50vw, 220px"
+                              className="object-contain p-4"
+                            />
+                          )}
+                        </div>
+                        <div className="p-3">
+                          <p className="text-sm font-semibold text-gray-900 line-clamp-2 group-hover:text-[var(--accent)]">
+                            {title}
+                          </p>
+                          {lang !== "en" && en && en.toLowerCase() !== title.toLowerCase() && (
+                            <p className="mt-0.5 text-xs text-gray-400 line-clamp-1">{en}</p>
+                          )}
+                        </div>
+                      </Link>
+                    </li>
+                  );
+                })}
+              </ul>
+              {relatedCategory && (
+                <p className="mt-6">
+                  <Link href={relatedCategory.path} className="font-semibold text-[var(--accent)] hover:underline">
+                    {t(translations.productPages.seeAllInCategory)}{" "}
+                    {htmlToText(localize(relatedCategory, "name", lang))} →
+                  </Link>
+                </p>
+              )}
+            </section>
+          )}
 
           {/* ── Footer links ── */}
           {!isEditing && (

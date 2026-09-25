@@ -1,12 +1,12 @@
 import { ImageResponse } from "next/og";
-import { SITE_NAME } from "./lib/site";
+import { SITE_NAME, OG_IMAGE_ALT } from "./lib/site";
 
 // Site-wide social share image (og:image + twitter:image). Next auto-wires this
 // file convention into the metadata with the correct absolute URL + dimensions,
 // so every page that doesn't set its own image gets a branded card instead of a
 // blank preview on LINE / Facebook / X / Slack. Text is English so it renders
 // with ImageResponse's built-in font (Thai would need a bundled font file).
-export const alt = `${SITE_NAME} — Testing Instruments & Laboratory Solutions`;
+export const alt = OG_IMAGE_ALT;
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 

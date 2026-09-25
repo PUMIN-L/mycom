@@ -6,7 +6,7 @@ export const translations = {
     home: { th: "หน้าแรก", en: "Home", zh: "首页" },
     services: { th: "บริการ", en: "Services", zh: "服务" },
     products: { th: "สินค้า", en: "Products", zh: "产品" },
-    catalog: { th: "แคตตาล๊อค", en: "Catalog", zh: "产品目录" },
+    catalog: { th: "แคตตาล็อก", en: "Catalog", zh: "产品目录" },
     about: { th: "เกี่ยวกับเรา", en: "About Us", zh: "关于我们" },
     clients: { th: "ลูกค้าของเรา", en: "Our Clients", zh: "我们的客户" },
     contact: { th: "ติดต่อเรา", en: "Contact", zh: "联系我们" },
@@ -19,10 +19,12 @@ export const translations = {
       en: "Experts in Testing Equipment & Laboratory Solutions",
       zh: "测试设备与实验室解决方案专家",
     },
+    // The home page's <h1>: it names what the business sells (the words people
+    // search for), not just a slogan. The Thai one is what Google indexes.
     title: {
-      th: "โซลูชันการทดสอบครบวงจร",
-      en: "Complete Testing Solutions",
-      zh: "适用于各行业的",
+      th: "เครื่องมือวัดและเครื่องทดสอบคุณภาพ ครบวงจร",
+      en: "Testing & Measuring Instruments — Complete Solutions",
+      zh: "测试与测量仪器一站式解决方案",
     },
     subtitle: {
       th: "จำหน่าย ซ่อมบำรุง และสอบเทียบเครื่องมือทดสอบคุณภาพ\nพร้อมบริการออกแบบและสร้างห้องปฏิบัติการมาตรฐานสากล",
@@ -203,18 +205,169 @@ export const translations = {
 
   // Catalog Page
   catalogPage: {
-    title: { th: "แคตตาล๊อคสินค้า", en: "Product Catalogs", zh: "产品目录" },
+    title: { th: "แคตตาล็อกสินค้า", en: "Product Catalogs", zh: "产品目录" },
     description: {
-      th: "เรียกดูและดาวน์โหลดโบรชัวร์ แคตตาล๊อคสินค้า และเอกสารข้อมูลทางเทคนิคของเรา",
+      th: "เรียกดูและดาวน์โหลดโบรชัวร์ แคตตาล็อกสินค้า และเอกสารข้อมูลทางเทคนิคของเรา",
       en: "Explore our extensive collection of product catalogs, brochures, and technical documents.",
       zh: "浏览和下载我们的产品目录、宣传册和技术文档。",
     },
     noCatalogs: {
-      th: "ยังไม่มีแคตตาล๊อคในขณะนี้",
+      th: "ยังไม่มีแคตตาล็อกในขณะนี้",
       en: "No catalogs available at the moment.",
       zh: "目前没有可用的目录。",
     },
     viewPdf: { th: "เปิดดู", en: "View PDF", zh: "查看 PDF" },
+  },
+
+  // Product pages: /products, /products/[category], and the "related" links
+  // at the foot of a /showcase content page
+  productPages: {
+    related: { th: "สินค้าที่เกี่ยวข้อง", en: "Related Products", zh: "相关产品" },
+    seeAllInCategory: { th: "ดูสินค้าทั้งหมดในหมวด", en: "See all products in", zh: "查看此类别全部产品：" },
+    viewDetails: { th: "ดูรายละเอียด", en: "View Details", zh: "查看详情" },
+    allProducts: { th: "สินค้าทั้งหมด", en: "All Products", zh: "全部产品" },
+    browseByCategory: { th: "ดูสินค้าทั้งหมดแยกตามหมวดหมู่", en: "Browse all products by category", zh: "按类别浏览全部产品" },
+    allTitle: {
+      th: "เครื่องมือวัดและเครื่องทดสอบทั้งหมด",
+      en: "All Testing & Measuring Instruments",
+      zh: "全部测试与测量仪器",
+    },
+    allIntro: {
+      th: "รวมเครื่องมือวัดและเครื่องทดสอบทุกหมวดที่โปรฟิน แล็บสเกลจำหน่าย แยกตามประเภท พร้อมบริการติดตั้ง สอนการใช้งาน ซ่อมบำรุง และสอบเทียบ",
+      en: "Every testing and measuring instrument Profin Lab Scale supplies, by category — with installation, training, maintenance and calibration.",
+      zh: "Profin Lab Scale 供应的全部测试与测量仪器，按类别分类，并提供安装、培训、维修和校准服务。",
+    },
+    // {name} is the category's name.
+    categoryIntro: {
+      th: "รวม{name}ที่โปรฟิน แล็บสเกลจำหน่าย พร้อมให้คำปรึกษาเลือกรุ่นที่เหมาะกับงาน ติดตั้ง สอนการใช้งาน ซ่อมบำรุง และสอบเทียบ",
+      en: "{name} supplied by Profin Lab Scale, with advice on choosing the right model, installation, training, maintenance and calibration.",
+      zh: "Profin Lab Scale 供应的{name}，并提供选型咨询、安装、培训、维修和校准服务。",
+    },
+    // {n} is a number.
+    itemCount: { th: "{n} รายการ", en: "{n} items", zh: "{n} 款" },
+    viewCategory: { th: "ดูทั้งหมวด", en: "View category", zh: "查看类别" },
+    otherCategories: { th: "หมวดหมู่อื่น", en: "Other Categories", zh: "其他类别" },
+    askQuote: { th: "สอบถามราคาและรายละเอียด", en: "Ask for a Quote", zh: "咨询价格与详情" },
+  },
+
+  // Service pages (/services/[slug]) — the three services on the home page,
+  // each with a page of its own. Keyed by slug (lib/servicePages.ts).
+  servicePages: {
+    learnMore: { th: "ดูรายละเอียดบริการ", en: "Learn More", zh: "了解详情" },
+    otherServices: { th: "บริการอื่นของเรา", en: "Our Other Services", zh: "我们的其他服务" },
+    ctaTitle: { th: "ปรึกษาเรื่องนี้กับเรา", en: "Talk to Us About This", zh: "与我们联系咨询" },
+    ctaText: {
+      th: "บอกงานที่คุณต้องการ แล้วเราจะช่วยแนะนำ",
+      en: "Tell us what you need and we will advise you.",
+      zh: "告诉我们您的需求，我们将为您提供建议。",
+    },
+    browseProducts: { th: "ดูสินค้าทั้งหมด", en: "Browse All Products", zh: "浏览全部产品" },
+    pages: {
+      "equipment-sales": {
+        title: {
+          th: "จำหน่ายเครื่องมือวัดและเครื่องทดสอบ",
+          en: "Testing & Measuring Equipment Sales",
+          zh: "测试与测量仪器销售",
+        },
+        metaDescription: {
+          th: "โปรฟิน แล็บสเกล จำหน่ายเครื่องมือวัดและเครื่องทดสอบคุณภาพจากแบรนด์ชั้นนำ พร้อมให้คำปรึกษาเลือกรุ่น ติดตั้ง และสอนการใช้งาน สำหรับห้องแลปและงาน QC",
+          en: "Profin Lab Scale supplies quality testing and measuring equipment from leading brands, with model selection advice, installation and training.",
+          zh: "Profin Lab Scale 供应知名品牌的优质测试与测量仪器，并提供选型咨询、安装及培训。",
+        },
+        intro: {
+          th: "เราจำหน่ายเครื่องมือทดสอบคุณภาพจากแบรนด์ชั้นนำ สำหรับห้องปฏิบัติการและงานควบคุมคุณภาพ (QC) ในอุตสาหกรรม พร้อมให้คำปรึกษาในการเลือกเครื่องที่เหมาะกับงานของคุณ ติดตั้ง และสอนการใช้งานให้ทีมงาน",
+          en: "We supply quality testing equipment from leading brands for industrial laboratories and quality control (QC), with expert advice on choosing the right instrument, installation, and training for your team.",
+          zh: "我们为工业实验室和质量控制（QC）提供知名品牌的优质测试设备，并提供专业选型咨询、安装及操作培训。",
+        },
+        listTitle: { th: "เครื่องมือที่เราจำหน่าย", en: "Equipment We Supply", zh: "我们供应的设备" },
+        list: [
+          { th: "เครื่องทดสอบแรงดึง (Tensile Tester / UTM)", en: "Tensile testers / Universal Testing Machines (UTM)", zh: "拉力试验机 / 万能材料试验机（UTM）" },
+          { th: "เครื่องทดสอบฟิล์ม พลาสติก และบรรจุภัณฑ์", en: "Film, plastic and packaging testers", zh: "薄膜、塑料及包装测试仪" },
+          { th: "เครื่องวัดค่า COF (Coefficient of Friction)", en: "COF (coefficient of friction) testers", zh: "摩擦系数（COF）测试仪" },
+          { th: "เครื่องทดสอบแรงปิดผนึกและแรงลอก (Heat Seal / Peel)", en: "Heat seal and peel strength testers", zh: "热封及剥离强度测试仪" },
+          { th: "เครื่องทดสอบแรงกระแทก (Dart Impact)", en: "Dart impact testers", zh: "落镖冲击试验机" },
+          { th: "เครื่องทดสอบ Melt Flow Index (MFI)", en: "Melt flow index (MFI) testers", zh: "熔体流动速率（MFI）测试仪" },
+          { th: "เครื่องวัดความหนืด (Viscometer)", en: "Viscometers", zh: "粘度计" },
+          { th: "เครื่องวัดสีและความเงา", en: "Colorimeters and gloss meters", zh: "色差仪及光泽度计" },
+          { th: "เครื่องวัดความแข็ง (Hardness Tester / Durometer)", en: "Hardness testers / durometers", zh: "硬度计" },
+          { th: "เครื่องชั่งวิเคราะห์และเครื่องชั่งความละเอียดสูง", en: "Analytical and precision balances", zh: "分析天平及精密天平" },
+          { th: "ตู้อบลมร้อนและตู้อบสุญญากาศ", en: "Laboratory and vacuum ovens", zh: "热风烘箱及真空烘箱" },
+          { th: "เครื่องทดสอบการรั่วซึม (Leak Tester)", en: "Leak testers", zh: "密封（泄漏）测试仪" },
+        ],
+        list2Title: { th: "บริการที่มาพร้อมเครื่อง", en: "Included With Your Equipment", zh: "随设备提供的服务" },
+        list2: [
+          { th: "ให้คำปรึกษาเลือกรุ่นให้ตรงกับงานของคุณ", en: "Advice on the model that fits your work", zh: "根据您的用途提供选型建议" },
+          { th: "ติดตั้งเครื่อง", en: "Installation", zh: "安装" },
+          { th: "สอนการใช้งานให้ทีมงานของคุณ", en: "Training for your team", zh: "为您的团队提供操作培训" },
+          { th: "ซ่อมบำรุงและสอบเทียบหลังการขาย", en: "After-sales maintenance and calibration", zh: "售后维修与校准" },
+        ],
+      },
+      "calibration-repair": {
+        title: {
+          th: "ซ่อมบำรุงและสอบเทียบเครื่องมือวัด",
+          en: "Maintenance, Repair & Calibration",
+          zh: "仪器维修与校准",
+        },
+        metaDescription: {
+          th: "บริการซ่อมบำรุง ดูแลรักษา และสอบเทียบเครื่องมือวัดและเครื่องทดสอบทุกประเภทตามมาตรฐานสากล โดยทีมวิศวกรผู้เชี่ยวชาญของโปรฟิน แล็บสเกล",
+          en: "Maintenance, repair and calibration of all types of testing and measuring instruments to international standards, by Profin Lab Scale's engineers.",
+          zh: "Profin Lab Scale 工程师团队按国际标准为各类测试与测量仪器提供维修、保养和校准服务。",
+        },
+        intro: {
+          th: "บริการซ่อมบำรุง ดูแลรักษา และสอบเทียบเครื่องมือทดสอบทุกประเภท โดยทีมวิศวกรผู้เชี่ยวชาญ เพื่อให้เครื่องของคุณวัดค่าได้ถูกต้องและพร้อมใช้งานอยู่เสมอ",
+          en: "Maintenance, repair and calibration for all types of testing equipment by expert engineers, so your instruments measure correctly and stay ready for use.",
+          zh: "由专业工程师团队为各类测试设备提供维修、保养和校准服务，确保您的仪器测量准确、随时可用。",
+        },
+        listTitle: { th: "บริการของเรา", en: "Our Services", zh: "我们的服务" },
+        list: [
+          { th: "สอบเทียบเครื่องมือวัดและเครื่องทดสอบตามมาตรฐานสากล", en: "Calibration of measuring and testing instruments to international standards", zh: "按国际标准校准测量与测试仪器" },
+          { th: "ซ่อมเครื่องทดสอบและเครื่องมือวัด", en: "Repair of testing and measuring instruments", zh: "测试与测量仪器维修" },
+          { th: "ดูแลรักษาเครื่องให้พร้อมใช้งาน", en: "Maintenance to keep instruments ready for use", zh: "日常保养，确保仪器随时可用" },
+          { th: "ให้คำแนะนำการใช้งานและการดูแลเครื่อง", en: "Advice on operating and caring for your instruments", zh: "提供仪器使用与保养建议" },
+        ],
+        list2Title: { th: "เครื่องที่ให้บริการ", en: "Instruments We Service", zh: "服务的仪器" },
+        list2: [
+          { th: "เครื่องทดสอบแรงดึง (Tensile Tester / UTM)", en: "Tensile testers / UTMs", zh: "拉力试验机 / 万能材料试验机" },
+          { th: "เครื่องทดสอบฟิล์ม พลาสติก และบรรจุภัณฑ์", en: "Film, plastic and packaging testers", zh: "薄膜、塑料及包装测试仪" },
+          { th: "เครื่องวัดค่า COF", en: "COF testers", zh: "摩擦系数测试仪" },
+          { th: "เครื่องวัดความหนืด (Viscometer)", en: "Viscometers", zh: "粘度计" },
+          { th: "เครื่องวัดสีและความเงา", en: "Colorimeters and gloss meters", zh: "色差仪及光泽度计" },
+          { th: "เครื่องวัดความแข็ง", en: "Hardness testers", zh: "硬度计" },
+          { th: "เครื่องชั่ง", en: "Balances", zh: "天平" },
+          { th: "ตู้อบห้องแล็บ", en: "Laboratory ovens", zh: "实验室烘箱" },
+        ],
+      },
+      "lab-design-construction": {
+        title: {
+          th: "ออกแบบและสร้างห้องปฏิบัติการ (Lab)",
+          en: "Laboratory Design & Construction",
+          zh: "实验室设计与建设",
+        },
+        metaDescription: {
+          th: "ออกแบบและสร้างห้องปฏิบัติการมาตรฐานสากลสำหรับอุตสาหกรรม ทั้งห้อง QC และห้องแลปโรงงาน พร้อมจัดหาเครื่องมือทดสอบ ติดตั้ง และสอนการใช้งาน",
+          en: "Design and construction of international-standard industrial laboratories and QC rooms, with the testing equipment, installation and training.",
+          zh: "为工业客户设计和建设国际标准实验室及QC室，并提供测试设备、安装和培训。",
+        },
+        intro: {
+          th: "ออกแบบและก่อสร้างห้องปฏิบัติการมาตรฐานสากลสำหรับอุตสาหกรรม ตั้งแต่ห้อง QC ไปจนถึงห้องแลปของโรงงาน พร้อมจัดหาเครื่องมือทดสอบ ติดตั้ง และสอนการใช้งาน ครบในที่เดียว",
+          en: "Design and construction of international-standard laboratories for industry — from QC rooms to full factory labs — together with the testing equipment, installation and training, all from one supplier.",
+          zh: "为工业客户设计和建设国际标准实验室——从QC室到工厂实验室——并一站式提供测试设备、安装和培训。",
+        },
+        listTitle: { th: "สิ่งที่เราทำ", en: "What We Do", zh: "服务内容" },
+        list: [
+          { th: "ออกแบบห้องแลปให้เหมาะกับงานทดสอบของคุณ", en: "Lab layouts designed around the tests you run", zh: "根据您的测试需求设计实验室" },
+          { th: "ก่อสร้างห้องปฏิบัติการตามมาตรฐานสากล", en: "Construction to international standards", zh: "按国际标准施工建设" },
+          { th: "จัดหาเครื่องมือวัดและเครื่องทดสอบ", en: "Supply of testing and measuring instruments", zh: "供应测试与测量仪器" },
+          { th: "ติดตั้งและสอนการใช้งาน", en: "Installation and training", zh: "安装与培训" },
+        ],
+        list2Title: { th: "เหมาะสำหรับ", en: "Suited For", zh: "适用于" },
+        list2: [
+          { th: "ห้อง QC ในโรงงาน", en: "Factory QC rooms", zh: "工厂QC室" },
+          { th: "ห้องปฏิบัติการทดสอบวัสดุ", en: "Materials testing laboratories", zh: "材料测试实验室" },
+          { th: "ห้องทดสอบบรรจุภัณฑ์ ฟิล์ม และพลาสติก", en: "Packaging, film and plastics testing labs", zh: "包装、薄膜及塑料测试实验室" },
+        ],
+      },
+    },
   },
 } as const;
 
