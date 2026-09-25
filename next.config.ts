@@ -5,6 +5,21 @@ import type { NextConfig } from "next";
 // the Google Maps embed on the Contact page, and the YouTube embed content
 // block. Anything outside this set (unknown scripts, event handlers, iframes
 // from other origins) is blocked.
+//
+// 'unsafe-eval' is DEV ONLY. React uses eval in development to rebuild server
+// error stacks, but neither React nor Next.js use it in production (Next's own
+// CSP guide). The libraries shipped to the browser either never reach eval on
+// a modern browser (jsPDF's File polyfill, Recharts/Quill's globalThis shim)
+// or feature-test it and fall back (pdf.js compiles glyph paths with
+// `new Function` only when a try/catch probe succeeds) — verified by running
+// them in Chrome under this exact policy. Dropping it stops injected script
+// from turning strings into code with eval/new Function/setTimeout(string).
+//
+// 'unsafe-inline' stays: removing it needs a per-request nonce, and Next only
+// applies nonces during dynamic rendering, which would turn every statically
+// cached page (/, /about, /catalog) into a per-request render.
+const isDev = process.env.NODE_ENV === "development";
+
 const contentSecurityPolicy = [
   "default-src 'self'",
   "base-uri 'self'",
@@ -16,7 +31,7 @@ const contentSecurityPolicy = [
   "media-src 'self' https://res.cloudinary.com",
   "font-src 'self' data:",
   "style-src 'self' 'unsafe-inline'",
-  "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+  `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ""}`,
   "worker-src 'self' blob:",
   "connect-src 'self' https://res.cloudinary.com",
 ].join("; ");
