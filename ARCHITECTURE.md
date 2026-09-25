@@ -212,6 +212,24 @@ User-authored HTML (showcase blocks, product descriptions) is sanitized
 server-side with [`sanitizeRichText`](./app/lib/sanitizeHtml.ts), which uses
 **`sanitize-html`** (pure JS). Sanitization happens on **write** in the stores.
 
+- **Every rich-text write path sanitizes** — products (create/update), contents
+  (blocks + title, create/update/restore) and categories (create AND rename:
+  `updateCategory` stored the request verbatim until it was found in a
+  security review, while the product sidebar renders these names as HTML).
+- **After saving, render the server's copy, never your own editor output.**
+  quill 2.0.3 (the latest) has an open advisory on its HTML export, so HTML
+  from the editor is untrusted until the server has sanitized it. The category
+  rename (`Products.tsx`) shows the names the PUT returns; the showcase
+  editor's auto-save (`saveBlocks`) takes the PUT's content row as its
+  baseline, like the full save does. A reply without them keeps the previous
+  value rather than fall back to the local HTML.
+- `xlsx` comes from SheetJS's own CDN
+  (`https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz`, pinned by sha512 in
+  the lockfile) — npm's `xlsx` stopped at 0.18.5, which has a prototype-pollution
+  and a ReDoS advisory. Upgrade by changing that URL. Its ESM build no longer
+  loads Node's `fs` by itself; the app only calls `writeFile` in the browser
+  (download), where that does not matter.
+
 > **Never** reach for `jsdom`, `isomorphic-dompurify`, or DOMPurify+linkedom on
 > the server. `jsdom` fails to load on Vercel's serverless runtime
 > (`ERR_REQUIRE_ESM`) and 500s the whole site; DOMPurify+linkedom silently
@@ -301,9 +319,20 @@ highlight expires without a reload.
   falls back to `createdAt` for a NULL stamp.
 
 ### 6. Security headers & CSRF
-- [`next.config.ts`](./next.config.ts) sets `Content-Security-Policy-Report-Only`
-  (tune, then flip to enforcing `Content-Security-Policy`), `X-Frame-Options: DENY`,
-  and `Strict-Transport-Security`.
+- [`next.config.ts`](./next.config.ts) sets an **enforced**
+  `Content-Security-Policy`, plus `X-Frame-Options: DENY`, `nosniff`,
+  `Referrer-Policy`, `Permissions-Policy` and `Strict-Transport-Security`.
+- `script-src` allows `'unsafe-eval'` **only under `next dev`** (React needs it
+  there; neither React nor Next uses eval in production). The shipped browser
+  libraries were run in Chrome under the production policy — pdf.js (both the
+  FontFace and the `new Function` glyph-path branch, which it feature-tests and
+  falls back from), html2canvas→jsPDF, Quill and xlsx — with output identical
+  to the old policy. Before adding a client library that may `eval` /
+  `new Function`, check it works without it
+  (`__tests__/nextConfigCsp.test.ts` pins the policy).
+- `'unsafe-inline'` stays: a nonce-based policy needs per-request rendering
+  (Next applies nonces only when rendering dynamically), which would end the
+  static caching of `/`, `/about` and `/catalog`.
 - CSRF is handled by the `withRoute` same-origin guard (§2). Auth is an httpOnly
   cookie, so a same-origin check is the CSRF defense.
 
@@ -644,6 +673,47 @@ so Vercel marks the run FAILED instead of losing it silently.
 [`app/lib/session.ts`](./app/lib/session.ts) is `server-only`. A 3-day HS256 JWT
 stored in an httpOnly `session` cookie. `createSession` / `getSession` /
 `deleteSession`. `SESSION_SECRET` **must** be set or the module throws at import.
+
+**Login (`app/api/auth/login/route.ts`):**
+- `username` / `password` must be non-empty **strings** — checked before the
+  lock or the DB is touched. `query()` inlines a non-string parameter as-is, so
+  `"username": [0]` became `WHERE username = 0`, which matches every user
+  (MySQL/TiDB cast non-numeric strings to 0) while its failures were counted
+  under the lock key "0". Any route taking a value from a public request body
+  into SQL needs the same type check.
+- The row the DB returns must BE the typed username (case aside), or it is
+  treated as no user. The DB compares by collation, looser than the lock key:
+  TiDB's default `utf8mb4_bin` is PAD SPACE, so `"admin "`, `"admin  "`… all
+  found the admin row, each under its own lock bucket — 5 more guesses per
+  trailing space (an `_ai_` collation does the same with accents).
+- Lockout: 5 failures / 15 min per bucket, DB-backed. The bucket is the
+  username — unless the request carries a valid **device cookie**
+  (`app/lib/loginDevice.ts`: `login_device`, issued on every successful login,
+  180 days, httpOnly, `Path=/api/auth/login`, SameSite=Strict), in which case
+  it is that device's own bucket. So someone failing on purpose locks the
+  username, not the admin's browser, and gains no extra guesses. A trusted
+  login clears only its own bucket, never the username's.
+- **Revocation ("ออกจากระบบอุปกรณ์อื่นทั้งหมด", /settings):** every session
+  and device token carries the **session epoch** it was issued under
+  (`settingsStore`: `session_epoch` row, cached, tag `session_epoch`).
+  `getSession()` rejects an older one; `POST /api/auth/logout-others` bumps it
+  atomically, busts the tag, and re-issues the caller's own session and device
+  token under the new epoch (passed explicitly, not read back through the
+  cache). Tokens from before epochs existed read as 0. The epoch is read only
+  when a valid session cookie is present, and a read error fails open (0) so a
+  DB blip does not log everyone out. `middleware.ts` (edge, no DB) checks only
+  the signature, so a revoked browser may still load a page shell — every
+  protected API goes through `getSession()` and rejects it (the one admin page
+  that reads server-side, `/documents`, reads the list `GET /api/documents`
+  already serves publicly). On the client, `AuthContext` reads `/api/auth/me`
+  once per page load, so a tab open during a revocation still says logged in:
+  `/login` calls `refresh()` before redirecting a "logged-in" visitor to
+  /adminpanel, or a revoked tab sent there by a 401 would bounce straight back
+  (`__tests__/pages/loginRevokedSession.test.tsx`).
+- ⚠️ The device key is `"login-device:" + SESSION_SECRET`, deliberately NOT the
+  session key: `getSession()` and middleware check only the signature, so a
+  token signed with the session key would be accepted as a session. Tests pin
+  both directions (`__tests__/lib/loginDevice.test.ts`).
 
 ### 11. Shared UI components — don't re-implement inline
 [`app/components/`](./app/components/): `ConfirmDialog`, `Toast`, `Spinner`,
