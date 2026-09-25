@@ -304,10 +304,20 @@ export default function Products({ dataPromise }: ProductsProps) {
         const err = await res.json();
         throw new Error(err.error || "Failed to update category");
       }
-      // success: update local state
-      setCategories(categories.map((c) =>
-        c.id === id ? { ...c, ...updatedPayload } : c
-      ));
+      // Show the names AS STORED (sanitized by the server), never our own
+      // editor output: the sidebar renders them as HTML, and editor output
+      // can carry markup the server strips (e.g. from pasted content). No
+      // stored names in the reply → keep the old ones until the next load
+      // rather than render unsanitized HTML.
+      const data = await res.json().catch(() => null);
+      const stored = data?.category;
+      if (stored && typeof stored.name_th === "string") {
+        setCategories(categories.map((c) =>
+          c.id === id
+            ? { ...c, name_th: stored.name_th, name_en: stored.name_en, name_zh: stored.name_zh }
+            : c
+        ));
+      }
       setEditingCatId(null);
       showToast("อัปเดตชื่อหมวดหมู่เรียบร้อยแล้ว", "success");
       router.refresh();

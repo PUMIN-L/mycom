@@ -107,15 +107,30 @@ export async function deleteCategory(id: number): Promise<boolean> {
   return result.affectedRows > 0;
 }
 
+/**
+ * Rename a category. Sanitized exactly as addCategory does: these names are
+ * rich text from the editor, rendered with dangerouslySetInnerHTML in the
+ * public product sidebar — this was the one rich-text write path that stored
+ * the request verbatim.
+ *
+ * Returns the names AS STORED (null when the category does not exist), so the
+ * client shows what the database holds rather than its own unsanitized
+ * editor output.
+ */
 export async function updateCategory(
   id: number,
   category: { name_th: string; name_en: string; name_zh: string }
-): Promise<boolean> {
+): Promise<{ name_th: string; name_en: string; name_zh: string } | null> {
+  const stored = {
+    name_th: sanitizeRichText(category.name_th).substring(0, 255),
+    name_en: sanitizeRichText(category.name_en).substring(0, 255),
+    name_zh: sanitizeRichText(category.name_zh).substring(0, 255),
+  };
   const [result] = await query<ResultSetHeader>(
     "UPDATE product_categories SET name_th = ?, name_en = ?, name_zh = ? WHERE id = ?",
-    [category.name_th, category.name_en, category.name_zh, id]
+    [stored.name_th, stored.name_en, stored.name_zh, id]
   );
-  return result.affectedRows > 0;
+  return result.affectedRows > 0 ? stored : null;
 }
 
 /**

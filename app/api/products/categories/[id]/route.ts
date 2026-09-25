@@ -52,23 +52,34 @@ export const PUT = withRoute(
     }
 
     const body = await request.json();
-    const { name_th, name_en, name_zh } = body;
+    const { name_th, name_en, name_zh } = (body ?? {}) as Record<string, unknown>;
 
-    if (!name_th || !name_en || !name_zh) {
+    // Strings only: a number or object would reach the sanitizer (and the SQL)
+    // as something other than text.
+    if (
+      typeof name_th !== "string" || !name_th ||
+      typeof name_en !== "string" || !name_en ||
+      typeof name_zh !== "string" || !name_zh
+    ) {
       return NextResponse.json(
         { error: "Missing required name fields" },
         { status: 400 }
       );
     }
 
-    const success = await updateCategory(categoryId, { name_th, name_en, name_zh });
-    if (!success) {
+    const stored = await updateCategory(categoryId, { name_th, name_en, name_zh });
+    if (!stored) {
       return NextResponse.json({ error: "Category not found" }, { status: 404 });
     }
 
     // Invalidate product cache
     revalidateTag("products", { expire: 0 });
 
-    return NextResponse.json({ message: "Category updated successfully" });
+    // The names as stored (sanitized) — the client renders these as HTML, so
+    // it must show them rather than its own editor output.
+    return NextResponse.json({
+      message: "Category updated successfully",
+      category: { id: categoryId, ...stored },
+    });
   }
 );

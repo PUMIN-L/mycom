@@ -475,7 +475,17 @@ export default function ShowcaseClient({
     // (which resets editTitle/editBlocks from `content`) can't make the UI
     // "revert" a change that already lives in the DB — otherwise the view and
     // the database diverge.
-    setContent((prev) => ({ ...prev, title: editTitle, blocks }));
+    //
+    // The baseline is the SERVER's copy (as handleSaveEdit already does), not
+    // our local title/blocks: view mode renders `content` as HTML, and local
+    // editor output has not been through the server's sanitizer — it can
+    // carry markup (e.g. from pasted content) that the stored copy does not.
+    // A reply that is not a content row leaves the baseline alone rather
+    // than fall back to the unsanitized local copy.
+    const saved = await res.json().catch(() => null);
+    if (saved && typeof saved === "object" && Array.isArray(saved.blocks)) {
+      setContent(saved);
+    }
   }
 
   async function handleSaveEdit() {

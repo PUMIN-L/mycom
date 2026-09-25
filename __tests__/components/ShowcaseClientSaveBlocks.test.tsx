@@ -10,7 +10,7 @@
  * found out on the next reload.
  */
 
-import { render, screen, fireEvent, waitFor, cleanup, within } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, cleanup, within, act } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("next/navigation", () => ({
@@ -215,5 +215,55 @@ describe("ShowcaseClient — adding an image block", () => {
 
     await waitFor(() => expect(blockOrder()).toHaveLength(3));
     expect(toastText()).toMatch(/เพิ่มรูปภาพสำเร็จ/);
+  });
+});
+
+// After an auto-persisting block operation the editor's `content` baseline is
+// what the SERVER stored, never the local editor copy: view mode renders
+// `content` as HTML, and local editor output has not been through the
+// server's sanitizer (quill 2.0.3 has an open advisory on its HTML export).
+/** Waits until the block PUT has been sent and its reply applied. */
+async function savedWith(fetchMock: ReturnType<typeof renderEditor>) {
+  await waitFor(() =>
+    expect(fetchMock.mock.calls.some(([, init]) => (init as RequestInit)?.method === "PUT")).toBe(true)
+  );
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 0));
+  });
+}
+
+describe("ShowcaseClient — the saved baseline is the server's copy", () => {
+  it("shows what the server stored once the admin leaves edit mode", async () => {
+    const serverCopy = {
+      id: "c1",
+      title: "<p>หัวข้อที่เซิร์ฟเวอร์เก็บ</p>",
+      blocks: [
+        { id: "b2", type: "text", content: "<p>บล็อกที่สอง (เก็บแล้ว)</p>", fontSize: "16" },
+        { id: "b1", type: "text", content: "<p>บล็อกแรก (เก็บแล้ว)</p>", fontSize: "16" },
+      ],
+      createdAt: "2026-09-01",
+      productId: null,
+    };
+    const fetchMock = renderEditor(() => ({ ok: true, status: 200, json: async () => serverCopy }) as unknown as Response);
+    await enterEditMode();
+
+    fireEvent.click(screen.getAllByTitle("เลื่อนบล็อกลง")[0]);
+    await savedWith(fetchMock);
+    fireEvent.click(screen.getByRole("button", { name: "ยกเลิก" }));
+
+    await waitFor(() => expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("หัวข้อที่เซิร์ฟเวอร์เก็บ"));
+    expect(document.body.textContent).toContain("บล็อกแรก (เก็บแล้ว)");
+    expect(blockOrder()).toEqual(["block-b2", "block-b1"]);
+  });
+
+  it("keeps the previous baseline, not the local copy, when the reply is not a content row", async () => {
+    const fetchMock = renderEditor(ok); // replies { id } only
+    await enterEditMode();
+
+    fireEvent.click(screen.getAllByTitle("เลื่อนบล็อกลง")[0]);
+    await savedWith(fetchMock);
+    fireEvent.click(screen.getByRole("button", { name: "ยกเลิก" }));
+
+    await waitFor(() => expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("หัวข้อทดสอบ"));
   });
 });

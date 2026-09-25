@@ -168,17 +168,44 @@ describe('productStore', () => {
   describe('updateCategory', () => {
     const names = { name_th: 'แก้', name_en: 'Edit', name_zh: '改' };
 
-    it('returns true and passes params in [th, en, zh, id] order', async () => {
+    it('returns the stored names and passes params in [th, en, zh, id] order', async () => {
       vi.mocked(query).mockResolvedValue([{ affectedRows: 1 }] as any);
 
-      expect(await updateCategory(4, names)).toBe(true);
+      expect(await updateCategory(4, names)).toEqual(names);
       expect(vi.mocked(query).mock.calls[0][0]).toContain('UPDATE product_categories');
       expect(vi.mocked(query).mock.calls[0][1]).toEqual(['แก้', 'Edit', '改', 4]);
     });
 
-    it('returns false when no row matched', async () => {
+    it('returns null when no row matched', async () => {
       vi.mocked(query).mockResolvedValue([{ affectedRows: 0 }] as any);
-      expect(await updateCategory(404, names)).toBe(false);
+      expect(await updateCategory(404, names)).toBeNull();
+    });
+
+    // The one rich-text write that stored the request verbatim: these names
+    // are rendered with dangerouslySetInnerHTML in the public product sidebar.
+    it('sanitizes the names before storing them, exactly like addCategory', async () => {
+      vi.mocked(query).mockResolvedValue([{ affectedRows: 1 }] as never);
+
+      const stored = await updateCategory(4, {
+        name_th: '<p>เครื่องชั่ง<img src=x onerror="alert(1)"></p>',
+        name_en: '<script>alert(1)</script><p><strong>Scales</strong></p>',
+        name_zh: '<a href="javascript:alert(1)">秤</a>',
+      });
+
+      const params = vi.mocked(query).mock.calls[0][1] as string[];
+      for (const value of [...params.slice(0, 3), stored!.name_th, stored!.name_en, stored!.name_zh]) {
+        expect(value).not.toMatch(/<script|onerror|javascript:/i);
+      }
+      // Formatting the editor produces survives.
+      expect(stored!.name_en).toBe('<p><strong>Scales</strong></p>');
+      // What is returned is exactly what was written.
+      expect(params.slice(0, 3)).toEqual([stored!.name_th, stored!.name_en, stored!.name_zh]);
+    });
+
+    it('caps each name at 255 characters like addCategory', async () => {
+      vi.mocked(query).mockResolvedValue([{ affectedRows: 1 }] as never);
+      const stored = await updateCategory(4, { name_th: 'ก'.repeat(300), name_en: 'e', name_zh: 'z' });
+      expect(stored!.name_th).toHaveLength(255);
     });
   });
 

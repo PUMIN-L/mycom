@@ -163,7 +163,7 @@ describe('Product Categories API Routes', () => {
 
     it('returns 404 when the category to update is not found', async () => {
       vi.mocked(getSession).mockResolvedValue(adminSession);
-      vi.mocked(updateCategory).mockResolvedValue(false);
+      vi.mocked(updateCategory).mockResolvedValue(null);
 
       const res = await PUT_CATEGORY(mutatingRequest(CATEGORY_URL, 'PUT', body), ctx('5'));
       expect(res.status).toBe(404);
@@ -171,14 +171,30 @@ describe('Product Categories API Routes', () => {
       expect(revalidateTag).not.toHaveBeenCalled();
     });
 
-    it('updates the category, revalidates cache, and returns 200', async () => {
+    it('updates the category, revalidates cache, and returns the names AS STORED', async () => {
       vi.mocked(getSession).mockResolvedValue(adminSession);
-      vi.mocked(updateCategory).mockResolvedValue(true);
+      const stored = { name_th: '<p>เก็บแล้ว</p>', name_en: '<p>Stored</p>', name_zh: '<p>存</p>' };
+      vi.mocked(updateCategory).mockResolvedValue(stored);
 
       const res = await PUT_CATEGORY(mutatingRequest(CATEGORY_URL, 'PUT', body), ctx('5'));
       expect(res.status).toBe(200);
       expect(updateCategory).toHaveBeenCalledWith(5, body);
       expect(revalidateTag).toHaveBeenCalledWith('products', { expire: 0 });
+      // The client renders these as HTML, so it must get the sanitized copy.
+      expect((await res.json()).category).toEqual({ id: 5, ...stored });
+    });
+
+    it.each([
+      ['a number', { ...body, name_th: 5 }],
+      ['an object', { ...body, name_en: { a: 1 } }],
+      ['an array', { ...body, name_zh: ['x'] }],
+      ['an empty string', { ...body, name_th: '' }],
+    ])('rejects a name that is %s with 400 and writes nothing', async (_label, bad) => {
+      vi.mocked(getSession).mockResolvedValue(adminSession);
+
+      const res = await PUT_CATEGORY(mutatingRequest(CATEGORY_URL, 'PUT', bad), ctx('5'));
+      expect(res.status).toBe(400);
+      expect(updateCategory).not.toHaveBeenCalled();
     });
   });
 
