@@ -10,9 +10,35 @@
 // showing broken. Two paths reach the fallback: onError, and a check on mount
 // for an image that already failed while the server-rendered HTML was
 // loading, before React was listening.
+//
+// Until the photo has loaded, its box shows the loading skeleton
+// (lib/imageSkeleton.ts) as the <img>'s own background. The box has no size
+// of its own before then — no stored dimensions, just a width % — so it also
+// gets `aspect-ratio: auto 4 / 3`: a 4:3 box while the photo's shape is
+// unknown, and the photo's own shape the moment it is known (that is what
+// `auto` means), without any JavaScript. The mount check also catches a photo
+// that loaded before hydration, when no onLoad will come.
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { cloudinaryResponsive } from "../lib/cloudinaryUrl";
+import { IMAGE_SKELETON } from "../lib/imageSkeleton";
+
+const LOADING_STYLE: CSSProperties = {
+  aspectRatio: "auto 4 / 3",
+  backgroundImage: `url("${IMAGE_SKELETON}")`,
+  backgroundSize: "cover",
+  backgroundPosition: "50% 50%",
+  backgroundRepeat: "no-repeat",
+};
+
+interface LoadResult {
+  /** The stored URL this result is about — a new image starts over. */
+  src: string;
+  /** The resized delivery failed, so the original URL is shown instead. */
+  resizedFailed: boolean;
+  /** Loaded, or failed for good: the skeleton is gone either way. */
+  settled: boolean;
+}
 
 export default function ResponsiveImage({
   src,
@@ -31,20 +57,26 @@ export default function ResponsiveImage({
   style?: CSSProperties;
 }) {
   const responsive = cloudinaryResponsive(src);
-  // Which src the resized delivery failed for — so a new image (an edit
-  // replaced it) automatically gets a fresh try.
-  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  const [result, setResult] = useState<LoadResult | null>(null);
+  const current = result?.src === src ? result : null;
+  const resizedFailed = current?.resizedFailed ?? false;
+  const optimized = responsive && !resizedFailed ? responsive : null;
+  const settled = current?.settled ?? false;
   const ref = useRef<HTMLImageElement>(null);
-  const optimized = responsive && failedSrc !== src ? responsive : null;
 
   useEffect(() => {
     const img = ref.current;
-    // complete + no pixels + a source chosen = it errored before hydration.
-    // (A lazy image not loaded yet has no currentSrc, so it is left alone.)
-    if (optimized && img && img.complete && img.currentSrc && img.naturalWidth === 0) {
-      setFailedSrc(src);
+    // Not finished (or lazy and not started — no currentSrc yet): onLoad /
+    // onError will report it.
+    if (settled || !img || !img.complete || !img.currentSrc) return;
+    if (img.naturalWidth > 0) {
+      // Loaded before React was listening.
+      setResult({ src, resizedFailed, settled: true });
+    } else {
+      // Failed before React was listening: retry the original, or give up.
+      setResult(optimized ? { src, resizedFailed: true, settled: false } : { src, resizedFailed, settled: true });
     }
-  }, [optimized, src]);
+  }, [optimized, resizedFailed, settled, src]);
 
   return (
     // eslint-disable-next-line @next/next/no-img-element -- sized by the block's width %, with no stored dimensions for next/image
@@ -57,10 +89,11 @@ export default function ResponsiveImage({
       loading={loading}
       decoding="async"
       className={className}
-      style={style}
-      onError={() => {
-        if (optimized) setFailedSrc(src);
-      }}
+      style={settled ? style : { ...LOADING_STYLE, ...style }}
+      onLoad={() => setResult({ src, resizedFailed, settled: true })}
+      onError={() =>
+        setResult(optimized ? { src, resizedFailed: true, settled: false } : { src, resizedFailed, settled: true })
+      }
     />
   );
 }

@@ -29,8 +29,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 // ~100 ms alone, but under the full parallel run with coverage (the pre-push
 // hook) a starved worker has missed testing-library's 1 s default wait. No
 // test in this file waits for something to NOT appear, so a longer ceiling
-// costs the passing tests nothing.
+// costs the passing tests nothing. The test's own limit is raised with it:
+// a wait allowed 5 s inside a test limited to vitest's default 5 s just
+// trades one timeout for the other.
 configure({ asyncUtilTimeout: 5_000 });
+vi.setConfig({ testTimeout: 30_000 });
 import { useState } from "react";
 import CustomerNoteSearchPanel, {
   buildChangeExcerpt,

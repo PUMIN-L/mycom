@@ -8,7 +8,7 @@
 // (lib/productLinks.ts) — these pages exist so that every product page is one
 // crawlable link away from the site's navigation.
 
-import Image from "next/image";
+import SkeletonImage from "./SkeletonImage";
 import Link from "next/link";
 import { useLanguage, useT } from "../i18n/LanguageContext";
 import { translations, type Language } from "../i18n/translations";
@@ -184,7 +184,7 @@ function ProductCard({
       >
         <div className="relative aspect-square bg-white">
           {product.image && (
-            <Image
+            <SkeletonImage
               src={product.image}
               alt={title}
               fill

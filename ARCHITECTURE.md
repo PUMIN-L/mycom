@@ -854,6 +854,23 @@ prop). Money inputs are [`FormattedNumberInput`](./app/components/FormattedNumbe
 decimal the value has — `toLocaleString`'s default of 3 showed 1.23456 as
 "1.235", and leaving the field then saved that.
 
+**Product and content photos show a loading skeleton** until they have
+loaded — never an empty box the photo pops into. Use
+[`SkeletonImage`](./app/components/SkeletonImage.tsx) (next/image with the
+shimmer from [`lib/imageSkeleton.ts`](./app/lib/imageSkeleton.ts) as its
+`placeholder`) for every product / content photo;
+[`ResponsiveImage`](./app/components/ResponsiveImage.tsx) (the showcase's
+content-block photos, no stored dimensions) paints the same shimmer in an
+`aspect-ratio: auto 4 / 3` box. Both paint it as the `<img>`'s own
+background: it is in the first HTML, needs no JavaScript, and never hides the
+photo (hiding it until a fade-in would delay LCP); the background is dropped
+on load, on error, and for a photo that loaded before hydration. It needs
+`data:` in the CSP's `img-src`. Not for the site's fixed images (hero,
+about, logo, the LINE QR), nor for images on documents printed to PDF
+(quotation, PO, billing, service job), where a half-loaded image would print
+the shimmer. `__tests__/components/SkeletonImage.test.tsx` fails if a display
+page goes back to a plain next/image.
+
 **Dates** ([`lib/dateFormat.ts`](./app/lib/dateFormat.ts)): "today" on the
 SERVER is `bangkokDateString(new Date())` — Vercel's clock is UTC, still
 yesterday in Bangkok until 07:00 (a sale or expense saved without a date used to

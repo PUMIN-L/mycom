@@ -3,7 +3,7 @@
 import { DocumentData } from "../lib/documentStore";
 import { useT } from "../i18n/LanguageContext";
 import { translations } from "../i18n/translations";
-import Image from "next/image";
+import SkeletonImage from "../components/SkeletonImage";
 import Link from "next/link";
 
 interface CatalogClientProps {
@@ -41,7 +41,7 @@ export default function CatalogClient({ initialDocuments }: CatalogClientProps) 
               <div className="relative aspect-[4/3] bg-gray-50 border-b border-gray-100 overflow-hidden p-4">
                 {doc.coverUrl ? (
                   <div className="relative w-full h-full shadow-sm rounded overflow-hidden">
-                    <Image
+                    <SkeletonImage
                       src={doc.coverUrl}
                       alt={doc.title}
                       fill

@@ -63,3 +63,13 @@ describe("next.config.ts connect-src", () => {
     expect(connect).not.toContain("*");
   });
 });
+
+describe("next.config.ts img-src", () => {
+  // The photo loading skeleton (lib/imageSkeleton.ts) is a data: SVG painted
+  // as the <img>'s background — blocked without data: here, and silently: the
+  // box would just sit empty again.
+  it("allows data: images, which the photo loading skeleton is", async () => {
+    const img = directive(await cspFor("production"), "img-src");
+    expect(img.split(" ")).toContain("data:");
+  });
+});

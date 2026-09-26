@@ -7,7 +7,7 @@ import { useAuth } from "../context/AuthContext";
 import { localize } from "../lib/localize";
 import ConfirmDialog from "./ConfirmDialog";
 import Toast from "./Toast";
-import Image from "next/image";
+import SkeletonImage from "./SkeletonImage";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { ProductCategory, ProductData } from "../lib/types";
@@ -1037,7 +1037,7 @@ export default function Products({ dataPromise }: ProductsProps) {
                     style={{ animationDelay: `${i * 100}ms` }}
                   >
                     <div className={`relative aspect-[4/3] sm:aspect-square overflow-hidden border-b border-gray-50 ${item.isPublished === false ? "bg-gray-100" : "bg-white"}`}>
-                      <Image
+                      <SkeletonImage
                         src={item.image}
                         alt={stripHtml(getTitle(item))}
                         fill
@@ -1232,7 +1232,7 @@ export default function Products({ dataPromise }: ProductsProps) {
                           </td>
                           <td className="py-2 px-4">
                             <div className="relative w-12 h-12 rounded bg-gray-50 overflow-hidden border border-gray-100 flex-shrink-0">
-                              <Image src={item.image} alt={stripHtml(getTitle(item))} fill sizes="48px" className={`object-contain p-1 ${item.isPublished === false ? "grayscale opacity-70" : ""}`} />
+                              <SkeletonImage src={item.image} alt={stripHtml(getTitle(item))} fill sizes="48px" className={`object-contain p-1 ${item.isPublished === false ? "grayscale opacity-70" : ""}`} />
                             </div>
                           </td>
                           <td className="py-3 px-4 min-w-[200px] whitespace-normal">

@@ -2,7 +2,7 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import Image from "next/image";
+import SkeletonImage from "../../components/SkeletonImage";
 import dynamic from "next/dynamic";
 import { useAuth } from "../../context/AuthContext";
 import { useLanguage, useT } from "../../i18n/LanguageContext";
@@ -176,7 +176,7 @@ function GalleryViewer({
       <div className="w-full flex items-center justify-center bg-gray-50 rounded-lg p-4 min-h-[300px] border border-gray-200">
         {images.length > 0 ? (
           <div className="relative w-full h-100">
-            <Image
+            <SkeletonImage
               src={images[activeIndex]}
               alt={images.length > 1 ? `${imageAlt} – รูปที่ ${activeIndex + 1}` : imageAlt}
               fill
@@ -213,7 +213,7 @@ function GalleryViewer({
                   } hover:border-orange-300 transition-all`}
                 onClick={() => setIndex(idx)}
               >
-                <Image
+                <SkeletonImage
                   src={url}
                   alt={`${imageAlt} – รูปที่ ${idx + 1}`}
                   fill
@@ -1354,7 +1354,7 @@ export default function ShowcaseClient({
                       >
                         <div className="relative aspect-square bg-white">
                           {item.image && (
-                            <Image
+                            <SkeletonImage
                               src={item.image}
                               alt={title}
                               fill
