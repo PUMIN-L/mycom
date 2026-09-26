@@ -337,10 +337,11 @@ export async function replaceInNotes(
   const matcher = input.matcher;
 
   // The replacement is the one value here that really is TEXT ON ITS WAY INTO
-  // STORAGE, so it keeps the project's sanitiser. The screen says so in words
-  // before the confirm dialog opens ("คำแทนที่มีอักขระ < > หรือ &…"), because
-  // this is the one place on this path where what is stored can differ from
-  // what was previewed.
+  // STORAGE, so it keeps the project's sanitiser. It stores `&`, `<` and `>` as
+  // typed (v44) and only removes real HTML tags; the screen says so in words
+  // before the confirm dialog opens ("คำแทนที่มีข้อความที่ดูเหมือนแท็ก HTML…"),
+  // because that is the one place on this path where what is stored can
+  // differ from what was previewed.
   const replacement = sanitizePlainText(input.replacement ?? "");
 
   // THE TOKENS ARE READ VERBATIM. `customerId` is a row key and `expectedNote`

@@ -32,7 +32,7 @@ export const POST = withRoute(
     const { imageCount } = await request.json();
     if (!imageCount || typeof imageCount !== "number" || imageCount < 1) {
       return NextResponse.json(
-        { error: "imageCount is required" },
+        { error: "ต้องระบุจำนวนรูป (imageCount)" },
         { status: 400 }
       );
     }

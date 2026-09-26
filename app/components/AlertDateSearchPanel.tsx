@@ -32,6 +32,7 @@ import {
   isValidDateString,
   toLocalDateString,
 } from "../lib/dateFormat";
+import { displayText } from "../lib/stripHtml";
 
 /**
  * ค้นหาแจ้งเตือนตามวันที่ — the date search + bulk reschedule block on
@@ -177,14 +178,13 @@ const STATUS_CHIP: Record<string, string> = {
  *  into a colour that would imply a meaning nobody decided. */
 const STATUS_CHIP_FALLBACK = "bg-gray-100 text-gray-600";
 
-/** `productName` can carry markup (the feed renders it with
- *  `dangerouslySetInnerHTML`). This block renders every string as TEXT, so the
- *  tags are stripped for display rather than executed. */
+/** `productName` can carry markup (a catalog title copied in); every other
+ *  field here is plain text, where "<" is now a real character (schema v44).
+ *  This block renders every string as TEXT: a value with a real tag is read
+ *  as HTML (tags gone, "&amp;" decoded), a plain one is shown as typed —
+ *  a blanket tag regex cut "A < B > C" down to "A C". */
 function plain(value: string | null | undefined): string {
-  return String(value ?? "")
-    .replace(/<[^>]*>/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  return displayText(value).replace(/\s+/g, " ").trim();
 }
 
 /** Ids are unique per TABLE, not across tables, so a task and an appointment

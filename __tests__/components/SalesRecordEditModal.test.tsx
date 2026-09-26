@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import SalesRecordEditModal from '@/app/components/modals/SalesRecordEditModal';
 
@@ -131,5 +131,89 @@ describe('SalesRecordEditModal — a bill this form cannot describe', () => {
 
     await waitFor(() => expect(screen.getByPlaceholderText('1')).not.toBeDisabled());
     expect(screen.queryByText(/ใบขายนี้มีสินค้า/)).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * Saving a sale is two requests: the record, then its costs
+ * (PUT /api/admin/sales/[id]/costs/sync). The second one used to be fired and
+ * forgotten — the modal said "saved" whatever it answered, so a refused or
+ * lost cost write left every margin built on it wrong with nobody told.
+ */
+describe('SalesRecordEditModal — saving the costs', () => {
+  const alertSpy = vi.fn();
+
+  /** The record loads and saves; the cost sync answers with `costs`. */
+  function installSaveFetch(costs: { ok: boolean; status: number; body?: unknown } | 'network-error') {
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith('/costs/sync')) {
+        if (costs === 'network-error') throw new TypeError('Failed to fetch');
+        return { ok: costs.ok, status: costs.status, json: async () => costs.body ?? {} } as Response;
+      }
+      if (url.endsWith('/items')) {
+        return { ok: true, json: async () => ({ items: [MULTI_LINE_ITEMS[1]] }) } as Response;
+      }
+      if (url.endsWith('/costs')) {
+        return { ok: true, json: async () => ({ items: [] }) } as Response;
+      }
+      if (init?.method === 'PUT') {
+        return { ok: true, status: 200, json: async () => RECORD } as Response;
+      }
+      return { ok: true, json: async () => RECORD } as Response;
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    return fetchMock;
+  }
+
+  async function save(onSaveSuccess = vi.fn()) {
+    render(
+      <SalesRecordEditModal editingId="rec-multi" onClose={vi.fn()} onSaveSuccess={onSaveSuccess} {...LOOKUPS} />
+    );
+    await screen.findByDisplayValue('Scale B');
+    fireEvent.click(screen.getByRole('button', { name: 'บันทึกข้อมูล' }));
+    await waitFor(() => expect(onSaveSuccess).toHaveBeenCalled());
+    return onSaveSuccess;
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.stubGlobal('alert', alertSpy);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('says nothing extra when the costs save too', async () => {
+    const fetchMock = installSaveFetch({ ok: true, status: 200 });
+    await save();
+    expect(fetchMock.mock.calls.some(([u]) => String(u).endsWith('/costs/sync'))).toBe(true);
+    expect(alertSpy).not.toHaveBeenCalled();
+  });
+
+  it('says the sale saved but its costs did not, with the server\'s reason', async () => {
+    installSaveFetch({ ok: false, status: 400, body: { error: 'ต้นทุนนี้แยกตามสินค้าไม่ได้' } });
+    await save();
+    expect(alertSpy).toHaveBeenCalledTimes(1);
+    expect(alertSpy.mock.calls[0][0]).toContain('บันทึกรายการขายแล้ว แต่บันทึกต้นทุนไม่สำเร็จ');
+    expect(alertSpy.mock.calls[0][0]).toContain('ต้นทุนนี้แยกตามสินค้าไม่ได้');
+  });
+
+  it('names an expired session in Thai', async () => {
+    installSaveFetch({ ok: false, status: 401, body: { error: 'Unauthorized' } });
+    await save();
+    expect(alertSpy.mock.calls[0][0]).toContain('เซสชันหมดอายุ');
+    expect(alertSpy.mock.calls[0][0]).not.toContain('Unauthorized');
+  });
+
+  it('reports a cost request that never reached the server', async () => {
+    installSaveFetch('network-error');
+    await save();
+    expect(alertSpy.mock.calls[0][0]).toContain('บันทึกต้นทุนไม่สำเร็จ');
+  });
+
+  it('still closes the form — for a new sale, saving again would create a second one', async () => {
+    installSaveFetch({ ok: false, status: 500 });
+    const onSaveSuccess = await save();
+    expect(onSaveSuccess).toHaveBeenCalledTimes(1);
   });
 });

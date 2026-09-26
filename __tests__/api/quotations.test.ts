@@ -108,7 +108,7 @@ describe('Quotations API', () => {
       vi.mocked(getSession).mockResolvedValue(adminSession);
       const res = await savePOST(postReq({ docNo: 'D-1' }));
       expect(res.status).toBe(400);
-      expect((await res.json()).error).toBe('id is required');
+      expect((await res.json()).error).toBe('ต้องระบุ id ของเอกสาร');
       expect(saveQuotationAtomic).not.toHaveBeenCalled();
     });
 

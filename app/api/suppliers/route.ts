@@ -3,7 +3,7 @@ import { getAllSuppliers, createSupplier } from "../../lib/supplierStore";
 import { withRoute, requireAuth, jsonError } from "../../lib/apiHelpers";
 
 export const GET = withRoute(
-  "Failed to load suppliers",
+  "โหลดรายชื่อซัพพลายเออร์ไม่สำเร็จ",
   async () => {
     await requireAuth();
 
@@ -13,13 +13,13 @@ export const GET = withRoute(
 );
 
 export const POST = withRoute(
-  "Failed to create supplier",
+  "เพิ่มซัพพลายเออร์ไม่สำเร็จ",
   async (request: Request) => {
     await requireAuth();
 
     const data = await request.json();
     if (!data.companyName || typeof data.companyName !== "string" || data.companyName.trim() === "") {
-      return jsonError("Company Name is required", 400);
+      return jsonError("กรุณากรอกชื่อบริษัท", 400);
     }
 
     const supplier = await createSupplier(data);

@@ -71,11 +71,13 @@ export const POST = withRoute(
     //
     // MEASURED BEFORE SANITISING, because that is the string the admin typed
     // and the string `CustomerNoteSearchPanel` measured before it let him press
-    // the button. `sanitizePlainText` expands `&` to `&amp;`, so a 200-character
-    // replacement full of company names like "A&B, C&D" grew past the ceiling
-    // on the way in and was refused with a length nobody had typed — the screen
-    // stating one rule while the server enforced another, which is precisely
-    // what `noteSearch.ts` exists to prevent. The real ceiling is not this one
+    // the button. Until v44 `sanitizePlainText` expanded `&` to `&amp;`, so a
+    // 200-character replacement full of company names like "A&B, C&D" grew
+    // past the ceiling on the way in and was refused with a length nobody had
+    // typed — the screen stating one rule while the server enforced another,
+    // which is precisely what `noteSearch.ts` exists to prevent. It no longer
+    // expands anything (it can only remove real HTML tags), but the rule stands:
+    // measure what was typed. The real ceiling is not this one
     // anyway: what must actually fit is the FINISHED note, and
     // `noteLengthRefusal` checks that per customer against the sanitised text.
     const rawReplacement = String(payload.replacement ?? "").slice(

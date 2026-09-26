@@ -29,7 +29,7 @@ async function isContentHiddenFromAnonymous(content: ContentData): Promise<boole
 
 // GET — single content, or all contents when id === "all" (public)
 export const GET = withRoute(
-  "Failed to fetch content",
+  "โหลดเนื้อหาไม่สำเร็จ",
   async (_request: NextRequest, { params }: Ctx) => {
     const { id } = await params;
     const session = await getSession();
@@ -54,10 +54,10 @@ export const GET = withRoute(
 
     const content = await getContent(id);
     if (!content) {
-      return NextResponse.json({ error: "Content not found" }, { status: 404 });
+      return NextResponse.json({ error: "ไม่พบเนื้อหานี้" }, { status: 404 });
     }
     if (!session && (await isContentHiddenFromAnonymous(content))) {
-      return NextResponse.json({ error: "Content not found" }, { status: 404 });
+      return NextResponse.json({ error: "ไม่พบเนื้อหานี้" }, { status: 404 });
     }
     return NextResponse.json(content);
   }
@@ -65,7 +65,7 @@ export const GET = withRoute(
 
 // PUT — update content (login required)
 export const PUT = withRoute(
-  "Failed to update content",
+  "แก้ไขเนื้อหาไม่สำเร็จ",
   async (request: NextRequest, { params }: Ctx) => {
     await requireAuth();
     const { id } = await params;
@@ -76,7 +76,7 @@ export const PUT = withRoute(
       const existingContent = await getContentByProductId(body.productId);
       if (existingContent && existingContent.id !== id) {
         return NextResponse.json(
-          { error: "This product already has a content linked to it" },
+          { error: "สินค้านี้มีเนื้อหาผูกอยู่แล้ว" },
           { status: 400 }
         );
       }
@@ -88,14 +88,14 @@ export const PUT = withRoute(
     } catch (err) {
       if (err instanceof ContentProductConflictError) {
         return NextResponse.json(
-          { error: "This product already has a content linked to it" },
+          { error: "สินค้านี้มีเนื้อหาผูกอยู่แล้ว" },
           { status: 400 }
         );
       }
       throw err;
     }
     if (!updated) {
-      return NextResponse.json({ error: "Content not found" }, { status: 404 });
+      return NextResponse.json({ error: "ไม่พบเนื้อหานี้" }, { status: 404 });
     }
     // Cached catalog reads hang off this tag — see app/lib/contentStore.ts.
     revalidateTag("products", { expire: 0 });
@@ -105,7 +105,7 @@ export const PUT = withRoute(
 
 // DELETE — delete content; return orphaned image URLs for client-side confirmation (login required)
 export const DELETE = withRoute(
-  "Failed to delete content",
+  "ลบเนื้อหาไม่สำเร็จ",
   async (_request: NextRequest, { params }: Ctx) => {
     await requireAuth();
     const { id } = await params;
@@ -113,13 +113,13 @@ export const DELETE = withRoute(
     // Fetch first so we can collect image URLs before the row is gone.
     const content = await getContent(id);
     if (!content) {
-      return NextResponse.json({ error: "Content not found" }, { status: 404 });
+      return NextResponse.json({ error: "ไม่พบเนื้อหานี้" }, { status: 404 });
     }
     const imageUrls = collectContentImageUrls(content);
 
     const deleted = await deleteContent(id);
     if (!deleted) {
-      throw new ApiError(500, "Failed to delete content");
+      throw new ApiError(500, "ลบเนื้อหาไม่สำเร็จ");
     }
 
     // Return orphaned images for the client to confirm deletion one-by-one.

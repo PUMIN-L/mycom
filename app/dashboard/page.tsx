@@ -41,6 +41,7 @@ import {
   fmt, fmtDec, MONTHS_TH, PIE_COLORS,
   pctChange, stripHtml, safeImageUrl, emptyForm,
 } from "./types";
+import { displayText } from "../lib/stripHtml";
 
 // emptyForm imported from ./types
 
@@ -858,9 +859,9 @@ export default function DashboardPage() {
 
   const handleProductClick = (p: TopItem) => {
     setShowRecords(true);
-    const cleanName = stripHtml(p.name);
+    const cleanName = displayText(p.name);
     const matching = salesRecords.filter(
-      (r) => r.productId === p.id || stripHtml(r.productName) === cleanName
+      (r) => r.productId === p.id || displayText(r.productName) === cleanName
     );
     if (matching.length === 1) {
       handleView(matching[0]);
@@ -905,7 +906,7 @@ export default function DashboardPage() {
     try {
       const rows = targetRecords.map((r) => ({
         "วันที่": r.saleDate,
-        "สินค้า": stripHtml(r.productName),
+        "สินค้า": displayText(r.productName),
         "จำนวน": r.qty,
         "ราคาต่อหน่วย": r.unitPrice,
         "ยอดรวม": r.totalAmount,
@@ -1310,7 +1311,7 @@ export default function DashboardPage() {
                   <div key={p.id} onClick={() => handleProductClick(p)} className="flex items-center gap-3 p-2 rounded-xl hover:bg-indigo-50/50 cursor-pointer transition-colors">
                     <div className="w-7 h-7 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center text-xs font-bold shrink-0">{i + 1}</div>
                     <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium text-gray-800 truncate">{stripHtml(p.name)}</div>
+                      <div className="text-sm font-medium text-gray-800 truncate">{displayText(p.name)}</div>
                       <div className="text-xs text-gray-400">{p.qty} เครื่อง · {p.deals} ดีล</div>
                     </div>
                     <div className="text-right shrink-0">

@@ -162,7 +162,7 @@ re-export them, so server code can keep importing from `./productStore` /
 Defined in [`app/lib/apiHelpers.ts`](./app/lib/apiHelpers.ts). The pattern:
 
 ```ts
-export const POST = withRoute("Failed to create product", async (req: NextRequest) => {
+export const POST = withRoute("เพิ่มสินค้าไม่สำเร็จ", async (req: NextRequest) => {
   await requireAuth();                       // throws ApiError(401) if logged out
   const data = await req.json();
   return NextResponse.json(await addProduct(data), { status: 201 });
@@ -172,6 +172,20 @@ export const POST = withRoute("Failed to create product", async (req: NextReques
 - `withRoute(fallbackMessage, handler)` — wraps the handler so any thrown error
   becomes JSON. `ApiError` → its own status (not logged); anything else → 500
   with `{ error: fallbackMessage, details }` (logged via `console.error`).
+- **`req.json()` inside a wrapped handler refuses an unusable body:** not JSON,
+  empty, or JSON `null` → `ApiError(400, INVALID_JSON_BODY_MESSAGE)` instead of
+  a crash in the handler reported (and logged) as a 500. Objects, arrays and
+  other values pass through, so each route still checks its own fields; a
+  route that writes `req.json().catch(…)` keeps its own fallback. It works by
+  redefining `json` on the request object, which Next's request Proxy (a
+  `get` trap only) passes through; a request that refused it would keep its
+  plain `json()`.
+- **Error messages are Thai** — they reach Thai admins as written (the 4xx
+  texts, and `fallbackMessage`, which is what a 500 says in production).
+  `__tests__/apiErrorLanguage.test.ts` scans `app/api` + `app/lib` and fails on
+  an English-only message; the few allowed (codes a client matches on, such as
+  `Unauthorized` and `invalid_phone`, the CSRF refusals, internal errors that
+  never reach a screen) are listed there.
 - **CSRF / same-origin guard:** `withRoute` rejects any state-changing request
   (`POST/PUT/PATCH/DELETE`) whose `Origin` host ≠ the request host with **403**.
   Requests with no `Origin` header (server-to-server, curl) pass. Tests that hit
@@ -196,6 +210,11 @@ manual auth checks — that's the duplication this replaced.
 | `POST /api/contact` (sends email)               | all `/api/quotations/**` (GET/POST/[id]/docnos) | `cleanup` = **cron** (`CRON_SECRET`) |
 | `GET /api/health`                               | `GET`/`PUT /api/settings/contact-email` | |
 | —                                               | all `/api/admin/**`, incl. `POST`/`GET /api/admin/sales` + `[id]/items` and `GET /api/admin/equipments/serial-check` (§8a), plus the task board's `/api/admin/tasks/**` + `/api/admin/task-topics/**` (§8c) | |
+
+A public read returns only what a visitor may see: `GET /api/products/[id]`
+drops `supplierIds` (which suppliers a product comes from) unless the caller is
+logged in — only the admin edit form and the showcase's admin-only suppliers
+modal read it.
 
 > History note: content + upload mutations were originally **unauthenticated**
 > (only the client UI was gated). They now call `requireAuth()` server-side. Keep
@@ -230,6 +249,73 @@ server-side with [`sanitizeRichText`](./app/lib/sanitizeHtml.ts), which uses
   and a ReDoS advisory. Upgrade by changing that URL. Its ESM build no longer
   loads Node's `fs` by itself; the app only calls `writeFile` in the browser
   (download), where that does not matter.
+
+**Showing rich text the way the editor showed it** ([`lib/richTextDisplay.ts`](./app/lib/richTextDisplay.ts)
++ the `rich-text` class in `globals.css`). Quill's editing area is
+`white-space: pre-wrap` with no paragraph margins, and it styles its own
+`ql-size-*` / `ql-align-*` classes; react-quill-new's getSemanticHTML even
+writes every space as `&nbsp;`. A page rendering that HTML plainly collapsed
+runs of spaces (once the nbsp became ordinary spaces so lines could wrap),
+added gaps between lines, dropped sizes and alignment, or — where paragraphs
+were laid out inline — ran every line into one. So:
+
+- A full display (a content block, a content title) is
+  `className="rich-text"` + `richTextHtml(html)`.
+- A compact one (a product card, a category in a list, a chip) is
+  `richTextInline(html)` inside `rich-text`: paragraphs become `<br>` so a
+  `line-clamp` still works, list items "• " / "1. " lines; alignment is lost
+  with the paragraphs, so `richTextAlign(html)` gives the container the one
+  every line shares.
+- A text-only place (the catalog cards, related products — kept as text for
+  page weight) is `htmlToTextLines(html)` with `whitespace-pre-wrap`. A
+  `<title>`, meta description or JSON-LD still wants one line: `htmlToText`.
+  A label, alt text, search or length check on a rich field is `stripHtml`,
+  which removes the tags AND decodes entities (it used to leave "&amp;" in
+  product pickers, the home cards' English line and product names on
+  quotations). Never put any of these text results back into HTML; a
+  plain-text fallback in an HTML slot goes through `escapeHtmlText`.
+- Whitespace that is the whole content of a line ("<p>  </p>") is kept, and a
+  paragraph with nothing in it gets a `<br>`: the editor shows both as lines.
+- The editor (`RichTextEditor`, wrapper class `rich-text-editor`) gets the
+  site's font and line height 1.6 from unlayered rules in `globals.css`:
+  `quill.snow.css` is unlayered, so a Tailwind utility cannot override it.
+  Its toolbar — size, bold/italic/underline/strike, text and background
+  colour, alignment, lists, clear — is pinned by
+  `__tests__/components/RichTextEditorToolbar.test.tsx`.
+
+**Plain text is stored as typed (schema v44).** Every other text column — names,
+addresses, notes, references, line-item names (the list is `PLAIN_TEXT_COLUMNS`
+in `db.ts`) — is written through `sanitizePlainText`, which removes REAL tags
+and then decodes sanitize-html's `&amp;` `&lt;` `&gt;` back, so "A&B" is stored
+as `A&B`, not `A&amp;B` (which then showed literally everywhere React printed
+it). The v44 migration decoded the rows written before, column by column with
+its progress in a `settings` row.
+
+"Real tag" is one rule, in [`lib/htmlTags.ts`](./app/lib/htmlTags.ts): a `<`
+followed by a known HTML element name, a boundary and a closing `>`, that is
+also closed later (`<b>…</b>`), carries an attribute, or is an element that
+embeds or runs something (`<img>`, `<script>`, `<br>` …); an unclosed one of
+those last kinds, or with an attribute, counts too. Every other `<` is handed
+to sanitize-html as `&lt;` and kept — an HTML parser alone takes any `<` + a
+letter for a tag and drops the text after it, so "PS<B-200" used to be saved
+as "PS". Consequences:
+
+- **Never render a plain-text value as HTML** (`dangerouslySetInnerHTML`): `<`
+  is real text — "x < y > z", "<5 กก.", "PS<B-200>", "Size <M>". Print it as
+  a React text node.
+- **Never run a tag regex (`stripHtml`, `/<[^>]*>/`) or DOMParser over plain
+  text.** Both cut those values ("PS<B-200>" parses as an element) —
+  `stripHtml`'s `/<[^>]*>?/` even cuts from a lone `<` to the end. Where the
+  cut value also fills an edit form (/expenses did), saving writes the cut
+  text back.
+- A value that may be EITHER — an equipment's or sale line's `productName` can
+  be the catalog's rich title, a sale-derived expense row carries a rich
+  category name — is shown with `displayText()` (`lib/stripHtml.ts`): a value
+  holding a real tag (the same `containsHtmlTag` rule) → `htmlToText`, plain
+  text → as typed. The note search-and-replace warning uses that rule too, so
+  "no warning" still means "stored exactly as typed".
+- Rich-text columns (product title/description, content title/blocks, category
+  names) are untouched: they are HTML, and still stored with entities.
 
 > **Never** reach for `jsdom`, `isomorphic-dompurify`, or DOMPurify+linkedom on
 > the server. `jsdom` fails to load on Vercel's serverless runtime
@@ -334,6 +420,8 @@ highlight expires without a reload.
 - `'unsafe-inline'` stays: a nonce-based policy needs per-request rendering
   (Next applies nonces only when rendering dynamically), which would end the
   static caching of `/`, `/about` and `/catalog`.
+- `connect-src` allows `https://api.cloudinary.com`: files over 4 MB are
+  uploaded from the browser straight to Cloudinary (§7).
 - CSRF is handled by the `withRoute` same-origin guard (§2). Auth is an httpOnly
   cookie, so a same-origin check is the CSRF defense.
 
@@ -348,6 +436,17 @@ All in [`app/lib/cloudinaryHelper.ts`](./app/lib/cloudinaryHelper.ts):
   `imageUrl` (`image` / `text-image` blocks) **and** its `imageUrls[]` array
   (`gallery` blocks), de-duplicated. Use this whenever deleting/diffing content
   images so gallery + text-image assets aren't orphaned on Cloudinary.
+
+**Uploads go through `uploadFormData()`** ([`lib/uploadClient.ts`](./app/lib/uploadClient.ts)),
+never a bare `fetch("/api/upload")`. Vercel refuses a request body over 4.5 MB
+before it reaches a function, so a large catalog PDF could never arrive at the
+route whatever its own limit said. Files up to `DIRECT_UPLOAD_THRESHOLD` (4 MB)
+still go through `/api/upload`; bigger ones are checked in the browser against
+the same limits (`lib/uploadLimits.ts`, shared by all three) and uploaded
+straight to Cloudinary with signatures from `POST /api/upload/sign` (login
+required; the signature fixes the folder, the allowed formats and — for a PDF's
+raw copy — the public id). Same answer shape either way: `{ url }`, or
+`{ url, coverUrl }` for a PDF.
 
 **Image-deletion safety invariant:** deleting a quotation must never destroy a
 Cloudinary image still referenced by a product or content block. `quotationStore`
@@ -365,7 +464,10 @@ media types → "Delivery of PDF and ZIP files") **must** be unchecked for the
 to hide the raw Cloudinary URL and force inline rendering. Because Next.js
 auto-decompresses `fetch` responses, we strip `content-encoding` and
 `content-length` before passing the stream to `NextResponse` — otherwise the
-browser double-decompresses and the PDF is corrupted.
+browser double-decompresses and the PDF is corrupted. The proxy takes an
+optional `name` (the document's title, passed by `/document/[id]`) and names
+the file after it — `filename*=UTF-8''…` with an ASCII `filename` fallback
+(`lib/pdfFilename.ts`); without one it stays `document.pdf`.
 
 ### 8. Quotation builder
 [`app/quotation/page.tsx`](./app/quotation/page.tsx) builds a quote and exports a
@@ -391,6 +493,14 @@ today's Bangkok date, a strict subset of the `snoozeUntil <= today` the alert
 queries already treat as spent, so no alert can reappear early because of it.
 `service_logs` (real service history) and `used_docnos` (kept for
 conversion-rate analytics) are deliberately not swept.
+
+**No PDF of an unsaved document — on every document page.** ⬇️ ดาวน์โหลด PDF
+saves first (quotation, billing, PO, service job), and a save that does not
+land — an error, no connection, or a number the ledger refused with no free one
+to move to — stops there with a Thai toast; nothing is rasterised. The PDF is
+the copy the customer keeps: made anyway, the customer would hold a number the
+system does not have, free to be issued again to someone else (for billing, a
+tax document). The quotation and billing saves used to be "best-effort".
 
 **Retention is 2 years (`RETENTION_DAYS = 730`), not 30 days.** This business's
 sales cycle runs for months to years, so the old 30-day window purged the
@@ -591,6 +701,13 @@ emails the address stored in `settings.contact_email` (default from
 [`contact.ts`](./app/lib/contact.ts), changeable at `/settings`). A send failure
 is logged and reported as `emailed:false` but the submission still succeeds — the
 lead is never dropped, and admins read it via `GET /api/contact/messages`.
+The same holds when SMTP is not configured at all (it used to answer 503 before
+saving anything). Against bots ([`contactSpamGuard.ts`](./app/lib/contactSpamGuard.ts)):
+a honeypot input (`website`, off-screen, out of the tab order) — a submission
+that fills it is answered "sent" and dropped; and an hourly email cap counted in
+the database (`countContactMessagesSince`), because the per-IP limit is per
+serverless instance — past 30 leads an hour, leads are still stored but no
+longer emailed one by one.
 Changing the recipient notifies **both** the old and new addresses. Visitor
 fields go into structured `{name,address}` objects to prevent header injection.
 
@@ -732,6 +849,18 @@ prop). Money inputs are [`FormattedNumberInput`](./app/components/FormattedNumbe
 (thousands separators) and dates are [`DatePicker`](./app/components/DatePicker.tsx)
 (month/year dropdowns, portalled to `#root-portal`) for the same reason: a raw
 `<input type="number">` or `type="date"` looks nothing like the rest of the admin UI.
+`FormattedNumberInput` shows exactly the number it reports: one decimal point
+(a second one is dropped from the text too, not just from the number) and every
+decimal the value has — `toLocaleString`'s default of 3 showed 1.23456 as
+"1.235", and leaving the field then saved that.
+
+**Dates** ([`lib/dateFormat.ts`](./app/lib/dateFormat.ts)): "today" on the
+SERVER is `bangkokDateString(new Date())` — Vercel's clock is UTC, still
+yesterday in Bangkok until 07:00 (a sale or expense saved without a date used to
+get yesterday's). `isValidDateString` is the one validator for a
+`YYYY-MM-DD` input and refuses a day that does not exist ("2026-02-31": `new
+Date()` rolls it over into March instead of failing, and a DATE column then
+rejects it with a 500).
 
 ### 12. i18n strings
 Add UI copy to [`app/i18n/translations.ts`](./app/i18n/translations.ts) and read
@@ -881,7 +1010,16 @@ account with strict transformations) the image falls back to the original.
 - **Migrations fail loud, not silent.** The `ADD COLUMN` / `CREATE INDEX` steps
   swallow only *benign* errors (already-exists / unsupported-syntax); a real
   failure (lock timeout, permission) rethrows so `schema_version` is never
-  stamped over a half-applied migration.
+  stamped over a half-applied migration. v44's entity decode
+  (`decodeStoredPlainText`, §5) is a DATA backfill and must not take the site
+  down: a column that fails is logged (`[db:bootstrap] … FAILED`), the site
+  carries on — and the version is left **unstamped**, so the next cold start
+  runs the bootstrap again. Per-column progress in a `settings` row
+  (`plaintext_decode_v44_done`) means that run decodes only the columns left.
+  At most `PLAIN_TEXT_DECODE_MAX_ATTEMPTS` (5) such bootstraps, counted in
+  `plaintext_decode_v44_attempts`: a column that fails every time then gets a
+  "giving up" log line and the version is stamped, so cold starts stop
+  re-running the whole bootstrap.
 - **Preview deploys never mutate the DB.** Bootstrap (CREATE/ALTER/seed) is
   skipped when `VERCEL_ENV === "preview"`, because previews share the production
   database — a branch bumping `SCHEMA_VERSION` must not alter prod before merge.

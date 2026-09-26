@@ -5,6 +5,7 @@ import { useAuth } from "../context/AuthContext";
 import Toast from "../components/Toast";
 import Link from "next/link";
 import { Supplier } from "../lib/types";
+import { richTextInline } from "../lib/richTextDisplay";
 
 function SuppliersInner() {
   const router = useRouter();
@@ -101,7 +102,7 @@ function SuppliersInner() {
         setDeleteConfirm(null);
         fetchData();
       } else {
-        showToast("Failed to delete supplier", "error");
+        showToast("ลบซัพพลายเออร์ไม่สำเร็จ", "error");
       }
     } catch (err) {
       showToast("Error deleting supplier", "error");
@@ -428,8 +429,8 @@ function SuppliersInner() {
                       viewingSupplier.linkedProducts.map((p) => (
                         <div 
                           key={p.id}
-                          className="px-4 py-2 bg-gray-50 text-gray-600 text-sm font-light rounded-md border border-gray-100 [&_p]:inline [&_p]:m-0"
-                          dangerouslySetInnerHTML={{ __html: p.title_th || p.title_en }}
+                          className="rich-text px-4 py-2 bg-gray-50 text-gray-600 text-sm font-light rounded-md border border-gray-100"
+                          dangerouslySetInnerHTML={{ __html: richTextInline(p.title_th || p.title_en) }}
                         />
                       ))
                     ) : (

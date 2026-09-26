@@ -12,6 +12,7 @@ import type {
   CustomerEquipment,
   ServiceSchedule,
 } from "../lib/types";
+import { displayText } from "../lib/stripHtml";
 
 /** Strip HTML tags from rich-text product titles for plain-text display. */
 /** Only allow Cloudinary image URLs to prevent XSS/SSRF via img src */
@@ -209,7 +210,7 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
         return {
           "ลูกค้า": eq.customerName || "",
           "บริษัท": eq.companyName || "",
-          "สินค้า": stripHtml(eq.productName) || eq.productId,
+          "สินค้า": displayText(eq.productName) || eq.productId,
           "Serial Number": eq.serialNumber,
           // Full Thai wording, never the raw "sold_by_us"/"customer_owned" —
           // this column is meant to be counted and read by a human.
@@ -342,7 +343,7 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
   if (editing && editing.id && !productOptions.some(o => o.value === editing.productId)) {
     productOptions.unshift({
       value: editing.productId || "_custom",
-      label: stripHtml(editing.productName) || "(สินค้าที่ระบุเอง)",
+      label: displayText(editing.productName) || "(สินค้าที่ระบุเอง)",
       subLabel: "กำหนดชื่อเอง",
     });
   }
@@ -355,7 +356,7 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
       const match = (
         (eq.customerName || "").toLowerCase().includes(q) ||
         (eq.companyName || "").toLowerCase().includes(q) ||
-        (eq.productName || "").replace(/<[^>]*>/g, "").toLowerCase().includes(q) ||
+        displayText(eq.productName).toLowerCase().includes(q) ||
         (eq.serialNumber || "").toLowerCase().includes(q) ||
         (eq.quotationNumber || "").toLowerCase().includes(q)
       );
@@ -688,7 +689,7 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
                         {safeImageUrl(eq.productImage) && (
                           <img src={safeImageUrl(eq.productImage)!} alt="" className="w-8 h-8 rounded object-cover border border-gray-100 bg-gray-50 shrink-0" />
                         )}
-                        <span className="text-sm text-gray-700">{stripHtml(eq.productName) || eq.productId}</span>
+                        <span className="text-sm text-gray-700">{displayText(eq.productName) || eq.productId}</span>
                       </div>
                     </td>
                     <td className="py-4 pr-4 text-sm text-gray-600 font-mono">{eq.serialNumber || "—"}</td>
@@ -829,7 +830,7 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
             </div>
             <h3 className="text-xl font-bold text-gray-900 mb-2">ยืนยันการลบอุปกรณ์</h3>
             <p className="text-gray-500 mb-6">
-              คุณแน่ใจหรือไม่ที่จะลบอุปกรณ์ <strong>{stripHtml(deleteConfirm.productName) || deleteConfirm.productId}</strong>
+              คุณแน่ใจหรือไม่ที่จะลบอุปกรณ์ <strong>{displayText(deleteConfirm.productName) || deleteConfirm.productId}</strong>
               {deleteConfirm.serialNumber ? <> (S/N: <strong>{deleteConfirm.serialNumber}</strong>)</> : null}?
               ประวัตินัดหมาย/บันทึกผลงานของอุปกรณ์นี้จะถูกลบไปด้วย และไม่สามารถกู้คืนได้
             </p>

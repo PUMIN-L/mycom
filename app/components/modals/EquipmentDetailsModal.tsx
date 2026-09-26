@@ -1,5 +1,6 @@
 "use client";
 import React, { useState, useEffect } from "react";
+import { displayText } from "../../lib/stripHtml";
 import Link from "next/link";
 import DatePicker from "../DatePicker";
 import type {
@@ -21,11 +22,6 @@ import { ensureTaskTopicsLoaded } from "../useTaskTopics";
 import TaskCreatedNotice from "./TaskCreatedNotice";
 
 // Note: Local stripHtml function
-function stripHtml(html?: string): string {
-  if (!html) return "";
-  return html.replace(/<[^>]*>/g, "");
-}
-
 interface EquipmentDetailsModalProps {
   equipment: CustomerEquipment;
   onClose: () => void;
@@ -325,7 +321,7 @@ export default function EquipmentDetailsModal({
           <div className="p-6 border-b border-gray-100 flex justify-between items-start shrink-0">
             <div>
               <h3 className="text-xl font-bold text-gray-800">รายละเอียดอุปกรณ์</h3>
-              <p className="text-sm text-gray-400 mt-1">{stripHtml(equipment.productName)} — S/N: {equipment.serialNumber || "—"}</p>
+              <p className="text-sm text-gray-400 mt-1">{displayText(equipment.productName)} — S/N: {equipment.serialNumber || "—"}</p>
             </div>
             <div className="flex gap-2">
               <button
@@ -356,7 +352,7 @@ export default function EquipmentDetailsModal({
           <div className="p-6 grid grid-cols-2 gap-4">
             <Info label="ลูกค้า" value={equipment.customerName} />
             <Info label="บริษัท" value={equipment.companyName} />
-            <Info label="สินค้า" value={stripHtml(equipment.productName)} />
+            <Info label="สินค้า" value={displayText(equipment.productName)} />
             <Info label="Serial Number" value={equipment.serialNumber} />
             <Info label="ใบเสนอราคา" value={equipment.quotationNumber} />
             <Info label="ใบรับประกัน" value={equipment.warrantyCertNumber} />

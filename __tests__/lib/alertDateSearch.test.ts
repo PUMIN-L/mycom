@@ -423,18 +423,14 @@ describe('validateSearchRange', () => {
     expect(validateSearchRange('', '')).toBeTruthy();
   });
 
-  it('documents that the shared validator checks SHAPE, not calendar overflow', () => {
-    // `isValidDateString` in dateFormat.ts accepts "2026-02-30" because
+  it('refuses a day that does not exist, through the one shared validator', () => {
+    // `isValidDateString` in dateFormat.ts used to accept "2026-02-30" —
     // `new Date("2026-02-30T00:00:00")` rolls over to 2 March rather than
-    // returning Invalid Date. That is pre-existing behaviour of the shared
-    // validator every date column in this app already relies on, and this
-    // feature deliberately does not fork a second, stricter one — two
-    // validators disagreeing about what a date is would be worse than the
-    // overflow. It is harmless here: the value is still `^\d{4}-\d{2}-\d{2}$`,
-    // so lexical ordering on the column is intact, and a range query for it
-    // simply matches nothing. Pinned so a future change to dateFormat.ts is a
-    // visible decision rather than a surprise.
-    expect(validateSearchRange('2026-02-30', '2026-03-01')).toBeNull();
+    // returning Invalid Date — and this test pinned that so changing it would
+    // be a visible decision. It was changed deliberately, in the SHARED
+    // validator (a DATE column refuses such a value outright), so this feature
+    // still has no second, stricter validator of its own to disagree with.
+    expect(validateSearchRange('2026-02-30', '2026-03-01')).toBeTruthy();
   });
 });
 

@@ -281,3 +281,73 @@ input[type="number"] {
 }
 
 .react-datepicker-popper { z-index: 9999 !important; }
+
+/* Rich text (the RichTextEditor's HTML) shown the way the editor showed it —
+   see app/lib/richTextDisplay.ts. Quill's editing area is pre-wrap with no
+   paragraph margins, and styles its size classes itself; a page rendering the
+   same HTML needs the same, or runs of spaces collapse, line breaks gain gaps
+   the editor never showed, and a chosen size shows as normal text. */
+@layer components {
+  .rich-text {
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+    tab-size: 4;
+  }
+  .rich-text p,
+  .rich-text h1,
+  .rich-text h2,
+  .rich-text h3,
+  .rich-text h4,
+  .rich-text h5,
+  .rich-text h6,
+  .rich-text blockquote,
+  .rich-text pre {
+    margin: 0;
+  }
+  .rich-text ul,
+  .rich-text ol {
+    margin: 0;
+    padding-left: 1.5em;
+  }
+  .rich-text ul {
+    list-style: disc;
+  }
+  .rich-text ol {
+    list-style: decimal;
+  }
+  .rich-text ul ul {
+    list-style: circle;
+  }
+  .rich-text ol ol {
+    list-style: lower-alpha;
+  }
+  .rich-text .ql-size-small {
+    font-size: 0.75em;
+  }
+  .rich-text .ql-size-large {
+    font-size: 1.5em;
+  }
+  .rich-text .ql-size-huge {
+    font-size: 2.5em;
+  }
+  .rich-text .ql-align-center {
+    text-align: center;
+  }
+  .rich-text .ql-align-right {
+    text-align: right;
+  }
+  .rich-text .ql-align-justify {
+    text-align: justify;
+  }
+}
+
+/* The editor itself, set to show text as the pages do: the site's font, not
+   quill.snow.css's Helvetica/Arial (Thai fell back to a system font), and the
+   line height the content pages use. quill.snow.css is unlayered — it beats
+   any Tailwind utility — so these are unlayered too, one class more specific. */
+.rich-text-editor .ql-container {
+  font-family: inherit;
+}
+.rich-text-editor .ql-editor {
+  line-height: 1.6;
+}

@@ -7,6 +7,7 @@ import FormattedNumberInput from "../components/FormattedNumberInput";
 import SearchableDropdown from "../components/SearchableDropdown";
 import { PieChart, Pie, Cell, Tooltip as RechartsTooltip, ResponsiveContainer, Legend } from "recharts";
 import { bangkokCurrentMonth } from "../lib/dateFormat";
+import { displayText, htmlToText } from "../lib/stripHtml";
 
 const EXPENSE_CATEGORIES = [
   "เงินเดือน",
@@ -117,14 +118,17 @@ export default function ExpensesPage() {
 
       const res = await fetch(`/api/admin/expenses?dateFrom=${dateFrom}&dateTo=${dateTo}`);
       if (!res.ok) throw new Error("Failed to fetch");
-      const data = await res.json();
-      const stripHtml = (html: string) => html ? html.replace(/<[^>]*>?/gm, '') : '';
-      setRecords(data.map((r: any) => ({
-        ...r,
-        title: stripHtml(r.title),
-        category: stripHtml(r.category),
-        note: stripHtml(r.note)
-      })));
+      const data: Expense[] = await res.json();
+      // An expense's own fields are plain text, shown exactly as typed — they
+      // also fill the edit form, so cutting "<5 กก." out of a note here would
+      // save the cut text back. Only the rows derived from a sale carry HTML:
+      // its product name may be the catalog's rich title, and its category is
+      // a (rich) category name.
+      setRecords(data.map((r) =>
+        r.source === "sale_cost"
+          ? { ...r, title: displayText(r.title), category: htmlToText(r.category ?? "") }
+          : r
+      ));
     } catch {
       showToast("ดึงข้อมูลรายจ่ายไม่สำเร็จ", "error");
     } finally {

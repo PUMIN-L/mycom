@@ -14,11 +14,13 @@ import Footer from "../../components/Footer";
 import ColorPickerDropdown from "../../components/ColorPickerDropdown";
 import Toast from "../../components/Toast";
 import type { OrphanedImage } from "../../components/ImageDeleteConfirmDialog";
-import { stripHtml, normalizeNbsp, htmlToText } from "../../lib/stripHtml";
+import { stripHtml, htmlToText } from "../../lib/stripHtml";
+import { escapeHtmlText, richTextHtml, richTextInline, htmlToTextLines } from "../../lib/richTextDisplay";
 import type { ContentBlock } from "../../lib/types";
 import type { SearchableDropdownOption } from "../../components/SearchableDropdown";
 import YoutubeEmbed from "../../components/YoutubeEmbed";
 import ResponsiveImage from "../../components/ResponsiveImage";
+import { uploadFormData } from "../../lib/uploadClient";
 
 // These are only ever rendered inside admin-only states (isEditing,
 // showDeleteContentConfirm, pendingDeleteBlock, orphanedImages) that stay
@@ -561,7 +563,7 @@ export default function ShowcaseClient({
       // Upload new image
       const formData = new FormData();
       formData.append("file", file);
-      const uploadRes = await fetch("/api/upload", { method: "POST", body: formData });
+      const uploadRes = await uploadFormData(formData);
       if (!uploadRes.ok) {
         showToast("อัปโหลดรูปใหม่ไม่สำเร็จ", "error");
         return;
@@ -683,7 +685,7 @@ export default function ShowcaseClient({
     try {
       const formData = new FormData();
       formData.append("file", file);
-      const uploadRes = await fetch("/api/upload", { method: "POST", body: formData });
+      const uploadRes = await uploadFormData(formData);
       if (!uploadRes.ok) {
         showToast("อัปโหลดรูปไม่สำเร็จ", "error");
         return;
@@ -741,7 +743,7 @@ export default function ShowcaseClient({
       const uploadPromises = filesArray.map(async (file) => {
         const formData = new FormData();
         formData.append("file", file);
-        const uploadRes = await fetch("/api/upload", { method: "POST", body: formData });
+        const uploadRes = await uploadFormData(formData);
         if (!uploadRes.ok) throw new Error("Upload failed");
         const data = await uploadRes.json();
         return data.url;
@@ -891,7 +893,9 @@ export default function ShowcaseClient({
                     />
                   </div>
                 ) : (
-                  <h1 className="text-4xl font-bold text-gray-900 truncate [&_p]:inline [&_p]:m-0" dangerouslySetInnerHTML={{ __html: content.title }} />
+                  // Every line of the title as it was typed — it used to be one
+                  // truncated line, its paragraphs run together.
+                  <h1 className="rich-text text-4xl font-bold text-gray-900" dangerouslySetInnerHTML={{ __html: richTextHtml(content.title) }} />
                 )}
 
                 {/* Product badge / selector */}
@@ -911,14 +915,15 @@ export default function ShowcaseClient({
                   </div>
                 ) : content.productId ? (
                   <div className="mt-2">
-                    <span className="inline-flex items-center gap-1.5 text-xs font-semibold bg-orange-100 text-orange-700 px-3 py-1 rounded-full [&_p]:inline [&_p]:m-0">
-                      <span dangerouslySetInnerHTML={{
+                    <span className="inline-flex items-center gap-1.5 text-xs font-semibold bg-orange-100 text-orange-700 px-3 py-1 rounded-full">
+                      <span className="rich-text" dangerouslySetInnerHTML={{
                         __html: (() => {
                           const p = allProducts.find((p) => p.id === content.productId);
-                          if (!p) return content.productId;
-                          if (lang === "zh") return p.title_zh || p.title_en || p.title_th;
-                          if (lang === "en") return p.title_en || p.title_th;
-                          return p.title_th || p.title_en || p.title_zh;
+                          // An id with no product behind it: text, never markup.
+                          if (!p) return escapeHtmlText(content.productId);
+                          if (lang === "zh") return richTextInline(p.title_zh || p.title_en || p.title_th);
+                          if (lang === "en") return richTextInline(p.title_en || p.title_th);
+                          return richTextInline(p.title_th || p.title_en || p.title_zh);
                         })()
                       }} />
                     </span>
@@ -1127,7 +1132,7 @@ export default function ShowcaseClient({
                     </div>
                   ) : (
                     <div
-                      className="w-full break-words [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:mb-1 [&_ul]:my-2 [&_ol]:my-2 [&_p]:mb-3 [&_p:last-child]:mb-0"
+                      className="rich-text w-full"
                       style={{
                         fontSize: `${block.fontSize}px`,
                         fontWeight: block.fontWeight as any,
@@ -1135,7 +1140,7 @@ export default function ShowcaseClient({
                         color: block.textColor,
                         lineHeight: "1.6",
                       }}
-                      dangerouslySetInnerHTML={{ __html: normalizeNbsp(block.content ?? "") }}
+                      dangerouslySetInnerHTML={{ __html: richTextHtml(block.content) }}
                     />
                   )
                 ) : block.type === "image" ? (
@@ -1197,7 +1202,7 @@ export default function ShowcaseClient({
                         </div>
                       ) : (
                         <div
-                          className="w-full break-words [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:mb-1 [&_ul]:my-2 [&_ol]:my-2 [&_p]:mb-3 [&_p:last-child]:mb-0"
+                          className="rich-text w-full"
                           style={{
                             fontSize: `${block.fontSize}px`,
                             fontWeight: block.fontWeight as any,
@@ -1205,7 +1210,7 @@ export default function ShowcaseClient({
                             color: block.textColor,
                             lineHeight: "1.6",
                           }}
-                          dangerouslySetInnerHTML={{ __html: normalizeNbsp(block.content ?? "") }}
+                          dangerouslySetInnerHTML={{ __html: richTextHtml(block.content) }}
                         />
                       )}
                     </div>
@@ -1359,8 +1364,8 @@ export default function ShowcaseClient({
                           )}
                         </div>
                         <div className="p-3">
-                          <p className="text-sm font-semibold text-gray-900 line-clamp-2 group-hover:text-[var(--accent)]">
-                            {title}
+                          <p className="text-sm font-semibold text-gray-900 line-clamp-2 whitespace-pre-wrap group-hover:text-[var(--accent)]">
+                            {htmlToTextLines(localize(item, "title", lang))}
                           </p>
                           {lang !== "en" && en && en.toLowerCase() !== title.toLowerCase() && (
                             <p className="mt-0.5 text-xs text-gray-400 line-clamp-1">{en}</p>

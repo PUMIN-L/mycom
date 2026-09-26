@@ -42,7 +42,8 @@ describe("toCatalogProduct", () => {
     expect(p.title_th).toBe("ตู้อบ & เตา");
     expect([...p.desc_th].length).toBeLessThanOrEqual(140);
     expect(p.desc_th.endsWith("…")).toBe(true);
-    expect(p.desc_en).toBe("Line one Line two");
+    // The lines the editor showed stay lines (the cards are pre-wrap).
+    expect(p.desc_en).toBe("Line one\nLine two");
     expect(Object.keys(p).sort()).toEqual(
       ["desc_en", "desc_th", "desc_zh", "id", "image", "title_en", "title_th", "title_zh"]
     );
@@ -80,5 +81,16 @@ describe("categoryTitle / categoryDescription", () => {
     const description = categoryDescription(section);
     expect(description.startsWith("เครื่องชั่ง (Balances) 20 รายการ เช่น")).toBe(true);
     expect([...description].length).toBeLessThanOrEqual(160);
+  });
+
+  // The cards keep a title's line breaks; a meta description is one line.
+  it("puts a two-line product title into the description on one line", () => {
+    const [section] = catalogSections(
+      [cat(1, "เครื่องชั่ง", "Balances")],
+      [prod("a", 1, { title_th: "<p>รุ่น A</p><p>ความละเอียด 0.1 g</p>" })]
+    );
+    expect(section.products[0].title_th).toBe("รุ่น A\nความละเอียด 0.1 g");
+    expect(categoryDescription(section)).toContain("เช่น รุ่น A ความละเอียด 0.1 g —");
+    expect(categoryDescription(section)).not.toContain("\n");
   });
 });

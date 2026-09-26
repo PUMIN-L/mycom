@@ -20,13 +20,16 @@ export default function RichTextEditor({ value, onChange, placeholder }: RichTex
       [{ 'size': [] }],
       ['bold', 'italic', 'underline', 'strike'],
       [{ 'color': [] }, { 'background': [] }],
+      // Left / centre / right / justify. Written as a ql-align-* class on the
+      // paragraph, which the pages style through `rich-text` (globals.css).
+      [{ 'align': [] }],
       [{ 'list': 'ordered'}, { 'list': 'bullet' }],
       ['clean']
     ],
   }), []);
 
   return (
-    <div className="rounded-lg overflow-hidden border border-gray-300 focus-within:border-orange-500 focus-within:ring-1 focus-within:ring-orange-500 transition-colors [&_.ql-toolbar]:border-none [&_.ql-toolbar]:border-b [&_.ql-toolbar]:border-gray-300 [&_.ql-toolbar]:bg-gray-50 [&_.ql-container]:border-none [&_.ql-editor]:min-h-[150px] [&_.ql-editor]:text-base">
+    <div className="rich-text-editor rounded-lg overflow-hidden border border-gray-300 focus-within:border-orange-500 focus-within:ring-1 focus-within:ring-orange-500 transition-colors [&_.ql-toolbar]:border-none [&_.ql-toolbar]:border-b [&_.ql-toolbar]:border-gray-300 [&_.ql-toolbar]:bg-gray-50 [&_.ql-container]:border-none [&_.ql-editor]:min-h-[150px] [&_.ql-editor]:text-base">
       <ReactQuill
         theme="snow"
         value={value}

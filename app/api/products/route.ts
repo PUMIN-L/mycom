@@ -15,7 +15,7 @@ export const dynamic = "force-dynamic";
 // GET — list products. Public callers get only published products; an
 // authenticated admin gets the full list (so hidden/draft items are never
 // exposed to anonymous clients, but admins can still manage them).
-export const GET = withRoute("Failed to fetch products", async () => {
+export const GET = withRoute("โหลดรายการสินค้าไม่สำเร็จ", async () => {
   const products = await getAllProducts();
   const session = await getSession();
   const visible = session ? products : products.filter(isProductPublic);
@@ -24,7 +24,7 @@ export const GET = withRoute("Failed to fetch products", async () => {
 
 // POST — create new product (login required)
 export const POST = withRoute(
-  "Failed to create product",
+  "เพิ่มสินค้าไม่สำเร็จ",
   async (request: NextRequest) => {
     await requireAuth();
     const data = (await request.json()) as Partial<ProductData>;
@@ -33,15 +33,15 @@ export const POST = withRoute(
     // (createdAt is assigned here; isPublished is coerced to a boolean).
     if (!data.title_th || !data.title_en || !data.title_zh) {
       return NextResponse.json(
-        { error: "Missing required title fields (th, en, zh)" },
+        { error: "กรุณากรอกชื่อสินค้าให้ครบทั้ง 3 ภาษา (ไทย อังกฤษ จีน)" },
         { status: 400 }
       );
     }
     if (typeof data.categoryId !== "number") {
-      return NextResponse.json({ error: "categoryId must be a number" }, { status: 400 });
+      return NextResponse.json({ error: "รหัสหมวดหมู่ต้องเป็นตัวเลข" }, { status: 400 });
     }
     if (typeof data.image !== "string" || !data.image) {
-      return NextResponse.json({ error: "image is required" }, { status: 400 });
+      return NextResponse.json({ error: "กรุณาใส่รูปสินค้า" }, { status: 400 });
     }
 
     const product: ProductData = {

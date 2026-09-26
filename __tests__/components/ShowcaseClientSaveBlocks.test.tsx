@@ -13,6 +13,12 @@
 import { render, screen, fireEvent, waitFor, cleanup, within, act } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
+// ShowcaseClient is the heaviest component rendered in the suite. Alone this
+// file runs its tests in ~4 s; in a full parallel run (the pre-push hook) a
+// starved worker has made single tests take 15–24 s and fail on the default
+// 5 s limit. More headroom here, for this file only — a real hang still fails.
+vi.setConfig({ testTimeout: 30_000 });
+
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn(), back: vi.fn() }),
   usePathname: () => "/showcase/c1",

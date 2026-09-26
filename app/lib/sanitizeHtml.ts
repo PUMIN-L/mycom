@@ -1,6 +1,7 @@
 import "server-only";
 import sanitize from "sanitize-html";
 import { normalizeNbsp } from "./stripHtml";
+import { escapeNonTagAngleBrackets } from "./htmlTags";
 
 // Server-side HTML sanitizer. Previously DOMPurify via isomorphic-dompurify,
 // whose jsdom backend failed to LOAD on Vercel's serverless runtime
@@ -79,9 +80,34 @@ export function sanitizeRichText(html: string | null | undefined): string {
 }
 
 /**
- * Sanitize plain-text fields (like titles) that shouldn't contain any HTML tags.
+ * Plain-text fields (names, notes, references, addresses…): every tag is
+ * removed, and the result is PLAIN TEXT.
+ *
+ * sanitize-html removes the tags and then, like any HTML serialiser, escapes
+ * what is left — `&` → `&amp;`, `<` → `&lt;`, `>` → `&gt;` (those three
+ * only; nothing else comes out encoded). That is right for HTML and was wrong
+ * here: every one of these fields is shown as TEXT — a React text node, a PDF,
+ * an Excel cell, a text email — so the escapes were shown literally.
+ * "A&B Co., Ltd." read "A&amp;B Co., Ltd." on screen, on quotations and on the
+ * public site, and a note search for "A&B" found nothing. The three escapes
+ * are undone here, `&amp;` LAST, so an escaped entity such as "&amp;lt;"
+ * comes back as the "&lt;" that was typed rather than as "<".
+ *
+ * Only REAL tags are removed (`escapeNonTagAngleBrackets`, lib/htmlTags.ts):
+ * an HTML parser takes every "<" followed by a letter for a tag and drops it
+ * with the text after it, so "PS<B-200" used to be saved as "PS". Such a "<"
+ * is handed to the parser as "&lt;" and comes back as the character. HTML
+ * pasted in, or a catalog title copied into a plain field, is still stripped.
+ *
+ * ⚠️ The result may contain `<`, `>` and `&` as characters. Render it as text
+ * (React escapes it); never put it into dangerouslySetInnerHTML or an HTML
+ * string. Rows written before v44 were decoded by the bootstrap
+ * (decodeStoredPlainText in db.ts).
  */
 export function sanitizePlainText(text: string | null | undefined): string {
   if (!text) return "";
-  return sanitize(text, { allowedTags: [], allowedAttributes: {} });
+  return sanitize(escapeNonTagAngleBrackets(text), { allowedTags: [], allowedAttributes: {} })
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&");
 }

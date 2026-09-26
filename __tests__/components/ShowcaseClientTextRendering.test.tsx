@@ -54,16 +54,16 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function renderView(blocks: ContentBlock[]) {
+function renderView(blocks: ContentBlock[], title = "หัวข้อทดสอบ", productId: string | null = null) {
   vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, status: 200, json: async () => ({}) }) as unknown as Response));
   return render(
     <ShowcaseClient
       initialContent={{
         id: "c1",
-        title: "หัวข้อทดสอบ",
+        title,
         blocks,
         createdAt: "2026-09-01",
-        productId: null,
+        productId,
       }}
       initialAllContents={[]}
       initialProducts={[]}
@@ -104,21 +104,54 @@ describe("ShowcaseClient — public view rendering of text blocks", () => {
     expect(container.textContent).toContain("competitive performance");
   });
 
-  it("gives rendered <p> tags a bottom margin, so separate paragraphs don't run together", () => {
+  // Shown as the editor showed it (the `rich-text` class, globals.css): each
+  // paragraph its own line with no gap the editor never had — it used to get
+  // a 12px bottom margin — and runs of spaces kept.
+  it("renders each paragraph as its own line, the way the editor laid it out", () => {
     const blocks: ContentBlock[] = [
       {
         id: "b1",
         type: "text",
-        content: "<p>Paragraph one.</p><p>Paragraph two.</p>",
+        content: "<p>Paragraph one.</p><p><br></p><p>Paragraph   two.</p>",
         fontSize: "16",
       } as ContentBlock,
     ];
     const { container } = renderView(blocks);
-    // The element carrying dangerouslySetInnerHTML is the one styled to
-    // restore <p> spacing — same mechanism already used for <ul>/<li> in this
-    // exact className.
-    const html = container.querySelector('[class*="break-words"]');
-    expect(html).not.toBeNull();
-    expect(html!.className).toContain("[&_p]:mb-3");
+    // The block, not the title (which is rich text too).
+    const html = Array.from(container.querySelectorAll(".rich-text")).find((el) =>
+      el.textContent?.includes("Paragraph one.")
+    );
+    expect(html).toBeDefined();
+    expect(html!.className).not.toContain("[&_p]:mb-3");
+    const paragraphs = html!.querySelectorAll("p");
+    expect(paragraphs).toHaveLength(3); // the empty line too
+    expect(paragraphs[2].textContent).toBe("Paragraph   two.");
+  });
+});
+
+describe("ShowcaseClient — the content title", () => {
+  // It used to be one truncated line, its paragraphs run together.
+  it("shows every line of the title, centring and spaces as typed", () => {
+    const { container } = renderView(
+      [],
+      '<p class="ql-align-center">เครื่องชั่ง&nbsp;&nbsp;รุ่นใหม่</p><p class="ql-align-center">ปี 2026</p>'
+    );
+    const h1 = container.querySelector("h1") as HTMLElement;
+    expect(h1.className).toContain("rich-text");
+    expect(h1.className).not.toContain("truncate");
+    const lines = h1.querySelectorAll("p");
+    expect(lines).toHaveLength(2);
+    expect(lines[0].textContent).toBe("เครื่องชั่ง  รุ่นใหม่");
+    expect(lines[0].className).toBe("ql-align-center");
+  });
+});
+
+describe("ShowcaseClient — the linked product's badge", () => {
+  // No product behind the id (deleted): the id is shown as text, never markup.
+  it("shows an id with no product as text", () => {
+    const id = '<img src=x onerror="alert(1)">';
+    const { container } = renderView([], "หัวข้อ", id);
+    expect(container.querySelector("img[src='x']")).toBeNull();
+    expect(container.textContent).toContain(id);
   });
 });

@@ -10,13 +10,13 @@ import { requireAuth, withRoute } from "../../../lib/apiHelpers";
  * without deleting the whole content.
  */
 export const DELETE = withRoute(
-  "Failed to delete image",
+  "ลบรูปไม่สำเร็จ",
   async (request: NextRequest) => {
     await requireAuth();
 
     const { imageUrl, contentId } = await request.json();
     if (!imageUrl) {
-      return NextResponse.json({ error: "imageUrl is required" }, { status: 400 });
+      return NextResponse.json({ error: "ต้องระบุ imageUrl ของรูป" }, { status: 400 });
     }
 
     const excludeSource = contentId ? { type: "content" as const, id: contentId } : undefined;

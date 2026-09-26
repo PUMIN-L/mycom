@@ -5,14 +5,23 @@ import { sendContactEmail, isMailConfigured } from "../../lib/mailer";
 import {
   saveContactMessage,
   markContactMessageEmailed,
+  countContactMessagesSince,
 } from "../../lib/contactMessageStore";
+import { CONTACT_EMAIL_CAP_PER_HOUR, CONTACT_HONEYPOT_FIELD } from "../../lib/contactSpamGuard";
 
-// Public contact-form endpoint. Validates, rate-limits, then emails the
-// submission to the CMS-configured recipient (settings.contact_email).
+// Public contact-form endpoint. Validates, rate-limits, stores the lead, then
+// emails it to the CMS-configured recipient (settings.contact_email).
 //
 // In-memory rate limit keyed on client IP. x-forwarded-for is spoofable, so
 // this is spam mitigation, not a security boundary — worst case an attacker
 // costs us a few emails. Entries are pruned per request and hard-capped.
+//
+// Two more layers against bots (lib/contactSpamGuard.ts):
+//   * a honeypot field — a bot that fills it is answered "sent", so it learns
+//     nothing, and its submission is dropped;
+//   * an hourly email cap counted in the database — the IP limit above is per
+//     serverless instance, so a flood spread across instances would otherwise
+//     still send one email per message. Past the cap leads are still stored.
 const LIMIT_PER_WINDOW = 5;
 const WINDOW_MS = 10 * 60 * 1000; // 10 minutes
 const MAX_TRACKED = 10_000;
@@ -37,17 +46,22 @@ const MAX_LEN = { name: 200, email: 320, phone: 50, subject: 300, message: 5000 
 // as defense-in-depth against header address injection (mailer.ts).
 const EMAIL_RE = /^[^\s@<>"',;]+@[^\s@<>"',;]+\.[^\s@<>"',;]+$/;
 
+/** True once more than CONTACT_EMAIL_CAP_PER_HOUR leads (this one included)
+ *  have arrived within the hour before `now`. */
+async function overHourlyEmailCap(now: number): Promise<boolean> {
+  try {
+    const since = new Date(now - 60 * 60 * 1000).toISOString();
+    return (await countContactMessagesSince(since)) > CONTACT_EMAIL_CAP_PER_HOUR;
+  } catch (err) {
+    // A failed count must not cost a real lead its email.
+    console.error("contact: could not count recent leads — emailing anyway:", err);
+    return false;
+  }
+}
+
 export const POST = withRoute(
   "ส่งข้อความไม่สำเร็จ กรุณาลองใหม่",
   async (request: NextRequest) => {
-    if (!isMailConfigured()) {
-      // Surfaced when SMTP_USER/SMTP_PASS are missing — check /api/health.
-      return NextResponse.json(
-        { error: "ระบบส่งอีเมลยังไม่ถูกตั้งค่า กรุณาติดต่อผ่าน LINE" },
-        { status: 503 }
-      );
-    }
-
     const now = Date.now();
     prune(now);
     const ip =
@@ -61,6 +75,10 @@ export const POST = withRoute(
     }
 
     const body = await request.json();
+    if (String(body[CONTACT_HONEYPOT_FIELD] ?? "").trim() !== "") {
+      console.warn("contact: honeypot field filled — submission dropped as spam");
+      return NextResponse.json({ success: true, emailed: false });
+    }
     const name = String(body.name ?? "").trim();
     const email = String(body.email ?? "").trim();
     const phone = String(body.phone ?? "").trim();
@@ -118,17 +136,26 @@ export const POST = withRoute(
       emailedOk: false,
     });
 
-    // The lead is now safe. A send failure is logged and reported as
-    // emailed:false, but the submission still succeeds (the admin sees it in the
-    // inbox and can follow up) rather than 500-ing and telling the visitor it
-    // failed.
-    const to = await getContactEmail();
+    // The lead is now safe. Not emailing it — SMTP not set up, the hourly cap
+    // reached, or a send that failed — is logged and reported as
+    // emailed:false, but the submission still succeeds (the admin sees it in
+    // the inbox and can follow up) rather than telling the visitor it failed.
     let emailed = false;
-    try {
-      await sendContactEmail(to, { name, email, phone, subject, message });
-      emailed = true;
-    } catch (err) {
-      console.error("contact: lead saved but email delivery failed:", err);
+    if (!isMailConfigured()) {
+      // SMTP_USER/SMTP_PASS are missing — /api/health reports it too.
+      console.error("contact: lead saved but not emailed — SMTP is not configured");
+    } else if (await overHourlyEmailCap(now)) {
+      console.warn(
+        `contact: lead saved but not emailed — over ${CONTACT_EMAIL_CAP_PER_HOUR} leads in the last hour`
+      );
+    } else {
+      try {
+        const to = await getContactEmail();
+        await sendContactEmail(to, { name, email, phone, subject, message });
+        emailed = true;
+      } catch (err) {
+        console.error("contact: lead saved but email delivery failed:", err);
+      }
     }
 
     // Flag update is separate: a failure here must NOT be logged as an email

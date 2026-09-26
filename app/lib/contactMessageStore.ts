@@ -48,6 +48,20 @@ export async function saveContactMessage(
   );
 }
 
+/**
+ * Leads stored at or after `sinceIso` — counted in the database, so the
+ * answer is the same on every serverless instance (an in-memory counter is
+ * per instance; see lib/rateLimit.ts). createdAt is an ISO string, indexed,
+ * and ISO strings sort chronologically.
+ */
+export async function countContactMessagesSince(sinceIso: string): Promise<number> {
+  const [rows] = await query<RowDataPacket[]>(
+    "SELECT COUNT(*) AS n FROM contact_messages WHERE createdAt >= ?",
+    [sinceIso]
+  );
+  return Number(rows[0]?.n ?? 0);
+}
+
 /** Flag whether the notification email for a stored lead was delivered. */
 export async function markContactMessageEmailed(
   id: string,

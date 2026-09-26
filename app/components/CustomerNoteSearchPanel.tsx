@@ -13,6 +13,7 @@ import {
   validateReplacement,
 } from "../lib/noteSearch";
 import type { NoteMatch, NoteMatcher } from "../lib/noteSearch";
+import { containsHtmlTag } from "../lib/htmlTags";
 
 /**
  * ค้นหา–แทนที่ในบันทึกลูกค้า — the search block on /customers.
@@ -255,12 +256,17 @@ export function buildPreview(
   });
 }
 
-/** `sanitizePlainText` runs on the server before the replacement is written, and
- *  it strips tags and escapes `<`, `>` and `&`. That would make the stored text
- *  differ from what this screen previewed, so the difference is announced
- *  rather than discovered afterwards. */
-function replacementNeedsWarning(replacement: string): boolean {
-  return /[<>&]/.test(replacement);
+/** `sanitizePlainText` runs on the server before the replacement is written.
+ *  It keeps `&`, `<` and `>` as typed but REMOVES a real HTML tag ("<b>…</b>",
+ *  "<img …>" — the rule is `containsHtmlTag` in lib/htmlTags.ts, the very
+ *  one the server saves by), which would make the stored text differ from
+ *  what this screen previewed, so that case is announced rather than
+ *  discovered afterwards. An HTML character reference typed literally
+ *  ("&amp;", "&#60;") is also read as the character it names. Anything else
+ *  — "5 < 10", "A&B", a model "PS<B-200" — is stored exactly as typed and
+ *  needs no warning. */
+export function replacementNeedsWarning(replacement: string): boolean {
+  return containsHtmlTag(replacement) || /&(#[0-9]+|#x[0-9a-f]+|[a-z][a-z0-9]*);/i.test(replacement);
 }
 
 // ── Props ────────────────────────────────────────────────────────────────────
@@ -507,7 +513,7 @@ export default function CustomerNoteSearchPanel({
     if (replacementNeedsWarning(replacement)) {
       lines.push("");
       lines.push(
-        "หมายเหตุ: คำแทนที่มีอักขระ < > หรือ & ซึ่งระบบจะแปลงหรือตัดออกก่อนบันทึก ผลจริงอาจต่างจากตัวอย่างนี้เล็กน้อย"
+        "หมายเหตุ: คำแทนที่มีข้อความที่ดูเหมือนแท็ก HTML (เช่น <b>) หรือรหัสอักขระ (เช่น &amp;) ซึ่งระบบจะตัดออกหรือแปลงก่อนบันทึก ผลจริงอาจต่างจากตัวอย่างนี้เล็กน้อย"
       );
     }
 
@@ -803,7 +809,7 @@ export default function CustomerNoteSearchPanel({
                 </p>
                 {replacementNeedsWarning(replacement) && (
                   <p className="mt-1 text-xs text-amber-700">
-                    คำแทนที่มีอักขระ &lt; &gt; หรือ &amp; ระบบจะแปลงหรือตัดออกก่อนบันทึก
+                    คำแทนที่มีข้อความที่ดูเหมือนแท็ก HTML (เช่น &lt;b&gt;) หรือรหัสอักขระ (เช่น &amp;amp;) ระบบจะตัดออกหรือแปลงก่อนบันทึก
                     ผลจริงอาจต่างจากตัวอย่างเล็กน้อย
                   </p>
                 )}

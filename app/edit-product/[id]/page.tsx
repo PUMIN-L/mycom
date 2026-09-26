@@ -11,6 +11,7 @@ import type { SearchableDropdownOption } from "../../components/SearchableDropdo
 import ImageDeleteConfirmDialog, { type OrphanedImage } from "../../components/ImageDeleteConfirmDialog";
 import { stripHtml } from "../../lib/stripHtml";
 import { useLeaveGuard } from "../../components/LeaveGuard";
+import { uploadFormData } from "../../lib/uploadClient";
 
 interface ProductCategory {
   id: number;
@@ -116,7 +117,7 @@ export default function EditProduct({ params }: { params: Promise<{ id: string }
       try {
         const res = await fetch(`/api/products/${productId}`);
         if (!res.ok) {
-          throw new Error("Product not found");
+          throw new Error("ไม่พบสินค้านี้");
         }
         const data = await res.json();
         setTitleTh(data.title_th || "");
@@ -153,10 +154,7 @@ export default function EditProduct({ params }: { params: Promise<{ id: string }
     formData.append("file", file);
 
     try {
-      const response = await fetch("/api/upload", {
-        method: "POST",
-        body: formData,
-      });
+      const response = await uploadFormData(formData);
 
       if (!response.ok) throw new Error("Failed to upload image");
 
@@ -243,7 +241,7 @@ export default function EditProduct({ params }: { params: Promise<{ id: string }
 
       if (!response.ok) {
         const errData = await response.json().catch(() => ({}));
-        throw new Error(errData.error || "Failed to update product");
+        throw new Error(errData.error || "แก้ไขสินค้าไม่สำเร็จ");
       }
 
       showToast("บันทึกการแก้ไขสำเร็จ", "success");

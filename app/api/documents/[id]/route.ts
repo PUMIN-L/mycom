@@ -6,14 +6,14 @@ import { getDocument, deleteDocument, updateDocument } from "../../../lib/docume
 export const dynamic = "force-dynamic";
 
 export const DELETE = withRoute(
-  "Failed to delete document",
+  "ลบเอกสารไม่สำเร็จ",
   async (request: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
     await requireAuth();
     const { id } = await params;
 
     const doc = await getDocument(id);
     if (!doc) {
-      return NextResponse.json({ error: "Document not found" }, { status: 404 });
+      return NextResponse.json({ error: "ไม่พบเอกสารนี้" }, { status: 404 });
     }
 
     // Collect Cloudinary URLs for client-side deletion confirmation.
@@ -35,7 +35,7 @@ export const DELETE = withRoute(
 );
 
 export const PUT = withRoute(
-  "Failed to update document",
+  "แก้ไขเอกสารไม่สำเร็จ",
   async (request: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
     await requireAuth();
     const { id } = await params;
@@ -43,12 +43,12 @@ export const PUT = withRoute(
     
     const doc = await getDocument(id);
     if (!doc) {
-      return NextResponse.json({ error: "Document not found" }, { status: 404 });
+      return NextResponse.json({ error: "ไม่พบเอกสารนี้" }, { status: 404 });
     }
 
     const { title, description } = body;
     if (!title) {
-      return NextResponse.json({ error: "Title is required" }, { status: 400 });
+      return NextResponse.json({ error: "กรุณากรอกชื่อเอกสาร" }, { status: 400 });
     }
 
     await updateDocument(id, { title, description });

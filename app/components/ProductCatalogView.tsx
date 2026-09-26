@@ -194,13 +194,13 @@ function ProductCard({
           )}
         </div>
         <div className="flex flex-1 flex-col p-4">
-          <Heading className="line-clamp-2 text-base font-bold text-gray-900 group-hover:text-[var(--accent)]">
+          <Heading className="line-clamp-2 whitespace-pre-wrap text-base font-bold text-gray-900 group-hover:text-[var(--accent)]">
             {title}
           </Heading>
           {lang !== "en" && en && en.toLowerCase() !== title.toLowerCase() && (
             <p className="mt-0.5 line-clamp-1 text-xs text-gray-400">{en}</p>
           )}
-          {desc && <p className="mt-2 line-clamp-2 text-sm text-gray-500">{desc}</p>}
+          {desc && <p className="mt-2 line-clamp-2 whitespace-pre-wrap text-sm text-gray-500">{desc}</p>}
         </div>
       </Link>
     </li>

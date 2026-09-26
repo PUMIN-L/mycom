@@ -56,6 +56,39 @@ describe('isValidDateString', () => {
   it('rejects a month/day out of any calendar\'s range', () => {
     expect(isValidDateString('2026-13-01')).toBe(false);
   });
+
+  // new Date("2026-02-31T00:00:00") is 3 March, not Invalid Date — the day
+  // has to be compared back or it slips through.
+  it('rejects a day past the end of its month, which new Date() would roll over', () => {
+    expect(isValidDateString('2026-02-31')).toBe(false);
+    expect(isValidDateString('2026-02-29')).toBe(false); // 2026 is not a leap year
+    expect(isValidDateString('2026-04-31')).toBe(false);
+    expect(isValidDateString('2026-01-32')).toBe(false);
+    expect(isValidDateString('2026-00-10')).toBe(false);
+    expect(isValidDateString('2026-05-00')).toBe(false);
+  });
+
+  it('accepts the last day of every month, leap days included', () => {
+    expect(isValidDateString('2028-02-29')).toBe(true);
+    expect(isValidDateString('2000-02-29')).toBe(true);
+    expect(isValidDateString('2026-02-28')).toBe(true);
+    expect(isValidDateString('2026-04-30')).toBe(true);
+    expect(isValidDateString('2026-12-31')).toBe(true);
+  });
+
+  it('gives the same answer in any timezone the code runs in', () => {
+    const realTZ = process.env.TZ;
+    try {
+      for (const tz of ['UTC', 'Asia/Bangkok', 'America/New_York', 'Pacific/Kiritimati']) {
+        process.env.TZ = tz;
+        expect(isValidDateString('2026-03-08')).toBe(true); // US DST starts
+        expect(isValidDateString('2026-02-31')).toBe(false);
+      }
+    } finally {
+      if (realTZ === undefined) delete process.env.TZ;
+      else process.env.TZ = realTZ;
+    }
+  });
 });
 
 describe('bangkokDateAtHour', () => {

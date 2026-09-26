@@ -314,3 +314,18 @@ describe('SalesTable — expandable sale rows', () => {
     expect(within(document.body).getAllByText(/รายการสินค้าในบิล/)).toHaveLength(2);
   });
 });
+
+// A model name can hold "<" + a letter ("PS<B-200>") — the save keeps it
+// (lib/htmlTags.ts). The table must show it, not read it as a tag and hide it;
+// a catalog title copied in as rich text is still shown as text.
+describe('SalesTable — product names', () => {
+  it('shows a model with < + a letter exactly as saved', () => {
+    renderTable({ records: [makeRecord({ productName: 'รุ่น PS<B-200>' })] });
+    expect(screen.getByText('รุ่น PS<B-200>')).toBeTruthy();
+  });
+
+  it('reads a rich catalog title as text', () => {
+    renderTable({ records: [makeRecord({ productName: '<p>A &amp; B</p>' })] });
+    expect(screen.getByText('A & B')).toBeTruthy();
+  });
+});

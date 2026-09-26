@@ -2,6 +2,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import { GET, PUT, DELETE } from '@/app/api/products/[id]/route';
+import type { ProductData } from '@/app/lib/types';
 
 // Product store — only the functions these handlers touch.
 vi.mock('@/app/lib/productStore', () => {
@@ -81,7 +82,7 @@ describe('Products [id] API Route', () => {
 
       const res = await GET(getRequest(), ctx('missing'));
       expect(res.status).toBe(404);
-      expect((await res.json()).error).toBe('Product not found');
+      expect((await res.json()).error).toBe('ไม่พบสินค้านี้');
     });
 
     it('hides an unpublished product from anonymous callers as 404 (not 403)', async () => {
@@ -94,7 +95,7 @@ describe('Products [id] API Route', () => {
 
       const res = await GET(getRequest(), ctx('2'));
       expect(res.status).toBe(404);
-      expect((await res.json()).error).toBe('Product not found');
+      expect((await res.json()).error).toBe('ไม่พบสินค้านี้');
     });
 
     it('returns an unpublished product (200) to a logged-in admin', async () => {
@@ -105,6 +106,30 @@ describe('Products [id] API Route', () => {
       const res = await GET(getRequest(), ctx('2'));
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual(product);
+    });
+
+    // Where a product is bought from is internal — only the admin edit form
+    // (and the showcase's admin-only suppliers modal) reads supplierIds.
+    it('does not tell an anonymous caller which suppliers a product comes from', async () => {
+      vi.mocked(getProduct).mockResolvedValue({
+        id: '1', title_en: 'Visible', isPublished: true, supplierIds: ['sup-1', 'sup-2'],
+      } as unknown as ProductData);
+
+      const res = await GET(getRequest(), ctx('1'));
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body).toEqual({ id: '1', title_en: 'Visible', isPublished: true });
+      expect(JSON.stringify(body)).not.toContain('sup-1');
+    });
+
+    it('still gives a logged-in admin the supplierIds the edit form loads', async () => {
+      vi.mocked(getSession).mockResolvedValue(adminSession);
+      vi.mocked(getProduct).mockResolvedValue({
+        id: '1', title_en: 'Visible', isPublished: true, supplierIds: ['sup-1', 'sup-2'],
+      } as unknown as ProductData);
+
+      const res = await GET(getRequest(), ctx('1'));
+      expect((await res.json()).supplierIds).toEqual(['sup-1', 'sup-2']);
     });
   });
 
@@ -127,7 +152,7 @@ describe('Products [id] API Route', () => {
 
       const res = await PUT(mutatingRequest('PUT', body), ctx('missing'));
       expect(res.status).toBe(404);
-      expect((await res.json()).error).toBe('Product not found');
+      expect((await res.json()).error).toBe('ไม่พบสินค้านี้');
       expect(revalidateTag).not.toHaveBeenCalled();
     });
 
@@ -209,7 +234,7 @@ describe('Products [id] API Route', () => {
 
       const res = await DELETE(mutatingRequest('DELETE'), ctx('missing'));
       expect(res.status).toBe(404);
-      expect((await res.json()).error).toBe('Product not found');
+      expect((await res.json()).error).toBe('ไม่พบสินค้านี้');
       expect(deleteProduct).not.toHaveBeenCalled();
       expect(revalidateTag).not.toHaveBeenCalled();
     });

@@ -80,15 +80,22 @@ export function formatDisplayDateTime(value?: string | null): string {
 }
 
 /**
- * True for a syntactically valid "YYYY-MM-DD" calendar date. Several date
+ * True for a "YYYY-MM-DD" string naming a day that exists. Several date
  * columns (warranty/schedule dates) are plain VARCHAR compared and sorted
  * LEXICALLY in SQL — that only sorts chronologically if every stored value is
  * actually in this shape, so any input crossing into one of those columns
  * must be checked with this before being trusted.
+ *
+ * "2026-02-31" is refused, not just "2026-13-01": `new Date()` does not fail on
+ * a day past the end of the month, it rolls over into the next one, so the
+ * parsed day is compared back. A DATE column (sales, expenses) rejects such a
+ * value outright, and in a VARCHAR one it is a date nobody can pick again.
  */
 export function isValidDateString(value: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
-  return !isNaN(new Date(value + "T00:00:00").getTime());
+  const [y, m, d] = value.split("-").map(Number);
+  const parsed = new Date(Date.UTC(y, m - 1, d));
+  return parsed.getUTCFullYear() === y && parsed.getUTCMonth() === m - 1 && parsed.getUTCDate() === d;
 }
 
 // Bangkok is UTC+7 year-round (no DST), so a fixed offset is exact. Use these

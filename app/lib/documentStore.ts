@@ -75,7 +75,7 @@ export async function updateDocument(
   updates: Partial<DocumentData>
 ): Promise<void> {
   const doc = await getDocument(id);
-  if (!doc) throw new Error("Document not found");
+  if (!doc) throw new Error("ไม่พบเอกสารนี้");
 
   // Only SET the columns actually supplied, so concurrent edits to different
   // fields don't clobber each other via a full-row read-modify-write.

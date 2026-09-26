@@ -6,20 +6,20 @@ import { sanitizePlainText } from "../../../lib/sanitizeHtml";
 
 type Ctx = { params: Promise<{ id: string }> };
 
-export const PUT = withRoute("Failed to update spec", async (req: Request, { params }: Ctx) => {
+export const PUT = withRoute("แก้ไขสเปกไม่สำเร็จ", async (req: Request, { params }: Ctx) => {
   await requireAuth();
   
   const { id } = await params;
   const body = await req.json();
 
   if (!body.productId || typeof body.productId !== "string" || body.productId.trim() === "") {
-    throw new ApiError(400, "productId is required");
+    throw new ApiError(400, "กรุณาเลือกสินค้า");
   }
   if (!body.name || typeof body.name !== "string" || body.name.trim() === "") {
-    throw new ApiError(400, "name is required");
+    throw new ApiError(400, "กรุณากรอกชื่อสเปก");
   }
   if (!body.detail || typeof body.detail !== "string" || body.detail.trim() === "") {
-    throw new ApiError(400, "detail is required");
+    throw new ApiError(400, "กรุณากรอกรายละเอียดสเปก");
   }
 
   const productId = sanitizePlainText(body.productId).substring(0, 255);
@@ -32,13 +32,13 @@ export const PUT = withRoute("Failed to update spec", async (req: Request, { par
   );
 
   if (result.affectedRows === 0) {
-    throw new ApiError(404, "Spec not found");
+    throw new ApiError(404, "ไม่พบสเปกนี้");
   }
 
   return NextResponse.json({ data: { id, productId, name, detail } });
 });
 
-export const DELETE = withRoute("Failed to delete spec", async (req: Request, { params }: Ctx) => {
+export const DELETE = withRoute("ลบสเปกไม่สำเร็จ", async (req: Request, { params }: Ctx) => {
   await requireAuth();
   
   const { id } = await params;
@@ -49,7 +49,7 @@ export const DELETE = withRoute("Failed to delete spec", async (req: Request, { 
   );
 
   if (result.affectedRows === 0) {
-    throw new ApiError(404, "Spec not found");
+    throw new ApiError(404, "ไม่พบสเปกนี้");
   }
 
   return NextResponse.json({ success: true });

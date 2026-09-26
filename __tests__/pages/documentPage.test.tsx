@@ -50,7 +50,8 @@ describe("/document/[id]", () => {
 
   it("links the PDF itself for crawlers, and marks the download nofollow", async () => {
     const { container } = render(await DocumentPreviewPage(params));
-    const proxy = `/api/documents/proxy?url=${encodeURIComponent(doc.pdfUrl)}`;
+    // `name` = the title, so the saved file is "Catalog 2026.pdf", not "document.pdf".
+    const proxy = `/api/documents/proxy?url=${encodeURIComponent(doc.pdfUrl)}&name=${encodeURIComponent(doc.title)}`;
     // Compared by attribute: jsdom's selector engine mis-parses "&" inside
     // a quoted [href="…"] value.
     const link = (href: string) =>

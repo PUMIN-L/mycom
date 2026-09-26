@@ -22,6 +22,7 @@ import SearchableDropdown from "../components/SearchableDropdown";
 import FormattedNumberInput from "../components/FormattedNumberInput";
 import ConfirmDialog from "../components/ConfirmDialog";
 import ImageDeleteConfirmDialog, { type OrphanedImage } from "../components/ImageDeleteConfirmDialog";
+import { uploadFormData } from "../lib/uploadClient";
 
 // ── ใบเสนอราคา (Quotation builder) ──────────────────────────────────────────
 // Admin-only tool: fill the form on the left, see a live A4 sheet on the right,
@@ -753,7 +754,7 @@ export default function QuotationPage() {
     try {
       const formData = new FormData();
       formData.append("file", file);
-      const res = await fetch("/api/upload", { method: "POST", body: formData });
+      const res = await uploadFormData(formData);
       if (!res.ok) throw new Error();
       const { url } = await res.json();
       // imageUploaded:true → this image was created for this quote and will be
@@ -962,7 +963,6 @@ export default function QuotationPage() {
     const uploadedImages = q.items
       .filter((it) => it.imageUploaded && it.imageUrl)
       .map((it) => it.imageUrl);
-    let saved = false;
     try {
       const res = await fetch("/api/quotations", {
         method: "POST",
@@ -979,10 +979,20 @@ export default function QuotationPage() {
         setGenerating(false);
         return;
       }
-      saved = res.ok;
+      if (!res.ok) throw new Error(`save failed: ${res.status}`);
     } catch {
-      /* save is best-effort — never block the download */
+      // No PDF for a quotation that was not recorded, as for billing, PO and
+      // service-job documents: the customer would hold a number the system
+      // does not know, free to be issued again to someone else. (The save
+      // used to be best-effort, and the PDF was made regardless.)
+      showToast("บันทึกใบเสนอราคาไม่สำเร็จ จึงยังไม่ได้สร้าง PDF กรุณาลองใหม่", "error");
+      setGenerating(false);
+      return;
     }
+    // Recorded: reserve the number locally (mirrors handleSave) and settle it,
+    // so a later reset/new quote advances past it and the dup-check stays
+    // accurate — even if making the PDF below fails.
+    settleDocNo();
     try {
       await generatePdf();
     } catch {
@@ -991,14 +1001,7 @@ export default function QuotationPage() {
       return;
     }
     setGenerating(false);
-    if (saved) {
-      // Reserve the number locally (mirrors handleSave) and settle it, so a
-      // later reset/new quote advances past it and the dup-check stays accurate.
-      settleDocNo();
-      setSavePrompt(true);
-    } else {
-      showToast("ดาวน์โหลดแล้ว (แต่บันทึกประวัติไม่สำเร็จ)", "error");
-    }
+    setSavePrompt(true);
   }
 
   // After a quote is persisted, reserve its number locally and stop the

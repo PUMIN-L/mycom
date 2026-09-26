@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const conn = { query: vi.fn() };
 const topQuery = vi.fn();
@@ -346,5 +346,35 @@ describe('generateExpensesForMonth', () => {
     expect(result.generated).toEqual([
       { id: expect.any(String), title: 'เงินเดือน', amount: 30000 },
     ]);
+  });
+});
+
+// Vercel runs on UTC: at 02:00 on the 25th in Bangkok, the UTC date is still
+// the 24th. A date the caller left out (or sent broken) means the business's
+// day — Bangkok's — whatever the server clock says.
+describe('addExpense — the date it falls back to', () => {
+  const realTZ = process.env.TZ;
+  beforeEach(() => {
+    process.env.TZ = 'UTC';
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-09-24T19:00:00Z')); // 02:00, 25 Sep in Bangkok
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    if (realTZ === undefined) delete process.env.TZ;
+    else process.env.TZ = realTZ;
+  });
+
+  it.each(['', 'not-a-date', '2026-02-31'])("is Bangkok's today for expenseDate %j", async (expenseDate) => {
+    topQuery.mockResolvedValue([{ affectedRows: 1 }]);
+    await addExpense({ title: 'x', amount: 1, expenseDate });
+    const [, params] = topQuery.mock.calls[0];
+    expect(params[3]).toBe('2026-09-25');
+  });
+
+  it('keeps a real date exactly as given', async () => {
+    topQuery.mockResolvedValue([{ affectedRows: 1 }]);
+    await addExpense({ title: 'x', amount: 1, expenseDate: '2028-02-29' });
+    expect(topQuery.mock.calls[0][1][3]).toBe('2028-02-29');
   });
 });

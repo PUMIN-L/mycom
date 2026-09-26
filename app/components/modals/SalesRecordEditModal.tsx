@@ -8,11 +8,7 @@ import { toLocalDateString } from "../../lib/dateFormat";
 // Shared with the dashboard's own edit form so both read "is this bill mixed?"
 // by the SAME rule the server matches machines with (productGroupKey).
 import { type LoadedEquipment, isMixedModelBill } from "../../dashboard/types";
-
-function stripHtml(html?: string): string {
-  if (!html) return "";
-  return html.replace(/<[^>]*>/g, "");
-}
+import { stripHtml } from "../../lib/stripHtml";
 
 const COST_TYPE_OPTIONS = [
   { value: "product", label: "📦 ต้นทุนค่าสินค้า" },
@@ -276,18 +272,41 @@ export default function SalesRecordEditModal({
         const recordId = savedRecord?.id || editingId;
 
         if (recordId) {
+          // The sale itself is saved at this point; its costs go in a second
+          // request, which can fail on its own — an expired session, a cost
+          // the server refuses. That request used to be fired and forgotten:
+          // the modal said "saved", the costs were silently not, and every
+          // margin built on them was wrong. Now a failure is said out loud.
+          // The modal still closes as before: for a NEW sale the record exists
+          // now, and pressing save again from here would create a second one.
+          let costError: string | null = null;
           try {
             const validCostItems = costItems.filter(ci => ci.amount > 0);
-            await fetch(`/api/admin/sales/${recordId}/costs/sync`, {
+            const costRes = await fetch(`/api/admin/sales/${recordId}/costs/sync`, {
               method: "PUT",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify(validCostItems),
             });
-          } catch (err: any) {
-            console.error("Failed to sync costs", err);
+            if (!costRes.ok) {
+              const body = await costRes.json().catch(() => null);
+              costError =
+                costRes.status === 401
+                  ? "เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่"
+                  : typeof body?.error === "string" && body.error
+                    ? body.error
+                    : `รหัสข้อผิดพลาด ${costRes.status}`;
+            }
+          } catch {
+            costError = "เชื่อมต่อเซิร์ฟเวอร์ไม่ได้";
+          }
+          if (costError) {
+            alert(
+              `บันทึกรายการขายแล้ว แต่บันทึกต้นทุนไม่สำเร็จ (${costError})\n` +
+                "กรุณาเปิดรายการนี้เพื่อแก้ไข แล้วบันทึกต้นทุนอีกครั้ง"
+            );
           }
         }
-        
+
         onSaveSuccess();
       } else {
         const err = await res.json();

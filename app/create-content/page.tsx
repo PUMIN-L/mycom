@@ -13,6 +13,7 @@ import { stripHtml } from "../lib/stripHtml";
 import { useLeaveGuard, LeaveGuardModal } from "../components/LeaveGuard";
 import YoutubeEmbed from "../components/YoutubeEmbed";
 import type { ContentBlock } from "../lib/types";
+import { uploadFormData } from "../lib/uploadClient";
 
 interface ProductCategory {
   id: number;
@@ -234,10 +235,7 @@ function CreateContentInner() {
     formData.append("file", file);
 
     try {
-      const response = await fetch("/api/upload", {
-        method: "POST",
-        body: formData,
-      });
+      const response = await uploadFormData(formData);
 
       if (!response.ok) {
         throw new Error("Failed to upload image");
@@ -271,7 +269,7 @@ function CreateContentInner() {
     formData.append("file", file);
 
     try {
-      const response = await fetch("/api/upload", { method: "POST", body: formData });
+      const response = await uploadFormData(formData);
       if (!response.ok) throw new Error("Failed to upload image");
       const data = await response.json();
       updateBlock(replacingBlockId, { imageUrl: data.url });
@@ -308,7 +306,7 @@ function CreateContentInner() {
       const uploadPromises = filesArray.map(async (file) => {
         const formData = new FormData();
         formData.append("file", file);
-        const res = await fetch("/api/upload", { method: "POST", body: formData });
+        const res = await uploadFormData(formData);
         if (!res.ok) throw new Error("Upload failed");
         const data = await res.json();
         return data.url;

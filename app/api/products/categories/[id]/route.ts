@@ -5,14 +5,14 @@ import { requireAuth, withRoute } from "../../../../lib/apiHelpers";
 
 // DELETE — remove a category (login required). Blocked while products still use it.
 export const DELETE = withRoute(
-  "Failed to delete category",
+  "ลบหมวดหมู่ไม่สำเร็จ",
   async (_request: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
     await requireAuth();
     const { id } = await params;
     const categoryId = parseInt(id, 10);
 
     if (isNaN(categoryId)) {
-      return NextResponse.json({ error: "Invalid category ID" }, { status: 400 });
+      return NextResponse.json({ error: "รหัสหมวดหมู่ไม่ถูกต้อง" }, { status: 400 });
     }
 
     // Constraint check: a category can't be deleted while it still has products.
@@ -21,7 +21,7 @@ export const DELETE = withRoute(
       return NextResponse.json(
         {
           error:
-            "Cannot delete category because it contains products. Please delete or move the products first.",
+            "ลบหมวดหมู่นี้ไม่ได้ เพราะยังมีสินค้าอยู่ในหมวด กรุณาลบหรือย้ายสินค้าออกก่อน",
         },
         { status: 400 }
       );
@@ -29,7 +29,7 @@ export const DELETE = withRoute(
 
     const success = await deleteCategory(categoryId);
     if (!success) {
-      return NextResponse.json({ error: "Category not found" }, { status: 404 });
+      return NextResponse.json({ error: "ไม่พบหมวดหมู่นี้" }, { status: 404 });
     }
 
     // Invalidate product cache
@@ -41,14 +41,14 @@ export const DELETE = withRoute(
 
 // PUT — update a category (login required).
 export const PUT = withRoute(
-  "Failed to update category",
+  "แก้ไขหมวดหมู่ไม่สำเร็จ",
   async (request: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
     await requireAuth();
     const { id } = await params;
     const categoryId = parseInt(id, 10);
 
     if (isNaN(categoryId)) {
-      return NextResponse.json({ error: "Invalid category ID" }, { status: 400 });
+      return NextResponse.json({ error: "รหัสหมวดหมู่ไม่ถูกต้อง" }, { status: 400 });
     }
 
     const body = await request.json();
@@ -62,14 +62,14 @@ export const PUT = withRoute(
       typeof name_zh !== "string" || !name_zh
     ) {
       return NextResponse.json(
-        { error: "Missing required name fields" },
+        { error: "กรุณากรอกชื่อหมวดหมู่ให้ครบทั้ง 3 ภาษา (ไทย อังกฤษ จีน)" },
         { status: 400 }
       );
     }
 
     const stored = await updateCategory(categoryId, { name_th, name_en, name_zh });
     if (!stored) {
-      return NextResponse.json({ error: "Category not found" }, { status: 404 });
+      return NextResponse.json({ error: "ไม่พบหมวดหมู่นี้" }, { status: 404 });
     }
 
     // Invalidate product cache

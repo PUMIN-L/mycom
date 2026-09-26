@@ -7,6 +7,7 @@ import {
   saveContactMessage,
   markContactMessageEmailed,
   listContactMessages,
+  countContactMessagesSince,
 } from '@/app/lib/contactMessageStore';
 
 beforeEach(() => vi.clearAllMocks());
@@ -22,6 +23,20 @@ const lead = {
 };
 
 describe('contactMessageStore', () => {
+  it('countContactMessagesSince counts the rows from that instant on', async () => {
+    vi.mocked(query).mockResolvedValue([[{ n: 7 }]] as never);
+    expect(await countContactMessagesSince('2026-09-25T01:00:00.000Z')).toBe(7);
+    const [sql, params] = vi.mocked(query).mock.calls[0];
+    expect(sql).toContain('COUNT(*)');
+    expect(sql).toContain('createdAt >= ?');
+    expect(params).toEqual(['2026-09-25T01:00:00.000Z']);
+  });
+
+  it('countContactMessagesSince reads a driver string count as a number', async () => {
+    vi.mocked(query).mockResolvedValue([[{ n: '12' }]] as never);
+    expect(await countContactMessagesSince('2026-09-25T01:00:00.000Z')).toBe(12);
+  });
+
   it('saveContactMessage inserts with emailedOk=0 by default', async () => {
     vi.mocked(query).mockResolvedValue([{ affectedRows: 1 }] as any);
     await saveContactMessage(lead);

@@ -55,3 +55,11 @@ describe("next.config.ts Content-Security-Policy", () => {
     expect(headers[0].source).toBe("/:path*");
   });
 });
+
+describe("next.config.ts connect-src", () => {
+  it("lets the browser upload large files straight to Cloudinary's API — that host only", async () => {
+    const connect = directive(await cspFor("production"), "connect-src");
+    expect(connect).toBe("connect-src 'self' https://res.cloudinary.com https://api.cloudinary.com");
+    expect(connect).not.toContain("*");
+  });
+});

@@ -43,11 +43,11 @@ export const PUT = withRoute(
     const data = await request.json();
 
     if (!data.companyId || typeof data.companyId !== "string" || data.companyId.trim() === "") {
-      return jsonError("companyId is required", 400);
+      return jsonError("กรุณาเลือกบริษัท", 400);
     }
 
     if (!data.name || typeof data.name !== "string" || data.name.trim() === "") {
-      return jsonError("Name is required", 400);
+      return jsonError("กรุณากรอกชื่อ", 400);
     }
 
     const companyId = sanitizePlainText(data.companyId).substring(0, 255);
@@ -155,7 +155,7 @@ export const PUT = withRoute(
 );
 
 export const DELETE = withRoute(
-  "Failed to delete customer",
+  "ลบลูกค้าไม่สำเร็จ",
   async (request: Request, { params }: { params: Promise<{ id: string }> }) => {
     await requireAuth();
 
@@ -170,14 +170,14 @@ export const DELETE = withRoute(
       [id]
     )) as any[];
     if (equipments.length > 0) {
-      return jsonError("Cannot delete customer with linked equipment", 400);
+      return jsonError("ลบลูกค้ารายนี้ไม่ได้ เพราะยังมีเครื่องมือที่ผูกกับลูกค้ารายนี้อยู่", 400);
     }
     const [salesRecords] = (await query(
       "SELECT id FROM sales_records WHERE customerId = ? LIMIT 1",
       [id]
     )) as any[];
     if (salesRecords.length > 0) {
-      return jsonError("Cannot delete customer with linked sales records", 400);
+      return jsonError("ลบลูกค้ารายนี้ไม่ได้ เพราะยังมีรายการขายที่ผูกกับลูกค้ารายนี้อยู่", 400);
     }
     // service_schedules.customerId has an ON DELETE CASCADE FK (customer-scoped
     // call follow-ups, not tied to equipment) — without this check, deleting
@@ -189,7 +189,7 @@ export const DELETE = withRoute(
       [id]
     )) as any[];
     if (schedules.length > 0) {
-      return jsonError("Cannot delete customer with linked call schedules", 400);
+      return jsonError("ลบลูกค้ารายนี้ไม่ได้ เพราะยังมีนัดโทรที่ผูกกับลูกค้ารายนี้อยู่", 400);
     }
 
     await query("DELETE FROM customers WHERE id = ?", [id]);

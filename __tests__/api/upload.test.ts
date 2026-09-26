@@ -63,7 +63,7 @@ describe('Upload API Route', () => {
 
       const res = await POST(uploadRequest(fd));
       expect(res.status).toBe(400);
-      expect((await res.json()).error).toBe('No file uploaded');
+      expect((await res.json()).error).toBe('ไม่พบไฟล์ที่อัปโหลด');
       expect(uploadImage).not.toHaveBeenCalled();
     });
 
@@ -74,7 +74,7 @@ describe('Upload API Route', () => {
 
       const res = await POST(uploadRequest(fd));
       expect(res.status).toBe(400);
-      expect((await res.json()).error).toContain('Unsupported image type');
+      expect((await res.json()).error).toContain('ไม่รองรับไฟล์รูปประเภทนี้');
       expect(uploadImage).not.toHaveBeenCalled();
     });
 
@@ -101,7 +101,7 @@ describe('Upload API Route', () => {
 
       const res = await POST(uploadRequest(fd));
       expect(res.status).toBe(400);
-      expect((await res.json()).error).toBe('Only PDF files are allowed for documents');
+      expect((await res.json()).error).toBe('เอกสารต้องเป็นไฟล์ PDF เท่านั้น');
       expect(uploadImage).not.toHaveBeenCalled();
     });
 
@@ -143,7 +143,7 @@ describe('Upload API Route', () => {
 
       const res = await DELETE(deleteRequest({}));
       expect(res.status).toBe(400);
-      expect((await res.json()).error).toBe('imageUrl is required');
+      expect((await res.json()).error).toBe('ต้องระบุ imageUrl ของรูป');
       expect(safeDeleteCloudinaryImage).not.toHaveBeenCalled();
     });
 

@@ -4,7 +4,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // getSession()/createSession() read the session epoch ("log out other devices").
 // Pinned here so these tests never reach the real settings store.
 vi.mock('@/app/lib/settingsStore', () => ({ getSessionEpoch: vi.fn(async () => 0) }));
-import { ApiError, jsonError, requireAuth, withRoute } from '@/app/lib/apiHelpers';
+import { ApiError, INVALID_JSON_BODY_MESSAGE, jsonError, requireAuth, withRoute } from '@/app/lib/apiHelpers';
 import * as sessionModule from '@/app/lib/session';
 
 // NOTE: next/server is intentionally NOT mocked — these tests assert against
@@ -125,6 +125,79 @@ describe('apiHelpers', () => {
       const res = await wrapped(req as any);
       expect(res).toBe(mockResponse);
       expect(handler).toHaveBeenCalled();
+    });
+  });
+
+  // A body the handler cannot use is the caller's mistake — a 400 — not a
+  // crash inside the handler reported (and logged) as a 500.
+  describe('withRoute — request.json() refuses an unusable body', () => {
+    const post = (body: string) =>
+      new Request('http://localhost:3000/api/x', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body,
+      });
+    const readsName = withRoute('Failed', async (req: Request) => {
+      const body = await req.json();
+      return Response.json({ name: body.name ?? null });
+    });
+
+    it.each([
+      ['not JSON at all', '{"name": '],
+      ['empty', ''],
+      ['JSON null', 'null'],
+    ])('answers 400, not 500, for a body that is %s — and logs nothing', async (_label, raw) => {
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const res = await readsName(post(raw));
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toBe(INVALID_JSON_BODY_MESSAGE);
+      expect(errorSpy).not.toHaveBeenCalled();
+      errorSpy.mockRestore();
+    });
+
+    it('hands a good body through untouched — objects and arrays alike', async () => {
+      expect(await (await readsName(post('{"name":"ก"}'))).json()).toEqual({ name: 'ก' });
+      const echo = withRoute('Failed', async (req: Request) => Response.json(await req.json()));
+      expect(await (await echo(post('[1,2]'))).json()).toEqual([1, 2]);
+    });
+
+    // In production Next hands a route (without `export const dynamic`) its
+    // request wrapped in a Proxy (proxyNextRequest in app-route/module.js)
+    // whose get trap returns methods bound to the real request through
+    // ReflectAdapter. The guard must work through that, not just on a bare
+    // Request.
+    it("works through the Proxy Next wraps the request in", async () => {
+      const { ReflectAdapter } = await import("next/dist/server/web/spec-extension/adapters/reflect");
+      const nextLike = (req: Request) =>
+        new Proxy(req, { get: (target, prop) => ReflectAdapter.get(target, prop, target) });
+
+      const bad = await readsName(nextLike(post("null")));
+      expect(bad.status).toBe(400);
+      expect((await bad.json()).error).toBe(INVALID_JSON_BODY_MESSAGE);
+      const good = await readsName(nextLike(post('{"name":"ข"}')));
+      expect(await good.json()).toEqual({ name: "ข" });
+    });
+
+    it("still runs the handler when the request refuses the override", async () => {
+      const sealed = new Proxy(post('{"name":"ค"}'), {
+        defineProperty: () => false, // Object.defineProperty then throws
+        get: (target, prop) => {
+          const v = Reflect.get(target, prop, target);
+          return typeof v === "function" ? v.bind(target) : v;
+        },
+      });
+      const res = await readsName(sealed);
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ name: "ค" });
+    });
+
+    it("leaves a route's own .catch() fallback in charge", async () => {
+      const lenient = withRoute('Failed', async (req: Request) => {
+        const body = await req.json().catch(() => ({ fallback: true }));
+        return Response.json(body);
+      });
+      expect(await (await lenient(post('null'))).json()).toEqual({ fallback: true });
+      expect(await (await lenient(post('nope'))).json()).toEqual({ fallback: true });
     });
   });
 });

@@ -282,8 +282,9 @@ function refuse(
 // this path had exactly that shape, and both were routed through
 // `sanitizePlainText` because it was the helper nearest to hand:
 //
-//   • THE SEARCH TERM. `sanitizePlainText` DELETES tag-like substrings — "a<b"
-//     became "a", "<test" became "" — so the browser validated one needle and
+//   • THE SEARCH TERM. `sanitizePlainText` deleted tag-like substrings — "a<b"
+//     became "a", "<test" became "" (it now removes only real tags, "<b>x</b>",
+//     but that is still a change) — so the browser validated one needle and
 //     the server searched for another, then echoed the shortened one back for
 //     the replace to be built on. A needle is never rendered as markup; it goes
 //     into a bound parameter, a JSON body and a React text child. It needs a

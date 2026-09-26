@@ -112,7 +112,7 @@ import SearchableDropdown from "./SearchableDropdown";
 import type { SearchableDropdownOption } from "./SearchableDropdown";
 import DatePicker from "./DatePicker";
 import FormattedNumberInput from "./FormattedNumberInput";
-import { stripHtml } from "../lib/stripHtml";
+import { stripHtml, displayText } from "../lib/stripHtml";
 import { toLocalDateString } from "../lib/dateFormat";
 import {
   CUSTOM_PRODUCT_SENTINEL,
@@ -444,7 +444,7 @@ export default function QuotationLineItemsEditor({
       return [
         {
           value: id,
-          label: stripHtml(line.productName) || "(สินค้าเดิมจากใบเสนอราคา)",
+          label: displayText(line.productName) || "(สินค้าเดิมจากใบเสนอราคา)",
           subLabel: "ไม่พบในรายการสินค้าปัจจุบัน",
         },
         ...baseProductOptions,

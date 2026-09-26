@@ -80,7 +80,7 @@ describe('Documents API Route', () => {
 
       const res = await GET();
       expect(res.status).toBe(500);
-      expect((await res.json()).error).toBe('Failed to fetch documents');
+      expect((await res.json()).error).toBe('โหลดเอกสารไม่สำเร็จ');
     });
   });
 
@@ -99,7 +99,7 @@ describe('Documents API Route', () => {
 
       const res = await POST(mutatingRequest('POST', { title: 'Only a title' }));
       expect(res.status).toBe(400);
-      expect((await res.json()).error).toBe('Missing required fields');
+      expect((await res.json()).error).toBe('กรุณากรอกข้อมูลให้ครบ');
       expect(addDocument).not.toHaveBeenCalled();
     });
 
@@ -142,7 +142,7 @@ describe('Documents API Route', () => {
 
       const res = await DELETE(mutatingRequest('DELETE'), ctx('missing'));
       expect(res.status).toBe(404);
-      expect((await res.json()).error).toBe('Document not found');
+      expect((await res.json()).error).toBe('ไม่พบเอกสารนี้');
       expect(deleteDocument).not.toHaveBeenCalled();
       expect(safeDeleteCloudinaryImage).not.toHaveBeenCalled();
     });
@@ -180,7 +180,7 @@ describe('Documents API Route', () => {
 
       const res = await PUT(mutatingRequest('PUT', { title: 'New' }), ctx('missing'));
       expect(res.status).toBe(404);
-      expect((await res.json()).error).toBe('Document not found');
+      expect((await res.json()).error).toBe('ไม่พบเอกสารนี้');
       expect(updateDocument).not.toHaveBeenCalled();
     });
 
@@ -190,7 +190,7 @@ describe('Documents API Route', () => {
 
       const res = await PUT(mutatingRequest('PUT', { description: 'no title' }), ctx('doc-1'));
       expect(res.status).toBe(400);
-      expect((await res.json()).error).toBe('Title is required');
+      expect((await res.json()).error).toBe('กรุณากรอกชื่อเอกสาร');
       expect(updateDocument).not.toHaveBeenCalled();
     });
 
@@ -297,6 +297,22 @@ describe('Documents API Route', () => {
       expect(res.headers.get('content-disposition')).toBe('attachment; filename="document.pdf"');
       // The same file as the inline URL — only that one may be indexed.
       expect(res.headers.get('x-robots-tag')).toBe('noindex');
+    });
+
+    it("names the file after the document's title (every PDF used to be document.pdf)", async () => {
+      fetchMock.mockResolvedValue({ status: 200, ok: true, body: null } as never);
+      const named = (download: boolean) => {
+        const req = proxyRequest(cloudUrl, download);
+        req.nextUrl.searchParams.set('name', 'แคตตาล็อก Ohaus 2026');
+        return new NextRequest(req.nextUrl);
+      };
+
+      const inline = await PROXY_GET(named(false));
+      expect(inline.headers.get('content-disposition')).toBe(
+        `inline; filename="Ohaus 2026.pdf"; filename*=UTF-8''${encodeURIComponent('แคตตาล็อก Ohaus 2026.pdf')}`
+      );
+      const attachment = await PROXY_GET(named(true));
+      expect(attachment.headers.get('content-disposition')).toMatch(/^attachment; filename="Ohaus 2026\.pdf"; filename\*=UTF-8''/);
     });
 
     it('leaves the inline PDF indexable (robots.txt allows crawling it)', async () => {

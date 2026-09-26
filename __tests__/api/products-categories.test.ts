@@ -133,7 +133,7 @@ describe('Product Categories API Routes', () => {
 
       const res = await DELETE(mutatingRequest(CATEGORY_URL, 'DELETE'), ctx('5'));
       expect(res.status).toBe(404);
-      expect((await res.json()).error).toBe('Category not found');
+      expect((await res.json()).error).toBe('ไม่พบหมวดหมู่นี้');
       expect(revalidateTag).not.toHaveBeenCalled();
     });
 
@@ -167,7 +167,7 @@ describe('Product Categories API Routes', () => {
 
       const res = await PUT_CATEGORY(mutatingRequest(CATEGORY_URL, 'PUT', body), ctx('5'));
       expect(res.status).toBe(404);
-      expect((await res.json()).error).toBe('Category not found');
+      expect((await res.json()).error).toBe('ไม่พบหมวดหมู่นี้');
       expect(revalidateTag).not.toHaveBeenCalled();
     });
 

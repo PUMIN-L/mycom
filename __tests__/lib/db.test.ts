@@ -40,14 +40,14 @@ process.env.DB_USER = 'tester';
 process.env.DB_PASSWORD = 'pw';
 process.env.DB_NAME = 'testdb';
 
-// A version SELECT result that MATCHES SCHEMA_VERSION (43) → bootstrap fast-path,
+// A version SELECT result that MATCHES SCHEMA_VERSION (44) → bootstrap fast-path,
 // skipping DDL. Value is a string because settings stores VARCHAR values.
 //
 // ⚠️ This constant only ever goes UP, in step with db.ts. The bootstrap's fast
 // path is `stored >= SCHEMA_VERSION`, so a number the live database has already
 // recorded can never trigger a migration again — reusing one silently skips the
 // entire migration in production (that is how v33 was burned).
-const SCHEMA_VERSION = '43';
+const SCHEMA_VERSION = '44';
 const SCHEMA_MATCH: [Array<{ value: string }>, unknown[]] = [[{ value: SCHEMA_VERSION }], []];
 // An empty result → no schema_version row / no admin row → full bootstrap.
 const EMPTY: [unknown[], unknown[]] = [[], []];
@@ -189,6 +189,12 @@ function mockBootstrapAgainst(db: FakeDb): void {
 
 const sqlOfCall = (call: unknown[]) => String(call[0]);
 const bootstrapSql = () => mockConnection.query.mock.calls.map(sqlOfCall);
+// The v44 plain-text decode (db.ts decodeStoredPlainText) rewrites HTML
+// entities in text columns back to the characters typed, and nothing else. The
+// "purely additive" checks below are about their own migrations; this one is
+// tested on its own at the end of the file.
+const isEntityDecode = (sql: string) =>
+  /^\s*UPDATE `\w+` SET `\w+` = REPLACE\(REPLACE\(REPLACE\(/.test(sql);
 const indexOfSql = (needle: string | RegExp) =>
   mockConnection.query.mock.calls.findIndex((c) =>
     typeof needle === 'string' ? sqlOfCall(c).includes(needle) : needle.test(sqlOfCall(c)),
@@ -406,8 +412,9 @@ describe('db.ts', () => {
       // A genuine DDL failure must propagate — not be console.warn'd away — so
       // schema_version is never stamped over a half-applied migration.
       await expect(db.getDbConnection()).rejects.toBe(fatal);
+      // The schema_version stamp, not the v44 decode progress writes.
       const settingsCalls = mockConnection.query.mock.calls.filter((c) =>
-        String(c[0]).includes('INSERT INTO settings')
+        String(c[0]).includes("VALUES ('schema_version'")
       );
       expect(settingsCalls).toHaveLength(0);
     });
@@ -426,8 +433,9 @@ describe('db.ts', () => {
       // Should complete normally — the benign duplicate-column error is not
       // rethrown, and bootstrap still reaches the schema_version stamp.
       await db.getDbConnection();
+      // The schema_version stamp, not the v44 decode progress writes.
       const settingsCalls = mockConnection.query.mock.calls.filter((c) =>
-        String(c[0]).includes('INSERT INTO settings')
+        String(c[0]).includes("VALUES ('schema_version'")
       );
       expect(settingsCalls).toHaveLength(1);
     });
@@ -460,8 +468,9 @@ describe('db.ts', () => {
         'warrantyStartDate',
         'warrantyEndDate',
       ]);
+      // The schema_version stamp, not the v44 decode progress writes.
       const settingsCalls = mockConnection.query.mock.calls.filter((c) =>
-        String(c[0]).includes('INSERT INTO settings')
+        String(c[0]).includes("VALUES ('schema_version'")
       );
       expect(settingsCalls).toHaveLength(1); // bootstrap still completes
     });
@@ -479,8 +488,9 @@ describe('db.ts', () => {
       });
 
       await db.getDbConnection();
+      // The schema_version stamp, not the v44 decode progress writes.
       const settingsCalls = mockConnection.query.mock.calls.filter((c) =>
-        String(c[0]).includes('INSERT INTO settings')
+        String(c[0]).includes("VALUES ('schema_version'")
       );
       expect(settingsCalls).toHaveLength(1);
     });
@@ -499,8 +509,9 @@ describe('db.ts', () => {
       // Must NOT be swallowed — a genuinely broken FK means ON DELETE CASCADE
       // never actually exists, which several stores rely on silently.
       await expect(db.getDbConnection()).rejects.toBe(realFailure);
+      // The schema_version stamp, not the v44 decode progress writes.
       const settingsCalls = mockConnection.query.mock.calls.filter((c) =>
-        String(c[0]).includes('INSERT INTO settings')
+        String(c[0]).includes("VALUES ('schema_version'")
       );
       expect(settingsCalls).toHaveLength(0);
     });
@@ -801,7 +812,8 @@ describe('db.ts', () => {
       const mutations = bootstrapSql().filter(
         (s) =>
           /^\s*(UPDATE|DELETE)\b/i.test(s) &&
-          /sales_records?|sales_record_items|sale_cost_items/i.test(s),
+          /sales_records?|sales_record_items|sale_cost_items/i.test(s) &&
+          !isEntityDecode(s),
       );
       expect(mutations).toEqual([]);
     });
@@ -988,7 +1000,7 @@ describe('db.ts', () => {
       // pre-existing row must simply take the column defaults, which is exactly
       // how the system behaved before the columns existed.
       const mutations = sql.filter(
-        (s) => /^\s*(UPDATE|DELETE)\b/i.test(s) && /customer_equipments/i.test(s),
+        (s) => /^\s*(UPDATE|DELETE)\b/i.test(s) && /customer_equipments/i.test(s) && !isEntityDecode(s),
       );
       expect(mutations).toEqual([]);
     });
@@ -1600,5 +1612,158 @@ describe('v37 receivables schema', () => {
       expect.stringContaining("INSERT INTO settings (name, value) VALUES ('schema_version', ?)"),
       [SCHEMA_VERSION],
     );
+  });
+});
+
+// v44 — plain-text columns used to store sanitize-html's escaped output
+// ("A&amp;B"), which every screen then showed literally. The bootstrap decodes
+// the rows written before sanitizePlainText stopped doing that.
+describe('v44 plain-text decode', () => {
+  const DECODE = /^UPDATE `(\w+)` SET `(\w+)` = REPLACE\(REPLACE\(REPLACE\(`\2`, '&lt;', '<'\), '&gt;', '>'\), '&amp;', '&'\) WHERE/;
+  const decodeCalls = () =>
+    bootstrapSql()
+      .map((sql) => sql.replace(/\s+/g, ' ').trim().match(DECODE))
+      .filter((m): m is RegExpMatchArray => m !== null)
+      .map((m) => `${m[1]}.${m[2]}`);
+  const progressWrites = () =>
+    mockConnection.query.mock.calls.filter(
+      (c) => typeof c[0] === 'string' && c[0].includes('INSERT INTO settings') && Array.isArray(c[1]) && c[1][0] === 'plaintext_decode_v44_done'
+    );
+
+  it('decodes every listed plain-text column, &amp; last, only rows that hold an entity', async () => {
+    const db = await freshImport();
+    mockConnection.query.mockResolvedValue(EMPTY);
+    await db.getDbConnection();
+
+    const expected = Object.entries(db.PLAIN_TEXT_COLUMNS).flatMap(([t, cs]) => cs.map((c) => `${t}.${c}`));
+    expect(decodeCalls()).toEqual(expected);
+    const one = bootstrapSql().find((s) => s.includes('UPDATE `customers` SET `note`'))!;
+    expect(one).toContain("WHERE (`note` LIKE '%&lt;%' OR `note` LIKE '%&gt;%' OR `note` LIKE '%&amp;%')");
+  });
+
+  it('never touches a rich-text column — decoding real HTML would turn escaped text into markup', async () => {
+    const db = await freshImport();
+    const rich = ['title_th', 'title_en', 'title_zh', 'desc_th', 'desc_en', 'desc_zh', 'blocks', 'name_th', 'name_en', 'name_zh'];
+    for (const [table, cols] of Object.entries(db.PLAIN_TEXT_COLUMNS)) {
+      expect(['products', 'contents', 'product_categories']).not.toContain(table);
+      for (const c of cols) expect(rich).not.toContain(c);
+    }
+  });
+
+  it('decodes the company profile settings (the public address and phone)', async () => {
+    const db = await freshImport();
+    mockConnection.query.mockResolvedValue(EMPTY);
+    await db.getDbConnection();
+    const call = mockConnection.query.mock.calls.find((c) => /^UPDATE settings SET value = REPLACE/.test(sqlOfCall(c).trim()))!;
+    expect(call).toBeDefined();
+    expect(call[1]).toEqual([db.PLAIN_TEXT_SETTING_NAMES]);
+    expect(db.PLAIN_TEXT_SETTING_NAMES).toContain('company_address_display');
+  });
+
+  it('runs before the version is stamped, and records each column as it finishes', async () => {
+    const db = await freshImport();
+    mockConnection.query.mockResolvedValue(EMPTY);
+    await db.getDbConnection();
+
+    const lastDecode = bootstrapSql().map((s, i) => [s, i] as const).filter(([s]) => /^UPDATE `\w+` SET `\w+` = REPLACE/.test(s.trim())).pop()![1];
+    const stamp = mockConnection.query.mock.calls.findIndex((c) => Array.isArray(c[1]) && c[1][0] === SCHEMA_VERSION);
+    expect(lastDecode).toBeLessThan(stamp);
+
+    const writes = progressWrites();
+    const total = Object.values(db.PLAIN_TEXT_COLUMNS).flat().length + 1; // + the settings target
+    expect(writes).toHaveLength(total);
+    expect(JSON.parse(writes.at(-1)![1][1])).toHaveLength(total);
+  });
+
+  it('skips the columns a previous bootstrap already decoded — never decodes twice', async () => {
+    const db = await freshImport();
+    mockConnection.query.mockImplementation((sql: string, params?: unknown[]) =>
+      typeof sql === 'string' && sql.startsWith('SELECT value FROM settings WHERE name = ?') && Array.isArray(params) && params[0] === 'plaintext_decode_v44_done'
+        ? Promise.resolve([[{ value: JSON.stringify(['customers.note', 'companies.name']) }], []])
+        : Promise.resolve(EMPTY),
+    );
+    await db.getDbConnection();
+    expect(decodeCalls()).not.toContain('customers.note');
+    expect(decodeCalls()).not.toContain('companies.name');
+    expect(decodeCalls()).toContain('customers.name');
+  });
+
+  // A failed column must not be stamped over: with the version stamped, every
+  // later cold start takes the fast path and the column is never retried —
+  // it would show "&amp;" for good.
+  it('logs a column that fails, leaves it unrecorded, keeps the site up — and leaves the version unstamped', async () => {
+    const db = await freshImport();
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    mockConnection.query.mockImplementation((sql: string) =>
+      typeof sql === 'string' && sql.includes('UPDATE `suppliers` SET `taxId`')
+        ? Promise.reject(Object.assign(new Error('lock wait timeout'), { code: 'ER_LOCK_WAIT_TIMEOUT' }))
+        : Promise.resolve(EMPTY),
+    );
+
+    await expect(db.getDbConnection()).resolves.toBe(mockPool);
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('suppliers.taxId FAILED'), expect.anything());
+    const last = JSON.parse(progressWrites().at(-1)![1][1]);
+    expect(last).not.toContain('suppliers.taxId');
+    expect(last).toContain('suppliers.address');
+    expect(mockConnection.query).not.toHaveBeenCalledWith(expect.stringContaining('INSERT INTO settings'), [SCHEMA_VERSION]);
+    expect(mockConnection.release).toHaveBeenCalledTimes(1);
+    errSpy.mockRestore();
+  });
+
+  it('counts each bootstrap that ends with a column undecoded', async () => {
+    const db = await freshImport();
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    mockConnection.query.mockImplementation((sql: string, params?: unknown[]) => {
+      if (typeof sql === 'string' && sql.includes('UPDATE `suppliers` SET `taxId`')) {
+        return Promise.reject(Object.assign(new Error('lock wait timeout'), { code: 'ER_LOCK_WAIT_TIMEOUT' }));
+      }
+      if (typeof sql === 'string' && sql.startsWith('SELECT value FROM settings') && Array.isArray(params) && params[0] === db.PLAIN_TEXT_DECODE_ATTEMPTS) {
+        return Promise.resolve([[{ value: '2' }], []]);
+      }
+      return Promise.resolve(EMPTY);
+    });
+
+    await db.getDbConnection();
+    expect(mockConnection.query).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO settings'), [db.PLAIN_TEXT_DECODE_ATTEMPTS, '3']);
+    expect(mockConnection.query).not.toHaveBeenCalledWith(expect.stringContaining('INSERT INTO settings'), [SCHEMA_VERSION]);
+    errSpy.mockRestore();
+  });
+
+  // A column that fails every time must not make every cold start re-run the
+  // whole bootstrap forever.
+  it('gives up after PLAIN_TEXT_DECODE_MAX_ATTEMPTS bootstraps — logs which columns, and stamps the version', async () => {
+    const db = await freshImport();
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    mockConnection.query.mockImplementation((sql: string, params?: unknown[]) => {
+      if (typeof sql === 'string' && sql.includes('UPDATE `suppliers` SET `taxId`')) {
+        return Promise.reject(Object.assign(new Error('permission denied'), { code: 'ER_TABLEACCESS_DENIED_ERROR' }));
+      }
+      if (typeof sql === 'string' && sql.startsWith('SELECT value FROM settings') && Array.isArray(params) && params[0] === db.PLAIN_TEXT_DECODE_ATTEMPTS) {
+        return Promise.resolve([[{ value: String(db.PLAIN_TEXT_DECODE_MAX_ATTEMPTS - 1) }], []]);
+      }
+      return Promise.resolve(EMPTY);
+    });
+
+    await db.getDbConnection();
+    expect(errSpy).toHaveBeenCalledWith(expect.stringMatching(/giving up .*suppliers\.taxId/));
+    expect(mockConnection.query).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO settings'), [SCHEMA_VERSION]);
+    errSpy.mockRestore();
+  });
+
+  it('on the next cold start, decodes only the column that failed, then stamps the version', async () => {
+    const db = await freshImport();
+    const everythingButTaxId = [
+      ...Object.entries(db.PLAIN_TEXT_COLUMNS).flatMap(([t, cs]) => cs.map((c) => `${t}.${c}`)),
+      'settings.company_profile',
+    ].filter((t) => t !== 'suppliers.taxId');
+    mockConnection.query.mockImplementation((sql: string, params?: unknown[]) =>
+      typeof sql === 'string' && sql.startsWith('SELECT value FROM settings WHERE name = ?') && Array.isArray(params) && params[0] === 'plaintext_decode_v44_done'
+        ? Promise.resolve([[{ value: JSON.stringify(everythingButTaxId) }], []])
+        : Promise.resolve(EMPTY),
+    );
+
+    await db.getDbConnection();
+    expect(decodeCalls()).toEqual(['suppliers.taxId']);
+    expect(mockConnection.query).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO settings'), [SCHEMA_VERSION]);
   });
 });

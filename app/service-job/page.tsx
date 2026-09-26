@@ -8,7 +8,7 @@ import SearchableDropdown from "../components/SearchableDropdown";
 import DatePicker from "../components/DatePicker";
 import { useLeaveGuard, LeaveGuardModal } from "../components/LeaveGuard";
 import { toLocalDateString, formatDisplayDate, isValidDateString } from "../lib/dateFormat";
-import { stripHtml } from "../lib/stripHtml";
+import { displayText } from "../lib/stripHtml";
 import type { ServiceJob, ServiceJobStatus } from "../lib/types";
 
 // ── ใบ Job — สร้าง/แก้ไขใบบันทึกงานบริการ (the printed job sheet) ─────────────
@@ -313,7 +313,7 @@ export default function ServiceJobPage() {
     (job: ServiceJob) => {
       const rows: PickedEquipment[] = (job.equipments || []).map((e) => ({
         equipmentId: e.equipmentId,
-        productName: stripHtml(e.productName || ""),
+        productName: displayText(e.productName || ""),
         serialNumber: e.serialNumber || "",
       }));
       setJobId(job.id);
@@ -424,7 +424,7 @@ export default function ServiceJobPage() {
         setPicked([
           {
             equipmentId: String(eq.id),
-            productName: stripHtml(eq.productName || ""),
+            productName: displayText(eq.productName || ""),
             serialNumber: String(eq.serialNumber || ""),
           },
         ]);
@@ -469,7 +469,7 @@ export default function ServiceJobPage() {
     });
 
     return sorted.map((e) => {
-      const name = stripHtml(e.productName || "") || "(ไม่ทราบชื่อเครื่อง)";
+      const name = displayText(e.productName || "") || "(ไม่ทราบชื่อเครื่อง)";
       const already = pickedIds.has(e.id);
       const isOwner = e.customerId === customerId;
       
@@ -536,7 +536,7 @@ export default function ServiceJobPage() {
       ...prev,
       {
         equipmentId: row.id,
-        productName: stripHtml(row.productName || ""),
+        productName: displayText(row.productName || ""),
         // NEVER typed. Straight off the machine row — see the header note.
         serialNumber: String(row.serialNumber || ""),
       },

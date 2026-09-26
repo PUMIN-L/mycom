@@ -5,7 +5,7 @@ import { requireAuth, withRoute } from "../../../../lib/apiHelpers";
 
 // PUT — reorder categories (login required).
 export const PUT = withRoute(
-  "Failed to reorder categories",
+  "จัดลำดับหมวดหมู่ไม่สำเร็จ",
   async (request: NextRequest) => {
     await requireAuth();
     
@@ -14,14 +14,14 @@ export const PUT = withRoute(
 
     if (!Array.isArray(categoryIds)) {
       return NextResponse.json(
-        { error: "Invalid payload. Expected an array of category IDs." },
+        { error: "รูปแบบข้อมูลไม่ถูกต้อง (ต้องเป็นรายการรหัสหมวดหมู่)" },
         { status: 400 }
       );
     }
 
     const success = await reorderCategories(categoryIds);
     if (!success) {
-      return NextResponse.json({ error: "Failed to update category order in database" }, { status: 500 });
+      return NextResponse.json({ error: "บันทึกลำดับหมวดหมู่ไม่สำเร็จ" }, { status: 500 });
     }
 
     // Invalidate product cache to reflect new order

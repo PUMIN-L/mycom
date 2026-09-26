@@ -34,7 +34,7 @@ export const POST = withRoute(
     const hasCustomerId = typeof data.customerId === "string" && data.customerId.trim();
 
     if (!hasEquipmentId && !hasCustomerId) {
-      return jsonError("equipmentId or customerId is required", 400);
+      return jsonError("กรุณาเลือกเครื่องมือหรือลูกค้า", 400);
     }
 
     if (hasEquipmentId) {
@@ -47,7 +47,7 @@ export const POST = withRoute(
         !(SCHEDULE_TYPES as readonly string[]).includes(data.scheduleType)
       ) {
         return jsonError(
-          `scheduleType must be one of: ${SCHEDULE_TYPES.join(", ")}`,
+          `ประเภทนัดหมายต้องเป็นหนึ่งใน: ${SCHEDULE_TYPES.join(", ")}`,
           400
         );
       }
@@ -76,7 +76,7 @@ export const POST = withRoute(
       typeof data.scheduledDate !== "string" ||
       !isValidDateString(data.scheduledDate)
     ) {
-      return jsonError("scheduledDate must be a valid date (YYYY-MM-DD)", 400);
+      return jsonError("วันนัดหมายไม่ถูกต้อง (ต้องเป็น YYYY-MM-DD)", 400);
     }
 
     const created = await addSchedule(data);

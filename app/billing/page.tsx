@@ -674,18 +674,35 @@ export default function BillingPage() {
       return;
     }
     setGenerating(true);
-    // Save first
+    // Save first — and STOP if the save does not land. This PDF goes to a
+    // customer: an invoice or receipt the system has not stored (a failed
+    // save, or a number the ledger refused) must never be rasterised, or the
+    // customer holds a tax document that does not exist here and its number
+    // can be issued again to someone else. The save used to be "best-effort"
+    // and the PDF was made regardless. Same recovery as handleSave for a
+    // number someone else took: advance to the next free one, then give up.
     let advancedTo = "";
     try {
-      const res = await postBillingDocument(b);
+      let res = await postBillingDocument(b);
       if (res.status === 409) {
-        // Same recovery as handleSave — never rasterise a number the ledger
-        // just refused, or the customer gets a PDF for a document that was
-        // never saved under that number.
         const retry = await retryWithNextFreeDocNo(b);
-        if (retry?.res.ok) advancedTo = retry.state.docNo;
+        if (retry) {
+          res = retry.res;
+          if (retry.res.ok) advancedTo = retry.state.docNo;
+        }
       }
-    } catch { /* best-effort */ }
+      if (res.status === 409) {
+        const data = await res.json().catch(() => null);
+        showToast(`${data?.error ?? "เลขที่เอกสารซ้ำ"} — ยังไม่ได้สร้าง PDF`, "error");
+        setGenerating(false);
+        return;
+      }
+      if (!res.ok) throw new Error(`save failed: ${res.status}`);
+    } catch {
+      showToast("บันทึกเอกสารไม่สำเร็จ จึงยังไม่ได้สร้าง PDF กรุณาลองใหม่", "error");
+      setGenerating(false);
+      return;
+    }
 
     // Let React repaint the sheet with the new number before html2canvas reads
     // it out of the DOM.

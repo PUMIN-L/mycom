@@ -10,6 +10,7 @@ import SearchableDropdown from "../components/SearchableDropdown";
 import type { SearchableDropdownOption } from "../components/SearchableDropdown";
 import { stripHtml } from "../lib/stripHtml";
 import { useLeaveGuard } from "../components/LeaveGuard";
+import { uploadFormData } from "../lib/uploadClient";
 
 interface ProductCategory {
   id: number;
@@ -112,10 +113,7 @@ export default function CreateProduct() {
     formData.append("file", file);
 
     try {
-      const response = await fetch("/api/upload", {
-        method: "POST",
-        body: formData,
-      });
+      const response = await uploadFormData(formData);
 
       if (!response.ok) throw new Error("Failed to upload image");
 

@@ -31,7 +31,8 @@ export default async function DocumentPreviewPage({ params }: { params: Promise<
     notFound();
   }
 
-  const proxyUrl = `/api/documents/proxy?url=${encodeURIComponent(doc.pdfUrl)}`;
+  // `name` makes the saved file carry the document's title, not "document.pdf".
+  const proxyUrl = `/api/documents/proxy?url=${encodeURIComponent(doc.pdfUrl)}&name=${encodeURIComponent(doc.title)}`;
   const downloadUrl = `${proxyUrl}&download=1`;
 
   const breadcrumbLd = {

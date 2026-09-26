@@ -15,7 +15,7 @@ import { recordOtpFailure, clearOtpAttempts } from "../../../lib/otpAttempts";
  * them against the database. Returns the list of orphaned (unused) assets.
  */
 export const GET = withRoute(
-  "Failed to scan Cloudinary orphans",
+  "ตรวจหารูปที่ไม่ได้ใช้บน Cloudinary ไม่สำเร็จ",
   async () => {
     await requireAuth();
 
@@ -68,7 +68,7 @@ export const GET = withRoute(
  * Each asset is double-checked against the DB before deletion as a safety net.
  */
 export const DELETE = withRoute(
-  "Failed to delete orphaned images",
+  "ลบรูปที่ไม่ได้ใช้ไม่สำเร็จ",
   async (request: NextRequest) => {
     await requireAuth();
 
@@ -123,7 +123,7 @@ export const DELETE = withRoute(
     // ── Deletion ──────────────────────────────────────────────────────────
     if (!Array.isArray(items) || items.length === 0) {
       return NextResponse.json(
-        { error: "items array is required" },
+        { error: "ต้องระบุรายการรูป (items)" },
         { status: 400 }
       );
     }

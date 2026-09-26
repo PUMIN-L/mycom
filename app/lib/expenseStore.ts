@@ -3,13 +3,7 @@ import { query, withTransaction } from "./db";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { sanitizePlainText } from "./sanitizeHtml";
 import type { Expense, RecurringExpense } from "./types";
-
-function formatLocalDate(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
+import { bangkokDateString, isValidDateString } from "./dateFormat";
 
 function cleanExpense(data: Partial<Expense>) {
   return {
@@ -17,10 +11,9 @@ function cleanExpense(data: Partial<Expense>) {
     amount: Math.max(0, Math.min(9999999999.99, Number(data.amount) || 0)),
     expenseDate: (() => {
       const raw = sanitizePlainText(data.expenseDate || "").substring(0, 10);
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return formatLocalDate(new Date());
-      const d = new Date(raw + "T00:00:00");
-      if (isNaN(d.getTime())) return formatLocalDate(new Date());
-      return raw;
+      // No usable date means today — Bangkok's today, not the server's (UTC on
+      // Vercel, which is still yesterday until 07:00 here).
+      return isValidDateString(raw) ? raw : bangkokDateString(new Date());
     })(),
     category: sanitizePlainText(data.category || "").substring(0, 100),
     note: sanitizePlainText(data.note || "").substring(0, 5000),

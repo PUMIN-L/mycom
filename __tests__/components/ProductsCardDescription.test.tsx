@@ -104,3 +104,53 @@ describe("Products grid card — description text", () => {
     expect(container.textContent).toContain("เครื่องชั่ง วิเคราะห์");
   });
 });
+
+// Shown as the editor showed it: its lines (the card clamps an inline run, so
+// each paragraph becomes a <br>), runs of spaces, and a centring every line
+// shares. It used to run every paragraph into one line.
+describe("Products grid card — lines, spaces and alignment as typed", () => {
+  it("keeps each line, the empty line between, the spaces, and the centring", async () => {
+    const desc_th =
+      `<p class="ql-align-center">บรรทัดแรก${NBSP}${NBSP}${NBSP}เว้นสามช่อง</p>` +
+      `<p class="ql-align-center"><br></p><p class="ql-align-center">บรรทัดที่สาม</p>`;
+    const dataPromise = Promise.resolve({ categories, products: [makeProduct(desc_th)] });
+
+    let container!: HTMLElement;
+    await act(async () => {
+      ({ container } = render(
+        <Suspense fallback={null}>
+          <Products dataPromise={dataPromise} />
+        </Suspense>
+      ));
+      await dataPromise;
+    });
+    await waitFor(() => expect(container.textContent).toContain("View Details"));
+
+    const desc = Array.from(container.querySelectorAll(".rich-text")).find((el) =>
+      el.textContent?.includes("บรรทัดแรก")
+    ) as HTMLElement;
+    expect(desc).toBeDefined();
+    expect(desc.innerHTML).toBe("บรรทัดแรก   เว้นสามช่อง<br><br>บรรทัดที่สาม");
+    expect(desc.style.textAlign).toBe("center");
+  });
+
+  it("shows a size and a colour the editor applied", async () => {
+    const title_th = '<p><span class="ql-size-large" style="color: rgb(230, 0, 0);">รุ่นใหม่</span></p>';
+    const dataPromise = Promise.resolve({ categories, products: [makeProduct("<p>x</p>", title_th)] });
+
+    let container!: HTMLElement;
+    await act(async () => {
+      ({ container } = render(
+        <Suspense fallback={null}>
+          <Products dataPromise={dataPromise} />
+        </Suspense>
+      ));
+      await dataPromise;
+    });
+    await waitFor(() => expect(container.textContent).toContain("View Details"));
+
+    const span = container.querySelector(".rich-text .ql-size-large") as HTMLElement;
+    expect(span).not.toBeNull();
+    expect(span.style.color).toBe("rgb(230, 0, 0)");
+  });
+});

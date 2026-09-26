@@ -10,20 +10,20 @@ import { requireAuth, withRoute } from "../../lib/apiHelpers";
 
 // POST — create content linked to a product (login required)
 export const POST = withRoute(
-  "Failed to create content",
+  "สร้างเนื้อหาไม่สำเร็จ",
   async (request: NextRequest) => {
     await requireAuth();
     const data: ContentData = await request.json();
 
     if (!data.productId) {
-      return NextResponse.json({ error: "Product ID is required" }, { status: 400 });
+      return NextResponse.json({ error: "กรุณาเลือกสินค้า" }, { status: 400 });
     }
 
     // Enforce one-content-per-product.
     const existingContent = await getContentByProductId(data.productId);
     if (existingContent) {
       return NextResponse.json(
-        { error: "This product already has a content linked to it" },
+        { error: "สินค้านี้มีเนื้อหาผูกอยู่แล้ว" },
         { status: 400 }
       );
     }
@@ -37,7 +37,7 @@ export const POST = withRoute(
     } catch (err) {
       if (err instanceof ContentProductConflictError) {
         return NextResponse.json(
-          { error: "This product already has a content linked to it" },
+          { error: "สินค้านี้มีเนื้อหาผูกอยู่แล้ว" },
           { status: 400 }
         );
       }

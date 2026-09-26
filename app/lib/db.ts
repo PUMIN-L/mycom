@@ -12,7 +12,7 @@ import type { QueryResult, FieldPacket, RowDataPacket } from "mysql2";
 // did not lower the 33 already written to `settings`, so the next change to
 // reuse 33 was skipped entirely and its tables were never created in
 // production. Reverting a migration means moving FORWARD to a new number.
-const SCHEMA_VERSION = 43;
+const SCHEMA_VERSION = 44;
 
 type DbPool = ReturnType<typeof mysql.createPool>;
 
@@ -1773,6 +1773,16 @@ async function bootstrapSchemaOnce(): Promise<void> {
     //   );
     // }
 
+    // v44 — plain-text columns hold text, not HTML entities (see
+    // decodeStoredPlainText). Last, so every table it touches exists.
+    //
+    // A column that failed leaves the version UNSTAMPED: stamped, every later
+    // cold start would take the fast path and that column would never be
+    // retried. Unstamped, the next cold start re-runs this (idempotent)
+    // bootstrap and the decode finishes only the columns left — for at most
+    // PLAIN_TEXT_DECODE_MAX_ATTEMPTS bootstraps, then it gives up and stamps.
+    if (!(await decodeStoredPlainText(connection))) return;
+
     // Record the schema version so future cold instances take the fast path.
     await connection.query(
       "INSERT INTO settings (name, value) VALUES ('schema_version', ?) ON DUPLICATE KEY UPDATE value = VALUES(value)",
@@ -1792,6 +1802,161 @@ async function bootstrapSchemaOnce(): Promise<void> {
 // release, so each attempt acquires a fresh one. Without this, one flaky cold
 // connection 500s the first page request (while /api/health, which skips init,
 // still looks healthy).
+// ── v44: plain-text columns hold TEXT, not HTML entities ────────────────────
+//
+// Every column below is written ONLY through sanitizePlainText, which until
+// v44 stored sanitize-html's escaped output: "&" as "&amp;", "<" as "&lt;",
+// ">" as "&gt;". Everything that reads them shows them as text, so the
+// entities were shown literally ("A&amp;B Co., Ltd." on screen, on quotations,
+// on the public site). sanitizePlainText now stores the characters; this
+// decodes the rows written before it.
+//
+// ⚠️ PLAIN-TEXT COLUMNS ONLY. A rich-text column (products.title_*/desc_*,
+// contents.title/blocks, product_categories.name_*) holds real HTML in which
+// "&lt;script&gt;" is text that must STAY escaped — decoding one of those
+// would turn it into markup. None of them is, or may ever be, in this list.
+//
+// The three entities are exactly what sanitize-html emits for text, and they
+// are undone in the same order sanitizePlainText uses — "&amp;" LAST, so a
+// stored "&amp;lt;" (the text "&lt;") becomes "&lt;", not "<".
+//
+// Each column is decoded ONCE: the ones done are recorded in the settings row
+// PLAIN_TEXT_DECODE_PROGRESS as they finish, so a bootstrap that runs again —
+// a later step failed and the version was not stamped — skips them instead of
+// decoding a second time. A column that fails is logged and left as it was
+// (it shows "&amp;" until a later bootstrap retries); it never takes the site
+// down, like the other backfills — but it does keep the version unstamped, so
+// that later bootstrap actually happens on the next cold start.
+export const PLAIN_TEXT_COLUMNS: Readonly<Record<string, readonly string[]>> = {
+  companies: ["name", "addressNo", "moo", "soi", "road", "subDistrict", "district", "province", "postalCode", "phone", "note"],
+  customers: ["name", "department", "phone", "email", "note"],
+  customer_equipments: ["productName", "serialNumber", "quotationNumber", "warrantyCertNumber", "warrantyType", "note"],
+  service_schedules: ["notes"],
+  service_logs: ["serviceReportNumber", "resultDetails", "customerFeedback"],
+  documents: ["title", "description"],
+  expenses: ["title", "category", "note"],
+  recurring_expenses: ["title", "category", "note"],
+  sales_records: ["productName", "quotationRef", "poRef", "deliveryRef", "invoiceRef", "receiptRef", "note"],
+  sales_record_items: ["productName"],
+  sale_cost_items: ["label", "note"],
+  salespeople: ["name", "phone", "email", "note"],
+  suppliers: ["companyName", "contactName", "phone", "note", "address", "taxId"],
+  task_topics: ["name", "icon"],
+  crm_tasks: ["title", "detail"],
+  task_links: ["label"],
+  billing_documents: ["paymentMethod", "paymentRef"],
+  billing_payments: ["ref", "note", "voidReason"],
+  product_specs: ["name", "detail"],
+  // customEquipments is JSON; its only strings are the plain-text productName
+  // and serialNumber, and replacing an entity with its character inside a
+  // JSON string leaves valid JSON.
+  service_jobs: ["technicianName", "workSummary", "customEquipments"],
+};
+
+/** The company profile (address, phone — shown on the public site) lives in
+ *  `settings` rows, written through the same sanitizePlainText. */
+export const PLAIN_TEXT_SETTING_NAMES: readonly string[] = [
+  "company_phone",
+  "company_address_display",
+  "company_address_street",
+  "company_address_locality",
+  "company_address_region",
+  "company_address_postal_code",
+  "company_address_country",
+];
+
+export const PLAIN_TEXT_DECODE_PROGRESS = "plaintext_decode_v44_done";
+
+/** Bootstraps that ended with a column still undecoded, and how many of them
+ *  to allow. Each one leaves the version unstamped so the next cold start
+ *  retries — but a column that fails EVERY time (a missing privilege, an engine
+ *  quirk) must not make every cold start re-run the whole bootstrap forever. */
+export const PLAIN_TEXT_DECODE_ATTEMPTS = "plaintext_decode_v44_attempts";
+export const PLAIN_TEXT_DECODE_MAX_ATTEMPTS = 5;
+
+const decodeEntitiesSql = (col: string) =>
+  `REPLACE(REPLACE(REPLACE(${col}, '&lt;', '<'), '&gt;', '>'), '&amp;', '&')`;
+const hasEntitySql = (col: string) =>
+  `(${col} LIKE '%&lt;%' OR ${col} LIKE '%&gt;%' OR ${col} LIKE '%&amp;%')`;
+
+/** True once every target is decoded — or once PLAIN_TEXT_DECODE_MAX_ATTEMPTS
+ *  bootstraps have tried and some still failed. The caller stamps the version
+ *  only on true. */
+async function decodeStoredPlainText(connection: mysql.PoolConnection): Promise<boolean> {
+  const done = new Set<string>();
+  try {
+    const [rows] = await connection.query<RowDataPacket[]>(
+      "SELECT value FROM settings WHERE name = ? LIMIT 1",
+      [PLAIN_TEXT_DECODE_PROGRESS]
+    );
+    const parsed = JSON.parse(String(rows?.[0]?.value ?? "[]"));
+    if (Array.isArray(parsed)) for (const t of parsed) done.add(String(t));
+  } catch {
+    // No progress row yet (or an unreadable one): start from the beginning.
+  }
+
+  const targets = [
+    ...Object.entries(PLAIN_TEXT_COLUMNS).flatMap(([table, cols]) => cols.map((c) => `${table}.${c}`)),
+    "settings.company_profile",
+  ];
+  for (const target of targets) {
+    if (done.has(target)) continue;
+    try {
+      if (target === "settings.company_profile") {
+        await connection.query(
+          `UPDATE settings SET value = ${decodeEntitiesSql("value")}
+            WHERE name IN (?) AND ${hasEntitySql("value")}`,
+          [PLAIN_TEXT_SETTING_NAMES]
+        );
+      } else {
+        const [table, col] = target.split(".");
+        const c = `\`${col}\``;
+        await connection.query(
+          `UPDATE \`${table}\` SET ${c} = ${decodeEntitiesSql(c)} WHERE ${hasEntitySql(c)}`
+        );
+      }
+      done.add(target);
+      await connection.query(
+        "INSERT INTO settings (name, value) VALUES (?, ?) ON DUPLICATE KEY UPDATE value = VALUES(value)",
+        [PLAIN_TEXT_DECODE_PROGRESS, JSON.stringify([...done])]
+      );
+    } catch (error) {
+      console.error(`[db:bootstrap] decoding stored entities in ${target} FAILED — it keeps showing "&amp;" until a later bootstrap retries:`, error);
+    }
+  }
+
+  const left = targets.filter((target) => !done.has(target));
+  if (left.length === 0) return true;
+
+  let attempts = 0;
+  try {
+    const [rows] = await connection.query<RowDataPacket[]>(
+      "SELECT value FROM settings WHERE name = ? LIMIT 1",
+      [PLAIN_TEXT_DECODE_ATTEMPTS]
+    );
+    attempts = Number(rows?.[0]?.value) || 0;
+  } catch {
+    // Unreadable: count this one as the first.
+  }
+  attempts += 1;
+  try {
+    await connection.query(
+      "INSERT INTO settings (name, value) VALUES (?, ?) ON DUPLICATE KEY UPDATE value = VALUES(value)",
+      [PLAIN_TEXT_DECODE_ATTEMPTS, String(attempts)]
+    );
+  } catch {
+    // Not recorded: the next bootstrap simply counts from where it can.
+  }
+  if (attempts >= PLAIN_TEXT_DECODE_MAX_ATTEMPTS) {
+    console.error(
+      `[db:bootstrap] giving up decoding stored entities in ${left.join(", ")} after ${attempts} bootstraps — ` +
+        `they keep showing "&amp;"; the schema version is stamped so cold starts stop re-running the bootstrap`
+    );
+    return true;
+  }
+  return false;
+}
+
 async function initializeDb(): Promise<void> {
   const MAX_ATTEMPTS = 3;
   let lastError: unknown;

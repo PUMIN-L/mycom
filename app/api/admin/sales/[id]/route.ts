@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withRoute, requireAuth } from "../../../../lib/apiHelpers";
+import { isValidDateString } from "../../../../lib/dateFormat";
 import {
   getSalesRecord,
   updateSalesRecord,
@@ -81,7 +82,7 @@ export const PUT = withRoute(
           { status: 400 }
         );
       }
-      if (isNaN(new Date(body.saleDate + "T00:00:00").getTime())) {
+      if (!isValidDateString(body.saleDate)) {
         return NextResponse.json(
           { error: "วันที่ไม่ถูกต้อง" },
           { status: 400 }

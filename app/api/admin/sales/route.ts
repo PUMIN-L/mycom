@@ -10,6 +10,7 @@ import type { SaleLineItem } from "../../../lib/saleLineItemStore";
 import type { EquipmentRowInput } from "../../../lib/crmStore";
 import type { SalesRecord } from "../../../lib/types";
 import { query } from "../../../lib/db";
+import { isValidDateString } from "../../../lib/dateFormat";
 
 /**
  * Sale payload. Two accepted shapes, both ending in the SAME atomic write:
@@ -214,7 +215,7 @@ export const POST = withRoute(
     if (!body.saleDate || !/^\d{4}-\d{2}-\d{2}$/.test(body.saleDate)) {
       return badRequest("กรุณาระบุวันที่ขาย (YYYY-MM-DD)");
     }
-    if (isNaN(new Date(body.saleDate + "T00:00:00").getTime())) {
+    if (!isValidDateString(body.saleDate)) {
       return badRequest("วันที่ไม่ถูกต้อง");
     }
     if (body.deliveryRef && !body.invoiceRef) {

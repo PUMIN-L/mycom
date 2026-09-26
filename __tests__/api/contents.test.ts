@@ -115,7 +115,7 @@ describe('Contents API Routes', () => {
       vi.mocked(getSession).mockResolvedValue(adminSession);
       const res = await POST(mutatingRequest('POST', { title: 'No product' }));
       expect(res.status).toBe(400);
-      expect((await res.json()).error).toBe('Product ID is required');
+      expect((await res.json()).error).toBe('กรุณาเลือกสินค้า');
       expect(addContent).not.toHaveBeenCalled();
     });
 
@@ -125,7 +125,7 @@ describe('Contents API Routes', () => {
       const res = await POST(mutatingRequest('POST', { productId: 'p-1' }));
       expect(res.status).toBe(400);
       expect((await res.json()).error).toBe(
-        'This product already has a content linked to it'
+        'สินค้านี้มีเนื้อหาผูกอยู่แล้ว'
       );
       expect(addContent).not.toHaveBeenCalled();
     });
@@ -148,7 +148,7 @@ describe('Contents API Routes', () => {
 
       const res = await POST(mutatingRequest('POST', { id: 'c-1', productId: 'p-1' }));
       expect(res.status).toBe(400);
-      expect((await res.json()).error).toBe('This product already has a content linked to it');
+      expect((await res.json()).error).toBe('สินค้านี้มีเนื้อหาผูกอยู่แล้ว');
     });
   });
 
@@ -178,7 +178,7 @@ describe('Contents API Routes', () => {
       vi.mocked(getContent).mockResolvedValue(undefined);
       const res = await getById(getRequest(), { params: Promise.resolve({ id: 'missing' }) });
       expect(res.status).toBe(404);
-      expect((await res.json()).error).toBe('Content not found');
+      expect((await res.json()).error).toBe('ไม่พบเนื้อหานี้');
     });
 
     it('filters out content linked to unpublished products for anonymous callers (id="all")', async () => {
@@ -242,7 +242,7 @@ describe('Contents API Routes', () => {
       });
       expect(res.status).toBe(400);
       expect((await res.json()).error).toBe(
-        'This product already has a content linked to it'
+        'สินค้านี้มีเนื้อหาผูกอยู่แล้ว'
       );
       expect(updateContent).not.toHaveBeenCalled();
     });
@@ -268,7 +268,7 @@ describe('Contents API Routes', () => {
         params: Promise.resolve({ id: 'c-1' }),
       });
       expect(res.status).toBe(400);
-      expect((await res.json()).error).toBe('This product already has a content linked to it');
+      expect((await res.json()).error).toBe('สินค้านี้มีเนื้อหาผูกอยู่แล้ว');
     });
 
     it('returns 404 when updating a content that does not exist', async () => {
@@ -278,7 +278,7 @@ describe('Contents API Routes', () => {
         params: Promise.resolve({ id: 'missing' }),
       });
       expect(res.status).toBe(404);
-      expect((await res.json()).error).toBe('Content not found');
+      expect((await res.json()).error).toBe('ไม่พบเนื้อหานี้');
     });
   });
 
@@ -300,7 +300,7 @@ describe('Contents API Routes', () => {
         params: Promise.resolve({ id: 'missing' }),
       });
       expect(res.status).toBe(404);
-      expect((await res.json()).error).toBe('Content not found');
+      expect((await res.json()).error).toBe('ไม่พบเนื้อหานี้');
       expect(deleteContent).not.toHaveBeenCalled();
     });
 
@@ -381,7 +381,7 @@ describe('Contents API Routes', () => {
         params: Promise.resolve({ productId: 'nope' }),
       });
       expect(res.status).toBe(404);
-      expect((await res.json()).error).toBe('No content found for this product');
+      expect((await res.json()).error).toBe('สินค้านี้ยังไม่มีเนื้อหา');
     });
   });
 });

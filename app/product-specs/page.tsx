@@ -98,7 +98,7 @@ export default function ProductSpecsPage() {
     if (!deleteConfirm) return;
     try {
       const res = await fetch(`/api/product-specs/${deleteConfirm.id}`, { method: "DELETE" });
-      if (!res.ok) throw new Error("Failed to delete spec");
+      if (!res.ok) throw new Error("ลบสเปกไม่สำเร็จ");
       
       await loadData();
       setDeleteConfirm(null);

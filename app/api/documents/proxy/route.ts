@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createRateLimiter, clientKey } from "../../../lib/rateLimit";
+import { pdfContentDisposition } from "../../../lib/pdfFilename";
 
 export const dynamic = "force-dynamic";
 
@@ -107,11 +108,12 @@ export async function GET(request: NextRequest) {
     // browser that would otherwise sniff the bytes and render them as something
     // else (e.g. HTML) under our own origin.
     headers.set("X-Content-Type-Options", "nosniff");
+    // Named after the document (`name`, its title — only ever used as a file
+    // name, cleaned in lib/pdfFilename.ts); every PDF used to save as
+    // "document.pdf".
     headers.set(
       "Content-Disposition",
-      isDownload
-        ? 'attachment; filename="document.pdf"'
-        : 'inline; filename="document.pdf"'
+      pdfContentDisposition(isDownload ? "attachment" : "inline", request.nextUrl.searchParams.get("name"))
     );
     // robots.txt lets crawlers read the catalogs through here — their text is
     // mostly product names and specs — but only the inline copy should be

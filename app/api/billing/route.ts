@@ -57,7 +57,7 @@ export const POST = withRoute(
 
     const id = String(body?.id ?? "").trim();
     if (!id) {
-      return NextResponse.json({ error: "id is required" }, { status: 400 });
+      return NextResponse.json({ error: "ต้องระบุ id ของเอกสาร" }, { status: 400 });
     }
 
     if (JSON.stringify(body).length > 200000) {

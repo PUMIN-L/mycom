@@ -897,3 +897,21 @@ describe("AlertDateSearchPanel — a slow earlier search cannot overwrite a newe
     expect(await screen.findByText("แถวจากช่วงที่ผ่านมา")).toBeInTheDocument();
   });
 });
+
+// A warranty's title is the machine's product name, which may be the catalog's
+// rich title; every other field is plain text, where "<" is a real character
+// (schema v44). A blanket tag regex cut "x < y > z" down to "x z".
+describe("AlertDateSearchPanel — names are shown as text", () => {
+  it("reads a catalog title as HTML and a plain title exactly as typed", async () => {
+    renderPanel({
+      rows: [
+        row({ kind: "warranty", id: "w9", title: "<p>เครื่องชั่ง &amp; ตาชั่ง</p>", movable: false, immovableCode: "immovable_fact", immovableReason: IMMOVABLE_REASONS.warranty }),
+        row({ kind: "task", id: "t9", title: "ราคา x < y > z" }),
+      ],
+    });
+    await search();
+    expect(screen.getAllByText("เครื่องชั่ง & ตาชั่ง").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("ราคา x < y > z").length).toBeGreaterThan(0);
+    expect(document.body.textContent).not.toContain("<p>");
+  });
+});

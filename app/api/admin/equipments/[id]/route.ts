@@ -81,13 +81,13 @@ export const PUT = withRoute(
     const { id } = await params;
     const data = await request.json();
     if (data.warrantyStartDate && !isValidDateString(data.warrantyStartDate)) {
-      return jsonError("warrantyStartDate must be a valid date (YYYY-MM-DD)", 400);
+      return jsonError("วันเริ่มประกันไม่ถูกต้อง (ต้องเป็น YYYY-MM-DD)", 400);
     }
     if (data.warrantyEndDate && !isValidDateString(data.warrantyEndDate)) {
-      return jsonError("warrantyEndDate must be a valid date (YYYY-MM-DD)", 400);
+      return jsonError("วันสิ้นสุดประกันไม่ถูกต้อง (ต้องเป็น YYYY-MM-DD)", 400);
     }
     if (data.calibrationDate && !isValidDateString(data.calibrationDate)) {
-      return jsonError("calibrationDate must be a valid date (YYYY-MM-DD)", 400);
+      return jsonError("วันที่สอบเทียบไม่ถูกต้อง (ต้องเป็น YYYY-MM-DD)", 400);
     }
     const ownershipError = validateOwnershipFields(data);
     if (ownershipError) return ownershipError;

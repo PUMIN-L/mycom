@@ -50,7 +50,7 @@ export const PUT = withRoute(
       !(SCHEDULE_TYPES as readonly string[]).includes(data.scheduleType)
     ) {
       return jsonError(
-        `scheduleType must be one of: ${SCHEDULE_TYPES.join(", ")}`,
+        `ประเภทนัดหมายต้องเป็นหนึ่งใน: ${SCHEDULE_TYPES.join(", ")}`,
         400
       );
     }
@@ -59,12 +59,12 @@ export const PUT = withRoute(
       !(SCHEDULE_STATUSES as readonly string[]).includes(data.status)
     ) {
       return jsonError(
-        `status must be one of: ${SCHEDULE_STATUSES.join(", ")}`,
+        `สถานะต้องเป็นหนึ่งใน: ${SCHEDULE_STATUSES.join(", ")}`,
         400
       );
     }
     if (data.scheduledDate !== undefined && !isValidDateString(data.scheduledDate)) {
-      return jsonError("scheduledDate must be a valid date (YYYY-MM-DD)", 400);
+      return jsonError("วันนัดหมายไม่ถูกต้อง (ต้องเป็น YYYY-MM-DD)", 400);
     }
 
     // A schedule can only become "completed" together with its result log, via

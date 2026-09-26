@@ -16,7 +16,8 @@ import { productHref } from "../lib/productLinks";
 import { PRODUCTS_PATH } from "../lib/catalogPaths";
 import { reorderVisible } from "../lib/reorderVisible";
 import dynamic from "next/dynamic";
-import { stripHtml, normalizeNbsp } from "../lib/stripHtml";
+import { stripHtml } from "../lib/stripHtml";
+import { richTextAlign, richTextHtml, richTextInline } from "../lib/richTextDisplay";
 import ImageDeleteConfirmDialog, { type OrphanedImage } from "./ImageDeleteConfirmDialog";
 import SearchableDropdown from "./SearchableDropdown";
 
@@ -270,7 +271,7 @@ export default function Products({ dataPromise }: ProductsProps) {
       const res = await fetch(`/api/products/categories/${id}`, { method: "DELETE" });
       if (!res.ok) {
         const err = await res.json();
-        throw new Error(err.error || "Failed to delete category");
+        throw new Error(err.error || "ลบหมวดหมู่ไม่สำเร็จ");
       }
       // success
       setCategories(categories.filter(c => c.id !== id));
@@ -310,7 +311,7 @@ export default function Products({ dataPromise }: ProductsProps) {
       });
       if (!res.ok) {
         const err = await res.json();
-        throw new Error(err.error || "Failed to update category");
+        throw new Error(err.error || "แก้ไขหมวดหมู่ไม่สำเร็จ");
       }
       // Show the names AS STORED (sanitized by the server), never our own
       // editor output: the sidebar renders them as HTML, and editor output
@@ -519,7 +520,7 @@ export default function Products({ dataPromise }: ProductsProps) {
     try {
       const res = await fetch(`/api/products/${id}`, { method: "DELETE" });
       if (!res.ok) {
-        throw new Error("Failed to delete product");
+        throw new Error("ลบสินค้าไม่สำเร็จ");
       }
       const data = await res.json();
       
@@ -884,7 +885,7 @@ export default function Products({ dataPromise }: ProductsProps) {
                           </div>
                         ) : (
                           <span className="relative py-2 font-serif text-base md:text-lg tracking-wide inline-block whitespace-nowrap lg:whitespace-normal lg:break-words leading-tight">
-                            <span dangerouslySetInnerHTML={{ __html: normalizeNbsp(getCatName(category)) }} className="[&_p]:inline [&_p]:m-0" />
+                            <span className="rich-text" dangerouslySetInnerHTML={{ __html: richTextInline(getCatName(category)) }} />
                             <div
                               className={`absolute bottom-0 left-0 h-[2px] bg-[var(--accent)] transition-all duration-500 ${category.id === selectedCategory ? "w-full" : "w-0 group-hover:w-full opacity-30"
                                 }`}
@@ -1138,8 +1139,8 @@ export default function Products({ dataPromise }: ProductsProps) {
                         // entirely instead of breaking mid-word — the line
                         // then clips well short of the card's edge, wasting
                         // the space that word would have occupied.
-                        className={`text-lg font-bold text-[var(--text-primary)] mb-1 transition-colors wrap-break-word [&_p]:m-0 [&_p]:line-clamp-1 [&_p:nth-child(n+3)]:hidden ${item.isPublished === false ? "" : "group-hover:text-[var(--accent)]"}`}
-                        dangerouslySetInnerHTML={{ __html: normalizeNbsp(getTitle(item)) }}
+                        className={`rich-text text-lg font-bold text-[var(--text-primary)] mb-1 transition-colors wrap-break-word [&_p]:line-clamp-1 [&_p:nth-child(n+3)]:hidden ${item.isPublished === false ? "" : "group-hover:text-[var(--accent)]"}`}
+                        dangerouslySetInnerHTML={{ __html: richTextHtml(getTitle(item)) }}
                       />
                       {/* Show the English name too when viewing another language:
                           Thai B2B buyers search equipment by its English name, so
@@ -1152,9 +1153,13 @@ export default function Products({ dataPromise }: ProductsProps) {
                           {stripHtml(item.title_en)}
                         </div>
                       )}
+                      {/* Its lines as typed (paragraphs become line breaks, so
+                          the 2-line clamp still works), and its alignment
+                          when every line shares one. */}
                       <div
-                        className="text-gray-500 leading-relaxed font-light text-sm line-clamp-2 mb-6 [&_p]:inline [&_p]:m-0"
-                        dangerouslySetInnerHTML={{ __html: normalizeNbsp(getDesc(item)) }}
+                        className="rich-text text-gray-500 leading-relaxed font-light text-sm line-clamp-2 mb-6"
+                        style={{ textAlign: richTextAlign(getDesc(item)) }}
+                        dangerouslySetInnerHTML={{ __html: richTextInline(getDesc(item)) }}
                       />
                       <div className="mt-auto flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-[var(--accent)] group/btn">
                         <span className={`border-b border-transparent transition-all duration-300 ${item.isPublished === false ? "" : "group-hover/btn:border-[var(--accent)]"}`}>
@@ -1231,7 +1236,7 @@ export default function Products({ dataPromise }: ProductsProps) {
                             </div>
                           </td>
                           <td className="py-3 px-4 min-w-[200px] whitespace-normal">
-                            <div className={`font-bold wrap-break-word [&_p]:m-0 [&_p]:line-clamp-1 [&_p:nth-child(n+3)]:hidden ${item.isPublished === false ? "text-gray-400" : "text-gray-800"}`} dangerouslySetInnerHTML={{ __html: normalizeNbsp(getTitle(item)) }} />
+                            <div className={`rich-text font-bold wrap-break-word [&_p]:line-clamp-1 [&_p:nth-child(n+3)]:hidden ${item.isPublished === false ? "text-gray-400" : "text-gray-800"}`} dangerouslySetInnerHTML={{ __html: richTextHtml(getTitle(item)) }} />
                             {item.pendingDeleteAt && (
                               <span className="inline-block mt-1 px-2 py-0.5 bg-red-100 text-red-600 text-[10px] font-bold rounded-full">รอยืนยันการลบ</span>
                             )}
@@ -1240,7 +1245,7 @@ export default function Products({ dataPromise }: ProductsProps) {
                             )}
                           </td>
                           <td className="py-3 px-4 text-sm text-gray-500 max-w-[150px] truncate">
-                            {cat ? <span dangerouslySetInnerHTML={{ __html: normalizeNbsp(getCatName(cat)) }} /> : "Unknown"}
+                            {cat ? <span className="rich-text" dangerouslySetInnerHTML={{ __html: richTextInline(getCatName(cat)) }} /> : "Unknown"}
                           </td>
                           <td className="py-3 px-4">
                             {item.isPublished !== false ? (

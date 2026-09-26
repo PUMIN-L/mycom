@@ -6,6 +6,7 @@ import { getContentByProductId } from "../../../lib/contentStore";
 import { getProduct, isProductPublic } from "../../../lib/productStore";
 import { getSession } from "../../../lib/session";
 import { LINE_ID, LINE_URL, LINE_APP_URL, lineQrUrl } from "../../../lib/contact";
+import { richTextInline } from "../../../lib/richTextDisplay";
 
 export const dynamic = "force-dynamic";
 
@@ -52,17 +53,28 @@ export default async function ProductContentGateway({
   // show the product's own title when this caller may actually see the
   // product — otherwise a guessed productId could still fish out a hidden
   // product's name.
-  const productTitle =
+  //
+  // The title is rich text (it used to be printed as a string, tags and all:
+  // "<p>…</p>"). The productId fallback comes from the URL, so it stays a
+  // text node — never HTML.
+  const productTitleHtml =
     product && productVisible
-      ? product.title_th || product.title_en || product.title_zh
-      : productId;
+      ? richTextInline(product.title_th || product.title_en || product.title_zh)
+      : null;
 
   return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4 py-12">
       <div className="max-w-md w-full text-center bg-white rounded-2xl shadow-lg p-10 border border-gray-100">
-        <p className="text-orange-500 font-semibold text-sm mb-2 uppercase tracking-widest">
-          {productTitle}
-        </p>
+        {productTitleHtml !== null ? (
+          <p
+            className="rich-text text-orange-500 font-semibold text-sm mb-2 uppercase tracking-widest"
+            dangerouslySetInnerHTML={{ __html: productTitleHtml }}
+          />
+        ) : (
+          <p className="text-orange-500 font-semibold text-sm mb-2 uppercase tracking-widest">
+            {productId}
+          </p>
+        )}
 
         {isLoggedIn ? (
           <>

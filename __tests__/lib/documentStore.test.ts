@@ -131,10 +131,10 @@ describe('documentStore', () => {
   });
 
   describe('updateDocument', () => {
-    it('throws "Document not found" and issues no UPDATE when missing', async () => {
+    it('throws "ไม่พบเอกสารนี้" and issues no UPDATE when missing', async () => {
       mockedQuery.mockResolvedValue([[]] as any); // getDocument -> not found
 
-      await expect(updateDocument('nope', { title: 'X' })).rejects.toThrow('Document not found');
+      await expect(updateDocument('nope', { title: 'X' })).rejects.toThrow('ไม่พบเอกสารนี้');
       expect(mockedQuery).toHaveBeenCalledTimes(1); // only the SELECT ran
     });
 

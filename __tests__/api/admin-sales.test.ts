@@ -127,6 +127,10 @@ describe('Admin Sales API', () => {
 
     it('rejects a calendar-impossible saleDate that still matches the pattern', async () => {
       await expectRejected({ saleDate: '2026-13-45', productName: 'Scale' });
+      // new Date() rolls 31 Feb over into March instead of failing, and the
+      // DATE column would refuse it — a 400 here, not a 500 from the INSERT.
+      await expectRejected({ saleDate: '2026-02-31', productName: 'Scale' });
+      await expectRejected({ saleDate: '2027-02-29', productName: 'Scale' });
     });
 
     it('rejects a delivery reference with no invoice reference', async () => {
@@ -591,6 +595,21 @@ describe('Admin Sales API', () => {
         { params: Promise.resolve({ id: '1' }) }
       );
       expect(res.status).toBe(400);
+    });
+
+    it('refuses a day that does not exist (31 Feb) before writing anything', async () => {
+      vi.mocked(getSession).mockResolvedValue(admin);
+
+      const res = await updateSale(
+        new NextRequest('http://localhost:3000/api/admin/sales/1', {
+          method: 'PUT',
+          body: JSON.stringify({ saleDate: '2026-02-31' }),
+        }),
+        { params: Promise.resolve({ id: '1' }) }
+      );
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toBe('วันที่ไม่ถูกต้อง');
+      expect(updateSalesRecord).not.toHaveBeenCalled();
     });
 
     it('updates sale record successfully', async () => {

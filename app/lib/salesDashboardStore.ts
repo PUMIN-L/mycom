@@ -2,7 +2,7 @@ import "server-only";
 import { query, withTransaction } from "./db";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { sanitizePlainText } from "./sanitizeHtml";
-import { bangkokDateString, bangkokParts } from "./dateFormat";
+import { bangkokDateString, bangkokParts, isValidDateString } from "./dateFormat";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 import type { SalesRecord, CostItem, CustomerEquipment } from "./types";
@@ -93,13 +93,6 @@ export interface SmartInsight {
 
 // ── CRUD ─────────────────────────────────────────────────────────────────────
 
-function formatLocalDate(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
-
 function cleanDate(d?: string | Date | null): string | undefined {
   if (!d) return undefined;
   // Defense-in-depth: if a raw Date object ever reaches here (e.g. a future
@@ -115,7 +108,9 @@ function cleanDate(d?: string | Date | null): string | undefined {
     return `${y}-${m}-${day}`;
   }
   const s = String(d).trim().substring(0, 10);
-  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : undefined;
+  // A day that does not exist ("2026-02-31") is dropped like a malformed one:
+  // the warranty columns are DATE, which would refuse it with a 500.
+  return isValidDateString(s) ? s : undefined;
 }
 
 /**
@@ -164,11 +159,9 @@ function cleanInput(data: SalesRecordInput) {
     saleType: normalizeSaleType(data.saleType),
     saleDate: (() => {
       const raw = sanitizePlainText(data.saleDate || "").substring(0, 10);
-      // Validate YYYY-MM-DD format and that it's a real date
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return formatLocalDate(new Date());
-      const d = new Date(raw + "T00:00:00");
-      if (isNaN(d.getTime())) return formatLocalDate(new Date());
-      return raw;
+      // No usable date means today — Bangkok's today, not the server's (UTC on
+      // Vercel, which is still yesterday until 07:00 here).
+      return isValidDateString(raw) ? raw : bangkokDateString(new Date());
     })(),
     quotationRef: sanitizePlainText(data.quotationRef || "").substring(0, 255),
     quotationId: data.quotationId

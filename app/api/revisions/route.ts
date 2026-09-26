@@ -40,7 +40,7 @@ export const GET = withRoute("โหลดประวัติการแก�
 
   if (!isEntityType(entityType) || !entityId) {
     return NextResponse.json(
-      { error: `entityType (${ENTITY_TYPE_LIST}) and entityId are required` },
+      { error: `ต้องระบุ entityType (${ENTITY_TYPE_LIST}) และ entityId` },
       { status: 400 }
     );
   }

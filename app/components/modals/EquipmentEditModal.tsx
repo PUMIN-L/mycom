@@ -1,16 +1,11 @@
 "use client";
 import React, { useState, useEffect, useMemo } from "react";
+import { displayText, stripHtml } from "../../lib/stripHtml";
 import DatePicker from "../DatePicker";
 import SearchableDropdown from "../SearchableDropdown";
 import type { SearchableDropdownOption } from "../SearchableDropdown";
 import type { CustomerEquipment, EquipmentOwnershipSource } from "../../lib/types";
 import { toLocalDateString } from "../../lib/dateFormat";
-
-// Note: stripHtml is simplified here since we can't easily import it from the dashboard types without creating circular dependencies.
-function stripHtml(html?: string): string {
-  if (!html) return "";
-  return html.replace(/<[^>]*>/g, "");
-}
 
 /** Where the machine came from. Two values only — the API rejects anything
  * else with a 400 rather than coercing it (spec: equipment-ownership). */
@@ -104,7 +99,7 @@ export default function EquipmentEditModal({
     if (editing.id && !opts.some(o => o.value === editing.productId)) {
       opts.unshift({
         value: editing.productId || "_custom",
-        label: stripHtml(editing.productName) || "(สินค้าที่ระบุเอง)",
+        label: displayText(editing.productName) || "(สินค้าที่ระบุเอง)",
         subLabel: "กำหนดชื่อเอง",
       });
     }

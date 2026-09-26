@@ -13,20 +13,25 @@ type Ctx = { params: Promise<{ id: string }> };
 
 // GET — single product by id (public)
 export const GET = withRoute(
-  "Failed to fetch product",
+  "โหลดข้อมูลสินค้าไม่สำเร็จ",
   async (_request: NextRequest, { params }: Ctx) => {
     const { id } = await params;
     const product = await getProduct(id);
     if (!product) {
-      return NextResponse.json({ error: "Product not found" }, { status: 404 });
+      return NextResponse.json({ error: "ไม่พบสินค้านี้" }, { status: 404 });
     }
     // Hide unpublished and pending-delete products from anonymous callers (report 404, not 403,
     // so their existence isn't disclosed).
-    if (product.isPublished === false || !!product.pendingDeleteAt) {
-      const session = await getSession();
-      if (!session) {
-        return NextResponse.json({ error: "Product not found" }, { status: 404 });
-      }
+    const session = await getSession();
+    if ((product.isPublished === false || !!product.pendingDeleteAt) && !session) {
+      return NextResponse.json({ error: "ไม่พบสินค้านี้" }, { status: 404 });
+    }
+    // Which suppliers a product comes from is internal: the ids are read by
+    // the admin edit form only, and a visitor has no business collecting them.
+    if (!session) {
+      const { supplierIds: _internal, ...publicProduct } = product;
+      void _internal;
+      return NextResponse.json(publicProduct);
     }
     return NextResponse.json(product);
   }
@@ -34,7 +39,7 @@ export const GET = withRoute(
 
 // PUT — update product (login required)
 export const PUT = withRoute(
-  "Failed to update product",
+  "แก้ไขสินค้าไม่สำเร็จ",
   async (request: NextRequest, { params }: Ctx) => {
     await requireAuth();
     const { id } = await params;
@@ -55,7 +60,7 @@ export const PUT = withRoute(
       throw err;
     }
     if (!updated) {
-      return NextResponse.json({ error: "Product not found" }, { status: 404 });
+      return NextResponse.json({ error: "ไม่พบสินค้านี้" }, { status: 404 });
     }
 
     // Collect images that are no longer referenced so the client can show a
@@ -79,13 +84,13 @@ export const PUT = withRoute(
 
 // DELETE — soft delete product (sets pendingDeleteAt). If already pending, hard deletes.
 export const DELETE = withRoute(
-  "Failed to delete product",
+  "ลบสินค้าไม่สำเร็จ",
   async (_request: NextRequest, { params }: Ctx) => {
     await requireAuth();
     const { id } = await params;
     const product = await getProduct(id);
     if (!product) {
-      return NextResponse.json({ error: "Product not found" }, { status: 404 });
+      return NextResponse.json({ error: "ไม่พบสินค้านี้" }, { status: 404 });
     }
 
     if (product.pendingDeleteAt) {
@@ -93,7 +98,7 @@ export const DELETE = withRoute(
       const { hardDeleteProduct } = await import("../../../lib/productDeleter");
       const orphanedImages = await hardDeleteProduct(id);
       if (!orphanedImages) {
-        throw new ApiError(500, "Failed to hard delete product");
+        throw new ApiError(500, "ลบสินค้าถาวรไม่สำเร็จ");
       }
       
       revalidateTag("products", { expire: 0 });
@@ -105,7 +110,7 @@ export const DELETE = withRoute(
         pendingDeleteAt: new Date().toISOString()
       });
       if (!updated) {
-        throw new ApiError(500, "Failed to soft delete product");
+        throw new ApiError(500, "ย้ายสินค้าไปรอลบไม่สำเร็จ");
       }
       
       revalidateTag("products", { expire: 0 });

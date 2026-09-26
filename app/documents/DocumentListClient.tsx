@@ -8,7 +8,8 @@ import ErrorModal from "../components/ErrorModal";
 import ImageDeleteConfirmDialog, { type OrphanedImage } from "../components/ImageDeleteConfirmDialog";
 
 import type { DocumentData } from "../lib/types";
-import { stripHtml } from "../lib/stripHtml";
+import { displayText } from "../lib/stripHtml";
+import { uploadFormData } from "../lib/uploadClient";
 
 interface DocumentListClientProps {
   initialDocuments: DocumentData[];
@@ -84,11 +85,11 @@ export default function DocumentListClient({
       return;
     }
 
-    if (stripHtml(docTitle).length > 255) {
+    if (displayText(docTitle).length > 255) {
       setErrorModal({ isOpen: true, message: "ชื่อเอกสารต้องมีความยาวไม่เกิน 255 ตัวอักษร" });
       return;
     }
-    if (stripHtml(docDesc).length > 2000) {
+    if (displayText(docDesc).length > 2000) {
       setErrorModal({ isOpen: true, message: "รายละเอียดเอกสารต้องมีความยาวไม่เกิน 2,000 ตัวอักษร" });
       return;
     }
@@ -100,10 +101,7 @@ export default function DocumentListClient({
       formData.append("file", docFile);
       formData.append("isDocument", "true");
 
-      const uploadRes = await fetch("/api/upload", {
-        method: "POST",
-        body: formData,
-      });
+      const uploadRes = await uploadFormData(formData);
       if (!uploadRes.ok) throw new Error("Upload failed");
       const uploadData = await uploadRes.json();
 
@@ -148,11 +146,11 @@ export default function DocumentListClient({
     e.preventDefault();
     if (!editingDoc) return;
 
-    if (stripHtml(editDocTitle).length > 255) {
+    if (displayText(editDocTitle).length > 255) {
       setErrorModal({ isOpen: true, message: "ชื่อเอกสารต้องมีความยาวไม่เกิน 255 ตัวอักษร" });
       return;
     }
-    if (stripHtml(editDocDesc).length > 2000) {
+    if (displayText(editDocDesc).length > 2000) {
       setErrorModal({ isOpen: true, message: "รายละเอียดเอกสารต้องมีความยาวไม่เกิน 2,000 ตัวอักษร" });
       return;
     }
@@ -196,7 +194,7 @@ export default function DocumentListClient({
         if (data.orphanedImages?.length > 0) {
           setOrphanedImages(data.orphanedImages.map((url: string) => ({
             url,
-            reason: `ลบเอกสาร "${stripHtml(item.title).substring(0, 50)}"`
+            reason: `ลบเอกสาร "${Array.from(displayText(item.title)).slice(0, 50).join("")}"`
           })));
         }
       } else {

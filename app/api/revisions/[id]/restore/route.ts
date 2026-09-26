@@ -74,8 +74,10 @@ async function restoreCustomerNote(rev: Revision): Promise<Response> {
   }
 
   // Same treatment the value gets on the way in through the customer routes.
-  // `sanitizePlainText` is idempotent, so a note that was written through
-  // those routes comes back out of it unchanged.
+  // A note written through those routes comes back out of it unchanged
+  // (short of text that itself spells an entity code, e.g. a typed "&amp;lt;"
+  // — decoded one level further), and a snapshot taken before schema v44,
+  // which still holds "&amp;" for "&", comes back as the text it stood for.
   const note = sanitizePlainText(raw ?? "");
 
   // The 2000-character ceiling is imposed by `sanitizePlainText(...)
@@ -174,7 +176,7 @@ export const POST = withRoute(
 
     const rev = await getRevision(id);
     if (!rev) {
-      return NextResponse.json({ error: "Revision not found" }, { status: 404 });
+      return NextResponse.json({ error: "ไม่พบประวัติการแก้ไขนี้" }, { status: 404 });
     }
 
     const data = rev.data as Record<string, unknown>;
@@ -197,7 +199,7 @@ export const POST = withRoute(
         // snapshot can't be re-applied, so report 404 rather than a false 200.
         const updated = await updateProduct(rev.entityId, data);
         if (!updated) {
-          return NextResponse.json({ error: "Product no longer exists" }, { status: 404 });
+          return NextResponse.json({ error: "สินค้านี้ถูกลบไปแล้ว" }, { status: 404 });
         }
         revalidateTag("products", { expire: 0 });
         break;
@@ -238,7 +240,7 @@ export const POST = withRoute(
           throw err;
         }
         if (!updated) {
-          return NextResponse.json({ error: "Content no longer exists" }, { status: 404 });
+          return NextResponse.json({ error: "เนื้อหานี้ถูกลบไปแล้ว" }, { status: 404 });
         }
         // Restoring a revision WRITES the contents table, so the cached catalog
         // reads must be busted here too — this branch lives outside
@@ -251,7 +253,7 @@ export const POST = withRoute(
         // consistent 404 instead of a 500.
         const existing = await getDocument(rev.entityId);
         if (!existing) {
-          return NextResponse.json({ error: "Document no longer exists" }, { status: 404 });
+          return NextResponse.json({ error: "เอกสารนี้ถูกลบไปแล้ว" }, { status: 404 });
         }
         await updateDocument(rev.entityId, data);
         // Same reason as the content branch above: this writes the documents

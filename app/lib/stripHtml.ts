@@ -1,6 +1,7 @@
-export function stripHtml(html: string): string {
-  if (!html) return "";
-  return html.replace(/<[^>]*>?/gm, '');
+import { containsHtmlTag } from "./htmlTags";
+
+function stripTags(html: string): string {
+  return html.replace(/<[^>]*>?/gm, "");
 }
 
 const NAMED_ENTITIES: Record<string, string> = {
@@ -11,6 +12,35 @@ const NAMED_ENTITIES: Record<string, string> = {
   apos: "'",
   nbsp: " ",
 };
+
+/** Character references → characters, ONCE ("&amp;lt;" reads "&lt;"). */
+function decodeEntities(text: string): string {
+  return text.replace(/&(#x[0-9a-f]{1,6}|#[0-9]{1,7}|[a-z]{2,6});/gi, (entity, body: string) => {
+    const lower = body.toLowerCase();
+    if (lower.startsWith("#")) {
+      const code = lower.startsWith("#x") ? parseInt(lower.slice(2), 16) : parseInt(lower.slice(1), 10);
+      return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : entity;
+    }
+    return NAMED_ENTITIES[lower] ?? entity;
+  });
+}
+
+/**
+ * Rich text (HTML) → its text, spaces and line layout aside: tags removed,
+ * then character references decoded once. For labels, alt text, search and
+ * length checks on a catalog title or category name.
+ *
+ * It used to remove the tags only, so every "&" sanitize-html had stored as
+ * "&amp;" showed as "&amp;" — in the product pickers, the home cards'
+ * English line, and the product names it put on quotations.
+ *
+ * NOT for plain text (a `<` there is a character — see displayText), and the
+ * result is text: render it as a text node or attribute, never as HTML.
+ */
+export function stripHtml(html: string): string {
+  if (!html) return "";
+  return decodeEntities(stripTags(html));
+}
 
 /**
  * Rich text → the plain text a reader sees, for places that are NOT HTML:
@@ -30,17 +60,28 @@ const NAMED_ENTITIES: Record<string, string> = {
  */
 export function htmlToText(html: string): string {
   if (!html) return "";
-  return stripHtml(html.replace(/<(?:br|\/p|\/div|\/li|\/h[1-6]|\/tr|\/td|\/th)\b[^>]*>/gi, " "))
-    .replace(/&(#x[0-9a-f]{1,6}|#[0-9]{1,7}|[a-z]{2,6});/gi, (entity, body: string) => {
-      const lower = body.toLowerCase();
-      if (lower.startsWith("#")) {
-        const code = lower.startsWith("#x") ? parseInt(lower.slice(2), 16) : parseInt(lower.slice(1), 10);
-        return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : entity;
-      }
-      return NAMED_ENTITIES[lower] ?? entity;
-    })
+  return decodeEntities(stripTags(html.replace(/<(?:br|\/p|\/div|\/li|\/h[1-6]|\/tr|\/td|\/th)\b[^>]*>/gi, " ")))
     .replace(/\s+/g, " ")
     .trim();
+}
+
+/**
+ * A value that may be rich text OR plain text, as text for display.
+ *
+ * Some fields mix the two — an equipment's product name is the name typed on
+ * the machine (plain text, sanitizePlainText) or, when it has none, the
+ * catalog title (rich text, "<p>A &amp; B</p>"); see EQUIPMENT_SELECT in
+ * crmStore.ts. stripHtml showed the catalog's "&amp;" literally; htmlToText
+ * on a plain name would cut "5 < 10" down to "5". So only a value holding a
+ * real tag is read as HTML, and a plain one is shown as typed. "Real tag" is
+ * the same rule sanitizePlainText saves by (lib/htmlTags.ts), so a model
+ * "PS<B-200>" the save kept is not then hidden on screen.
+ *
+ * Returns text: render it as a React text node, never as HTML.
+ */
+export function displayText(value: string | null | undefined): string {
+  if (!value) return "";
+  return containsHtmlTag(value) ? htmlToText(value) : value.trim();
 }
 
 /**

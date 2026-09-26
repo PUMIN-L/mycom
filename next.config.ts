@@ -33,7 +33,10 @@ const contentSecurityPolicy = [
   "style-src 'self' 'unsafe-inline'",
   `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ""}`,
   "worker-src 'self' blob:",
-  "connect-src 'self' https://res.cloudinary.com",
+  // api.cloudinary.com: files over 4 MB upload from the browser straight to
+  // Cloudinary with a server-signed request (lib/uploadClient.ts) — Vercel
+  // refuses bodies that large before they reach /api/upload.
+  "connect-src 'self' https://res.cloudinary.com https://api.cloudinary.com",
 ].join("; ");
 
 const nextConfig: NextConfig = {

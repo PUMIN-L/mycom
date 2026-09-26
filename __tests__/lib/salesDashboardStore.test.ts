@@ -2240,3 +2240,48 @@ describe('period boundaries — the card and the breakdowns must agree', () => {
     expect(october.overview.previousPeriod.revenue).toBe(SEPTEMBER_REVENUE);
   });
 });
+
+// Vercel runs on UTC: at 02:00 on the 25th in Bangkok, the UTC date is still
+// the 24th. A date the caller left out (or sent broken) means the business's
+// day — Bangkok's — whatever the server clock says.
+describe('addSalesRecord — the saleDate it falls back to', () => {
+  const realTZ = process.env.TZ;
+  beforeEach(() => {
+    process.env.TZ = 'UTC';
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-09-24T19:00:00Z')); // 02:00, 25 Sep in Bangkok
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    if (realTZ === undefined) delete process.env.TZ;
+    else process.env.TZ = realTZ;
+  });
+
+  it.each(['', 'not-a-date', '2026-02-31'])("is Bangkok's today for saleDate %j", async (saleDate) => {
+    vi.mocked(query)
+      .mockResolvedValueOnce([{ affectedRows: 1 }] as never) // INSERT
+      .mockResolvedValueOnce([[{ id: 'rec-1' }]] as never); // getSalesRecord
+    await addSalesRecord({ productName: 'Scale', qty: 1, unitPrice: 1, saleDate });
+    const insert = vi.mocked(query).mock.calls[0];
+    expect(insert[0]).toContain('INSERT INTO sales_records');
+    expect(insert[1]![12]).toBe('2026-09-25'); // saleDate
+  });
+});
+
+// warrantyStartDate / warrantyEndDate are DATE columns: a day that does not
+// exist would be refused by the INSERT (a 500). It is dropped like a
+// malformed date instead; a real one is kept.
+describe('addSalesRecord — warranty dates', () => {
+  it('drops a warranty date that does not exist, keeps a real one', async () => {
+    vi.mocked(query)
+      .mockResolvedValueOnce([{ affectedRows: 1 }] as never) // INSERT
+      .mockResolvedValueOnce([[{ id: 'rec-1' }]] as never); // getSalesRecord
+    await addSalesRecord({
+      productName: 'Scale', qty: 1, unitPrice: 1, saleDate: '2026-02-10',
+      warrantyStartDate: '2026-02-31', warrantyEndDate: '2028-02-29',
+    });
+    const params = vi.mocked(query).mock.calls[0][1] as unknown[];
+    expect(params[18]).toBeNull(); // warrantyStartDate
+    expect(params[19]).toBe('2028-02-29'); // warrantyEndDate
+  });
+});

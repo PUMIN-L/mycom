@@ -105,7 +105,7 @@ describe("POST /api/purchase-orders (create)", () => {
     vi.mocked(getSession).mockResolvedValue(adminSession);
     const res = await createPOST(postReq("http://localhost/api/purchase-orders", { docNo: "PO150926-22" }));
     expect(res.status).toBe(400);
-    expect((await res.json()).error).toBe("id is required");
+    expect((await res.json()).error).toBe("ต้องระบุ id ของเอกสาร");
     expect(createPurchaseOrder).not.toHaveBeenCalled();
   });
 

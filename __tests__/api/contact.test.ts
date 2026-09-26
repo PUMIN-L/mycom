@@ -20,8 +20,14 @@ vi.mock('@/app/lib/contactMessageStore', () => ({
   saveContactMessage: vi.fn(),
   markContactMessageEmailed: vi.fn(),
   listContactMessages: vi.fn(),
+  countContactMessagesSince: vi.fn(),
 }));
-import { saveContactMessage, markContactMessageEmailed } from '@/app/lib/contactMessageStore';
+import {
+  saveContactMessage,
+  markContactMessageEmailed,
+  countContactMessagesSince,
+} from '@/app/lib/contactMessageStore';
+import { CONTACT_EMAIL_CAP_PER_HOUR, CONTACT_HONEYPOT_FIELD } from '@/app/lib/contactSpamGuard';
 
 const valid = {
   name: 'John Visitor',
@@ -46,6 +52,7 @@ describe('POST /api/contact (public contact form)', () => {
     vi.clearAllMocks();
     vi.mocked(isMailConfigured).mockReturnValue(true);
     vi.mocked(getContactEmail).mockResolvedValue('admin@shop.test');
+    vi.mocked(countContactMessagesSince).mockResolvedValue(1); // just this lead
   });
 
   it('refuses a cross-origin request with 403 (real withRoute CSRF guard)', async () => {
@@ -54,14 +61,76 @@ describe('POST /api/contact (public contact form)', () => {
     expect(sendContactEmail).not.toHaveBeenCalled();
   });
 
-  it('returns 503 when mail is not configured, without sending', async () => {
+  // It used to answer 503 before saving anything, so every enquiry sent while
+  // SMTP was unset was simply lost.
+  it('still stores the lead when mail is not configured — it just is not emailed', async () => {
     vi.mocked(isMailConfigured).mockReturnValue(false);
     const res = await POST(makeReq(valid, '203.0.113.2'));
-    expect(res.status).toBe(503);
-    expect((await res.json()).error).toBe(
-      'ระบบส่งอีเมลยังไม่ถูกตั้งค่า กรุณาติดต่อผ่าน LINE'
-    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ success: true, emailed: false });
+    expect(saveContactMessage).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(saveContactMessage).mock.calls[0][0]).toMatchObject({ ...valid, emailedOk: false });
     expect(sendContactEmail).not.toHaveBeenCalled();
+    expect(markContactMessageEmailed).not.toHaveBeenCalled();
+  });
+
+  it('answers a bot that filled the honeypot as if it worked — and stores and sends nothing', async () => {
+    const res = await POST(makeReq({ ...valid, [CONTACT_HONEYPOT_FIELD]: 'http://spam.example' }, '203.0.113.20'));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ success: true, emailed: false });
+    expect(saveContactMessage).not.toHaveBeenCalled();
+    expect(sendContactEmail).not.toHaveBeenCalled();
+  });
+
+  it('treats the empty honeypot the real form always sends as a normal submission', async () => {
+    const res = await POST(makeReq({ ...valid, [CONTACT_HONEYPOT_FIELD]: '' }, '203.0.113.21'));
+    expect(await res.json()).toEqual({ success: true, emailed: true });
+    expect(saveContactMessage).toHaveBeenCalledTimes(1);
+  });
+
+  describe('the hourly email cap (counted in the DB, so across every instance)', () => {
+    it('emails the lead that reaches the cap exactly', async () => {
+      vi.mocked(countContactMessagesSince).mockResolvedValue(CONTACT_EMAIL_CAP_PER_HOUR);
+      const res = await POST(makeReq(valid, '203.0.113.22'));
+      expect(await res.json()).toEqual({ success: true, emailed: true });
+      expect(sendContactEmail).toHaveBeenCalledTimes(1);
+    });
+
+    it('stores but does not email a lead past the cap', async () => {
+      vi.mocked(countContactMessagesSince).mockResolvedValue(CONTACT_EMAIL_CAP_PER_HOUR + 1);
+      const res = await POST(makeReq(valid, '203.0.113.23'));
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ success: true, emailed: false });
+      expect(saveContactMessage).toHaveBeenCalledTimes(1);
+      expect(sendContactEmail).not.toHaveBeenCalled();
+    });
+
+    it('counts the hour before this request, after this lead was stored', async () => {
+      const before = Date.now();
+      await POST(makeReq(valid, '203.0.113.24'));
+      const since = Date.parse(vi.mocked(countContactMessagesSince).mock.calls[0][0]);
+      expect(before - since).toBeGreaterThanOrEqual(60 * 60 * 1000 - 1000);
+      expect(before - since).toBeLessThanOrEqual(60 * 60 * 1000 + 1000);
+      expect(vi.mocked(saveContactMessage).mock.invocationCallOrder[0]).toBeLessThan(
+        vi.mocked(countContactMessagesSince).mock.invocationCallOrder[0]
+      );
+    });
+
+    it('still emails the lead when the count itself fails', async () => {
+      vi.mocked(countContactMessagesSince).mockRejectedValueOnce(new Error('DB blip'));
+      const res = await POST(makeReq(valid, '203.0.113.25'));
+      expect(await res.json()).toEqual({ success: true, emailed: true });
+    });
+  });
+
+  // The lead is already stored by then: a 500 would tell the visitor it failed
+  // and invite a second, duplicate submission.
+  it('reports emailed:false, not a 500, when the recipient cannot be read', async () => {
+    vi.mocked(getContactEmail).mockRejectedValueOnce(new Error('DB blip'));
+    const res = await POST(makeReq(valid, '203.0.113.26'));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ success: true, emailed: false });
+    expect(saveContactMessage).toHaveBeenCalledTimes(1);
   });
 
   it('returns 400 when a required field is missing', async () => {

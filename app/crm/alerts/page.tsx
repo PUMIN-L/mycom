@@ -22,6 +22,7 @@ import {
   formatDisplayDate,
 } from "../../lib/dateFormat";
 import { dueMarkerOf } from "../../lib/taskBoard";
+import { displayText } from "../../lib/stripHtml";
 import { resolveAlertEditRoute } from "../../lib/alertEditRoute";
 
 // Import Modals
@@ -853,7 +854,7 @@ export default function AlertsPage() {
                     </div>
                     
                     <h4 className="font-bold text-gray-900 mb-1 line-clamp-1">{alert.data.customerName || "ลูกค้าทั่วไป"}</h4>
-                    <p className="text-sm text-gray-500 mb-4 line-clamp-1" dangerouslySetInnerHTML={{ __html: alert.data.productName || "ไม่ระบุสินค้า" }} />
+                    <p className="text-sm text-gray-500 mb-4 line-clamp-1">{displayText(alert.data.productName) || "ไม่ระบุสินค้า"}</p>
                     
                     <div className="mt-auto pt-4 flex gap-2 w-full">
                       <button 
@@ -971,7 +972,7 @@ export default function AlertsPage() {
                     </div>
                     
                     <h4 className="font-bold text-gray-900 mb-1 line-clamp-1">{alert.data.customerName || "ลูกค้าทั่วไป"}</h4>
-                    <p className="text-sm text-gray-500 mb-1 line-clamp-1" dangerouslySetInnerHTML={{ __html: alert.data.productName || "ไม่ระบุสินค้า" }} />
+                    <p className="text-sm text-gray-500 mb-1 line-clamp-1">{displayText(alert.data.productName) || "ไม่ระบุสินค้า"}</p>
                     <p className="text-xs text-gray-400 font-mono mb-4">S/N: {alert.data.serialNumber || "—"}</p>
                     
                     <div className="mt-auto flex gap-2 w-full opacity-0 group-hover:opacity-100 transition-opacity">
@@ -1006,7 +1007,7 @@ export default function AlertsPage() {
                     </div>
 
                     <h4 className="font-bold text-gray-900 mb-1 line-clamp-1">{alert.data.customerName || "ลูกค้าทั่วไป"}</h4>
-                    <p className="text-sm text-gray-500 mb-1 line-clamp-1" dangerouslySetInnerHTML={{ __html: alert.data.productName || "ไม่ระบุสินค้า" }} />
+                    <p className="text-sm text-gray-500 mb-1 line-clamp-1">{displayText(alert.data.productName) || "ไม่ระบุสินค้า"}</p>
                     <p className="text-xs text-gray-400 font-mono mb-4">S/N: {alert.data.serialNumber || "—"}</p>
 
                     <div className="mt-auto flex gap-2 w-full opacity-0 group-hover:opacity-100 transition-opacity">
@@ -1053,7 +1054,7 @@ export default function AlertsPage() {
                     {alert.data.companyName && (
                       <p className="text-xs text-gray-400 mb-1 line-clamp-1">{alert.data.companyName}</p>
                     )}
-                    <p className="text-sm text-gray-500 mb-1 line-clamp-1" dangerouslySetInnerHTML={{ __html: alert.data.productName || "ไม่ระบุสินค้า" }} />
+                    <p className="text-sm text-gray-500 mb-1 line-clamp-1">{displayText(alert.data.productName) || "ไม่ระบุสินค้า"}</p>
                     <p className="text-xs text-gray-400 font-mono mb-2 line-clamp-1">
                       S/N: {alert.data.serialNumber || "— ยังไม่ได้ใส่"}
                     </p>
@@ -1192,7 +1193,7 @@ export default function AlertsPage() {
                     </div>
                     
                     <h4 className="font-bold text-gray-900 mb-1 line-clamp-1">{alert.data.customerName || "ลูกค้าทั่วไป"}</h4>
-                    <p className="text-sm text-gray-500 mb-3 line-clamp-1" dangerouslySetInnerHTML={{ __html: alert.data.productName || "ไม่ระบุสินค้า" }} />
+                    <p className="text-sm text-gray-500 mb-3 line-clamp-1">{displayText(alert.data.productName) || "ไม่ระบุสินค้า"}</p>
                     
                     <div className="flex flex-col gap-1 mb-4 text-xs font-medium text-gray-500">
                        {!alert.data.deliveryRef && <div className="flex items-center gap-1.5"><span className="text-red-500">❌</span> ขาดใบส่งสินค้า (เกิน 20 วัน)</div>}
@@ -1488,7 +1489,7 @@ export default function AlertsPage() {
                 {selectedAlert.type !== "customer_call" && (
                   <div className="col-span-2">
                     <div className="text-gray-500 mb-1">สินค้า</div>
-                    <div className="font-semibold text-gray-800" dangerouslySetInnerHTML={{ __html: selectedAlert.data.productName || "—" }} />
+                    <div className="font-semibold text-gray-800">{displayText(selectedAlert.data.productName) || "—"}</div>
                   </div>
                 )}
 

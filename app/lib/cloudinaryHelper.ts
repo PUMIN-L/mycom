@@ -35,6 +35,28 @@ export function uploadImage(
   });
 }
 
+/**
+ * Sign the parameters of an upload the BROWSER will send straight to
+ * Cloudinary (files too big to pass through a Vercel function — see
+ * lib/uploadLimits.ts). Cloudinary accepts the upload only with exactly these
+ * parameters, so what is signed here — the folder, the public id, the allowed
+ * formats — is what the browser can do. The API secret never leaves the
+ * server. Null when Cloudinary is not configured.
+ */
+export function signUploadParams(
+  params: Record<string, string | number>
+): { signature: string; apiKey: string; cloudName: string } | null {
+  const secret = process.env.CLOUDINARY_API_SECRET;
+  const apiKey = process.env.CLOUDINARY_API_KEY;
+  const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
+  if (!secret || !apiKey || !cloudName) return null;
+  return {
+    signature: cloudinary.utils.api_sign_request(params, secret),
+    apiKey,
+    cloudName,
+  };
+}
+
 /** Infer the Cloudinary resource_type from a delivery URL. */
 function detectResourceType(url: string): "image" | "raw" | "video" {
   if (url.includes("/raw/upload/")) return "raw";

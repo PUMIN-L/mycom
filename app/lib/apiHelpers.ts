@@ -11,7 +11,7 @@ import { getSession, SessionPayload } from "./session";
 //
 // Pattern for a handler:
 //
-//   export const POST = withRoute("Failed to create product", async (req) => {
+//   export const POST = withRoute("เพิ่มสินค้าไม่สำเร็จ", async (req) => {
 //     await requireAuth();                 // throws ApiError(401) if not logged in
 //     const data = await req.json();
 //     return NextResponse.json(await addProduct(data), { status: 201 });
@@ -85,6 +85,44 @@ function crossOriginRejected(args: unknown[]): Response | null {
   return null;
 }
 
+/** What a caller gets for a body `request.json()` cannot use. */
+export const INVALID_JSON_BODY_MESSAGE = "ข้อมูลที่ส่งมาไม่ถูกต้อง (ต้องเป็น JSON)";
+
+/**
+ * Make the handler's `request.json()` refuse, as ApiError(400), a body that
+ * is not JSON or is JSON `null`. Both are the caller's mistake, but reached
+ * the handler as a crash — "Unexpected token…" from the parse, or "Cannot
+ * read properties of null" from the first `body.field` — and so came back as
+ * a 500 that also landed in the error log. Objects, arrays and other values
+ * pass through; each route still checks the fields it needs. A route that
+ * already writes `request.json().catch(…)` keeps its own fallback.
+ */
+function refuseUnusableJsonBody(args: unknown[]): void {
+  const req = args[0] as { json?: unknown } | undefined;
+  if (!req || typeof req.json !== "function") return;
+  const parse = (req.json as () => Promise<unknown>).bind(req);
+  try {
+    Object.defineProperty(req, "json", {
+      configurable: true,
+      writable: true,
+      value: async () => {
+        let body: unknown;
+        try {
+          body = await parse();
+        } catch {
+          throw new ApiError(400, INVALID_JSON_BODY_MESSAGE);
+        }
+        if (body === null) throw new ApiError(400, INVALID_JSON_BODY_MESSAGE);
+        return body;
+      },
+    });
+  } catch {
+    // A request object that refuses the property (none does today — Next's
+    // own Proxy has only a `get` trap) keeps its plain json(): the handler
+    // behaves as it did before this guard, rather than every route failing.
+  }
+}
+
 export function withRoute<Args extends unknown[]>(
   fallbackMessage: string,
   handler: (...args: Args) => Promise<Response>
@@ -92,6 +130,7 @@ export function withRoute<Args extends unknown[]>(
   return async (...args: Args): Promise<Response> => {
     const csrf = crossOriginRejected(args);
     if (csrf) return csrf;
+    refuseUnusableJsonBody(args);
     try {
       return await handler(...args);
     } catch (error) {

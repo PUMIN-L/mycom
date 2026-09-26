@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { sanitizeRichText } from "../../app/lib/sanitizeHtml";
+import { sanitizeRichText, sanitizePlainText } from "../../app/lib/sanitizeHtml";
 
 // sanitizeRichText guards every rich-text field rendered later with
 // dangerouslySetInnerHTML, so these assertions are the XSS safety net for the
@@ -114,5 +114,82 @@ describe("sanitizeRichText", () => {
     const out = sanitizeRichText("<p>Your Workplace uses RS232</p>");
     expect(out).not.toMatch(/ /);
     expect(out).toContain("Your Workplace uses RS232");
+  });
+});
+
+// Plain-text fields are SHOWN AS TEXT everywhere (React text nodes, PDFs,
+// Excel, text emails). sanitize-html's own output escapes & < >, which used to
+// be stored and then shown literally: "A&B Co., Ltd." read "A&amp;B Co., Ltd."
+describe("sanitizePlainText", () => {
+  it("is empty for null/undefined/empty", () => {
+    expect(sanitizePlainText(null)).toBe("");
+    expect(sanitizePlainText(undefined)).toBe("");
+    expect(sanitizePlainText("")).toBe("");
+  });
+
+  it("keeps &, < and > as the characters that were typed — not as entities", () => {
+    expect(sanitizePlainText("A&B Co., Ltd.")).toBe("A&B Co., Ltd.");
+    expect(sanitizePlainText("5 < 10 > 3")).toBe("5 < 10 > 3");
+    expect(sanitizePlainText("x<3")).toBe("x<3");
+    expect(sanitizePlainText('บริษัท "ไทย" จำกัด O\'Brien')).toBe('บริษัท "ไทย" จำกัด O\'Brien');
+  });
+
+  it("still removes tags — the text inside them stays", () => {
+    expect(sanitizePlainText("<b>bold</b> text")).toBe("bold text");
+    expect(sanitizePlainText("<script>alert(1)</script>ok")).toBe("ok");
+    expect(sanitizePlainText('<img src=x onerror="alert(1)">x')).toBe("x");
+    expect(sanitizePlainText("<br>line")).toBe("line");
+  });
+
+  it("decodes once: a typed entity comes back as that entity's text, not as markup", () => {
+    // What the user typed is parsed as HTML text first: "&amp;lt;" is the text
+    // "&lt;" — it must not become "<".
+    expect(sanitizePlainText("&amp;lt;")).toBe("&lt;");
+    expect(sanitizePlainText("&lt;script&gt;")).toBe("<script>");
+    expect(sanitizePlainText("&copy; &nbsp;x")).toBe("© " + String.fromCharCode(0xa0) + "x");
+  });
+
+  it("is stable: sanitising its own output changes nothing", () => {
+    for (const s of ["A&B", "5 < 10", "a & b < c > d", "ไทย & English"]) {
+      const once = sanitizePlainText(s);
+      expect(sanitizePlainText(once)).toBe(once);
+    }
+  });
+
+  it("keeps line breaks and tabs", () => {
+    expect(sanitizePlainText("a\nb\tc")).toBe("a\nb\tc");
+  });
+
+  // An HTML parser takes every "<" + letter for a tag and drops it with the
+  // text after it: "PS<B-200" used to be saved as "PS". Only a REAL tag is
+  // removed now (lib/htmlTags.ts).
+  it("keeps < + a letter that is not a real tag — a model, a size, a grade", () => {
+    for (const s of [
+      "PS<B-200", "รุ่น PS<B-200> สีดำ", "Size <M>", "Size <S> or <L>", "เกรด <A> หรือ <B>",
+      "a<b c", "5<a", "x<y", "<b>ไม่มีแท็กปิด", "a</b", "<!-- x -->", "<?x", "<H2O>",
+    ]) {
+      expect(sanitizePlainText(s), s).toBe(s);
+    }
+  });
+
+  it("still removes a real tag: closed, with attributes, or one that embeds or runs something", () => {
+    expect(sanitizePlainText("PS<B-200> <b>ใหม่</b>")).toBe("PS<B-200> ใหม่");
+    expect(sanitizePlainText('<a href="x">ลิงก์</a>')).toBe("ลิงก์");
+    expect(sanitizePlainText("บรรทัด<br>ใหม่")).toBe("บรรทัดใหม่");
+    expect(sanitizePlainText("</b>")).toBe("");
+    expect(sanitizePlainText("<p>A &amp; B</p>")).toBe("A & B"); // a catalog title copied in
+  });
+
+  it("removes an unclosed tag that would run something, or carries an attribute", () => {
+    expect(sanitizePlainText("<img src=x onerror=alert(1)")).toBe("");
+    expect(sanitizePlainText("<svg/onload=alert(1)")).toBe("");
+    expect(sanitizePlainText("<b onmouseover=alert(1)")).toBe("");
+  });
+
+  it("is stable for the text it keeps", () => {
+    for (const s of ["PS<B-200", "Size <M>", "a<b c", "<b>ไม่มีแท็กปิด"]) {
+      const once = sanitizePlainText(s);
+      expect(sanitizePlainText(once)).toBe(once);
+    }
   });
 });

@@ -36,7 +36,7 @@ describe('DELETE /api/salespeople/[id]', () => {
     const res = await DELETE(req('sp-1'), ctx('sp-1'));
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({
-      error: 'Cannot delete salesperson with linked sales records',
+      error: 'ลบพนักงานขายคนนี้ไม่ได้ เพราะยังมีรายการขายที่ผูกอยู่',
     });
     expect(deleteSalesperson).not.toHaveBeenCalled();
   });

@@ -4,7 +4,7 @@ import { requireAuth, withRoute } from "../../lib/apiHelpers";
 
 // GET — list all salespeople (admin only — internal staff data).
 export const GET = withRoute(
-  "Failed to fetch salespeople",
+  "โหลดรายชื่อพนักงานขายไม่สำเร็จ",
   async (_request: NextRequest) => {
     await requireAuth();
     const salespeople = await getAllSalespeople();
@@ -14,17 +14,17 @@ export const GET = withRoute(
 
 // POST — create new salesperson (login required)
 export const POST = withRoute(
-  "Failed to create salesperson",
+  "เพิ่มพนักงานขายไม่สำเร็จ",
   async (request: NextRequest) => {
     await requireAuth();
     const body = await request.json();
     
     if (!body.name || body.name.trim() === "") {
-      return NextResponse.json({ error: "Name is required" }, { status: 400 });
+      return NextResponse.json({ error: "กรุณากรอกชื่อ" }, { status: 400 });
     }
     
     if (body.name.length > 255) {
-      return NextResponse.json({ error: "Name must be less than 255 characters" }, { status: 400 });
+      return NextResponse.json({ error: "ชื่อยาวเกิน 255 ตัวอักษร" }, { status: 400 });
     }
 
     const created = await createSalesperson(body);

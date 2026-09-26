@@ -18,7 +18,7 @@ const LIST_COLUMNS =
   "customers.id, customers.companyId, customers.name, customers.department, customers.phone, customers.email, customers.createdAt, customers.noteUpdatedAt";
 
 export const GET = withRoute(
-  "Failed to load customers",
+  "โหลดรายชื่อลูกค้าไม่สำเร็จ",
   async (request: Request) => {
     await requireAuth();
 
@@ -34,7 +34,7 @@ export const GET = withRoute(
 );
 
 export const POST = withRoute(
-  "Failed to create customer",
+  "เพิ่มลูกค้าไม่สำเร็จ",
   async (request: Request) => {
     await requireAuth();
 
@@ -43,11 +43,11 @@ export const POST = withRoute(
     const now = new Date().toISOString();
 
     if (!data.companyId || typeof data.companyId !== "string" || data.companyId.trim() === "") {
-      return jsonError("companyId is required", 400);
+      return jsonError("กรุณาเลือกบริษัท", 400);
     }
     
     if (!data.name || typeof data.name !== "string" || data.name.trim() === "") {
-      return jsonError("Name is required", 400);
+      return jsonError("กรุณากรอกชื่อ", 400);
     }
 
     const companyId = sanitizePlainText(data.companyId).substring(0, 255);

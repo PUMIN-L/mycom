@@ -22,11 +22,19 @@
  *   • the page's own ชื่อลูกค้า/ชื่อบริษัท box still filters exactly as before.
  */
 
-import { render, screen, fireEvent, waitFor, within, cleanup, act } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within, cleanup, act, configure } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+
+// The replace flow here (confirm → mocked fetch → report) settles within
+// ~100 ms alone, but under the full parallel run with coverage (the pre-push
+// hook) a starved worker has missed testing-library's 1 s default wait. No
+// test in this file waits for something to NOT appear, so a longer ceiling
+// costs the passing tests nothing.
+configure({ asyncUtilTimeout: 5_000 });
 import { useState } from "react";
 import CustomerNoteSearchPanel, {
   buildChangeExcerpt,
+  replacementNeedsWarning,
 } from "@/app/components/CustomerNoteSearchPanel";
 import type {
   CustomerNoteSearchResponse,
@@ -770,5 +778,62 @@ describe("หน้าแม่เรนเดอร์ใหม่ ผลกา
       target: { value: "ใบเสนอราคา" },
     });
     await waitFor(() => expect(screen.queryByText("ผลการแทนที่")).not.toBeInTheDocument());
+  });
+});
+
+// The replacement goes through sanitizePlainText, which keeps `&`, `<` and `>`
+// as typed and only REMOVES a real HTML tag (lib/htmlTags.ts), so only that
+// case — or a typed character reference — can make the stored note differ
+// from the preview, and only those warn.
+const STORED_AS_TYPED = [
+  "A&B จำกัด", "5 < 10", "x > y", "a<1", "< ก", "",
+  // "<" + a letter that is not a real tag: a model, a size, an unfinished tag.
+  "PS<B-200", "รุ่น PS<B-200>", "Size <M>", "เกรด <A> หรือ <B>", "a<b c", "5<a", "<b>ตัวหนา",
+  "a</b", "<!-- x -->", "<?x",
+];
+const TAG_REMOVED = [
+  "<b>ตัวหนา</b>", "ดู <img src=x>", "</b>", "บรรทัด<br>ใหม่", "<img src=x onerror=alert(1)",
+  '<a href="x">ลิงก์</a>',
+];
+
+describe("replacementNeedsWarning", () => {
+  it("does not warn for text that is stored exactly as typed", () => {
+    for (const r of STORED_AS_TYPED) {
+      expect(replacementNeedsWarning(r), r).toBe(false);
+    }
+  });
+
+  it("warns for a real tag, which the server removes", () => {
+    for (const r of TAG_REMOVED) {
+      expect(replacementNeedsWarning(r), r).toBe(true);
+    }
+  });
+});
+
+describe("replacementNeedsWarning — agrees with what the server stores", () => {
+  it("warns for a typed character reference, which is stored as the character", () => {
+    for (const r of ["&amp;", "A &lt; B", "&#60;", "&#x3c;", "&nbsp;"]) {
+      expect(replacementNeedsWarning(r), r).toBe(true);
+    }
+  });
+
+  it("whenever it does NOT warn, the server stores exactly what was typed", async () => {
+    const { sanitizePlainText } = await import("@/app/lib/sanitizeHtml");
+    for (const r of STORED_AS_TYPED) {
+      expect(sanitizePlainText(r), r).toBe(r);
+    }
+    // The entity check is deliberately cautious ("R&D;" looks like one): it
+    // may warn for text that is in fact kept, never the other way round.
+    for (const r of ["R&D; lab", "a & b; c", "ราคา <= 5", "เวอร์เนีย ดิจิตอล", "&", "&;", "& amp;", "100% & up"]) {
+      if (!replacementNeedsWarning(r)) expect(sanitizePlainText(r), r).toBe(r);
+    }
+  });
+
+  it("and whenever it DOES warn, the stored text really differs", async () => {
+    const { sanitizePlainText } = await import("@/app/lib/sanitizeHtml");
+    for (const r of [...TAG_REMOVED, "&amp;", "A &lt; B", "&#60;"]) {
+      expect(replacementNeedsWarning(r), r).toBe(true);
+      expect(sanitizePlainText(r), r).not.toBe(r);
+    }
   });
 });

@@ -2,14 +2,18 @@
 // /products/{id}-{slug} (one category). Pure — the pages call these on the
 // server and pass the result to the client view.
 //
-// Everything is converted to PLAIN TEXT here (htmlToText): product and
-// category names are rich text in the database, but these pages render them
-// as text nodes, and descriptions are clipped to a blurb. Shipping full
+// Everything is converted to PLAIN TEXT here: product and category names are
+// rich text in the database, but these pages render them as text nodes, and
+// descriptions are clipped to a blurb. Product titles and descriptions keep
+// their line breaks and spaces (htmlToTextLines — the cards are pre-wrap);
+// category names are one line (htmlToText), as headings and page titles need.
+// Shipping full
 // three-language rich descriptions for the whole catalog would put the
 // /showcase page-weight problem (ARCHITECTURE "Page weight") on every page.
 
 import { categoryPath } from "./catalogPaths";
 import { clipText, htmlToText } from "./stripHtml";
+import { htmlToTextLines } from "./richTextDisplay";
 import type { ProductCategory, ProductData } from "./types";
 
 export interface CatalogProduct {
@@ -41,12 +45,14 @@ export function toCatalogProduct(p: ProductData): CatalogProduct {
   return {
     id: p.id,
     image: p.image,
-    title_th: htmlToText(p.title_th),
-    title_en: htmlToText(p.title_en),
-    title_zh: htmlToText(p.title_zh),
-    desc_th: clipText(htmlToText(p.desc_th), BLURB_LENGTH),
-    desc_en: clipText(htmlToText(p.desc_en), BLURB_LENGTH),
-    desc_zh: clipText(htmlToText(p.desc_zh), BLURB_LENGTH),
+    // Lines and spaces as the editor showed them (the cards render them with
+    // white-space: pre-wrap) — htmlToText ran every line into one.
+    title_th: htmlToTextLines(p.title_th),
+    title_en: htmlToTextLines(p.title_en),
+    title_zh: htmlToTextLines(p.title_zh),
+    desc_th: clipText(htmlToTextLines(p.desc_th), BLURB_LENGTH),
+    desc_en: clipText(htmlToTextLines(p.desc_en), BLURB_LENGTH),
+    desc_zh: clipText(htmlToTextLines(p.desc_zh), BLURB_LENGTH),
   };
 }
 
@@ -92,7 +98,8 @@ export function categoryTitle(category: Pick<CatalogCategory, "name_th" | "name_
 /** The meta description of a category page: what it is, and a few models. */
 export function categoryDescription(section: CatalogSection): string {
   const names = section.products
-    .map((p) => p.title_th || p.title_en)
+    // One line each here: the titles keep their line breaks for the cards.
+    .map((p) => (p.title_th || p.title_en).replace(/\s+/g, " ").trim())
     .filter(Boolean)
     .slice(0, 3);
   const examples = names.length ? ` เช่น ${names.join(", ")}` : "";

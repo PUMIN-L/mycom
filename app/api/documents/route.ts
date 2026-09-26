@@ -6,7 +6,7 @@ import { addDocument, getAllDocuments } from "../../lib/documentStore";
 export const dynamic = "force-dynamic";
 
 export const GET = withRoute(
-  "Failed to fetch documents",
+  "โหลดเอกสารไม่สำเร็จ",
   async () => {
     const docs = await getAllDocuments();
     return NextResponse.json(docs);
@@ -14,13 +14,13 @@ export const GET = withRoute(
 );
 
 export const POST = withRoute(
-  "Failed to create document",
+  "เพิ่มเอกสารไม่สำเร็จ",
   async (request: NextRequest) => {
     await requireAuth();
     const body = await request.json();
 
     if (!body.id || !body.title || !body.pdfUrl || !body.coverUrl) {
-      return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
+      return NextResponse.json({ error: "กรุณากรอกข้อมูลให้ครบ" }, { status: 400 });
     }
 
     const newDoc = {

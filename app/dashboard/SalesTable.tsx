@@ -3,7 +3,8 @@ import React, { useState, useEffect, useCallback } from "react";
 import type { SalesRecord } from "../lib/types";
 import SearchableDropdown from "../components/SearchableDropdown";
 import Spinner from "../components/Spinner";
-import { fmtDec, safeImageUrl, stripHtml, MONTHS_TH } from "./types";
+import { fmtDec, safeImageUrl, MONTHS_TH } from "./types";
+import { displayText } from "../lib/stripHtml";
 
 // ── Expandable row: what is actually inside one bill ────────────────────────
 // Shapes mirror GET /api/admin/sales/[id]/items exactly (line items from
@@ -198,7 +199,7 @@ function SaleDetailPanel({
                 return (
                 <tr key={it.id || idx} className="border-t border-gray-50">
                   <td className="py-2 pr-3 text-sm text-gray-800">
-                    {stripHtml(it.productName) || "ไม่ระบุสินค้า"}
+                    {displayText(it.productName) || "ไม่ระบุสินค้า"}
                   </td>
                   <td className="py-2 pr-3 text-sm text-right text-gray-600">{Number(it.qty || 0)}</td>
                   <td className="py-2 pr-3 text-sm text-right text-gray-600">฿{fmtDec(it.unitPrice)}</td>
@@ -236,7 +237,7 @@ function SaleDetailPanel({
               <tbody>
                 {equipments.map((eq, idx) => (
                   <tr key={eq.id || idx} className="border-t border-gray-50">
-                    <td className="py-2 pr-3 text-sm text-gray-800">{dash(stripHtml(eq.productName))}</td>
+                    <td className="py-2 pr-3 text-sm text-gray-800">{dash(displayText(eq.productName))}</td>
                     <td className="py-2 pr-3 text-sm font-mono text-gray-700">{dash(eq.serialNumber)}</td>
                     <td className="py-2 pr-3 text-sm text-gray-600">{dash(eq.warrantyType)}</td>
                     <td className="py-2 pr-3 text-sm text-gray-600">{fmtDate(eq.warrantyStartDate)}</td>
@@ -498,7 +499,7 @@ export default function SalesTable({
                   <td className="py-3 pr-3 text-sm text-gray-600">{r.saleDate}</td>
                   <td className="py-3 pr-3 text-sm font-medium text-gray-800">
 
-                    {stripHtml(r.productName)}
+                    {displayText(r.productName)}
                     {safeImageUrl(r.productImage) && (
                       <img src={safeImageUrl(r.productImage)!} alt="" className="inline-block ml-2 w-6 h-6 rounded object-cover border border-gray-100 bg-gray-50" />
                     )}

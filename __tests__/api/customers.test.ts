@@ -150,6 +150,17 @@ describe('POST /api/customers', () => {
     const [, params] = vi.mocked(query).mock.calls[0];
     expect(params).toContain('');
   });
+
+  it('stores &, < and > as typed — not as the &amp; the screens used to show', async () => {
+    // Every screen shows these fields as text, so an entity stored here was
+    // shown literally ("A&amp;B"). Tags are still removed.
+    vi.mocked(query).mockResolvedValueOnce([{ affectedRows: 1 }] as never);
+    await POST(postReq({ companyId: 'co-1', name: 'A&B <b>QC</b>', note: 'ราคา 5 < 10 & ส่งฟรี' }));
+    const [, params] = vi.mocked(query).mock.calls[0];
+    expect(params).toContain('A&B QC');
+    expect(params).toContain('ราคา 5 < 10 & ส่งฟรี');
+    expect(JSON.stringify(params)).not.toContain('&amp;');
+  });
 });
 
 describe('PUT /api/customers/[id]', () => {
@@ -404,7 +415,7 @@ describe('DELETE /api/customers/[id]', () => {
     vi.mocked(query).mockResolvedValueOnce([[{ id: 'eq-1' }]] as any);
     const res = await DELETE(deleteReq('cust-1'), ctx('cust-1'));
     expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({ error: 'Cannot delete customer with linked equipment' });
+    expect(await res.json()).toEqual({ error: 'ลบลูกค้ารายนี้ไม่ได้ เพราะยังมีเครื่องมือที่ผูกกับลูกค้ารายนี้อยู่' });
   });
 
   it('rejects deletion when linked sales records exist', async () => {
@@ -413,7 +424,7 @@ describe('DELETE /api/customers/[id]', () => {
       .mockResolvedValueOnce([[{ id: 'sale-1' }]] as any); // has sales record
     const res = await DELETE(deleteReq('cust-1'), ctx('cust-1'));
     expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({ error: 'Cannot delete customer with linked sales records' });
+    expect(await res.json()).toEqual({ error: 'ลบลูกค้ารายนี้ไม่ได้ เพราะยังมีรายการขายที่ผูกกับลูกค้ารายนี้อยู่' });
   });
 
   it('rejects deletion when linked call schedules exist', async () => {
@@ -423,7 +434,7 @@ describe('DELETE /api/customers/[id]', () => {
       .mockResolvedValueOnce([[{ id: 'sch-1' }]] as any); // has schedule
     const res = await DELETE(deleteReq('cust-1'), ctx('cust-1'));
     expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({ error: 'Cannot delete customer with linked call schedules' });
+    expect(await res.json()).toEqual({ error: 'ลบลูกค้ารายนี้ไม่ได้ เพราะยังมีนัดโทรที่ผูกกับลูกค้ารายนี้อยู่' });
   });
 
   it('deletes the customer when nothing references it', async () => {

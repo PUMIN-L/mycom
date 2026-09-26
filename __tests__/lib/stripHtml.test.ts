@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { normalizeNbsp, htmlToText, clipText } from "../../app/lib/stripHtml";
+import { normalizeNbsp, htmlToText, clipText, displayText, stripHtml } from "../../app/lib/stripHtml";
 
 describe("normalizeNbsp", () => {
   it("replaces every U+00A0 with a regular space", () => {
@@ -74,5 +74,52 @@ describe("clipText", () => {
   it("counts characters, not UTF-16 units", () => {
     const emoji = String.fromCodePoint(0x1f600);
     expect(clipText(emoji.repeat(5), 5)).toBe(emoji.repeat(5));
+  });
+});
+
+describe("displayText", () => {
+  it("reads a rich catalog title as text, entities decoded", () => {
+    expect(displayText("<p>A &amp; B</p>")).toBe("A & B");
+    expect(displayText("<p>Line 1</p><p>Line 2</p>")).toBe("Line 1 Line 2");
+  });
+
+  it("shows a plain name as typed — a lone < is not the start of a tag", () => {
+    expect(displayText("5 < 10 > 3")).toBe("5 < 10 > 3");
+    expect(displayText("A&B Co., Ltd.")).toBe("A&B Co., Ltd.");
+    expect(displayText("  Scale X  ")).toBe("Scale X");
+  });
+
+  it("is empty for nothing", () => {
+    expect(displayText(null)).toBe("");
+    expect(displayText(undefined)).toBe("");
+    expect(displayText("")).toBe("");
+  });
+
+  // The save keeps "<" + a letter that is not a real tag (lib/htmlTags.ts);
+  // the screen must not then hide it by reading it as HTML.
+  it("shows a model or size with < + a letter exactly as saved", () => {
+    expect(displayText("PS<B-200")).toBe("PS<B-200");
+    expect(displayText("รุ่น PS<B-200>")).toBe("รุ่น PS<B-200>");
+    expect(displayText("Size <M>")).toBe("Size <M>");
+    expect(displayText("เกรด <A> หรือ <B>")).toBe("เกรด <A> หรือ <B>");
+  });
+
+  it("still reads a catalog title with a single tag as HTML", () => {
+    expect(displayText("Scale<br>X-200")).toBe("Scale X-200");
+    expect(displayText('<span style="color:red">A &amp; B</span>')).toBe("A & B");
+  });
+});
+
+describe("stripHtml", () => {
+  // It used to remove the tags only, so a catalog title with "&" showed
+  // "&amp;" in the pickers, the cards' English line and on quotations.
+  it("removes the tags and decodes the entities, once", () => {
+    expect(stripHtml("<p>Hardness &amp; Durometer</p>")).toBe("Hardness & Durometer");
+    expect(stripHtml("<p>&amp;lt;b&amp;gt;</p>")).toBe("&lt;b&gt;");
+    expect(stripHtml("<p>5 &lt; 10</p><p>x</p>")).toBe("5 < 10x");
+  });
+
+  it("is empty for nothing", () => {
+    expect(stripHtml("")).toBe("");
   });
 });

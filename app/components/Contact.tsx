@@ -6,6 +6,7 @@ import { useT } from "../i18n/LanguageContext";
 import { translations } from "../i18n/translations";
 import Image from "next/image";
 import { LINE_ID, LINE_URL, lineQrUrl } from "../lib/contact";
+import { CONTACT_HONEYPOT_FIELD } from "../lib/contactSpamGuard";
 
 import LineQrModal from "./LineQrModal";
 
@@ -29,6 +30,8 @@ export default function Contact({ email, phone, address, addressMapsQuery }: Con
     subject: "",
     message: "",
   });
+  // The spam trap below. Only a bot ever types into it.
+  const [honeypot, setHoneypot] = useState("");
   const [status, setStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
   // Which localized error to show — mapped from the response status so EN/ZH
   // visitors don't see the API's Thai-only error strings.
@@ -60,7 +63,7 @@ export default function Contact({ email, phone, address, addressMapsQuery }: Con
       const res = await fetch("/api/contact", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(formState),
+        body: JSON.stringify({ ...formState, [CONTACT_HONEYPOT_FIELD]: honeypot }),
       });
       if (!res.ok) {
         let errKey: typeof errorKey = "error";
@@ -209,7 +212,23 @@ export default function Contact({ email, phone, address, addressMapsQuery }: Con
 
           {/* Contact Form */}
           <div className="bg-[var(--bg-secondary)] p-12 md:p-16">
-            <form onSubmit={handleSubmit} className="space-y-8">
+            <form onSubmit={handleSubmit} className="space-y-8 relative">
+              {/* Spam trap: off-screen, out of the tab order and hidden from
+                  screen readers, so no person fills it — a bot that fills every
+                  input does, and /api/contact drops that submission. */}
+              <div aria-hidden="true" className="absolute -left-[10000px] top-0 w-px h-px overflow-hidden">
+                <label>
+                  Website
+                  <input
+                    type="text"
+                    name={CONTACT_HONEYPOT_FIELD}
+                    tabIndex={-1}
+                    autoComplete="off"
+                    value={honeypot}
+                    onChange={(e) => setHoneypot(e.target.value)}
+                  />
+                </label>
+              </div>
               <div className="space-y-2">
                 <label className="text-sm font-bold uppercase tracking-widest text-gray-400">
                   {t(translations.contact.form.name)}
