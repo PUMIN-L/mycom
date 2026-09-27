@@ -514,6 +514,31 @@ single-page PDF **client-side** (`jspdf` + `html2canvas-pro`, dynamically import
 builder UI and the saved-list summary can never drift. Number inputs use a
 raw-text `NumberInput` so sub-1 values (e.g. `0.5%` discount) are enterable.
 
+**The saved list (`/billing/saved`)** shows quotations and all three billing
+types in one table, with a tab, a search box and a **date range**. Filtering is
+[`app/lib/savedDocFilter.ts`](./app/lib/savedDocFilter.ts), not inline in the
+page, because two rules there decide what a bulk delete can reach:
+- **The range is a Bangkok calendar day**, via `savedOnBangkokDate`. `createdAt`
+  is a UTC instant, so `createdAt.slice(0, 10)` files a document saved at 06:00
+  in the office under the *previous* day and drops it out of a filter for the
+  day the admin watched it being made. A row whose date cannot be read is shown
+  when no range is set and hidden once one is — "delete this range" must not
+  sweep up a document that could not be shown to be in it.
+- **A bulk delete only ever touches rows on screen** (`visibleSelection`). The
+  tick survives a filter change, so without this an admin who ticked 40 rows,
+  switched tab and pressed ลบที่เลือก would delete documents he was no longer
+  looking at. The selection bar says how many ticked rows the filter is hiding.
+
+`เลือกทั้งหมด` ticks the filtered rows up to `BULK_DELETE_MAX_ITEMS` (100) and
+**announces the remainder** rather than trimming quietly — each delete is its
+own sequential request. Deletes run one at a time because partial success is
+normal: a billing document with payments answers 409, and that refusal is
+reported **by document number with the server's reason** (a `role="alert"`
+block that stays on screen), not folded into a count. Refused rows stay in the
+table and stay ticked. Images freed across the whole sweep are pooled,
+**de-duplicated** (an "แก้ไข (New Ver.)" clone reuses its original's image URL)
+and handed to `ImageDeleteConfirmDialog` once.
+
 **docNo (quotation number) ledger:** format `QT<YYYYMMDD>-NN`, the trailing
 number starts at `DOCNO_START` (22) each day ([`quotationNumber.ts`](./app/lib/quotationNumber.ts)).
 Issued numbers are recorded in `used_docnos` — a ledger **separate** from

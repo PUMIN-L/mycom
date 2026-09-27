@@ -9,6 +9,8 @@ interface DatePickerProps {
   className?: string;
   placeholderText?: string;
   isClearable?: boolean;
+  /** Put on the text input, so a <label htmlFor> can name this field. */
+  id?: string;
 }
 
 const months = [
@@ -133,9 +135,10 @@ function CustomHeader({
   );
 }
 
-export default function DatePicker({ selected, onChange, className, placeholderText, isClearable }: DatePickerProps) {
+export default function DatePicker({ selected, onChange, className, placeholderText, isClearable, id }: DatePickerProps) {
   return (
     <ReactDatePicker
+      id={id}
       selected={selected}
       onChange={onChange}
       dateFormat="yyyy-MM-dd"

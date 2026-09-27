@@ -6,10 +6,39 @@ import { useAuth } from "../../context/AuthContext";
 import ConfirmDialog from "../../components/ConfirmDialog";
 import Toast from "../../components/Toast";
 import ImageDeleteConfirmDialog, { type OrphanedImage } from "../../components/ImageDeleteConfirmDialog";
+import DatePicker from "../../components/DatePicker";
 import { BILLING_LABELS } from "../../lib/billingNumber";
 import type { BillingDocType } from "../../lib/billingNumber";
+import {
+  BULK_DELETE_MAX_ITEMS,
+  filterSavedDocs,
+  isImpossibleRange,
+  selectAllPlan,
+  summariseByDocType,
+  visibleSelection,
+} from "../../lib/savedDocFilter";
+import {
+  addDaysToDateString,
+  bangkokDateString,
+  formatDisplayDate,
+  isValidDateString,
+  toLocalDateString,
+} from "../../lib/dateFormat";
 
 type CombinedDocType = BillingDocType | "quotation";
+
+/** One refused document, named with the server's own Thai reason. */
+interface BulkFailure {
+  docNo: string;
+  reason: string;
+}
+
+const docTypeLabel = (docType: string): string =>
+  docType === "quotation" ? "ใบเสนอราคา" : BILLING_LABELS[docType as BillingDocType]?.th ?? docType;
+
+/** A "YYYY-MM-DD" string as the Date react-datepicker wants, or null. */
+const parseDateValue = (value: string): Date | null =>
+  isValidDateString(value) ? new Date(`${value}T00:00:00`) : null;
 
 interface BillingSummary {
   id: string;
@@ -57,6 +86,19 @@ function SavedBillingContent() {
   const [orphanedImages, setOrphanedImages] = useState<OrphanedImage[]>([]);
   const [createDropdownOpen, setCreateDropdownOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  /** The date range, as Bangkok calendar days. Empty = that end is open. */
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  /** Ticked ids. Kept across filter changes, but only the rows still on screen
+   *  are ever deleted — see `selectedVisible`. */
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  /** Progress while the loop runs: "กำลังลบ 7 / 24". */
+  const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null);
+  /** The documents a bulk delete could NOT remove, each with its reason. A
+   *  toast saying "3 ใบลบไม่ได้" without naming them is not a report. */
+  const [bulkFailures, setBulkFailures] = useState<BulkFailure[]>([]);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -172,18 +214,126 @@ function SavedBillingContent() {
     }
   }
 
-  const filtered = useMemo(() => {
-    let result = filter === "all" ? items : items.filter((i) => i.docType === filter);
-    const q = searchQuery.trim().toLowerCase();
-    if (q) {
-      result = result.filter(
-        (i) =>
-          (i.docNo || "").toLowerCase().includes(q) ||
-          (i.customer || "").toLowerCase().includes(q)
+  const filtered = useMemo(
+    () => filterSavedDocs(items, { docType: filter, search: searchQuery, from: dateFrom, to: dateTo }),
+    [items, filter, searchQuery, dateFrom, dateTo]
+  );
+
+  /** A range whose start is after its end covers nothing, which on screen is
+   *  indistinguishable from "no documents" — so it is said out loud. */
+  const badRange = isImpossibleRange(dateFrom, dateTo);
+  const hasDateFilter = isValidDateString(dateFrom) || isValidDateString(dateTo);
+
+  /** What ลบที่เลือก will delete: the ticked rows that are STILL on screen. */
+  const selectedVisible = useMemo(() => visibleSelection(filtered, selected), [filtered, selected]);
+  const plan = useMemo(() => selectAllPlan(filtered), [filtered]);
+
+  const applyPreset = (from: string, to: string) => {
+    setDateFrom(from);
+    setDateTo(to);
+  };
+
+  const clearDateRange = () => {
+    setDateFrom("");
+    setDateTo("");
+  };
+
+  const toggleRow = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const handleSelectAll = () => {
+    setSelected(new Set(plan.ids));
+    if (plan.cappedOut > 0) {
+      showToast(
+        `เลือกได้ครั้งละไม่เกิน ${BULK_DELETE_MAX_ITEMS} ใบ จึงเลือกให้ ${plan.selectedCount} ใบ (เหลืออีก ${plan.cappedOut} ใบ ลบรอบนี้เสร็จแล้วกดเลือกทั้งหมดอีกครั้ง)`,
+        "success"
       );
     }
-    return result;
-  }, [items, filter, searchQuery]);
+  };
+
+  /**
+   * Delete every ticked document that is still on screen, ONE AT A TIME.
+   *
+   * Sequential on purpose: each delete is its own transaction, the server
+   * refuses some of them (409 — a billing document with money attached), and
+   * every refusal has to come back attached to the document it refers to.
+   * Partial success is the normal outcome, so the rows that went are removed
+   * from the table and the rest are named in a report that stays on screen.
+   * Images freed by the deletes are pooled and the confirm dialog is opened
+   * ONCE, de-duplicated: an "แก้ไข (New Ver.)" clone reuses its original's
+   * image URL, so the same photo can be freed by two documents at once.
+   */
+  async function handleBulkDelete() {
+    const targets = selectedVisible;
+    if (targets.length === 0) return;
+    setBulkConfirmOpen(false);
+    setBulkDeleting(true);
+    setBulkFailures([]);
+    setBulkProgress({ done: 0, total: targets.length });
+
+    const deletedIds: string[] = [];
+    const failures: BulkFailure[] = [];
+    const freedImages: string[] = [];
+
+    for (const [index, item] of targets.entries()) {
+      const endpoint =
+        item.docType === "quotation" ? `/api/quotations/${item.id}` : `/api/billing/${item.id}`;
+      const name = item.docNo || docTypeLabel(item.docType);
+      try {
+        const res = await fetch(endpoint, { method: "DELETE" });
+        if (res.ok) {
+          const data = await res.json().catch(() => null);
+          deletedIds.push(item.id);
+          if (Array.isArray(data?.orphanedImages)) {
+            for (const url of data.orphanedImages) {
+              if (typeof url === "string" && url) freedImages.push(url);
+            }
+          }
+        } else {
+          const data = await res.json().catch(() => null);
+          failures.push({
+            docNo: name,
+            reason:
+              typeof data?.error === "string" && data.error
+                ? data.error
+                : res.status === 404
+                  ? "ไม่พบเอกสารนี้แล้ว (อาจถูกลบไปก่อนหน้านี้)"
+                  : "ลบไม่สำเร็จ",
+          });
+        }
+      } catch {
+        failures.push({ docNo: name, reason: "เชื่อมต่อไม่สำเร็จ" });
+      }
+      setBulkProgress({ done: index + 1, total: targets.length });
+    }
+
+    const deletedSet = new Set(deletedIds);
+    setItems((prev) => prev.filter((x) => !deletedSet.has(x.id)));
+    // Un-tick what is gone; a document that was refused stays ticked so the
+    // admin can deal with it without finding it again.
+    setSelected((prev) => new Set([...prev].filter((id) => !deletedSet.has(id))));
+    setBulkFailures(failures);
+    setBulkDeleting(false);
+    setBulkProgress(null);
+
+    const parts: string[] = [];
+    if (deletedIds.length > 0) parts.push(`ลบแล้ว ${deletedIds.length} ใบ`);
+    if (failures.length > 0) parts.push(`ลบไม่ได้ ${failures.length} ใบ (ดูเหตุผลด้านล่าง)`);
+    showToast(
+      parts.join(" · ") || "ไม่มีเอกสารถูกลบ",
+      failures.length > 0 && deletedIds.length === 0 ? "error" : "success"
+    );
+
+    const unique = [...new Set(freedImages)];
+    if (unique.length > 0) {
+      setOrphanedImages(unique.map((url) => ({ url, reason: "ลบเอกสาร" })));
+    }
+  }
 
   const latestVersions = useMemo(() => {
     const map = new Map<string, { id: string; version: number }>();
@@ -332,12 +482,175 @@ function SavedBillingContent() {
           </div>
         </div>
 
+        {/* Date range — the day the document was SAVED, as a Bangkok calendar
+            day (lib/savedDocFilter.ts). Both ends are inclusive and either can
+            be left empty. */}
+        <div className="mb-4 bg-white rounded-xl border border-gray-200 shadow-sm p-4">
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="w-full sm:w-44">
+              <label htmlFor="saved-date-from" className="block text-xs font-semibold text-gray-500 mb-1.5 uppercase tracking-wider">
+                ตั้งแต่วันที่
+              </label>
+              <DatePicker
+                id="saved-date-from"
+                selected={parseDateValue(dateFrom)}
+                onChange={(date) => {
+                  const next = date ? toLocalDateString(date) : "";
+                  setDateFrom(next);
+                  // Never leave a range that reads forwards but runs backwards.
+                  if (next && isValidDateString(dateTo) && dateTo < next) setDateTo(next);
+                }}
+                placeholderText="วันที่เริ่มต้น"
+                isClearable
+              />
+            </div>
+            <div className="w-full sm:w-44">
+              <label htmlFor="saved-date-to" className="block text-xs font-semibold text-gray-500 mb-1.5 uppercase tracking-wider">
+                ถึงวันที่
+              </label>
+              <DatePicker
+                id="saved-date-to"
+                selected={parseDateValue(dateTo)}
+                onChange={(date) => setDateTo(date ? toLocalDateString(date) : "")}
+                placeholderText="วันที่สิ้นสุด"
+                isClearable
+              />
+            </div>
+            {hasDateFilter && (
+              <button
+                onClick={clearDateRange}
+                className="px-4 py-2.5 rounded-xl border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition"
+              >
+                ล้างช่วงวันที่
+              </button>
+            )}
+          </div>
+
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <span className="text-xs text-gray-400">ทางลัด:</span>
+            {(() => {
+              const today = bangkokDateString(new Date());
+              const presets: { label: string; from: string; to: string }[] = [
+                { label: "วันนี้", from: today, to: today },
+                { label: "7 วันที่ผ่านมา", from: addDaysToDateString(today, -6), to: today },
+                { label: "30 วันที่ผ่านมา", from: addDaysToDateString(today, -29), to: today },
+                { label: "เดือนนี้", from: `${today.slice(0, 8)}01`, to: today },
+              ];
+              return presets.map((preset) => (
+                <button
+                  key={preset.label}
+                  onClick={() => applyPreset(preset.from, preset.to)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition ${
+                    dateFrom === preset.from && dateTo === preset.to
+                      ? "bg-orange-500 text-white border-orange-500"
+                      : "bg-white border-gray-300 text-gray-600 hover:bg-gray-50"
+                  }`}
+                >
+                  {preset.label}
+                </button>
+              ));
+            })()}
+          </div>
+
+          {badRange ? (
+            <p className="mt-3 text-xs font-semibold text-red-600">
+              ⚠ วันเริ่มต้น ({formatDisplayDate(dateFrom)}) อยู่หลังวันสิ้นสุด ({formatDisplayDate(dateTo)}) — ช่วงนี้จึงไม่มีเอกสารใดเลย
+            </p>
+          ) : hasDateFilter ? (
+            <p className="mt-3 text-xs font-semibold text-gray-600">
+              กำลังดูเอกสารที่บันทึก{" "}
+              {isValidDateString(dateFrom) && isValidDateString(dateTo)
+                ? `${formatDisplayDate(dateFrom)} ถึง ${formatDisplayDate(dateTo)}`
+                : isValidDateString(dateFrom)
+                  ? `ตั้งแต่ ${formatDisplayDate(dateFrom)} เป็นต้นมา`
+                  : `ก่อนหรือตรงกับ ${formatDisplayDate(dateTo)}`}{" "}
+              · พบ {filtered.length} ใบ
+            </p>
+          ) : null}
+        </div>
+
+        {/* Bulk selection — scoped to the rows on screen, so the tab and the
+            date range genuinely narrow what ลบที่เลือก can reach. */}
+        {!loading && !loadFailed && filtered.length > 0 && (
+          <div className="mb-4 flex flex-wrap items-center gap-3">
+            <button
+              onClick={handleSelectAll}
+              disabled={bulkDeleting}
+              className="px-4 py-2 rounded-xl bg-gray-800 text-white text-sm font-semibold hover:bg-gray-900 transition disabled:opacity-50"
+            >
+              ☑️ เลือกทั้งหมด
+            </button>
+            {selected.size > 0 && (
+              <button
+                onClick={() => setSelected(new Set())}
+                disabled={bulkDeleting}
+                className="px-4 py-2 rounded-xl bg-white border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition disabled:opacity-50"
+              >
+                ล้างการเลือก
+              </button>
+            )}
+            {selectedVisible.length > 0 && (
+              <button
+                onClick={() => setBulkConfirmOpen(true)}
+                disabled={bulkDeleting}
+                className="px-4 py-2 rounded-xl bg-red-600 text-white text-sm font-bold hover:bg-red-700 transition disabled:opacity-50 flex items-center gap-2"
+              >
+                {bulkDeleting ? (
+                  <>
+                    <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                    {bulkProgress ? `กำลังลบ ${bulkProgress.done} / ${bulkProgress.total}` : "กำลังลบ..."}
+                  </>
+                ) : (
+                  `🗑️ ลบที่เลือก (${selectedVisible.length})`
+                )}
+              </button>
+            )}
+            <span className="text-xs text-gray-500">
+              เลือกไว้ {selectedVisible.length} จาก {plan.scopeCount} ใบที่เห็นอยู่
+              {plan.cappedOut > 0 && ` · เลือกทั้งหมดได้ครั้งละ ${BULK_DELETE_MAX_ITEMS} ใบ`}
+              {selected.size > selectedVisible.length &&
+                ` · อีก ${selected.size - selectedVisible.length} ใบที่ติ๊กไว้ถูกตัวกรองซ่อนอยู่ จะไม่ถูกลบ`}
+            </span>
+          </div>
+        )}
+
+        {/* Which documents a bulk delete could not remove, and why. */}
+        {bulkFailures.length > 0 && (
+          <div role="alert" className="mb-4 rounded-xl border border-amber-300 bg-amber-50 p-4">
+            <div className="flex items-start justify-between gap-3">
+              <h3 className="text-sm font-bold text-amber-900">
+                ลบไม่ได้ {bulkFailures.length} ใบ
+              </h3>
+              <button
+                onClick={() => setBulkFailures([])}
+                className="text-xs font-semibold text-amber-700 hover:text-amber-900 shrink-0"
+              >
+                ปิด
+              </button>
+            </div>
+            <ul className="mt-2 space-y-1">
+              {bulkFailures.map((failure) => (
+                <li key={failure.docNo} className="text-xs text-amber-900">
+                  <span className="font-mono font-bold">{failure.docNo}</span> — {failure.reason}
+                </li>
+              ))}
+            </ul>
+            <p className="mt-2 text-[11px] text-amber-700">
+              เอกสารที่มีการรับชำระเงินแล้วลบไม่ได้ ให้กดปุ่ม 🗑️ ของเอกสารนั้นทีละใบ ระบบจะเสนอ “ยกเลิกเอกสาร” ให้แทน
+            </p>
+          </div>
+        )}
+
         {/* Table */}
         {loading ? (
           <div className="bg-white rounded-xl shadow-sm overflow-hidden">
             <table className="w-full">
               <thead>
                 <tr className="bg-gray-50 border-b">
+                  <th className="px-4 py-3 w-10" />
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500">ประเภท</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500">เลขที่</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500">ลูกค้า</th>
@@ -349,6 +662,7 @@ function SavedBillingContent() {
               <tbody>
                 {Array.from({ length: 3 }).map((_, i) => (
                   <tr key={i} className="border-b">
+                    <td className="px-4 py-3"><div className="h-4 w-4 bg-gray-200 rounded animate-pulse" /></td>
                     <td className="px-4 py-3"><div className="h-4 bg-gray-200 rounded animate-pulse w-20" /></td>
                     <td className="px-4 py-3"><div className="h-4 bg-gray-200 rounded animate-pulse w-32" /></td>
                     <td className="px-4 py-3"><div className="h-4 bg-gray-200 rounded animate-pulse w-28" /></td>
@@ -380,6 +694,15 @@ function SavedBillingContent() {
             <table className="w-full">
               <thead>
                 <tr className="bg-gray-50 border-b">
+                  <th className="px-4 py-3 w-10">
+                    <input
+                      type="checkbox"
+                      aria-label="เลือกทั้งหมดที่เห็นอยู่"
+                      checked={filtered.length > 0 && selectedVisible.length === filtered.length}
+                      onChange={(e) => (e.target.checked ? handleSelectAll() : setSelected(new Set()))}
+                      className="w-4 h-4 rounded border-gray-300 text-red-600 focus:ring-red-500 cursor-pointer"
+                    />
+                  </th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500">ประเภท</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500">เลขที่</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500">ลูกค้า</th>
@@ -394,12 +717,24 @@ function SavedBillingContent() {
                   return (
                     <tr
                       key={item.id}
-                      className="border-b hover:bg-gray-50/50 cursor-pointer transition"
+                      className={`border-b hover:bg-gray-50/50 cursor-pointer transition ${
+                        selected.has(item.id) ? "bg-red-50/60" : ""
+                      }`}
                       onClick={() => {
                         if (item.docType === "quotation") router.push(`/quotation?id=${item.id}&view=1`);
                         else router.push(`/billing?id=${item.id}&view=1`);
                       }}
                     >
+                      {/* stopPropagation: ticking a row must not also open it. */}
+                      <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          aria-label={`เลือก ${item.docNo || docTypeLabel(item.docType)}`}
+                          checked={selected.has(item.id)}
+                          onChange={() => toggleRow(item.id)}
+                          className="w-4 h-4 rounded border-gray-300 text-red-600 focus:ring-red-500 cursor-pointer"
+                        />
+                      </td>
                       <td className="px-4 py-3">
                         <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold ${
                           item.docType === "quotation" ? "bg-orange-100 text-orange-700" :
@@ -477,6 +812,30 @@ function SavedBillingContent() {
           onConfirm={handleCancelDocument}
           onCancel={() => setBlockedDelete(null)}
           loading={cancelling}
+        />
+      )}
+
+      {/* Bulk delete confirmation. It names the KINDS and the date range, not
+          just a count: that one line is what gives away a bulk delete aimed at
+          the wrong tab or the wrong month. */}
+      {bulkConfirmOpen && selectedVisible.length > 0 && (
+        <ConfirmDialog
+          title={`ลบ ${selectedVisible.length} เอกสาร`}
+          message={
+            `กำลังจะลบ ${summariseByDocType(selectedVisible, docTypeLabel)}` +
+            (hasDateFilter
+              ? `\n\nช่วงวันที่: ${isValidDateString(dateFrom) ? formatDisplayDate(dateFrom) : "ไม่กำหนด"} ถึง ${isValidDateString(dateTo) ? formatDisplayDate(dateTo) : "ไม่กำหนด"}`
+              : "") +
+            `\n\nลบแล้วกู้คืนไม่ได้` +
+            `\nเอกสารที่มีการรับชำระเงินแล้วจะถูกข้ามและแจ้งให้ทราบ` +
+            `\nรูปที่ไม่ได้ใช้ต่อ จะถามให้ยืนยันลบออกจาก Cloudinary หลังจากนี้`
+          }
+          confirmText={`ลบ ${selectedVisible.length} ใบ`}
+          loadingText="กำลังลบ..."
+          cancelText="ยกเลิก"
+          onConfirm={handleBulkDelete}
+          onCancel={() => setBulkConfirmOpen(false)}
+          loading={bulkDeleting}
         />
       )}
 
