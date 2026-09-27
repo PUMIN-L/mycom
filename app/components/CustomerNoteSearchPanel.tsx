@@ -410,9 +410,17 @@ export default function CustomerNoteSearchPanel({
     []
   );
 
+  /** Cancels the auto-search the debounce below has scheduled, if any. */
+  const cancelPendingAutoSearchRef = useRef<(() => void) | null>(null);
+
   const handleSubmitSearch = (event: React.FormEvent) => {
     event.preventDefault();
     if (isSearching) return;
+    // Typing started a 200 ms auto-search for this same term. Searching now
+    // makes it a duplicate — and a harmful one: it lands a moment later, not
+    // flagged keepReport, and wiped the replace report of an admin quick
+    // enough to replace within that moment.
+    cancelPendingAutoSearchRef.current?.();
     runSearch(term, matchCase, useRegex);
   };
 
@@ -433,12 +441,20 @@ export default function CustomerNoteSearchPanel({
     }
 
     const timeoutId = setTimeout(() => {
+      cancelPendingAutoSearchRef.current = null;
       runSearch(term, matchCase, useRegex, { signal: controller.signal });
     }, 200);
+    // Only the timer: once it has fired, the search is under way and is
+    // aborted by the cleanup below, not by a press of ค้นหา.
+    cancelPendingAutoSearchRef.current = () => {
+      clearTimeout(timeoutId);
+      cancelPendingAutoSearchRef.current = null;
+    };
 
     return () => {
       clearTimeout(timeoutId);
       controller.abort();
+      cancelPendingAutoSearchRef.current = null;
     };
   }, [term, matchCase, useRegex, runSearch]);
 

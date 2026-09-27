@@ -27,11 +27,14 @@ vi.mock("@/app/lib/session", () => ({
 import { createSession } from "@/app/lib/session";
 
 import { POST as login } from "@/app/api/auth/login/route";
+// The per-IP brake is module state; every request here comes from one "IP".
+import { loginIpLimiter } from "@/app/lib/loginThrottle";
 
 const rawReq = (raw: string) => new NextRequest("http://localhost", { method: "POST", body: raw });
 
 beforeEach(() => {
   vi.clearAllMocks();
+  loginIpLimiter.reset();
   conn.query.mockResolvedValue([[{ value: "0|0" }]]);
 });
 

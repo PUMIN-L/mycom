@@ -4,7 +4,7 @@ import { withRoute, requireAuth, jsonError } from "../../../../../lib/apiHelpers
 import { getEquipment, countProtectedServiceHistory } from "../../../../../lib/crmStore";
 import { getContactEmail, setSetting } from "../../../../../lib/settingsStore";
 import { isMailConfigured, sendEquipmentDeleteOtpEmail } from "../../../../../lib/mailer";
-import { resetOtpAttempts } from "../../../../../lib/otpAttempts";
+import { claimOtpIssue, otpIssueRefused, resetOtpAttempts } from "../../../../../lib/otpAttempts";
 
 function generateOtp(): string {
   return randomInt(100000, 1000000).toString();
@@ -59,6 +59,9 @@ export const POST = withRoute(
         { status: 400 }
       );
     }
+
+    const issue = await claimOtpIssue(`equipment_delete_otp_${id}`);
+    if (!issue.allowed) return otpIssueRefused(issue.retryAfterSeconds);
 
     const otp = generateOtp();
     const expiresAt = Date.now() + 15 * 60 * 1000; // 15 minutes

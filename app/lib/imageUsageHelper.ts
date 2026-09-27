@@ -9,7 +9,8 @@ export type ExcludeSource = {
 
 /**
  * Checks if a given Cloudinary image URL is still referenced by any product,
- * content block, or document in the database.
+ * document, content block, quotation (uploaded images or line items) or
+ * billing document in the database.
  * @param imageUrl The URL to check
  * @param excludeSource The entity currently being deleted (to ignore it in the check)
  */
@@ -52,12 +53,16 @@ export async function isCloudinaryImageInUse(
   const [contentRows] = await query<RowDataPacket[]>(contentSql, contentParams);
   if (contentRows.length > 0) return true;
 
-  // 4. Check quotations table (uploadedImages JSON array — images uploaded
-  // specifically for a quote, e.g. a custom line-item photo; also referenced
-  // by an "แก้ไข New Ver." clone that reuses the same URL).
+  // 4. Check quotations table — both columns. `uploadedImages` lists the
+  // images uploaded specifically for a quote (a custom line-item photo; an
+  // "แก้ไข New Ver." clone reuses the same URL). `data` is the quote itself,
+  // and a line item picked from the catalog carries a COPY of the product's
+  // image URL (quotation/page.tsx: `imageUrl: p.image, imageUploaded: false`)
+  // that is not in uploadedImages. Replacing that product's photo must not
+  // delete the image an old quotation still prints.
   let quotationSql =
-    "SELECT id FROM quotations WHERE JSON_SEARCH(uploadedImages, 'one', ?) IS NOT NULL";
-  const quotationParams: any[] = [imageUrl];
+    "SELECT id FROM quotations WHERE (JSON_SEARCH(uploadedImages, 'one', ?) IS NOT NULL OR JSON_SEARCH(data, 'one', ?) IS NOT NULL)";
+  const quotationParams: any[] = [imageUrl, imageUrl];
   if (excludeSource?.type === "quotation") {
     quotationSql += " AND id != ?";
     quotationParams.push(excludeSource.id);
@@ -83,8 +88,8 @@ export async function isCloudinaryImageInUse(
 }
 
 /**
- * Deletes an image from Cloudinary ONLY if it is not referenced by any other
- * product, content, or document.
+ * Deletes an image from Cloudinary ONLY if nothing else in the database still
+ * references it (see isCloudinaryImageInUse).
  */
 export async function safeDeleteCloudinaryImage(
   imageUrl: string,
@@ -118,12 +123,35 @@ export async function safeDeleteCloudinaryImages(
 
 // ── Orphan scanning ──────────────────────────────────────────────────────────
 
+const QUOTATION_PAGE = 100;
+
 /**
  * Collect every Cloudinary URL currently referenced anywhere in the database
- * (products, documents, contents). Returns a Set for O(1) lookup.
+ * (products, documents, contents, quotations, billing documents). Returns a
+ * Set for O(1) lookup.
  */
 export async function getAllUsedImageUrls(): Promise<Set<string>> {
   const urls = new Set<string>();
+
+  // Every Cloudinary URL anywhere inside a JSON value — for the blobs whose
+  // shape is the client's (quotation / billing `data`).
+  const collectCloudinaryUrls = (value: unknown): void => {
+    if (typeof value === "string") {
+      if (value.includes("cloudinary.com")) urls.add(value);
+      return;
+    }
+    if (Array.isArray(value)) {
+      for (const v of value) collectCloudinaryUrls(v);
+      return;
+    }
+    if (value && typeof value === "object") {
+      for (const v of Object.values(value as Record<string, unknown>)) collectCloudinaryUrls(v);
+    }
+  };
+  const parsedJson = (value: unknown): unknown => {
+    if (typeof value !== "string") return value;
+    try { return JSON.parse(value); } catch { return null; /* skip malformed */ }
+  };
 
   // 1. Product thumbnails
   const [productRows] = await query<RowDataPacket[]>(
@@ -165,20 +193,23 @@ export async function getAllUsedImageUrls(): Promise<Set<string>> {
     }
   }
 
-  // 4. Quotation uploaded images
-  const [quotRows] = await query<RowDataPacket[]>(
-    "SELECT uploadedImages FROM quotations WHERE uploadedImages IS NOT NULL"
-  );
-  for (const row of quotRows) {
-    let imgs: unknown[] = [];
-    if (typeof row.uploadedImages === "string") {
-      try { imgs = JSON.parse(row.uploadedImages); } catch { /* skip malformed */ }
-    } else if (Array.isArray(row.uploadedImages)) {
-      imgs = row.uploadedImages;
+  // 4. Quotations: the images uploaded for the quote (`uploadedImages`) AND
+  // every URL inside the quote itself (`data`) — a catalog line item carries a
+  // copy of the product's image URL that uploadedImages does not list (see
+  // isCloudinaryImageInUse). A page at a time: two years of quotes, up to
+  // 200 KB each (the save route's cap), is too much to hold at once.
+  for (let after = ""; ; ) {
+    const [quotRows] = await query<RowDataPacket[]>(
+      "SELECT id, uploadedImages, data FROM quotations WHERE id > ? ORDER BY id LIMIT ?",
+      [after, QUOTATION_PAGE]
+    );
+    for (const row of quotRows) {
+      const imgs = parsedJson(row.uploadedImages);
+      if (Array.isArray(imgs)) collectCloudinaryUrls(imgs.filter((u) => typeof u === "string"));
+      collectCloudinaryUrls(parsedJson(row.data));
     }
-    for (const u of imgs) {
-      if (typeof u === "string" && u.includes("cloudinary.com")) urls.add(u);
-    }
+    if (quotRows.length < QUOTATION_PAGE) break;
+    after = String(quotRows[quotRows.length - 1].id);
   }
 
   // 5. Billing document line-item images (scan the whole `data` blob — the
@@ -186,25 +217,8 @@ export async function getAllUsedImageUrls(): Promise<Set<string>> {
   const [billingRows] = await query<RowDataPacket[]>(
     "SELECT data FROM billing_documents WHERE data IS NOT NULL"
   );
-  const collectCloudinaryUrls = (value: unknown): void => {
-    if (typeof value === "string") {
-      if (value.includes("cloudinary.com")) urls.add(value);
-      return;
-    }
-    if (Array.isArray(value)) {
-      for (const v of value) collectCloudinaryUrls(v);
-      return;
-    }
-    if (value && typeof value === "object") {
-      for (const v of Object.values(value as Record<string, unknown>)) collectCloudinaryUrls(v);
-    }
-  };
   for (const row of billingRows) {
-    let data: unknown = row.data;
-    if (typeof data === "string") {
-      try { data = JSON.parse(data); } catch { data = null; }
-    }
-    collectCloudinaryUrls(data);
+    collectCloudinaryUrls(parsedJson(row.data));
   }
 
   return urls;

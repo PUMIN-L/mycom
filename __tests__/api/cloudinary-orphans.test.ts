@@ -36,6 +36,17 @@ const conn = {
       const v = sharedState.get(key);
       return [v !== undefined ? [{ value: v }] : []];
     }
+    // claimOtpIssue: make sure the row exists, never overwrite it.
+    if (sql.includes("VALUES (?, '') ON DUPLICATE KEY UPDATE name = name")) {
+      const [key] = params as [string];
+      if (!sharedState.has(key)) sharedState.set(key, '');
+      return [{ affectedRows: 1 }];
+    }
+    if (sql.includes('UPDATE settings SET value = ? WHERE name = ?')) {
+      const [value, key] = params as [string, string];
+      sharedState.set(key, value);
+      return [{ affectedRows: 1 }];
+    }
     if (sql.includes('INSERT INTO settings')) {
       const [key, value] = params as [string, string];
       sharedState.set(key, value);
@@ -52,6 +63,7 @@ vi.mock('@/app/lib/mailer', () => ({
   isMailConfigured: vi.fn().mockReturnValue(true),
   sendOrphanDeleteOtpEmail: vi.fn().mockResolvedValue(undefined),
 }));
+import { sendOrphanDeleteOtpEmail } from '@/app/lib/mailer';
 
 vi.mock('cloudinary', () => ({
   v2: { uploader: { destroy: vi.fn().mockResolvedValue({ result: 'ok' }) } },
@@ -110,6 +122,38 @@ describe('POST /api/cloudinary/orphans/otp', () => {
     expect(res.status).toBe(200);
     expect(setSetting).toHaveBeenCalledWith('orphan_delete_otp_attempts', '0');
   });
+
+  // Same strength as every other OTP in the app; it was 5 digits.
+  it('issues a 6-digit code — the one it emails', async () => {
+    const state = mockSettingsState();
+    await otpPOST(req('http://localhost:3000/api/cloudinary/orphans/otp', 'POST', { imageCount: 3 }));
+    const code = state.get('orphan_delete_otp')!;
+    expect(code).toMatch(/^\d{6}$/);
+    expect(vi.mocked(sendOrphanDeleteOtpEmail).mock.calls[0][1]).toBe(code);
+  });
+
+  // Each new code resets the guess count, so unlimited re-issuing was
+  // unlimited guessing (and an email every time).
+  it('refuses a second code within a minute: no email, the first code stays', async () => {
+    const state = mockSettingsState();
+    await otpPOST(req('http://localhost:3000/api/cloudinary/orphans/otp', 'POST', { imageCount: 3 }));
+    const first = state.get('orphan_delete_otp');
+    state.set('orphan_delete_otp_attempts', '3');
+    vi.mocked(sendOrphanDeleteOtpEmail).mockClear();
+
+    const res = await otpPOST(req('http://localhost:3000/api/cloudinary/orphans/otp', 'POST', { imageCount: 3 }));
+    expect(res.status).toBe(429);
+    expect(Number(res.headers.get('Retry-After'))).toBeGreaterThan(0);
+    expect(sendOrphanDeleteOtpEmail).not.toHaveBeenCalled();
+    expect(state.get('orphan_delete_otp')).toBe(first);
+    expect(state.get('orphan_delete_otp_attempts')).toBe('3'); // not reset
+  });
+
+  it('an invalid request does not use up the allowance', async () => {
+    mockSettingsState();
+    expect((await otpPOST(req('http://localhost:3000/api/cloudinary/orphans/otp', 'POST', { imageCount: 0 }))).status).toBe(400);
+    expect((await otpPOST(req('http://localhost:3000/api/cloudinary/orphans/otp', 'POST', { imageCount: 3 }))).status).toBe(200);
+  });
 });
 
 describe('DELETE /api/cloudinary/orphans', () => {
@@ -121,13 +165,22 @@ describe('DELETE /api/cloudinary/orphans', () => {
     expect(res.status).toBe(400);
   });
 
+  it('rejects an old-style 5-digit code as malformed', async () => {
+    mockSettingsState({ orphan_delete_otp: '123456', orphan_delete_otp_expires: String(Date.now() + 100000) });
+    const res = await DELETE(
+      req('http://localhost:3000/api/cloudinary/orphans', 'DELETE', { items: [], otp: '12345' })
+    );
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe('กรุณากรอกรหัสยืนยัน 6 หลัก');
+  });
+
   it('rejects a wrong OTP (403) while attempts remain', async () => {
     mockSettingsState({
-      orphan_delete_otp: '12345',
+      orphan_delete_otp: '123456',
       orphan_delete_otp_expires: String(Date.now() + 100000),
     });
     const res = await DELETE(
-      req('http://localhost:3000/api/cloudinary/orphans', 'DELETE', { items: [], otp: '99999' })
+      req('http://localhost:3000/api/cloudinary/orphans', 'DELETE', { items: [], otp: '999999' })
     );
     expect(res.status).toBe(403);
     expect((await res.json()).error).toBe('รหัสยืนยันไม่ถูกต้อง');
@@ -135,35 +188,35 @@ describe('DELETE /api/cloudinary/orphans', () => {
 
   it('locks out the OTP after 5 wrong attempts, even for the right code afterward', async () => {
     mockSettingsState({
-      orphan_delete_otp: '12345',
+      orphan_delete_otp: '123456',
       orphan_delete_otp_expires: String(Date.now() + 100000),
     });
 
     let lastRes;
     for (let i = 0; i < 5; i++) {
       lastRes = await DELETE(
-        req('http://localhost:3000/api/cloudinary/orphans', 'DELETE', { items: [], otp: '00000' })
+        req('http://localhost:3000/api/cloudinary/orphans', 'DELETE', { items: [], otp: '000000' })
       );
     }
     expect(lastRes!.status).toBe(403);
     expect((await lastRes!.json()).error).toContain('เกินจำนวนที่กำหนด');
 
     const afterLockout = await DELETE(
-      req('http://localhost:3000/api/cloudinary/orphans', 'DELETE', { items: [], otp: '12345' })
+      req('http://localhost:3000/api/cloudinary/orphans', 'DELETE', { items: [], otp: '123456' })
     );
     expect(afterLockout.status).toBe(403);
   });
 
   it('deletes orphaned assets with a correct, unexpired OTP', async () => {
     mockSettingsState({
-      orphan_delete_otp: '12345',
+      orphan_delete_otp: '123456',
       orphan_delete_otp_expires: String(Date.now() + 100000),
     });
     vi.mocked(getAllUsedImageUrls).mockResolvedValue(new Set());
     const res = await DELETE(
       req('http://localhost:3000/api/cloudinary/orphans', 'DELETE', {
         items: [{ publicId: 'orphan-1', resourceType: 'image' }],
-        otp: '12345',
+        otp: '123456',
       })
     );
     expect(res.status).toBe(200);

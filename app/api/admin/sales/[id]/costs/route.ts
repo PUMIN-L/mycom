@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withRoute, requireAuth } from "../../../../../lib/apiHelpers";
+import { parsePositiveMoney } from "../../../../../lib/moneyAmount";
 import {
   getSalesRecord,
   getCostItems,
@@ -35,12 +36,13 @@ export const POST = withRoute(
       return NextResponse.json({ error: "ไม่พบรายการขาย" }, { status: 404 });
     }
     const body = await request.json();
-    if (!body.amount || !Number.isFinite(Number(body.amount)) || Number(body.amount) <= 0) {
-      return NextResponse.json(
-        { error: "จำนวนเงินต้องมากกว่า 0" },
-        { status: 400 }
-      );
+    // Rounded to the satang before the check, and stored rounded: 0.004 would
+    // otherwise pass "more than 0" and land in DECIMAL(12,2) as ฿0.00.
+    const parsed = parsePositiveMoney(body.amount);
+    if (!parsed.ok) {
+      return NextResponse.json({ error: parsed.error }, { status: 400 });
     }
+    body.amount = parsed.amount;
     // ต้นทุนสินค้า is per line item, not a bill-level cost row — a client that
     // asks for one gets told where it belongs (400) rather than a 500, and
     // nothing is written anywhere.

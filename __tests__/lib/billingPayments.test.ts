@@ -447,7 +447,10 @@ describe('voidSupersededReceiptPayment — แก้ไข (New Ver.) takes the 
 // paidAmount and quietly makes an invoice look part-paid, unpaid, or settled
 // twice, from a row that reads like any other in the history.
 describe('addBillingPayment — amount guard', () => {
-  it.each([0, -1, -0.01, NaN, Infinity, -Infinity])(
+  // 0.004 and 0.0049 are ฿0.00 in DECIMAL(12,2): checked before rounding they
+  // were "more than 0" and became zero-baht rows. Above 9,999,999,999.99 the
+  // column cannot hold it at all.
+  it.each([0, -1, -0.01, NaN, Infinity, -Infinity, 0.004, 0.0049, 10_000_000_000])(
     'refuses %p and writes nothing',
     async (amount) => {
       await expect(
@@ -471,5 +474,25 @@ describe('addBillingPayment — amount guard', () => {
     await expect(
       addBillingPayment({ ...payment, amount: 999999 })
     ).resolves.toEqual({ paidAmount: 999999 });
+  });
+
+  it('stores the amount settled to the satang — the value it checked', async () => {
+    conn.query
+      .mockResolvedValueOnce([{ affectedRows: 1 }])
+      .mockResolvedValueOnce([[{ paid: '1.01' }]])
+      .mockResolvedValueOnce([{ affectedRows: 1 }]);
+
+    await addBillingPayment({ ...payment, amount: 1.005 }); // float: 100.49999…
+    expect(calls()[0][1]![2]).toBe(1.01);
+  });
+
+  it('accepts the smallest amount that is not ฿0.00, and the column’s ceiling', async () => {
+    for (const amount of [0.005, 9_999_999_999.99]) {
+      conn.query
+        .mockResolvedValueOnce([{ affectedRows: 1 }])
+        .mockResolvedValueOnce([[{ paid: String(amount) }]])
+        .mockResolvedValueOnce([{ affectedRows: 1 }]);
+      await expect(addBillingPayment({ ...payment, amount })).resolves.toBeDefined();
+    }
   });
 });

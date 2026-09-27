@@ -40,6 +40,10 @@ import { purgeExpiredAlertSnoozes } from '@/app/lib/crmStore';
 vi.mock('@/app/lib/poStore', () => ({ purgeExpiredPurchaseOrders: vi.fn() }));
 import { purgeExpiredPurchaseOrders } from '@/app/lib/poStore';
 
+// What it deletes is asserted in __tests__/lib/loginThrottle.test.ts.
+vi.mock('@/app/lib/loginThrottle', () => ({ purgeExpiredLoginFailures: vi.fn() }));
+import { purgeExpiredLoginFailures } from '@/app/lib/loginThrottle';
+
 // Drive the REAL requireAuth/withRoute by controlling getSession (null = anon).
 vi.mock('@/app/lib/session', () => ({ getSession: vi.fn() }));
 import { getSession } from '@/app/lib/session';
@@ -399,10 +403,12 @@ describe('Quotations API', () => {
       vi.mocked(purgeExpiredQuotations).mockResolvedValue(3);
       vi.mocked(purgeExpiredAlertSnoozes).mockResolvedValue(2);
       vi.mocked(purgeExpiredPurchaseOrders).mockResolvedValue(0);
+      vi.mocked(purgeExpiredLoginFailures).mockResolvedValue(4);
       const res = await cleanupGET(cleanupReq('Bearer cron-test-secret'));
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual({
         ok: true, deleted: 3, billingDeleted: 0, docNosPurged: 0, snoozesPurged: 2, posPurged: 0,
+        loginFailuresPurged: 4,
       });
       // Retention widened 30 -> 730 days (2 years): this business's sales cycle
       // runs for months, so the old window purged quotations right when the
@@ -427,6 +433,39 @@ describe('Quotations API', () => {
       const res = await cleanupGET(cleanupReq('Bearer wrong-secret'));
       expect(res.status).toBe(401);
       expect(purgeExpiredAlertSnoozes).not.toHaveBeenCalled();
+      expect(purgeExpiredLoginFailures).not.toHaveBeenCalled();
+    });
+
+    // ── Ended login lockout windows ────────────────────────────────────────
+    it('purges ended login lockout rows in the same run and logs the count', async () => {
+      vi.mocked(purgeExpiredQuotations).mockResolvedValue(0);
+      vi.mocked(purgeExpiredAlertSnoozes).mockResolvedValue(0);
+      vi.mocked(purgeExpiredPurchaseOrders).mockResolvedValue(0);
+      vi.mocked(purgeExpiredLoginFailures).mockResolvedValue(12);
+      const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      try {
+        const res = await cleanupGET(cleanupReq('Bearer cron-test-secret'));
+        expect(res.status).toBe(200);
+        expect((await res.json()).loginFailuresPurged).toBe(12);
+        // No argument: "now" is the store's default.
+        expect(purgeExpiredLoginFailures).toHaveBeenCalledWith();
+        expect(String(spy.mock.calls.at(-1)![0])).toContain('loginFailuresPurged=12');
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it('fails the whole run when the login-row purge throws', async () => {
+      vi.mocked(purgeExpiredQuotations).mockResolvedValue(0);
+      vi.mocked(purgeExpiredAlertSnoozes).mockResolvedValue(0);
+      vi.mocked(purgeExpiredPurchaseOrders).mockResolvedValue(0);
+      vi.mocked(purgeExpiredLoginFailures).mockRejectedValueOnce(new Error('db down'));
+      const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      try {
+        expect((await cleanupGET(cleanupReq('Bearer cron-test-secret'))).status).toBe(500);
+      } finally {
+        spy.mockRestore();
+      }
     });
 
     it('reports the snooze count on the greppable success line, in English like the rest', async () => {

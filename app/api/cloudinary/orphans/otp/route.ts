@@ -3,17 +3,19 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth, withRoute } from "../../../../lib/apiHelpers";
 import { getContactEmail, setSetting } from "../../../../lib/settingsStore";
 import { isMailConfigured, sendOrphanDeleteOtpEmail } from "../../../../lib/mailer";
-import { resetOtpAttempts } from "../../../../lib/otpAttempts";
+import { claimOtpIssue, otpIssueRefused, resetOtpAttempts } from "../../../../lib/otpAttempts";
 
-// Generate a random 5-digit OTP
+// Generate a random 6-digit OTP — the same strength as every other OTP here.
+// (It was 5 digits: ten times easier to guess, for a delete that cannot be
+// undone.)
 function generateOtp(): string {
-  return randomInt(10000, 100000).toString();
+  return randomInt(100000, 1000000).toString();
 }
 
 /**
  * POST /api/cloudinary/orphans/otp  (admin only)
  *
- * Sends a 5-digit OTP to the configured contact email to authorize
+ * Sends a 6-digit OTP to the configured contact email to authorize
  * deletion of orphaned Cloudinary images.
  * Body: { imageCount: number }
  */
@@ -36,6 +38,9 @@ export const POST = withRoute(
         { status: 400 }
       );
     }
+
+    const issue = await claimOtpIssue("orphan_delete_otp");
+    if (!issue.allowed) return otpIssueRefused(issue.retryAfterSeconds);
 
     const otp = generateOtp();
     const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes

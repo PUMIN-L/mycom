@@ -508,6 +508,39 @@ describe("รายงานผลการแทนที่", () => {
     expect(onReplaced).not.toHaveBeenCalled();
   });
 
+  // Typing starts the 200 ms auto-search; pressing ค้นหา searched at once but
+  // left that timer running. It fired a moment later — a second, identical
+  // search, not flagged keepReport — and wiped the report the admin had just
+  // been shown. Under the parallel test run this is what made the test above
+  // fail at ~250 ms: the report appeared, then was gone one line later.
+  it("pressing ค้นหา cancels the pending auto-search, so it cannot wipe a report shown after", async () => {
+    const { fetchMock } = renderPanel({
+      replace: () =>
+        jsonResponse(
+          {
+            replacedCount: 0,
+            unchangedCount: 0,
+            refusedCount: 1,
+            results: [
+              { customerId: "c1", customerName: "สมชาย ใจดี", status: "refused", matchCount: 1, resultLength: 0, code: "stale", reason: "ถูกแก้ไขไปแล้ว" },
+            ],
+          },
+          400
+        ),
+    });
+    await search(); // types (timer starts) and presses ค้นหา at once
+    fireEvent.click(screen.getByRole("button", { name: "แทนที่ทั้งหมด (2 ราย)" }));
+    fireEvent.click(screen.getByRole("button", { name: "แทนที่ 2 ราย" }));
+    await screen.findByText("ผลการแทนที่");
+
+    // Well past the 200 ms debounce.
+    await act(() => new Promise((resolve) => setTimeout(resolve, 450)));
+
+    expect(screen.getByText("ผลการแทนที่")).toBeInTheDocument();
+    const searches = fetchMock.mock.calls.filter(([u]) => String(u).startsWith("/api/customers/note-search"));
+    expect(searches).toHaveLength(1); // no duplicate of the search just pressed
+  });
+
   it("สำเร็จบางส่วนก็ยังบอกชื่อรายที่ทำไม่ได้", async () => {
     const REASON = "ไม่พบลูกค้ารายนี้แล้ว อาจถูกลบไปหลังจากที่หน้าจอค้นหาครั้งล่าสุด";
     renderPanel({

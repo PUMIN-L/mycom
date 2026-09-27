@@ -80,6 +80,17 @@ describe('POST /api/admin/expenses/recurring', () => {
     expect(res.status).toBe(201);
     expect(addRecurringExpense).toHaveBeenCalledWith(body);
   });
+
+  // 0.004 was "more than 0" and then a ฿0.00 bill generated every month.
+  it('refuses an amount that is ฿0.00 once rounded, and stores the rounded amount', async () => {
+    const tiny = await POST(req('http://localhost:3000/api/admin/expenses/recurring', 'POST', { title: 'x', amount: 0.004 }));
+    expect(tiny.status).toBe(400);
+    expect(addRecurringExpense).not.toHaveBeenCalled();
+
+    vi.mocked(addRecurringExpense).mockResolvedValue({ id: 'r1' } as never);
+    await POST(req('http://localhost:3000/api/admin/expenses/recurring', 'POST', { ...body, amount: '1500.005' }));
+    expect(addRecurringExpense).toHaveBeenCalledWith({ ...body, amount: 1500.01 });
+  });
 });
 
 describe('PUT /api/admin/expenses/recurring/[id]', () => {
@@ -118,6 +129,16 @@ describe('PUT /api/admin/expenses/recurring/[id]', () => {
     );
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ id: 'r1', amount: 16000 });
+  });
+
+  it('refuses an amount that is ฿0.00 once rounded, and stores the rounded amount', async () => {
+    const tiny = await PUT(req('http://localhost:3000/api/admin/expenses/recurring/r1', 'PUT', { amount: 0.004 }), ctx('r1'));
+    expect(tiny.status).toBe(400);
+    expect(updateRecurringExpense).not.toHaveBeenCalled();
+
+    vi.mocked(updateRecurringExpense).mockResolvedValue({ id: 'r1' } as never);
+    await PUT(req('http://localhost:3000/api/admin/expenses/recurring/r1', 'PUT', { amount: 99.999 }), ctx('r1'));
+    expect(updateRecurringExpense).toHaveBeenCalledWith('r1', { amount: 100 });
   });
 });
 

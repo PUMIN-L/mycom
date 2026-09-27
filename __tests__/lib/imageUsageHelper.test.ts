@@ -78,7 +78,7 @@ describe('isCloudinaryImageInUse', () => {
     await isCloudinaryImageInUse(URL_A, { type: 'quotation', id: 'q1' });
     const quotationCall = vi.mocked(query).mock.calls[3];
     expect(quotationCall[0]).toContain('AND id != ?');
-    expect(quotationCall[1]).toEqual([URL_A, 'q1']);
+    expect(quotationCall[1]).toEqual([URL_A, URL_A, 'q1']);
   });
 
   it('excludes the billing document currently being deleted from its own billing check', async () => {
@@ -95,7 +95,65 @@ describe('isCloudinaryImageInUse', () => {
     // The quotations/billing checks should NOT carry the product's exclude id.
     const quotationCall = vi.mocked(query).mock.calls[3];
     expect(quotationCall[0]).not.toContain('AND id != ?');
-    expect(quotationCall[1]).toEqual([URL_A]);
+    expect(quotationCall[1]).toEqual([URL_A, URL_A]);
+  });
+});
+
+// A quotation line item picked from the catalog carries a COPY of the
+// product's image URL in `data` (quotation/page.tsx: `imageUrl: p.image,
+// imageUploaded: false`) — not in uploadedImages. Run against a stand-in
+// quotations table that answers JSON_SEARCH for whichever column the SQL
+// actually searches, so a query that forgets `data` finds nothing.
+describe('a catalog image copied into a quotation counts as in use', () => {
+  const PRODUCT_IMG = 'https://res.cloudinary.com/demo/image/upload/v1/samples/mycom/scale_old.jpg';
+  type QuoteRow = { id: string; uploadedImages: unknown; data: unknown };
+  let quotes: QuoteRow[];
+
+  const deepHas = (value: unknown, needle: string): boolean =>
+    typeof value === 'string'
+      ? value === needle
+      : Array.isArray(value)
+        ? value.some((v) => deepHas(v, needle))
+        : !!value && typeof value === 'object' && Object.values(value).some((v) => deepHas(v, needle));
+
+  beforeEach(() => {
+    quotes = [
+      {
+        id: 'quo-2025-001',
+        uploadedImages: '[]',
+        data: JSON.stringify({ customerCompany: 'บริษัท ก', items: [{ name: 'เครื่องชั่ง', imageUrl: PRODUCT_IMG, imageUploaded: false }] }),
+      },
+    ];
+    vi.mocked(query).mockImplementation((async (sql: string, params: unknown[] = []) => {
+      if (!sql.includes('FROM quotations')) return [[]]; // the product's photo has been replaced
+      const url = params[0] as string;
+      const excludeId = sql.includes('AND id != ?') ? params[params.length - 1] : undefined;
+      const hit = quotes.find(
+        (q) =>
+          q.id !== excludeId &&
+          ((sql.includes('JSON_SEARCH(uploadedImages') && deepHas(JSON.parse(String(q.uploadedImages)), url)) ||
+            (sql.includes('JSON_SEARCH(data') && deepHas(JSON.parse(String(q.data)), url)))
+      );
+      return [hit ? [{ id: hit.id }] : []];
+    }) as never);
+  });
+
+  it('isCloudinaryImageInUse finds it', async () => {
+    expect(await isCloudinaryImageInUse(PRODUCT_IMG)).toBe(true);
+  });
+
+  it('confirming the old photo’s deletion after replacing it leaves Cloudinary alone', async () => {
+    expect(await safeDeleteCloudinaryImage(PRODUCT_IMG)).toBe(false);
+    expect(deleteCloudinaryImage).not.toHaveBeenCalled();
+  });
+
+  it('the quotation being deleted does not keep its own copy alive', async () => {
+    expect(await isCloudinaryImageInUse(PRODUCT_IMG, { type: 'quotation', id: 'quo-2025-001' })).toBe(false);
+  });
+
+  it('another quotation holding the same copy still does', async () => {
+    quotes.push({ id: 'quo-2025-002', uploadedImages: '[]', data: JSON.stringify({ items: [{ imageUrl: PRODUCT_IMG }] }) });
+    expect(await isCloudinaryImageInUse(PRODUCT_IMG, { type: 'quotation', id: 'quo-2025-001' })).toBe(true);
   });
 });
 
@@ -201,6 +259,65 @@ describe('getAllUsedImageUrls', () => {
 
     const urls = await getAllUsedImageUrls();
     expect(urls.size).toBe(0);
+  });
+
+  it('collects the catalog image a quotation line item carries in data, not just uploadedImages', async () => {
+    vi.mocked(query)
+      .mockResolvedValueOnce([[]] as never) // products — the photo was replaced
+      .mockResolvedValueOnce([[]] as never) // documents
+      .mockResolvedValueOnce([[]] as never) // contents
+      .mockResolvedValueOnce([
+        [
+          {
+            id: 'quo-1',
+            uploadedImages: '[]',
+            data: JSON.stringify({ items: [{ imageUrl: 'https://res.cloudinary.com/x/old-product.jpg', imageUploaded: false }] }),
+          },
+          { id: 'quo-2', uploadedImages: [], data: { items: [{ imageUrl: 'https://res.cloudinary.com/x/parsed.jpg' }] } },
+        ],
+      ] as never) // quotations
+      .mockResolvedValueOnce([[]] as never); // billing_documents
+
+    const urls = await getAllUsedImageUrls();
+    expect(urls.has('https://res.cloudinary.com/x/old-product.jpg')).toBe(true);
+    expect(urls.has('https://res.cloudinary.com/x/parsed.jpg')).toBe(true);
+  });
+
+  it('reads quotations a page at a time and reaches the last one', async () => {
+    const all = Array.from({ length: 250 }, (_, i) => ({
+      id: `quo-${String(i).padStart(4, '0')}`,
+      uploadedImages: '[]',
+      data: JSON.stringify({ items: [{ imageUrl: `https://res.cloudinary.com/x/q${i}.jpg` }] }),
+    }));
+    vi.mocked(query).mockImplementation((async (sql: string, params: unknown[] = []) => {
+      if (!sql.includes('FROM quotations')) return [[]];
+      const [after, limit] = params as [string, number];
+      return [all.filter((q) => q.id > after).slice(0, limit)];
+    }) as never);
+
+    const urls = await getAllUsedImageUrls();
+    expect(urls.size).toBe(250);
+    expect(urls.has('https://res.cloudinary.com/x/q249.jpg')).toBe(true);
+    const pages = vi.mocked(query).mock.calls.filter(([sql]) => String(sql).includes('FROM quotations'));
+    expect(pages).toHaveLength(3); // 100 + 100 + 50
+    for (const [, params] of pages) expect((params as unknown[])[1]).toBe(100);
+  });
+
+  it('a quotation with malformed data is skipped, not fatal', async () => {
+    vi.mocked(query)
+      .mockResolvedValueOnce([[]] as never)
+      .mockResolvedValueOnce([[]] as never)
+      .mockResolvedValueOnce([[]] as never)
+      .mockResolvedValueOnce([
+        [
+          { id: 'quo-bad', uploadedImages: 'not-json{', data: 'not-json{' },
+          { id: 'quo-ok', uploadedImages: '["https://res.cloudinary.com/x/ok.jpg"]', data: '{}' },
+        ],
+      ] as never)
+      .mockResolvedValueOnce([[]] as never);
+
+    const urls = await getAllUsedImageUrls();
+    expect([...urls]).toEqual(['https://res.cloudinary.com/x/ok.jpg']);
   });
 
   it('ignores non-Cloudinary URLs everywhere', async () => {

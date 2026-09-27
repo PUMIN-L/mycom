@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import DashboardActions from "./DashboardActions";
 
 // Admin Panel hub (moved from /showcase — see
-// openspec/changes/rename-adminpanel-unblock-content). Gated by middleware;
+// openspec/changes/rename-adminpanel-unblock-content). Gated by proxy.ts;
 // noindex because it's an internal tool, never a public page.
 export const metadata: Metadata = {
   title: "ระบบจัดการ (Admin Panel)",

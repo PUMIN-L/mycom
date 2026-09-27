@@ -52,6 +52,17 @@ const conn = {
       const v = sharedState.get(key);
       return [v !== undefined ? [{ value: v }] : []];
     }
+    // claimOtpIssue: make sure the row exists, never overwrite it.
+    if (sql.includes("VALUES (?, '') ON DUPLICATE KEY UPDATE name = name")) {
+      const [key] = params as [string];
+      if (!sharedState.has(key)) sharedState.set(key, '');
+      return [{ affectedRows: 1 }];
+    }
+    if (sql.includes('UPDATE settings SET value = ? WHERE name = ?')) {
+      const [value, key] = params as [string, string];
+      sharedState.set(key, value);
+      return [{ affectedRows: 1 }];
+    }
     if (sql.includes('INSERT INTO settings')) {
       const [key, value] = params as [string, string];
       sharedState.set(key, value);
@@ -103,6 +114,9 @@ const equipmentNoSchedule = { id: 'eq-1', serialNumber: 'ABC', productName: 'Sca
 describe('Admin Equipments API', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // An empty settings table per test: an OTP issued in one test would
+    // otherwise hold the next one inside claimOtpIssue's one-minute wait.
+    sharedState = new Map();
     vi.mocked(getSession).mockResolvedValue(null);
     vi.mocked(getEquipment).mockResolvedValue(equipmentNoSchedule as any);
     vi.mocked(listSchedules).mockResolvedValue([]);
@@ -474,6 +488,23 @@ describe('Admin Equipments API', () => {
         expect.stringMatching(/^\d{6}$/),
         expect.objectContaining({ completedScheduleCount: 0, jobLogCount: 3 })
       );
+    });
+
+    it('refuses a second code for the same machine within a minute — no email', async () => {
+      mockSettingsState();
+      vi.mocked(getSession).mockResolvedValue(admin);
+      vi.mocked(countProtectedServiceHistory).mockResolvedValue({ completedSchedules: 1, jobLogs: 0, total: 1 });
+      expect((await deleteOtpPOST(mutReqId('POST'), ctx('eq-1'))).status).toBe(200);
+      const first = sharedState.get('equipment_delete_otp_eq-1');
+      vi.mocked(sendEquipmentDeleteOtpEmail).mockClear();
+
+      const res = await deleteOtpPOST(mutReqId('POST'), ctx('eq-1'));
+      expect(res.status).toBe(429);
+      expect(sendEquipmentDeleteOtpEmail).not.toHaveBeenCalled();
+      expect(sharedState.get('equipment_delete_otp_eq-1')).toBe(first);
+
+      // Another machine's code is its own count.
+      expect((await deleteOtpPOST(mutReqId('POST'), ctx('eq-2'))).status).toBe(200);
     });
 
     it('DELETE refuses without a code when the history is ใบ Job only', async () => {

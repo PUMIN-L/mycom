@@ -1660,6 +1660,24 @@ describe('salesDashboardStore — schema v33 line items', () => {
       expect(db.tables.sales_records[0].costAmount).toBe(15000);
     });
 
+    // 0.004 was "more than 0", so it was written — as a ฿0.00 row in
+    // DECIMAL(12,2). It is an empty row, and is dropped like one.
+    it('drops a row that is ฿0.00 once rounded, and stores the others to the satang', async () => {
+      const db = oneLineDb();
+      installFakeTransaction(db);
+      installFakeQuery(db);
+
+      const written = await syncCostItems('sale-1', [
+        { costType: 'transport', label: 'ค่ารถ', amount: 3000.005 },
+        { costType: 'commission', label: 'ค่าคอม', amount: 0.004 },
+        { costType: 'product_cost', label: 'ต้นทุนสินค้า', amount: 1.005 },
+      ]);
+
+      expect(written.map((i) => [i.costType, i.amount])).toEqual([['transport', 3000.01]]);
+      expect(db.tables.sale_cost_items.map((r) => [r.costType, r.amount])).toEqual([['transport', 3000.01]]);
+      expect(db.tables.sales_record_items[0].costAmount).toBe(1.01);
+    });
+
     it('round-trips: the sheet getCostItems reports re-saves to the same numbers', async () => {
       const db = oneLineDb();
       installFakeTransaction(db);

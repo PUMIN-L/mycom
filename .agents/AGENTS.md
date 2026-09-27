@@ -19,7 +19,7 @@ When displaying a list of entities (like customers, product specs) that can be e
 - Ensure that action buttons inside the row (like "Delete" or "Edit") use `e.stopPropagation()` in their `onClick` handlers so they don't accidentally trigger the row click event.
 
 ## 4. Access Control for Admin Pages
-The following pages are strictly for admin/management use and **MUST NOT** be accessible without logging in. Always ensure they are protected by `middleware.ts` matchers:
+The following pages are strictly for admin/management use and **MUST NOT** be accessible without logging in. Always ensure they are protected by `proxy.ts` matchers (Next 16's name for `middleware.ts`):
 - `/create-content`
 - `/documents`
 - `/quotation`

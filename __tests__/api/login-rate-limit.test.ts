@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { NextRequest } from 'next/server';
 // REAL bcrypt (deliberately NOT mocked here), matching login-credentials.test.ts.
 import bcrypt from 'bcryptjs';
@@ -57,13 +57,97 @@ vi.mock('@/app/lib/settingsStore', () => ({
 import { getSetting, setSetting } from '@/app/lib/settingsStore';
 
 import { POST as login } from '@/app/api/auth/login/route';
+// The per-IP brake is module state; every request here comes from one "IP".
+import { loginIpLimiter } from '@/app/lib/loginThrottle';
 
 const req = (body: any) =>
   new NextRequest('http://localhost', { method: 'POST', body: JSON.stringify(body) });
 
 beforeEach(() => {
   vi.clearAllMocks();
+  loginIpLimiter.reset();
   state = new Map();
+});
+
+describe('login per-IP brake (before the lockout row and bcrypt)', () => {
+  const reqFrom = (ip: string, body: unknown) =>
+    new NextRequest('http://localhost', {
+      method: 'POST',
+      headers: { 'x-forwarded-for': ip },
+      body: JSON.stringify(body),
+    });
+
+  // bcrypt is stubbed here, unlike the rest of this file: these tests are
+  // about the attempts before it, and a made-up username is compared against
+  // the cost-12 dummy hash — ten of those in pure-JS bcryptjs is seconds, and
+  // under the parallel coverage run more than a test's time limit.
+  let compare: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    compare = vi.spyOn(bcrypt, 'compare').mockImplementation((async (pw: string) => pw === 'correct-horse') as never);
+  });
+  afterEach(() => {
+    compare.mockRestore();
+  });
+
+  it('stops one source cycling through made-up usernames after 10 attempts', async () => {
+    vi.mocked(query).mockResolvedValue([[]] as never); // no such users
+    const statuses: number[] = [];
+    for (let i = 0; i < 10; i++) {
+      statuses.push((await login(reqFrom('203.0.113.7', { username: `ghost${i}`, password: 'x' }))).status);
+    }
+    expect(statuses).toEqual(Array(10).fill(401));
+    expect(compare).toHaveBeenCalledTimes(10);
+    const rowsBefore = state.size;
+    vi.mocked(query).mockClear();
+    vi.mocked(getSetting).mockClear();
+    vi.mocked(withTransaction).mockClear();
+    compare.mockClear();
+
+    const res = await login(reqFrom('203.0.113.7', { username: 'ghost10', password: 'x' }));
+    expect(res.status).toBe(429);
+    expect(Number(res.headers.get('Retry-After'))).toBeGreaterThan(0);
+    expect((await res.json()).error).toContain('บ่อยเกินไป');
+    // Nothing the attempt would have cost: no lockout read, no user lookup,
+    // no bcrypt, no new settings row.
+    expect(getSetting).not.toHaveBeenCalled();
+    expect(query).not.toHaveBeenCalled();
+    expect(compare).not.toHaveBeenCalled();
+    expect(withTransaction).not.toHaveBeenCalled();
+    expect(state.size).toBe(rowsBefore);
+  });
+
+  it('another address is not held back by it', async () => {
+    const passwordHash = bcrypt.hashSync('correct-horse', 4);
+    vi.mocked(query).mockResolvedValue([[{ id: '1', username: 'admin', passwordHash }]] as never);
+    for (let i = 0; i < 11; i++) await login(reqFrom('203.0.113.7', { username: `ghost${i}`, password: 'x' }));
+
+    const res = await login(reqFrom('198.51.100.2', { username: 'admin', password: 'correct-horse' }));
+    expect(res.status).toBe(200);
+  });
+
+  it('lets the address in again after a minute', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+      vi.mocked(query).mockResolvedValue([[]] as never);
+      for (let i = 0; i < 10; i++) await login(reqFrom('203.0.113.7', { username: `ghost${i}`, password: 'x' }));
+      expect((await login(reqFrom('203.0.113.7', { username: 'g', password: 'x' }))).status).toBe(429);
+
+      vi.setSystemTime(new Date('2026-01-01T00:01:01Z'));
+      expect((await login(reqFrom('203.0.113.7', { username: 'g', password: 'x' }))).status).toBe(401);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a malformed body is refused without using up the allowance', async () => {
+    for (let i = 0; i < 15; i++) {
+      expect((await login(reqFrom('203.0.113.7', { username: ['x'], password: 1 }))).status).toBe(400);
+    }
+    const passwordHash = bcrypt.hashSync('correct-horse', 4);
+    vi.mocked(query).mockResolvedValue([[{ id: '1', username: 'admin', passwordHash }]] as never);
+    expect((await login(reqFrom('203.0.113.7', { username: 'admin', password: 'correct-horse' }))).status).toBe(200);
+  });
 });
 
 describe('login rate limiting (settings-table backed, shared across instances)', () => {

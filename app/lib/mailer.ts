@@ -200,7 +200,7 @@ export async function sendMaintenanceOtpEmail(
   );
 }
 
-/** Send a 5-digit OTP to `to` to authorize deleting orphaned Cloudinary images. */
+/** Send a 6-digit OTP to `to` to authorize deleting orphaned Cloudinary images. */
 export async function sendOrphanDeleteOtpEmail(
   to: string,
   otp: string,

@@ -62,6 +62,8 @@ vi.mock("@/app/lib/settingsStore", () => ({
 }));
 
 import { POST as login } from "@/app/api/auth/login/route";
+// The per-IP brake is module state; every request here comes from one "IP".
+import { loginIpLimiter } from "@/app/lib/loginThrottle";
 import { issueLoginDeviceToken } from "@/app/lib/loginDevice";
 
 const PASSWORD = "correct-horse";
@@ -81,6 +83,7 @@ async function lockUsernameAsAttacker(username = "admin") {
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  loginIpLimiter.reset();
   state = new Map();
   epoch = 0;
   const passwordHash = bcrypt.hashSync(PASSWORD, 4);

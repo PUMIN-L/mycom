@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { withRoute, requireAuth } from "../../../../lib/apiHelpers";
 import { getContactEmail, setSetting, isMaintenanceMode } from "../../../../lib/settingsStore";
 import { isMailConfigured, sendMaintenanceOtpEmail } from "../../../../lib/mailer";
-import { resetOtpAttempts } from "../../../../lib/otpAttempts";
+import { claimOtpIssue, otpIssueRefused, resetOtpAttempts } from "../../../../lib/otpAttempts";
 
 function generateOtp(): string {
   return randomInt(100000, 1000000).toString();
@@ -32,6 +32,9 @@ export const POST = withRoute(
         { status: 400 }
       );
     }
+
+    const issue = await claimOtpIssue("maintenance_otp");
+    if (!issue.allowed) return otpIssueRefused(issue.retryAfterSeconds);
 
     const otp = generateOtp();
     const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes

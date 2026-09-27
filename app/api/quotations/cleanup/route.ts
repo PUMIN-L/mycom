@@ -3,6 +3,7 @@ import { withRoute } from "../../../lib/apiHelpers";
 import { purgeExpiredQuotations } from "../../../lib/quotationStore";
 import { purgeExpiredAlertSnoozes } from "../../../lib/crmStore";
 import { purgeExpiredPurchaseOrders } from "../../../lib/poStore";
+import { purgeExpiredLoginFailures } from "../../../lib/loginThrottle";
 
 // GET /api/quotations/cleanup — invoked daily by Vercel Cron (see vercel.json)
 // to delete quotations past their retention window (RETENTION_DAYS below) plus
@@ -41,7 +42,7 @@ export const GET = withRoute(
     // up — and it has to be visible in the logs. Grep `cron:quotations-cleanup`.
     //
     // Logged on every unauthenticated hit rather than once per process. Note
-    // what that exposes: middleware.ts gates no /api path, so ANY anonymous
+    // what that exposes: proxy.ts gates no /api path, so ANY anonymous
     // caller can drive this line. That is acceptable, but not because the route
     // is unlisted — obscurity is not the argument. It is acceptable because
     // Vercel already writes a request log for every one of those hits, so the
@@ -90,11 +91,16 @@ export const GET = withRoute(
       // paper copy is kept by the office, so the DB row after 2 years is
       // redundant. Reuses the same retention window as quotations.
       const posPurged = await purgeExpiredPurchaseOrders(RETENTION_DAYS);
+      // Login lockout rows whose 15-minute window has ended. Every failed
+      // login writes one — for a made-up username too — and nothing else
+      // deletes them; an ended window already counts as no failures, so no
+      // login's outcome changes (see purgeExpiredLoginFailures).
+      const loginFailuresPurged = await purgeExpiredLoginFailures();
       // Structured success line so a MISSING nightly run is detectable in logs.
       console.log(
-        `[cron:quotations-cleanup] ok deleted=${deleted} billingDeleted=${billingDeleted} docNosPurged=${docNosPurged} snoozesPurged=${snoozesPurged} posPurged=${posPurged}`
+        `[cron:quotations-cleanup] ok deleted=${deleted} billingDeleted=${billingDeleted} docNosPurged=${docNosPurged} snoozesPurged=${snoozesPurged} posPurged=${posPurged} loginFailuresPurged=${loginFailuresPurged}`
       );
-      return NextResponse.json({ ok: true, deleted, billingDeleted, docNosPurged, snoozesPurged, posPurged });
+      return NextResponse.json({ ok: true, deleted, billingDeleted, docNosPurged, snoozesPurged, posPurged, loginFailuresPurged });
     } catch (err) {
       // Log then rethrow so withRoute returns 500 → Vercel marks the cron run
       // FAILED instead of the failure disappearing silently. (Note: withRoute

@@ -99,6 +99,9 @@ app/
 ├── login/               Admin login page.
 └── showcase/            Public content browsing + admin in-place editing.
 
+proxy.ts                 Next 16's `proxy` convention (formerly middleware.ts —
+                         deprecated): admin pages in `config.matcher` redirect to
+                         /login without a validly SIGNED session cookie (§10).
 instrumentation.ts       Next 16 server error hook (onRequestError) — structured
                          error logging; wire Sentry here (see §Observability).
 __tests__/               Vitest suites (unit tests for lib/* + api/*). See §Testing.
@@ -194,6 +197,16 @@ export const POST = withRoute("เพิ่มสินค้าไม่สำ�
 - `jsonError(message, status, details?)` — the standard `{ error, details? }` shape.
 - For *expected* non-200s (404 / 400 validation) you may either
   `return NextResponse.json(..., { status })` directly or `throw new ApiError(...)`.
+- **A positive money amount from a body goes through `parsePositiveMoney`**
+  ([`app/lib/moneyAmount.ts`](./app/lib/moneyAmount.ts)), and the route
+  stores the `amount` it returns. It rounds to the satang **first** and checks
+  after. Checking `> 0` first let 0.004 through, and the DECIMAL(12,2) column
+  then held ฿0.00 (a zero-baht payment, cost or monthly bill). It also refuses
+  anything above 9,999,999,999.99 (the column's ceiling), and anything that is
+  not a number or numeric string. Used by billing payments, recurring
+  expenses and sale costs. `addBillingPayment` and `syncCostItems` apply the
+  same rounding themselves (`toSatang`). `toSatang`, not quotationTotals'
+  `round2`, whose relative epsilon is a whole satang at the ceiling.
 
 The wrapped handler keeps the native `(request, context)` signature, so dynamic
 `params` typing still works. **Don't** go back to per-handler `try/catch` +
@@ -422,6 +435,19 @@ highlight expires without a reload.
   static caching of `/`, `/about` and `/catalog`.
 - `connect-src` allows `https://api.cloudinary.com`: files over 4 MB are
   uploaded from the browser straight to Cloudinary (§7).
+- **`images.remotePatterns` is an allowlist for a public endpoint.**
+  `/_next/image` resizes any URL the patterns match, for anyone, on Vercel's
+  image-optimization quota. It takes only `res.cloudinary.com/<our
+  CLOUDINARY_CLOUD_NAME>/image/upload/**` and `flagcdn.com/w40/*.png` (the
+  navbar flags), both with `search: ""`. res.cloudinary.com is shared by every
+  Cloudinary account, and `/image/fetch/` pulls in any web image, so neither
+  the host alone nor our cloud's whole path is safe. Without the cloud name at
+  build, there is no Cloudinary pattern (fail closed). The LINE QR image
+  (api.qrserver.com, which draws whatever text it is given) renders
+  `unoptimized` and is not a pattern. A new remote image host means a new
+  pattern, as tight as its URLs allow, and an `img-src` entry.
+  `__tests__/nextConfigImages.test.ts` checks the patterns with Next's own
+  matcher.
 - CSRF is handled by the `withRoute` same-origin guard (§2). Auth is an httpOnly
   cookie, so a same-origin check is the CSRF defense.
 
@@ -455,6 +481,17 @@ and `deleteQuotation`/`purgeExpiredQuotations` cross-check every URL against
 `SELECT image FROM products` + content blocks (`imageUrl` **and** `imageUrls[]`)
 before calling `cloudinary.destroy`.
 
+**And the other way round:** deleting an image (the confirm dialog →
+`/api/upload/delete` → `safeDeleteCloudinaryImage`, or the orphan scanner)
+must never destroy one a quotation still shows. A line item picked from the
+catalog carries a **copy** of the product's image URL in `quotations.data`
+(`imageUrl: p.image, imageUploaded: false`), and `uploadedImages` does not
+list it. So `isCloudinaryImageInUse` searches both quotation columns, and
+`getAllUsedImageUrls` collects every URL inside `data`, reading a page of
+quotations at a time. Billing documents copy line items onward and are
+covered the same way (whole `data`). Anything new that stores an image URL
+has to be added to both functions in `app/lib/imageUsageHelper.ts`.
+
 **⚠️ PDF Strict Delivery Restrictions:** By default, Cloudinary restricts
 delivery of `raw` PDFs to prevent XSS. A global setting (Security → Restricted
 media types → "Delivery of PDF and ZIP files") **must** be unchecked for the
@@ -487,7 +524,9 @@ a *different* quote aborts with 409, and the quote can never be persisted withou
 its reservation — so the "one live number" invariant holds under failure and
 concurrency. A Vercel Cron (`/api/quotations/cleanup`, gated by `CRON_SECRET`) purges
 quotations past `RETENTION_DAYS` **and expired `alert_snoozes` rows**
-(`purgeExpiredAlertSnoozes` in `crmStore.ts`, `snoozesPurged` in the log line).
+(`purgeExpiredAlertSnoozes` in `crmStore.ts`, `snoozesPurged` in the log line),
+plus login lockout rows whose window has ended (`purgeExpiredLoginFailures`,
+`loginFailuresPurged` — §10).
 That purge is one day conservative on purpose — it deletes with `<` against
 today's Bangkok date, a strict subset of the `snoozeUntil <= today` the alert
 queries already treat as spent, so no alert can reappear early because of it.
@@ -811,6 +850,22 @@ stored in an httpOnly `session` cookie. `createSession` / `getSession` /
   it is that device's own bucket. So someone failing on purpose locks the
   username, not the admin's browser, and gains no extra guesses. A trusted
   login clears only its own bucket, never the username's.
+- **Per-IP brake, in front of the lockout** (`app/lib/loginThrottle.ts`):
+  10 attempts / minute per `clientKey` (in memory, per instance), checked
+  after the body's type check and before the lockout row is read or bcrypt
+  runs. It exists because the lockout alone never stops a caller who makes up a
+  new username for every attempt: each name is its own bucket, and every
+  attempt still costs ~0.25 s of bcrypt (cost 12) and one `settings` row. Not a
+  replacement for the lockout (an IP is not an identity, and the counter is per
+  instance). Failures for unknown usernames are still recorded, so the
+  lockout does not reveal which usernames exist.
+- **Lockout rows are purged nightly.** Rows are `login_fail_<username>` /
+  `login_fail_dev_<deviceId>` = `"count|expiresAt"`. The cleanup cron's
+  `purgeExpiredLoginFailures` deletes those whose window has ended (an ended
+  window already counts as no failures, so no login's outcome changes). It
+  reads them in keyset pages, with the prefix escaped in LIKE (`_` is a
+  wildcard), and deletes a row only if its value is unchanged since the read.
+  A failure recorded mid-purge has opened a new window and stays.
 - **Revocation ("ออกจากระบบอุปกรณ์อื่นทั้งหมด", /settings):** every session
   and device token carries the **session epoch** it was issued under
   (`settingsStore`: `session_epoch` row, cached, tag `session_epoch`).
@@ -819,7 +874,7 @@ stored in an httpOnly `session` cookie. `createSession` / `getSession` /
   token under the new epoch (passed explicitly, not read back through the
   cache). Tokens from before epochs existed read as 0. The epoch is read only
   when a valid session cookie is present, and a read error fails open (0) so a
-  DB blip does not log everyone out. `middleware.ts` (edge, no DB) checks only
+  DB blip does not log everyone out. `proxy.ts` (no DB, by choice) checks only
   the signature, so a revoked browser may still load a page shell — every
   protected API goes through `getSession()` and rejects it (the one admin page
   that reads server-side, `/documents`, reads the list `GET /api/documents`
@@ -829,9 +884,27 @@ stored in an httpOnly `session` cookie. `createSession` / `getSession` /
   /adminpanel, or a revoked tab sent there by a 401 would bounce straight back
   (`__tests__/pages/loginRevokedSession.test.tsx`).
 - ⚠️ The device key is `"login-device:" + SESSION_SECRET`, deliberately NOT the
-  session key: `getSession()` and middleware check only the signature, so a
+  session key: `getSession()` and `proxy.ts` check only the signature, so a
   token signed with the session key would be accepted as a session. Tests pin
   both directions (`__tests__/lib/loginDevice.test.ts`).
+
+**Emailed one-time codes (OTP)** gate the actions a stolen session should
+not be able to take alone: changing the contact email, the company profile,
+maintenance mode, deleting equipment with service history, and deleting
+unused Cloudinary images. Five `…/otp` routes issue codes, and the matching
+route verifies them. All go through
+[`app/lib/otpAttempts.ts`](./app/lib/otpAttempts.ts):
+- Codes are **6 digits** (`crypto.randomInt(100000, 1000000)`) everywhere.
+  The orphan-image code was 5 digits until September 2026; its screen, route
+  and email say 6 now.
+- **Guesses:** 5 wrong answers wipe the code (`recordOtpFailure`, a locked
+  read-modify-write). Each new code starts from 0 (`resetOtpAttempts`).
+- **Issuing:** because of that reset, `claimOtpIssue(otpKey)` must come
+  before any new code: at most one a minute and 5 an hour per `otpKey`
+  (settings row `<otpKey>_issued`, under a row lock). Refused →
+  `otpIssueRefused` = 429 + `Retry-After` + a Thai "wait N" message, and no
+  code stored, no email sent. It is called after the request validates, so a
+  bad request uses nothing up. A new OTP route must call it.
 
 ### 11. Shared UI components — don't re-implement inline
 [`app/components/`](./app/components/): `ConfirmDialog`, `Toast`, `Spinner`,
@@ -1077,7 +1150,8 @@ SESSION_SECRET=
 # If ADMIN_PASSWORD is unset the admin user is NOT seeded (no weak default).
 ADMIN_USERNAME=admin     ADMIN_PASSWORD=
 
-# Cloudinary
+# Cloudinary. CLOUDINARY_CLOUD_NAME is also read at BUILD time: next.config.ts
+# lets /_next/image resize only that cloud's photos (§6), so changing it needs a redeploy.
 CLOUDINARY_CLOUD_NAME=   CLOUDINARY_API_KEY=   CLOUDINARY_API_SECRET=
 
 # Email (contact form) — Gmail App Password by default; host/port optional.

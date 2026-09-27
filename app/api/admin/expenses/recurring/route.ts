@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withRoute, requireAuth } from "../../../../lib/apiHelpers";
 import { addRecurringExpense, listRecurringExpenses } from "../../../../lib/expenseStore";
+import { parsePositiveMoney } from "../../../../lib/moneyAmount";
 
 export const GET = withRoute(
   "ดึงข้อมูลรายจ่ายประจำไม่สำเร็จ",
@@ -20,15 +21,14 @@ export const POST = withRoute(
     if (!body.title) {
       return NextResponse.json({ error: "กรุณาระบุชื่อรายการ" }, { status: 400 });
     }
-    const amountNum = Number(body.amount);
-    if (!body.amount || !Number.isFinite(amountNum) || amountNum <= 0) {
-      return NextResponse.json(
-        { error: "จำนวนเงินต้องมากกว่า 0" },
-        { status: 400 }
-      );
+    // Rounded to the satang before the check, and the rounded value is what is
+    // stored: 0.004 would otherwise be a ฿0.00 bill generated every month.
+    const parsed = parsePositiveMoney(body.amount);
+    if (!parsed.ok) {
+      return NextResponse.json({ error: parsed.error }, { status: 400 });
     }
 
-    const record = await addRecurringExpense(body);
+    const record = await addRecurringExpense({ ...body, amount: parsed.amount });
     return NextResponse.json(record, { status: 201 });
   }
 );

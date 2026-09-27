@@ -1,7 +1,7 @@
 // @vitest-environment node
 /**
  * The device token and the session token must never be interchangeable:
- * getSession() and middleware only check a JWT's SIGNATURE, so a device token
+ * getSession() and proxy.ts only check a JWT's SIGNATURE, so a device token
  * that verified under the session key would be accepted as a login. The
  * device key is derived from SESSION_SECRET, not equal to it.
  */

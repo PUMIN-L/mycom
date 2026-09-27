@@ -9,6 +9,7 @@ import { getBillingDocument } from "../../../../lib/billingStore";
 import { sanitizePlainText } from "../../../../lib/sanitizeHtml";
 import { isValidDateString } from "../../../../lib/dateFormat";
 import { PAYMENT_METHODS } from "../../../../lib/paymentMethods";
+import { parsePositiveMoney } from "../../../../lib/moneyAmount";
 
 /** GET /api/billing/[id]/payments — the full history, voided rows included.
  *  The ledger's "ประวัติการรับชำระ" disclosure renders voided rows struck
@@ -54,15 +55,17 @@ export const POST = withRoute(
       );
     }
 
-    const amount = Number(body?.amount);
     // Zero and negative are refused: a refund is not a payment, and a ฿0 row is
     // noise in a financial history. A correction goes through the void path.
-    if (!Number.isFinite(amount) || amount <= 0) {
-      return NextResponse.json(
-        { error: "จำนวนเงินต้องมากกว่า 0" },
-        { status: 400 }
-      );
+    // Settled to the satang BEFORE that check (parsePositiveMoney), so the
+    // amount checked is the amount stored — 0.004 is a ฿0.00 row, not "more
+    // than 0" — and "is this document paid?" is always compared in the same
+    // decimal space as DECIMAL(12,2).
+    const parsed = parsePositiveMoney(body?.amount);
+    if (!parsed.ok) {
+      return NextResponse.json({ error: parsed.error }, { status: 400 });
     }
+    const amount = parsed.amount;
 
     const paidDate = String(body?.paidDate ?? "").trim();
     if (!isValidDateString(paidDate)) {
@@ -80,9 +83,7 @@ export const POST = withRoute(
     const { paidAmount } = await addBillingPayment({
       id: randomUUID(),
       billingDocumentId: id,
-      // Settled to the satang on the way into DECIMAL(12,2), so the comparison
-      // "is this document paid?" is always made in the same decimal space.
-      amount: Math.round(amount * 100) / 100,
+      amount,
       paidDate,
       method,
       ref: sanitizePlainText(String(body?.ref ?? "")).slice(0, 255),

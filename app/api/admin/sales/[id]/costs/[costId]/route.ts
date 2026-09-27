@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withRoute, requireAuth } from "../../../../../../lib/apiHelpers";
+import { parsePositiveMoney } from "../../../../../../lib/moneyAmount";
 import {
   getSalesRecord,
   updateCostItem,
@@ -29,11 +30,13 @@ export const PUT = withRoute(
       return NextResponse.json({ error: "ไม่พบรายการขาย" }, { status: 404 });
     }
     const body = await request.json();
-    if (body.amount !== undefined && (!Number.isFinite(Number(body.amount)) || Number(body.amount) <= 0)) {
-      return NextResponse.json(
-        { error: "จำนวนเงินต้องมากกว่า 0" },
-        { status: 400 }
-      );
+    if (body.amount !== undefined) {
+      // Rounded before the check, and stored rounded (see the POST).
+      const parsed = parsePositiveMoney(body.amount);
+      if (!parsed.ok) {
+        return NextResponse.json({ error: parsed.error }, { status: 400 });
+      }
+      body.amount = parsed.amount;
     }
     let updated;
     try {

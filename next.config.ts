@@ -27,7 +27,7 @@ const contentSecurityPolicy = [
   "frame-ancestors 'none'",
   "frame-src https://www.google.com https://www.youtube-nocookie.com",
   "form-action 'self'",
-  "img-src 'self' data: blob: https://res.cloudinary.com https://images.unsplash.com https://flagcdn.com https://api.qrserver.com",
+  "img-src 'self' data: blob: https://res.cloudinary.com https://flagcdn.com https://api.qrserver.com",
   "media-src 'self' https://res.cloudinary.com",
   "font-src 'self' data:",
   "style-src 'self' 'unsafe-inline'",
@@ -39,26 +39,40 @@ const contentSecurityPolicy = [
   "connect-src 'self' https://res.cloudinary.com https://api.cloudinary.com",
 ].join("; ");
 
+// Which remote images /_next/image will resize. Each one it serves is work on
+// Vercel's image-optimization quota, and the endpoint is public — so it takes
+// only the images this site actually shows through next/image:
+//   - photos uploaded to OUR Cloudinary account. res.cloudinary.com is shared
+//     by every Cloudinary account, and /image/fetch/ on any of them pulls in
+//     an arbitrary web image, so the path is pinned to our cloud's
+//     /image/upload/. Stored URLs are upload secure_urls, which carry no query
+//     string — `search: ""` stops "?1", "?2"... turning one photo into
+//     unlimited optimizations. No CLOUDINARY_CLOUD_NAME at build: no pattern
+//     (fail closed, like documents/proxy) — /api/health reports the missing
+//     variable.
+//   - the navbar's language flags (flagcdn.com/w40/xx.png).
+// The LINE QR code (api.qrserver.com) renders `unoptimized`: a generator that
+// draws any text it is given has no place behind a resizer. The browser loads
+// it directly, which is why img-src still lists it.
+const cloudName = process.env.CLOUDINARY_CLOUD_NAME ?? "";
+
+const remotePatterns: NonNullable<NonNullable<NextConfig["images"]>["remotePatterns"]> = [
+  { protocol: "https", hostname: "flagcdn.com", pathname: "/w40/*.png", search: "" },
+];
+// A cloud name is letters, digits, - and _ — anything else would be read as
+// glob syntax in the pattern.
+if (/^[\w-]+$/.test(cloudName)) {
+  remotePatterns.push({
+    protocol: "https",
+    hostname: "res.cloudinary.com",
+    pathname: `/${cloudName}/image/upload/**`,
+    search: "",
+  });
+}
+
 const nextConfig: NextConfig = {
   images: {
-    remotePatterns: [
-      {
-        protocol: "https",
-        hostname: "images.unsplash.com",
-      },
-      {
-        protocol: "https",
-        hostname: "flagcdn.com",
-      },
-      {
-        protocol: "https",
-        hostname: "res.cloudinary.com",
-      },
-      {
-        protocol: "https",
-        hostname: "api.qrserver.com",
-      },
-    ],
+    remotePatterns,
   },
   async redirects() {
     return [

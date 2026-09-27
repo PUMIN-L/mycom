@@ -71,7 +71,7 @@ export async function getSession(): Promise<SessionPayload | null> {
   if (!payload) return null;
   // Revoked by "ออกจากระบบอุปกรณ์อื่นทั้งหมด" if issued under an older epoch.
   // Read only when a valid token is present, so anonymous traffic never pays
-  // for it. middleware.ts (edge, no DB) cannot check this — it gates page
+  // for it. proxy.ts (no DB, by choice) does not check this — it gates page
   // shells by signature alone; every API route and server-side read goes
   // through here.
   const tokenEpoch = Number(payload.epoch) || 0;

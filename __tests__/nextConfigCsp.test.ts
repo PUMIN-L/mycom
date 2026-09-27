@@ -72,4 +72,10 @@ describe("next.config.ts img-src", () => {
     const img = directive(await cspFor("production"), "img-src");
     expect(img.split(" ")).toContain("data:");
   });
+
+  it("lists only the hosts the site loads images from", async () => {
+    expect(directive(await cspFor("production"), "img-src")).toBe(
+      "img-src 'self' data: blob: https://res.cloudinary.com https://flagcdn.com https://api.qrserver.com"
+    );
+  });
 });

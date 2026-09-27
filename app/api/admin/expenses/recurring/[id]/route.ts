@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withRoute, requireAuth } from "../../../../../lib/apiHelpers";
 import { updateRecurringExpense, deleteRecurringExpense } from "../../../../../lib/expenseStore";
+import { parsePositiveMoney } from "../../../../../lib/moneyAmount";
 
 export const PUT = withRoute(
   "แก้ไขรายจ่ายประจำไม่สำเร็จ",
@@ -9,11 +10,13 @@ export const PUT = withRoute(
     const { id } = await params;
     const body = await request.json();
 
-    if (body.amount !== undefined && !(Number(body.amount) > 0)) {
-      return NextResponse.json(
-        { error: "จำนวนเงินต้องมากกว่า 0" },
-        { status: 400 }
-      );
+    if (body.amount !== undefined) {
+      // Rounded before the check, and stored rounded (see the POST).
+      const parsed = parsePositiveMoney(body.amount);
+      if (!parsed.ok) {
+        return NextResponse.json({ error: parsed.error }, { status: 400 });
+      }
+      body.amount = parsed.amount;
     }
 
     const record = await updateRecurringExpense(id, body);

@@ -14,7 +14,7 @@ import { getSessionEpoch } from "./settingsStore";
 // so every guess still lands in the username bucket, 5 per 15 minutes.
 //
 // ⚠️ The signing key is DERIVED from SESSION_SECRET, never the session key
-// itself. getSession()/middleware verify only the signature, so a token
+// itself. getSession()/proxy.ts verify only the signature, so a token
 // signed with the session key would be accepted AS a session. With distinct
 // keys (and the audience check) neither kind of token verifies as the other.
 

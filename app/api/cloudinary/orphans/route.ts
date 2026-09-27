@@ -64,7 +64,7 @@ export const GET = withRoute(
  * Deletes selected orphaned assets from Cloudinary.
  * Body: { items: { publicId: string; resourceType: string }[], otp: string }
  *
- * Requires a valid 5-digit OTP sent via POST /api/cloudinary/orphans/otp.
+ * Requires a valid 6-digit OTP sent via POST /api/cloudinary/orphans/otp.
  * Each asset is double-checked against the DB before deletion as a safety net.
  */
 export const DELETE = withRoute(
@@ -75,9 +75,9 @@ export const DELETE = withRoute(
     const { items, otp } = await request.json();
 
     // ── OTP Verification ──────────────────────────────────────────────────
-    if (!otp || typeof otp !== "string" || otp.length !== 5) {
+    if (!otp || typeof otp !== "string" || otp.length !== 6) {
       return NextResponse.json(
-        { error: "กรุณากรอกรหัสยืนยัน 5 หลัก" },
+        { error: "กรุณากรอกรหัสยืนยัน 6 หลัก" },
         { status: 400 }
       );
     }

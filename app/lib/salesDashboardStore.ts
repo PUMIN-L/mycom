@@ -3,6 +3,7 @@ import { query, withTransaction } from "./db";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { sanitizePlainText } from "./sanitizeHtml";
 import { bangkokDateString, bangkokParts, isValidDateString } from "./dateFormat";
+import { MAX_MONEY_AMOUNT, toSatang } from "./moneyAmount";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 import type { SalesRecord, CostItem, CustomerEquipment } from "./types";
@@ -1449,7 +1450,9 @@ function cleanCostInput(data: Partial<CostItem>) {
   return {
     costType: normalizeCostType(data.costType),
     label: sanitizePlainText(data.label || "").substring(0, 255),
-    amount: Math.max(0, Math.min(9999999999.99, Number(data.amount) || 0)),
+    // Settled to the satang here, so the amount handed back (and summed into
+    // the product cost) is the one DECIMAL(12,2) stores.
+    amount: toSatang(Math.max(0, Math.min(MAX_MONEY_AMOUNT, Number(data.amount) || 0))),
     note: sanitizePlainText(data.note || "").substring(0, 5000),
   };
 }
@@ -1825,7 +1828,9 @@ export async function syncCostItems(
     const insertedItems: CostItem[] = [];
     let submittedProductCost = 0;
     for (const item of items) {
-      if (!(Number(item.amount) > 0)) continue;
+      // An emptied row is dropped — and so is one that is ฿0.00 once rounded
+      // (0.004 was "more than 0" and became a zero-baht cost row).
+      if (!(toSatang(Number(item.amount)) > 0)) continue;
       const v = cleanCostInput(item);
       if (v.costType === "product_cost") {
         // Bridged onto the line item below instead of being stored here — one

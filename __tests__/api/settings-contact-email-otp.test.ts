@@ -15,6 +15,14 @@ vi.mock('@/app/lib/mailer', () => ({
 }));
 import { isMailConfigured, sendOtpEmail } from '@/app/lib/mailer';
 
+// How often a code may be issued is claimOtpIssue's job, tested in
+// __tests__/lib/otpAttempts.test.ts; here, only what the route does with the answer.
+vi.mock('@/app/lib/otpAttempts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/app/lib/otpAttempts')>()),
+  claimOtpIssue: vi.fn(),
+}));
+import { claimOtpIssue } from '@/app/lib/otpAttempts';
+
 vi.mock('@/app/lib/session', () => ({ getSession: vi.fn() }));
 import { getSession } from '@/app/lib/session';
 
@@ -32,6 +40,7 @@ beforeEach(() => {
   vi.mocked(getSession).mockResolvedValue(null); // default: anonymous
   vi.mocked(isMailConfigured).mockReturnValue(true);
   vi.mocked(getContactEmail).mockResolvedValue('current@example.com');
+  vi.mocked(claimOtpIssue).mockResolvedValue({ allowed: true });
 });
 
 describe('POST /api/settings/contact-email/otp', () => {
@@ -86,5 +95,23 @@ describe('POST /api/settings/contact-email/otp', () => {
       expect.stringMatching(/^\d{6}$/),
       'new@example.com'
     );
+  });
+
+  it('asks for a code too soon: 429, nothing stored, no email', async () => {
+    vi.mocked(getSession).mockResolvedValue(adminSession);
+    vi.mocked(claimOtpIssue).mockResolvedValue({ allowed: false, retryAfterSeconds: 42 });
+    const res = await POST(postRequest({ newEmail: 'new@example.com' }));
+    expect(res.status).toBe(429);
+    expect(res.headers.get('Retry-After')).toBe('42');
+    expect((await res.json()).error).toContain('42 วินาที');
+    expect(setSetting).not.toHaveBeenCalled();
+    expect(sendOtpEmail).not.toHaveBeenCalled();
+    expect(claimOtpIssue).toHaveBeenCalledWith('contact_email_otp');
+  });
+
+  it('an invalid request never reaches the issue limit', async () => {
+    vi.mocked(getSession).mockResolvedValue(adminSession);
+    await POST(postRequest({}));
+    expect(claimOtpIssue).not.toHaveBeenCalled();
   });
 });

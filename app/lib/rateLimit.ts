@@ -1,12 +1,15 @@
 // Small in-memory rate limiter, extracted from a Map + prune block that several
-// routes used to carry their own copy of. Used by app/api/documents/proxy and
-// app/api/upload; new call sites should use it rather than hand-rolling another.
+// routes used to carry their own copy of. Used by app/api/documents/proxy,
+// app/api/upload and app/api/auth/login; new call sites should use it rather
+// than hand-rolling another.
 //
-// Two routes deliberately do NOT use it:
-//   * app/api/auth/login — its throttle is DB-backed (a settings row), because
-//     a per-instance counter lets a distributed attacker get FAILURE_LIMIT
-//     guesses per warm instance instead of in total. Credential guessing needs
-//     a real global limit; see that file.
+// app/api/auth/login uses it only as a per-IP brake (app/lib/loginThrottle.ts)
+// in FRONT of its real throttle, the per-account lockout. That one is
+// DB-backed (a settings row), because a per-instance counter lets a
+// distributed attacker get FAILURE_LIMIT guesses per warm instance instead of
+// in total. Credential guessing needs a real global limit; see that route.
+//
+// One route deliberately does NOT use it:
 //   * app/api/contact — it counts an attempt only AFTER the payload validates,
 //     so a visitor who fumbles the phone format five times is not locked out of
 //     the contact form. check() below consumes on every call by design, which

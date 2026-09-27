@@ -24,12 +24,17 @@ vi.mock('@/app/lib/session', () => ({
 import { createSession } from '@/app/lib/session';
 
 import { POST as login } from '@/app/api/auth/login/route';
+// The per-IP brake is module state; every request here comes from one "IP".
+import { loginIpLimiter } from '@/app/lib/loginThrottle';
 
 const req = (body: any) =>
   new NextRequest('http://localhost', { method: 'POST', body: JSON.stringify(body) });
 
 describe('login credential verification (real bcrypt)', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    loginIpLimiter.reset();
+  });
 
   it('accepts the correct password and creates a session', async () => {
     const passwordHash = bcrypt.hashSync('correct-horse', 10);

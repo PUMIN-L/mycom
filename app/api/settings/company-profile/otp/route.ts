@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { withRoute, requireAuth } from "../../../../lib/apiHelpers";
 import { getCompanyProfile, getContactEmail, setSetting } from "../../../../lib/settingsStore";
 import { isMailConfigured, sendCompanyProfileOtpEmail } from "../../../../lib/mailer";
-import { resetOtpAttempts } from "../../../../lib/otpAttempts";
+import { claimOtpIssue, otpIssueRefused, resetOtpAttempts } from "../../../../lib/otpAttempts";
 import { parseCompanyProfilePartial, summarizeCompanyProfileChanges } from "../../../../lib/companyProfileValidation";
 
 function generateOtp(): string {
@@ -30,6 +30,9 @@ export const POST = withRoute(
 
     const [current, currentEmail] = await Promise.all([getCompanyProfile(), getContactEmail()]);
     const changesSummary = summarizeCompanyProfileChanges(current, result.partial);
+
+    const issue = await claimOtpIssue("company_profile_otp");
+    if (!issue.allowed) return otpIssueRefused(issue.retryAfterSeconds);
 
     const otp = generateOtp();
     const expiresAt = Date.now() + 15 * 60 * 1000; // 15 minutes

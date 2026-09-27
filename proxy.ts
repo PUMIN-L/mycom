@@ -1,3 +1,11 @@
+// Next 16's `proxy` file convention — formerly middleware.ts, which Next 16
+// deprecates (renamed, same behaviour; see node_modules/next/dist/docs/
+// 01-app/03-api-reference/03-file-conventions/proxy.md). Runs before every
+// page in `config.matcher` and sends a visitor without a validly SIGNED
+// session cookie to /login. It checks the signature only — no database, so a
+// revoked session still passes here; every protected API rejects it through
+// getSession() (ARCHITECTURE.md §10). Proxy runs on the Node.js runtime; a
+// `runtime` export here is an error.
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { jwtVerify } from "jose";
@@ -17,7 +25,7 @@ async function decrypt(token: string | undefined) {
   }
 }
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const session = request.cookies.get('session')?.value;
   const payload = await decrypt(session);
 

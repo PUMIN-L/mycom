@@ -66,6 +66,17 @@ describe('POST /api/admin/sales/[id]/costs', () => {
     expect(addCostItem).toHaveBeenCalledWith('sale-1', { amount: 100 });
   });
 
+  // 0.004 was "more than 0" and then a ฿0.00 cost row in DECIMAL(12,2).
+  it('refuses an amount that is ฿0.00 once rounded, and stores the rounded amount', async () => {
+    const tiny = await POST(req('http://localhost:3000/api/admin/sales/sale-1/costs', 'POST', { amount: 0.004 }), ctx('sale-1'));
+    expect(tiny.status).toBe(400);
+    expect(addCostItem).not.toHaveBeenCalled();
+
+    vi.mocked(addCostItem).mockResolvedValue({ id: 'ci-1' } as never);
+    await POST(req('http://localhost:3000/api/admin/sales/sale-1/costs', 'POST', { label: 'ค่ารถ', amount: 350.555 }), ctx('sale-1'));
+    expect(addCostItem).toHaveBeenCalledWith('sale-1', { label: 'ค่ารถ', amount: 350.56 });
+  });
+
   it('404s when the sale does not exist', async () => {
     vi.mocked(getSalesRecord).mockResolvedValue(null);
     const res = await POST(req('http://localhost:3000/api/admin/sales/missing/costs', 'POST', { amount: 100 }), ctx('missing'));
@@ -109,6 +120,19 @@ describe('PUT /api/admin/sales/[id]/costs/[costId]', () => {
       costCtx('sale-1', 'ci-1')
     );
     expect(res.status).toBe(200);
+  });
+
+  it('refuses an amount that is ฿0.00 once rounded, and stores the rounded amount', async () => {
+    const tiny = await PUT(
+      req('http://localhost:3000/api/admin/sales/sale-1/costs/ci-1', 'PUT', { amount: '0.001' }),
+      costCtx('sale-1', 'ci-1')
+    );
+    expect(tiny.status).toBe(400);
+    expect(updateCostItem).not.toHaveBeenCalled();
+
+    vi.mocked(updateCostItem).mockResolvedValue({ id: 'ci-1' } as never);
+    await PUT(req('http://localhost:3000/api/admin/sales/sale-1/costs/ci-1', 'PUT', { amount: 1.005 }), costCtx('sale-1', 'ci-1'));
+    expect(updateCostItem).toHaveBeenCalledWith('ci-1', { amount: 1.01 });
   });
 
   it('404s when the cost item does not exist', async () => {

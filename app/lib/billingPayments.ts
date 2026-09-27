@@ -1,6 +1,7 @@
 import { query, withTransaction } from "./db";
 import type { RowDataPacket } from "mysql2";
 import type { PoolConnection } from "mysql2/promise";
+import { MAX_MONEY_AMOUNT, toSatang } from "./moneyAmount";
 
 /**
  * การรับชำระเงิน — payments recorded against a billing document.
@@ -178,7 +179,12 @@ export async function addBillingPayment(
   //
   // Overpayment stays allowed on purpose — see the route for why a customer who
   // pays too much must still be recordable.
-  if (!Number.isFinite(payment.amount) || payment.amount <= 0) {
+  //
+  // Checked AFTER settling to the satang, i.e. on the value the DECIMAL(12,2)
+  // column will actually hold: 0.004 is a ฿0.00 row, not a positive payment,
+  // and above the column's ceiling is a database error rather than a row.
+  const amount = Number.isFinite(payment.amount) ? toSatang(payment.amount) : NaN;
+  if (!(amount > 0) || amount > MAX_MONEY_AMOUNT) {
     throw new InvalidPaymentAmountError(payment.amount);
   }
   return withTransaction(async (conn) => {
@@ -189,7 +195,7 @@ export async function addBillingPayment(
       [
         payment.id,
         payment.billingDocumentId,
-        payment.amount,
+        amount,
         payment.paidDate,
         payment.method,
         payment.ref ?? "",

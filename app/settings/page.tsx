@@ -428,8 +428,8 @@ export default function SettingsPage() {
   };
 
   const handleDeleteOrphans = async () => {
-    if (deleteOtp.length !== 5) {
-      showToast("กรุณากรอกรหัสยืนยัน 5 หลัก", "error");
+    if (deleteOtp.length !== 6) {
+      showToast("กรุณากรอกรหัสยืนยัน 6 หลัก", "error");
       return;
     }
     setDeleting(true);
@@ -1243,7 +1243,7 @@ export default function SettingsPage() {
               คุณต้องการลบ <strong>{selectedOrphans.size} รูป</strong> ออกจาก Cloudinary
             </p>
             <p className="text-sm text-gray-500 mb-4">
-              การกระทำนี้ไม่สามารถย้อนกลับได้ ระบบจะส่งรหัสยืนยัน 5 หลักไปทางอีเมลที่ตั้งค่าไว้
+              การกระทำนี้ไม่สามารถย้อนกลับได้ ระบบจะส่งรหัสยืนยัน 6 หลักไปทางอีเมลที่ตั้งค่าไว้
             </p>
 
             {!otpSent ? (
@@ -1273,16 +1273,16 @@ export default function SettingsPage() {
                 <input
                   type="text"
                   required
-                  maxLength={5}
+                  maxLength={6}
                   value={deleteOtp}
                   onChange={(e) => setDeleteOtp(e.target.value.replace(/\D/g, ""))}
-                  placeholder="รหัสยืนยัน 5 หลัก"
+                  placeholder="รหัสยืนยัน 6 หลัก"
                   className="w-full px-4 py-3 text-center text-2xl tracking-widest border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 font-mono"
                 />
                 <button
                   type="button"
                   onClick={handleDeleteOrphans}
-                  disabled={deleting || deleteOtp.length !== 5}
+                  disabled={deleting || deleteOtp.length !== 6}
                   className="w-full px-4 py-3 bg-red-600 text-white font-bold rounded-lg hover:bg-red-700 transition disabled:opacity-50 flex items-center justify-center gap-2"
                 >
                   {deleting ? (

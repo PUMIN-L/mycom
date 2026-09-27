@@ -10,6 +10,8 @@ import {
   issueLoginDeviceToken,
   loginDeviceIdFor,
 } from "../../../lib/loginDevice";
+import { LOGIN_FAIL_PREFIX, loginIpLimiter, parseLoginFailState } from "../../../lib/loginThrottle";
+import { clientKey } from "../../../lib/rateLimit";
 import { RowDataPacket } from "mysql2";
 
 // Login throttle keyed on the *username* being targeted, persisted in the
@@ -23,10 +25,10 @@ import { RowDataPacket } from "mysql2";
 // against a given account regardless of the source IP, and — since it applies
 // to the raw input rather than only known accounts — an attacker can't tell
 // which usernames are real by seeing which ones eventually start 429'ing.
-// The key is truncated to bound how large a single settings row can get; this
-// intentionally does not cap the *number* of distinct usernames tracked (each
-// costs one small settings row), which is an acceptable trade-off for a
-// low-traffic admin login endpoint.
+// The key is truncated to bound how large a single settings row can get. The
+// *number* of distinct usernames tracked is bounded by two things outside this
+// file (app/lib/loginThrottle.ts): a per-IP attempt limit checked before any
+// of this runs, and the nightly cron deleting rows whose window has ended.
 const FAILURE_LIMIT = 5;
 const BLOCK_MS = 15 * 60 * 1000; // 15 minutes
 const LOCK_KEY_MAX_LEN = 100;
@@ -38,7 +40,7 @@ const DUMMY_PASSWORD_HASH =
   "$2b$12$k6Pr6AL.tywtgyDcnIA8pOK1FX5OK0QXvp14WbDsprFvAwmqj6bBu";
 
 function loginLockKey(username: string): string {
-  return `login_fail_${username.toLowerCase().slice(0, LOCK_KEY_MAX_LEN)}`;
+  return `${LOGIN_FAIL_PREFIX}${username.toLowerCase().slice(0, LOCK_KEY_MAX_LEN)}`;
 }
 
 // count+expiresAt are kept in ONE settings row ("count|expiresAt") instead of
@@ -47,10 +49,7 @@ function loginLockKey(username: string): string {
 // design) let concurrent failed attempts for the same username all read the
 // same pre-increment count and collapse into a single +1, letting an
 // attacker blow through FAILURE_LIMIT with one burst of parallel requests.
-function parseLockState(raw: string | null): { count: number; expiresAt: number } {
-  const [countStr, expiresStr] = (raw || "0|0").split("|");
-  return { count: parseInt(countStr, 10) || 0, expiresAt: parseInt(expiresStr, 10) || 0 };
-}
+const parseLockState = parseLoginFailState;
 
 async function isLockedOut(lockKey: string, now: number): Promise<boolean> {
   const { count, expiresAt } = parseLockState(await getSetting(lockKey));
@@ -106,13 +105,23 @@ export const POST = withRoute(
       );
     }
 
+    // Before the lockout row is read or bcrypt runs — the two things a flood
+    // of made-up usernames would otherwise get for free.
+    const ipLimit = loginIpLimiter.check(clientKey(request));
+    if (!ipLimit.allowed) {
+      return NextResponse.json(
+        { error: "มีการพยายามเข้าสู่ระบบจากเครือข่ายนี้บ่อยเกินไป กรุณารอสักครู่แล้วลองใหม่" },
+        { status: 429, headers: { "Retry-After": String(ipLimit.retryAfterSeconds) } }
+      );
+    }
+
     const now = Date.now();
     // A browser that has logged in as this user before (a valid device
     // cookie) is counted in its own bucket, so failures by anyone else —
     // which lock the username's bucket — cannot lock it out. Its own failures
     // stay in its own bucket too. See app/lib/loginDevice.ts.
     const deviceId = await loginDeviceIdFor(request.cookies.get(LOGIN_DEVICE_COOKIE)?.value, username);
-    const lockKey = deviceId ? `login_fail_dev_${deviceId}` : loginLockKey(username);
+    const lockKey = deviceId ? `${LOGIN_FAIL_PREFIX}dev_${deviceId}` : loginLockKey(username);
 
     if (await isLockedOut(lockKey, now)) {
       return NextResponse.json(

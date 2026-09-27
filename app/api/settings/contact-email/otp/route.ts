@@ -6,7 +6,7 @@ import {
   setSetting,
 } from "../../../../lib/settingsStore";
 import { isMailConfigured, sendOtpEmail } from "../../../../lib/mailer";
-import { resetOtpAttempts } from "../../../../lib/otpAttempts";
+import { claimOtpIssue, otpIssueRefused, resetOtpAttempts } from "../../../../lib/otpAttempts";
 
 // Rejects <>"',; too
 const EMAIL_RE = /^[^\s@<>"',;]+@[^\s@<>"',;]+\.[^\s@<>"',;]+$/;
@@ -46,6 +46,9 @@ export const POST = withRoute(
         { status: 400 }
       );
     }
+
+    const issue = await claimOtpIssue("contact_email_otp");
+    if (!issue.allowed) return otpIssueRefused(issue.retryAfterSeconds);
 
     const otp = generateOtp();
     const expiresAt = Date.now() + 15 * 60 * 1000; // 15 minutes
