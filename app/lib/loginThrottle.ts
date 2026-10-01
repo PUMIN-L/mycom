@@ -1,6 +1,6 @@
 import { ResultSetHeader, RowDataPacket } from "mysql2";
 import { query, withTransaction } from "./db";
-import { getSetting, setSetting } from "./settingsStore";
+import { setSetting } from "./settingsStore";
 import { createRateLimiter } from "./rateLimit";
 
 // The login throttles, outside any route file (a route file may only export
@@ -51,23 +51,25 @@ export function parseLoginFailState(raw: string | null): { count: number; expire
   return { count: parseInt(countStr, 10) || 0, expiresAt: parseInt(expiresStr, 10) || 0 };
 }
 
-/** Is this bucket locked right now? */
-export async function isLockedOut(lockKey: string, now: number = Date.now()): Promise<boolean> {
-  const { count, expiresAt } = parseLoginFailState(await getSetting(lockKey));
-  return count >= LOGIN_FAILURE_LIMIT && expiresAt > now;
-}
-
 /**
- * Count one wrong answer against `lockKey`, as ONE locked read-modify-write.
- * count + expiresAt live in one row ("count|expiresAt") so they can be locked
- * and updated in a single step: two get-then-set round trips let concurrent
- * failures read the same count and collapse into a single +1, so one burst of
- * parallel requests blew through the limit.
+ * Take one attempt from `lockKey`'s allowance — BEFORE the answer is checked —
+ * in ONE locked read-modify-write. False, and nothing taken, when the bucket
+ * is already full: the caller refuses without checking anything.
+ *
+ * WHY BEFORE, NOT AFTER. The old shape was "is it locked? → check the answer
+ * → if wrong, count it". Every request in a burst sent at once passed the
+ * first step before any of them reached the third, so a botnet got as many
+ * guesses as it sent requests: 20 wrong codes fired together were all checked
+ * where the limit promised 5 — against a 6-digit code, that is the whole of
+ * 2FA's protection. Here the take IS the check: the row lock queues the burst,
+ * the first five get an attempt, the rest get `false`.
+ *
+ * A correct answer then resets the bucket (clearLoginFailures), or hands its
+ * attempt back (refundLoginAttempt) where resetting would be wrong. The row is
+ * created first because a SELECT … FOR UPDATE on a missing row locks nothing.
  */
-export async function recordLoginFailure(lockKey: string, now: number = Date.now()): Promise<void> {
-  await withTransaction(async (conn) => {
-    // Ensure the row exists so the SELECT below can actually take a row
-    // lock — locking a nonexistent row locks nothing.
+export async function takeLoginAttempt(lockKey: string, now: number = Date.now()): Promise<boolean> {
+  return withTransaction(async (conn) => {
     await conn.query(
       "INSERT INTO settings (name, value) VALUES (?, '0|0') ON DUPLICATE KEY UPDATE name = name",
       [lockKey]
@@ -77,13 +79,32 @@ export async function recordLoginFailure(lockKey: string, now: number = Date.now
       [lockKey]
     );
     const { count, expiresAt } = parseLoginFailState(rows[0] ? String(rows[0].value) : null);
-    const stillInWindow = expiresAt > now;
-    const nextCount = stillInWindow ? count + 1 : 1;
-    const nextExpires = stillInWindow ? expiresAt : now + LOGIN_BLOCK_MS;
+    const inWindow = expiresAt > now;
+    if (inWindow && count >= LOGIN_FAILURE_LIMIT) return false;
+    const nextCount = inWindow ? count + 1 : 1;
+    const nextExpires = inWindow ? expiresAt : now + LOGIN_BLOCK_MS;
     await conn.query("UPDATE settings SET value = ? WHERE name = ?", [
       `${nextCount}|${nextExpires}`,
       lockKey,
     ]);
+    return true;
+  });
+}
+
+/**
+ * Give back one attempt taken by takeLoginAttempt, for an outcome that was
+ * not a guess (setup not started, the password was right but the bucket must
+ * not be reset). Never goes below zero, and does nothing to an ended window.
+ */
+export async function refundLoginAttempt(lockKey: string, now: number = Date.now()): Promise<void> {
+  await withTransaction(async (conn) => {
+    const [rows] = await conn.query<RowDataPacket[]>(
+      "SELECT value FROM settings WHERE name = ? FOR UPDATE",
+      [lockKey]
+    );
+    const { count, expiresAt } = parseLoginFailState(rows[0] ? String(rows[0].value) : null);
+    if (count <= 0 || expiresAt <= now) return;
+    await conn.query("UPDATE settings SET value = ? WHERE name = ?", [`${count - 1}|${expiresAt}`, lockKey]);
   });
 }
 

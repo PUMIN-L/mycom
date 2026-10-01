@@ -72,7 +72,8 @@ describe('POST /api/billing/[id]/payments', () => {
     expect(addBillingPayment).not.toHaveBeenCalled();
   });
 
-  it.each([0, -500, 'abc', '', null, true])('%p is refused', async (amount) => {
+  // '0x10', '1e3': Number() reads them as ฿16 and ฿1,000 — not money anyone typed.
+  it.each([0, -500, 'abc', '', null, true, '0x10', '1e3'])('%p is refused', async (amount) => {
     const res = await post({ ...valid, amount });
     expect(res.status).toBe(400);
     expect((await res.json()).error).toBe('จำนวนเงินต้องมากกว่า 0');

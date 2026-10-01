@@ -1,10 +1,10 @@
 // @vitest-environment node
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// The failure counter must be a locked read-modify-write (same class of fix
-// as the login rate-limiter), so recordOtpFailure now goes through
-// withTransaction + a real connection instead of settingsStore's plain
-// getSetting/setSetting.
+// The guess counter must be a locked read-modify-write taken BEFORE the code
+// is compared (same class of fix as the login lockout), so takeOtpAttempt
+// goes through withTransaction + a real connection instead of settingsStore's
+// plain getSetting/setSetting.
 const conn = { query: vi.fn() };
 vi.mock('@/app/lib/db', () => ({
   withTransaction: vi.fn(async (fn: (c: typeof conn) => Promise<unknown>) => fn(conn)),
@@ -16,11 +16,10 @@ vi.mock('@/app/lib/settingsStore', () => ({
 }));
 import { getSetting, setSetting } from '@/app/lib/settingsStore';
 
-import { resetOtpAttempts, recordOtpFailure, clearOtpAttempts, claimOtpIssue, otpIssueRefused } from '@/app/lib/otpAttempts';
+import { resetOtpAttempts, takeOtpAttempt, clearOtpAttempts, claimOtpIssue, otpIssueRefused } from '@/app/lib/otpAttempts';
 import { withTransaction } from '@/app/lib/db';
 
 const OTP_KEY = 'contact_email_otp';
-const OTP_EXPIRES_KEY = 'contact_email_otp_expires';
 const ATTEMPTS_KEY = `${OTP_KEY}_attempts`;
 
 beforeEach(() => {
@@ -42,48 +41,62 @@ describe('clearOtpAttempts', () => {
   });
 });
 
-describe('recordOtpFailure', () => {
-  it('increments the counter via a locked read-modify-write and reports not-locked while under the limit', async () => {
-    conn.query.mockResolvedValueOnce([[{ value: '2' }]]); // SELECT ... FOR UPDATE: 2 prior failures
-    conn.query.mockResolvedValueOnce([{ affectedRows: 1 }]); // the counter upsert
+// The guess is TAKEN before the code is compared — see takeOtpAttempt. Run
+// against a stand-in table that executes its statements.
+describe('takeOtpAttempt', () => {
+  let table: Map<string, string>;
 
-    const result = await recordOtpFailure(OTP_KEY, OTP_EXPIRES_KEY);
-
-    expect(result.locked).toBe(false);
-    expect(withTransaction).toHaveBeenCalledTimes(1);
-    expect(conn.query.mock.calls[0][0]).toContain('FOR UPDATE');
-    expect(conn.query.mock.calls[1][1]).toEqual([ATTEMPTS_KEY, '3']);
-    expect(setSetting).not.toHaveBeenCalledWith(OTP_KEY, '');
+  beforeEach(() => {
+    table = new Map();
+    conn.query.mockImplementation(async (sql: string, params: unknown[] = []) => {
+      if (sql.startsWith("INSERT INTO settings (name, value) VALUES (?, '0') ON DUPLICATE KEY UPDATE name = name")) {
+        const [key] = params as [string];
+        if (!table.has(key)) table.set(key, '0');
+        return [{ affectedRows: 1 }];
+      }
+      if (sql.startsWith('SELECT value FROM settings WHERE name = ? FOR UPDATE')) {
+        const v = table.get((params as [string])[0]);
+        return [v === undefined ? [] : [{ value: v }]];
+      }
+      if (sql.startsWith('UPDATE settings SET value = ? WHERE name = ?')) {
+        const [value, key] = params as [string, string];
+        table.set(key, value);
+        return [{ affectedRows: 1 }];
+      }
+      throw new Error(`Unhandled SQL in test: ${sql}`);
+    });
   });
 
-  it('treats a missing counter row as zero prior failures', async () => {
-    conn.query.mockResolvedValueOnce([[]]); // no row yet
-    conn.query.mockResolvedValueOnce([{ affectedRows: 1 }]);
-    const result = await recordOtpFailure(OTP_KEY, OTP_EXPIRES_KEY);
-    expect(result.locked).toBe(false);
-    expect(conn.query.mock.calls[1][1]).toEqual([ATTEMPTS_KEY, '1']);
+  it('gives five guesses at a code, the fifth marked as the last', async () => {
+    const results = [];
+    for (let i = 0; i < 5; i++) results.push(await takeOtpAttempt(OTP_KEY));
+    expect(results.map((r) => r.allowed)).toEqual([true, true, true, true, true]);
+    expect(results.map((r) => r.last)).toEqual([false, false, false, false, true]);
+    expect(table.get(ATTEMPTS_KEY)).toBe('5');
   });
 
-  it('locks out and wipes the OTP once the failure limit is reached', async () => {
-    conn.query.mockResolvedValueOnce([[{ value: '4' }]]); // this failure is the 5th
-    conn.query.mockResolvedValueOnce([{ affectedRows: 1 }]);
-    const result = await recordOtpFailure(OTP_KEY, OTP_EXPIRES_KEY);
-    expect(result.locked).toBe(true);
-    expect(setSetting).toHaveBeenCalledWith(OTP_KEY, '');
-    expect(setSetting).toHaveBeenCalledWith(OTP_EXPIRES_KEY, '0');
+  it('refuses a sixth, without counting it', async () => {
+    table.set(ATTEMPTS_KEY, '5');
+    expect(await takeOtpAttempt(OTP_KEY)).toEqual({ allowed: false, last: false });
+    expect(table.get(ATTEMPTS_KEY)).toBe('5');
   });
 
-  it('stays locked (does not go below the limit) on further failures past the limit', async () => {
-    conn.query.mockResolvedValueOnce([[{ value: '9' }]]);
-    conn.query.mockResolvedValueOnce([{ affectedRows: 1 }]);
-    const result = await recordOtpFailure(OTP_KEY, OTP_EXPIRES_KEY);
-    expect(result.locked).toBe(true);
+  it('starts from zero when no row exists, and creates it so FOR UPDATE has a row to lock', async () => {
+    expect(await takeOtpAttempt(OTP_KEY)).toEqual({ allowed: true, last: false });
+    expect(table.get(ATTEMPTS_KEY)).toBe('1');
+    expect(String(conn.query.mock.calls[0][0])).toContain('ON DUPLICATE KEY UPDATE name = name');
+    expect(String(conn.query.mock.calls[1][0])).toContain('FOR UPDATE');
   });
 
-  it('reads/writes the counter through the locked connection, not settingsStore (guards against the race regressing)', async () => {
-    conn.query.mockResolvedValueOnce([[{ value: '0' }]]);
-    conn.query.mockResolvedValueOnce([{ affectedRows: 1 }]);
-    await recordOtpFailure(OTP_KEY, OTP_EXPIRES_KEY);
+  it('a new code (resetOtpAttempts) gives five fresh guesses', async () => {
+    table.set(ATTEMPTS_KEY, '5');
+    vi.mocked(setSetting).mockImplementation(async (key: string, value: string) => void table.set(key, value));
+    await resetOtpAttempts(OTP_KEY);
+    expect((await takeOtpAttempt(OTP_KEY)).allowed).toBe(true);
+  });
+
+  it('counts inside one transaction, never through the unlocked settingsStore read', async () => {
+    await takeOtpAttempt(OTP_KEY);
     expect(withTransaction).toHaveBeenCalledTimes(1);
     expect(getSetting).not.toHaveBeenCalled();
   });

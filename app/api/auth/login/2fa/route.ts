@@ -9,9 +9,8 @@ import {
 } from "../../../../lib/loginDevice";
 import {
   clearLoginFailures,
-  isLockedOut,
   loginIpLimiter,
-  recordLoginFailure,
+  takeLoginAttempt,
   twoFactorDeviceLockKey,
   twoFactorLockKey,
 } from "../../../../lib/loginThrottle";
@@ -68,7 +67,11 @@ export const POST = withRoute(
     const deviceId = await loginDeviceIdFor(request.cookies.get(LOGIN_DEVICE_COOKIE)?.value, pending.username);
     const lockKey = deviceId ? twoFactorDeviceLockKey(deviceId) : twoFactorLockKey(pending.userId);
 
-    if (await isLockedOut(lockKey, now)) {
+    // Counted BEFORE the code is checked, in one locked step: a 6-digit code
+    // is only safe while the guesses at it are really capped, and a burst of
+    // parallel requests must not all slip past a "locked yet?" read
+    // (takeLoginAttempt). The right code resets the bucket below.
+    if (!(await takeLoginAttempt(lockKey, now))) {
       return NextResponse.json(
         { error: "ใส่รหัสผิดหลายครั้งเกินไป กรุณารอ 15 นาทีแล้วลองใหม่" },
         { status: 429 }
@@ -77,7 +80,6 @@ export const POST = withRoute(
 
     const result = await verifySecondFactor(pending.userId, code, now);
     if (!result.ok) {
-      await recordLoginFailure(lockKey, now);
       return NextResponse.json({ error: WRONG_MESSAGES[result.reason] }, { status: 401 });
     }
 

@@ -153,6 +153,11 @@ export function createFakeTwoFactorDb(users: Partial<FakeUser>[] = []): FakeTwoF
       if (!db.settings.has(String(p[0]))) db.settings.set(String(p[0]), "0|0");
       return ok(1);
     }
+    // takeOtpAttempt's guess counter.
+    if (sql === "INSERT INTO settings (name, value) VALUES (?, '0') ON DUPLICATE KEY UPDATE name = name") {
+      if (!db.settings.has(String(p[0]))) db.settings.set(String(p[0]), "0");
+      return ok(1);
+    }
     if (sql === "SELECT value FROM settings WHERE name = ? FOR UPDATE") {
       const v = db.settings.get(String(p[0]));
       return rows(v === undefined ? [] : [{ value: v }]);

@@ -2,8 +2,8 @@
 /**
  * Which remote images /_next/image will resize (next.config.ts). The endpoint
  * is public and every image it serves costs image-optimization quota, so it
- * must take this site's own photos and flags — not any Cloudinary account's
- * images, not a Cloudinary fetch of an arbitrary URL, not a QR generator.
+ * takes the navbar's flags and nothing else — no Cloudinary URL at all (photos
+ * are resized by Cloudinary through next/image's loader), no QR generator.
  * Checked with Next's own matcher, the one the optimizer runs.
  */
 import { describe, it, expect, vi, afterEach } from "vitest";
@@ -28,40 +28,21 @@ afterEach(() => {
 });
 
 describe("next.config.ts images.remotePatterns — Cloudinary", () => {
-  it("takes photos uploaded to our cloud, with or without a transformation", async () => {
-    const p = await patternsFor("mycloud");
-    expect(allowed(p, "https://res.cloudinary.com/mycloud/image/upload/v1712/samples/mycom/scale.jpg")).toBe(true);
-    expect(allowed(p, "https://res.cloudinary.com/mycloud/image/upload/w_800,f_jpg,pg_1/v1712/doc.pdf")).toBe(true);
-  });
-
-  it("refuses another Cloudinary account's images", async () => {
-    const p = await patternsFor("mycloud");
-    expect(allowed(p, "https://res.cloudinary.com/demo/image/upload/v1/sample.jpg")).toBe(false);
-    expect(allowed(p, "https://res.cloudinary.com/mycloud-evil/image/upload/v1/x.jpg")).toBe(false);
-  });
-
-  it("refuses our cloud's fetch / other delivery types — they pull in arbitrary web images", async () => {
-    const p = await patternsFor("mycloud");
-    expect(allowed(p, "https://res.cloudinary.com/mycloud/image/fetch/https://example.com/huge.jpg")).toBe(false);
-    expect(allowed(p, "https://res.cloudinary.com/mycloud/video/upload/v1/clip.jpg")).toBe(false);
-    expect(allowed(p, "https://res.cloudinary.com/mycloud/raw/upload/v1/file.pdf")).toBe(false);
-  });
-
-  it("refuses a query string — one photo would otherwise become unlimited optimizations", async () => {
-    const p = await patternsFor("mycloud");
-    expect(allowed(p, "https://res.cloudinary.com/mycloud/image/upload/v1/x.jpg?1")).toBe(false);
-  });
-
-  it("refuses plain http", async () => {
-    const p = await patternsFor("mycloud");
-    expect(allowed(p, "http://res.cloudinary.com/mycloud/image/upload/v1/x.jpg")).toBe(false);
-  });
-
-  it("fails closed with no cloud name, or one that would be read as a glob", async () => {
-    for (const name of [undefined, "", "*", "my*cloud", "{a,b}"]) {
-      const p = await patternsFor(name);
-      expect(p.some((x) => "hostname" in x && x.hostname === "res.cloudinary.com")).toBe(false);
-      expect(allowed(p, "https://res.cloudinary.com/mycloud/image/upload/v1/x.jpg")).toBe(false);
+  // Even a pattern pinned to our own cloud's /image/upload/ let anyone mint
+  // endless "new" images: Cloudinary accepts any transformation in front of a
+  // real public id, and each such URL is a fresh optimization. Photos are
+  // resized by Cloudinary instead (SkeletonImage's loader), so the optimizer
+  // takes no Cloudinary URL at all — whatever the cloud name.
+  it.each([undefined, "", "mycloud"])("accepts no Cloudinary URL (CLOUDINARY_CLOUD_NAME=%s)", async (cloud) => {
+    const p = await patternsFor(cloud);
+    expect(p.some((x) => "hostname" in x && String(x.hostname).includes("cloudinary"))).toBe(false);
+    for (const url of [
+      "https://res.cloudinary.com/mycloud/image/upload/v1712/samples/mycom/scale.jpg",
+      "https://res.cloudinary.com/mycloud/image/upload/w_1/v1712/samples/mycom/scale.jpg",
+      "https://res.cloudinary.com/mycloud/image/fetch/https://example.com/huge.jpg",
+      "https://res.cloudinary.com/demo/image/upload/v1/sample.jpg",
+    ]) {
+      expect(allowed(p, url), url).toBe(false);
     }
   });
 });

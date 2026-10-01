@@ -20,46 +20,51 @@ export async function resetOtpAttempts(otpKey: string): Promise<void> {
   await setSetting(attemptsKey(otpKey), "0");
 }
 
+export interface OtpAttempt {
+  /** False: FAILURE_LIMIT guesses were already taken at this code — refuse
+   *  without comparing (and make sure the code is gone). */
+  allowed: boolean;
+  /** This guess was the last one allowed: if it is wrong, wipe the code and
+   *  say "too many attempts". */
+  last: boolean;
+}
+
 /**
- * Record one failed verification attempt for `otpKey`. Once FAILURE_LIMIT is
- * reached, the OTP and its expiry are wiped immediately — the code can no
- * longer be redeemed even by a correct guess on the very next request — and
- * `locked: true` is returned so the caller can return a distinct message.
+ * Take one guess at the code issued for `otpKey`, BEFORE comparing it, in one
+ * locked read-modify-write.
  *
- * The counter itself is read-and-incremented under a row lock (SELECT ... FOR
- * UPDATE inside a transaction) instead of a plain getSetting-then-setSetting
- * pair — the earlier non-atomic version let concurrent verification requests
- * against the same OTP all read the same pre-increment count and collapse
- * into a single +1, letting a burst of parallel guesses blow past
- * FAILURE_LIMIT (the same race class fixed for login in api/auth/login).
- * This relies on the attempts row already existing (every OTP-issuing route
- * calls resetOtpAttempts, which upserts it, before any verification can
- * happen), so the lock is on a real row rather than a not-yet-existing one.
+ * WHY BEFORE. The old shape was "compare → if wrong, count". Requests in a
+ * burst all read the stored code and compared it before any of their failures
+ * landed, so a burst of N parallel guesses got N comparisons where the limit
+ * promised 5 — the same hole the login lockout had (lib/loginThrottle.ts,
+ * takeLoginAttempt). Here the row lock queues the burst: five get a guess,
+ * the rest get `allowed: false`.
+ *
+ * A right answer resets the count (clearOtpAttempts); a new code resets it too
+ * (resetOtpAttempts). The row is created first, so FOR UPDATE always has a
+ * real row to lock.
  */
-export async function recordOtpFailure(
-  otpKey: string,
-  otpExpiresKey: string
-): Promise<{ locked: boolean }> {
-  const next = await withTransaction(async (conn) => {
+export async function takeOtpAttempt(otpKey: string): Promise<OtpAttempt> {
+  const key = attemptsKey(otpKey);
+  return withTransaction(async (conn) => {
+    await conn.query(
+      "INSERT INTO settings (name, value) VALUES (?, '0') ON DUPLICATE KEY UPDATE name = name",
+      [key]
+    );
     const [rows] = await conn.query<RowDataPacket[]>(
       "SELECT value FROM settings WHERE name = ? FOR UPDATE",
-      [attemptsKey(otpKey)]
+      [key]
     );
-    const current = parseInt((rows[0]?.value as string) || "0", 10);
-    const count = current + 1;
-    await conn.query(
-      "INSERT INTO settings (name, value) VALUES (?, ?) ON DUPLICATE KEY UPDATE value = VALUES(value)",
-      [attemptsKey(otpKey), String(count)]
-    );
-    return count;
+    const taken = parseInt((rows[0]?.value as string) || "0", 10) || 0;
+    if (taken >= FAILURE_LIMIT) return { allowed: false, last: false };
+    const next = taken + 1;
+    await conn.query("UPDATE settings SET value = ? WHERE name = ?", [String(next), key]);
+    return { allowed: true, last: next >= FAILURE_LIMIT };
   });
-  if (next >= FAILURE_LIMIT) {
-    await setSetting(otpKey, "");
-    await setSetting(otpExpiresKey, "0");
-    return { locked: true };
-  }
-  return { locked: false };
 }
+
+/** The message a route answers with once the guesses at a code are used up. */
+export const OTP_TOO_MANY_ATTEMPTS = "กรอกรหัส OTP ผิดเกินจำนวนที่กำหนด กรุณาขอรหัสใหม่";
 
 /** Call once an OTP is consumed (success or expiry) to reset its counter. */
 export async function clearOtpAttempts(otpKey: string): Promise<void> {

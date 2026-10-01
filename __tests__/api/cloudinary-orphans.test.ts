@@ -36,15 +36,17 @@ const conn = {
       const v = sharedState.get(key);
       return [v !== undefined ? [{ value: v }] : []];
     }
-    // claimOtpIssue: make sure the row exists, never overwrite it.
-    if (sql.includes("VALUES (?, '') ON DUPLICATE KEY UPDATE name = name")) {
-      const [key] = params as [string];
-      if (!sharedState.has(key)) sharedState.set(key, '');
-      return [{ affectedRows: 1 }];
-    }
     if (sql.includes('UPDATE settings SET value = ? WHERE name = ?')) {
       const [value, key] = params as [string, string];
       sharedState.set(key, value);
+      return [{ affectedRows: 1 }];
+    }
+    // takeOtpAttempt / claimOtpIssue: create the row with its literal default
+    // if missing — never overwrite an existing one.
+    if (sql.includes('ON DUPLICATE KEY UPDATE name = name')) {
+      const [key] = params as [string];
+      const literal = sql.includes("VALUES (?, '0')") ? '0' : '';
+      if (!sharedState.has(key)) sharedState.set(key, literal);
       return [{ affectedRows: 1 }];
     }
     if (sql.includes('INSERT INTO settings')) {
@@ -205,6 +207,25 @@ describe('DELETE /api/cloudinary/orphans', () => {
       req('http://localhost:3000/api/cloudinary/orphans', 'DELETE', { items: [], otp: '123456' })
     );
     expect(afterLockout.status).toBe(403);
+  });
+
+  // A burst of parallel guesses: the five guesses are taken but the code is
+  // not wiped yet. The right code arriving then must still be refused.
+  it('refuses even the right code once five guesses are taken, before the code is wiped', async () => {
+    const state = mockSettingsState({
+      orphan_delete_otp: '123456',
+      orphan_delete_otp_expires: String(Date.now() + 100000),
+      orphan_delete_otp_attempts: '5',
+    });
+    const res = await DELETE(
+      req('http://localhost:3000/api/cloudinary/orphans', 'DELETE', {
+        items: [{ publicId: 'orphan-1', resourceType: 'image' }],
+        otp: '123456',
+      })
+    );
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toContain('เกินจำนวนที่กำหนด');
+    expect(state.get('orphan_delete_otp')).toBe('');
   });
 
   it('deletes orphaned assets with a correct, unexpired OTP', async () => {

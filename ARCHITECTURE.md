@@ -203,7 +203,9 @@ export const POST = withRoute("เพิ่มสินค้าไม่สำ�
   after. Checking `> 0` first let 0.004 through, and the DECIMAL(12,2) column
   then held ฿0.00 (a zero-baht payment, cost or monthly bill). It also refuses
   anything above 9,999,999,999.99 (the column's ceiling), and anything that is
-  not a number or numeric string. Used by billing payments, recurring
+  not a number or a PLAIN decimal string ("1500", "1500.00", ".5"). Number()
+  alone would read "0x10" as 16, "0b101" as 5 and "1e3" as 1000.
+  Used by billing payments, recurring
   expenses and sale costs. `addBillingPayment` and `syncCostItems` apply the
   same rounding themselves (`toSatang`). `toSatang`, not quotationTotals'
   `round2`, whose relative epsilon is a whole satang at the ceiling.
@@ -438,15 +440,28 @@ highlight expires without a reload.
   uploaded from the browser straight to Cloudinary (§7).
 - **`images.remotePatterns` is an allowlist for a public endpoint.**
   `/_next/image` resizes any URL the patterns match, for anyone, on Vercel's
-  image-optimization quota. It takes only `res.cloudinary.com/<our
-  CLOUDINARY_CLOUD_NAME>/image/upload/**` and `flagcdn.com/w40/*.png` (the
-  navbar flags), both with `search: ""`. res.cloudinary.com is shared by every
-  Cloudinary account, and `/image/fetch/` pulls in any web image, so neither
-  the host alone nor our cloud's whole path is safe. Without the cloud name at
-  build, there is no Cloudinary pattern (fail closed). The LINE QR image
-  (api.qrserver.com, which draws whatever text it is given) renders
-  `unoptimized` and is not a pattern. A new remote image host means a new
-  pattern, as tight as its URLs allow, and an `img-src` entry.
+  image-optimization quota. It takes only `flagcdn.com/w40/*.png` (the navbar
+  flags, a small fixed set) with `search: ""`.
+  - **Cloudinary is deliberately NOT a pattern.** Even pinned to our own
+    cloud's `/image/upload/`, anyone could mint endless "new" images: Cloudinary
+    accepts any transformation in front of a real public id (`w_1/`, `w_2/`, …),
+    each a distinct URL and a fresh optimization.
+  - Product and content photos are resized by **Cloudinary itself** instead.
+    [`SkeletonImage`](./app/components/SkeletonImage.tsx) gives next/image the
+    `cloudinaryImageLoader` from
+    [`lib/cloudinaryUrl.ts`](./app/lib/cloudinaryUrl.ts)
+    (`f_auto,q_auto,c_limit,w_<next/image's own widths>`).
+  - A Cloudinary URL that already carries a transformation renders
+    `unoptimized`, as it is.
+  - If the resized delivery fails, the photo falls back to the original URL.
+    That happens on an account with Cloudinary's "strict transformations"
+    turned on, which refuses transformations it was not told about.
+  - Those transformations and their bandwidth count on Cloudinary's quota,
+    not Vercel's.
+  - The LINE QR image (api.qrserver.com, which draws whatever text it is
+    given) renders `unoptimized` and is not a pattern either.
+  - A new remote image host means a new pattern, as tight as its URLs allow
+    and only if its URLs cannot be varied at will, plus an `img-src` entry.
   `__tests__/nextConfigImages.test.ts` checks the patterns with Next's own
   matcher.
 - CSRF is handled by the `withRoute` same-origin guard (§2). Auth is an httpOnly
@@ -760,7 +775,11 @@ the board.
 
 ### 9. Email (contact form) + lead persistence
 [`app/lib/mailer.ts`](./app/lib/mailer.ts) sends via SMTP (`nodemailer`, Gmail by
-default). The public `POST /api/contact` **persists the lead to `contact_messages`
+default). Addresses go to nodemailer as structured `{ name, address }` objects,
+never hand-built `"name" <addr>` strings, so a visitor's name cannot add a
+second From/Reply-To address. `__tests__/lib/mailerHeaders.test.ts` checks
+this with the REAL nodemailer, so an upgrade that changes it fails the suite.
+The public `POST /api/contact` **persists the lead to `contact_messages`
 first** (via [`contactMessageStore`](./app/lib/contactMessageStore.ts)), then
 emails the address stored in `settings.contact_email` (default from
 [`contact.ts`](./app/lib/contact.ts), changeable at `/settings`). A send failure
@@ -876,6 +895,16 @@ stored in an httpOnly `session` cookie. `createSession` / `getSession` /
   it is that device's own bucket. So someone failing on purpose locks the
   username, not the admin's browser, and gains no extra guesses. A trusted
   login clears only its own bucket, never the username's.
+- ⚠️ **The attempt is TAKEN before the answer is checked** (`takeLoginAttempt`
+  in `lib/loginThrottle.ts`: one locked read-modify-write that refuses when the
+  bucket is full). The earlier shape was "locked yet? → check → count if
+  wrong", and every request of a burst sent at once passed the first step
+  before any reached the third: 20 wrong codes fired together were all checked
+  (`__tests__/api/lockout-burst.test.ts`). A right answer then resets its
+  bucket, or — where the bucket is the username's and the check was a settings
+  re-auth — hands its one attempt back (`refundLoginAttempt`). Any new
+  "N wrong answers" limit must take before it checks; there is deliberately no
+  "is it locked?" read to build the old shape from.
 - **Per-IP brake, in front of the lockout** (`app/lib/loginThrottle.ts`):
   10 attempts / minute per `clientKey` (in memory, per instance), checked
   after the body's type check and before the lockout row is read or bcrypt
@@ -983,8 +1012,12 @@ route verifies them. All go through
 - Codes are **6 digits** (`crypto.randomInt(100000, 1000000)`) everywhere.
   The orphan-image code was 5 digits until September 2026; its screen, route
   and email say 6 now.
-- **Guesses:** 5 wrong answers wipe the code (`recordOtpFailure`, a locked
-  read-modify-write). Each new code starts from 0 (`resetOtpAttempts`).
+- **Guesses:** 5 per code. Each guess is TAKEN before the code is compared
+  (`takeOtpAttempt`, one locked read-modify-write; it refuses once five are
+  taken), and the fifth wrong one wipes the code. Taking after comparing — the
+  earlier `recordOtpFailure` — let a burst of parallel guesses all compare
+  before any failure was counted. Each new code starts from 0
+  (`resetOtpAttempts`).
 - **Issuing:** because of that reset, `claimOtpIssue(otpKey)` must come
   before any new code: at most one a minute and 5 an hour per `otpKey`
   (settings row `<otpKey>_issued`, under a row lock). Refused →
@@ -1238,8 +1271,7 @@ SESSION_SECRET=
 # If ADMIN_PASSWORD is unset the admin user is NOT seeded (no weak default).
 ADMIN_USERNAME=admin     ADMIN_PASSWORD=
 
-# Cloudinary. CLOUDINARY_CLOUD_NAME is also read at BUILD time: next.config.ts
-# lets /_next/image resize only that cloud's photos (§6), so changing it needs a redeploy.
+# Cloudinary
 CLOUDINARY_CLOUD_NAME=   CLOUDINARY_API_KEY=   CLOUDINARY_API_SECRET=
 
 # Email (contact form) — Gmail App Password by default; host/port optional.

@@ -13,10 +13,11 @@ vi.mock('@/app/lib/settingsStore', () => ({
 import { getSetting, setSetting, MAINTENANCE_MODE_SETTING } from '@/app/lib/settingsStore';
 
 vi.mock('@/app/lib/otpAttempts', () => ({
-  recordOtpFailure: vi.fn(),
+  takeOtpAttempt: vi.fn(),
   clearOtpAttempts: vi.fn(),
+  OTP_TOO_MANY_ATTEMPTS: 'กรอกรหัส OTP ผิดเกินจำนวนที่กำหนด กรุณาขอรหัสใหม่',
 }));
-import { recordOtpFailure } from '@/app/lib/otpAttempts';
+import { takeOtpAttempt } from '@/app/lib/otpAttempts';
 
 vi.mock('next/cache', () => ({ revalidateTag: vi.fn(), revalidatePath: vi.fn() }));
 import { revalidateTag, revalidatePath } from 'next/cache';
@@ -40,7 +41,7 @@ const pendingOtp = (enable: boolean, otp = '123456') =>
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(getSession).mockResolvedValue(adminSession);
-  vi.mocked(recordOtpFailure).mockResolvedValue({ locked: false } as any);
+  vi.mocked(takeOtpAttempt).mockResolvedValue({ allowed: true, last: false });
 });
 
 describe('PUT /api/settings/maintenance', () => {

@@ -23,6 +23,19 @@ const conn = {
       const v = sharedState.get(key);
       return [v !== undefined ? [{ value: v }] : []];
     }
+    // takeOtpAttempt / claimOtpIssue: create the row with its literal default
+    // if missing — never overwrite an existing one.
+    if (sql.includes('ON DUPLICATE KEY UPDATE name = name')) {
+      const [key] = params as [string];
+      const literal = sql.includes("VALUES (?, '0')") ? '0' : '';
+      if (!sharedState.has(key)) sharedState.set(key, literal);
+      return [{ affectedRows: 1 }];
+    }
+    if (sql.includes('UPDATE settings SET value = ? WHERE name = ?')) {
+      const [value, key] = params as [string, string];
+      sharedState.set(key, value);
+      return [{ affectedRows: 1 }];
+    }
     if (sql.includes('INSERT INTO settings')) {
       const [key, value] = params as [string, string];
       sharedState.set(key, value);
@@ -185,6 +198,22 @@ describe('Settings contact-email API Route', () => {
       expect(afterLockout.status).toBe(400);
       expect(setSetting).not.toHaveBeenCalledWith('contact_email', 'new@example.com');
       // Lockout must wipe the real combined state, not just a throwaway key.
+      expect(state.get('contact_email_otp_state')).toBe('');
+    });
+
+    // A burst of parallel guesses: the five guesses are taken but the code is
+    // not wiped yet. The right code arriving then must still be refused.
+    it('refuses even the right code once five guesses are taken, before the code is wiped', async () => {
+      vi.mocked(getSession).mockResolvedValue(adminSession);
+      vi.mocked(getContactEmail).mockResolvedValue('old@example.com');
+      const state = mockSettingsState();
+      seedOtpState(state, { otp: '123456', expiresAt: Date.now() + 100000, pendingEmail: 'new@example.com' });
+      state.set('contact_email_otp_attempts', '5');
+
+      const res = await PUT(putRequest({ email: 'new@example.com', otp: '123456' }));
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toContain('เกินจำนวนที่กำหนด');
+      expect(setSetting).not.toHaveBeenCalledWith('contact_email', 'new@example.com');
       expect(state.get('contact_email_otp_state')).toBe('');
     });
 

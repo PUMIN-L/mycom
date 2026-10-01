@@ -7,7 +7,7 @@ import {
   MAINTENANCE_MODE_SETTING,
   isMaintenanceMode,
 } from "../../../lib/settingsStore";
-import { recordOtpFailure, clearOtpAttempts } from "../../../lib/otpAttempts";
+import { takeOtpAttempt, clearOtpAttempts, OTP_TOO_MANY_ATTEMPTS } from "../../../lib/otpAttempts";
 
 // GET — public, no auth required. The MaintenanceOverlay component on every
 // page polls this to decide whether to show the overlay.
@@ -58,20 +58,16 @@ export const PUT = withRoute(
       );
     }
 
-    if (state.otp !== providedOtp) {
-      const { locked } = await recordOtpFailure(
-        "maintenance_otp",
-        "maintenance_otp_legacy_expires_unused"
-      );
-      if (locked) await setSetting("maintenance_otp_state", "");
-      return NextResponse.json(
-        {
-          error: locked
-            ? "กรอกรหัส OTP ผิดเกินจำนวนที่กำหนด กรุณาขอรหัสใหม่"
-            : "รหัส OTP ไม่ถูกต้อง",
-        },
-        { status: 400 }
-      );
+    // The guess is taken BEFORE comparing (takeOtpAttempt), so a burst of
+    // parallel guesses gets five comparisons, not one each.
+    const attempt = await takeOtpAttempt("maintenance_otp");
+    const wrong = state.otp !== providedOtp;
+    if (!attempt.allowed || (wrong && attempt.last)) {
+      await setSetting("maintenance_otp_state", "");
+      return NextResponse.json({ error: OTP_TOO_MANY_ATTEMPTS }, { status: 400 });
+    }
+    if (wrong) {
+      return NextResponse.json({ error: "รหัส OTP ไม่ถูกต้อง" }, { status: 400 });
     }
 
     // OTP is correct — toggle the maintenance flag.

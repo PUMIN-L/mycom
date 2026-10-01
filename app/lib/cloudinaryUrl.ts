@@ -39,6 +39,19 @@ export function cloudinaryResized(url: string, width: number): string | null {
   return parsed.toString();
 }
 
+/**
+ * A next/image `loader` for Cloudinary photos: Cloudinary resizes them, not
+ * Vercel's /_next/image. That keeps res.cloudinary.com OUT of
+ * images.remotePatterns entirely — any URL the optimizer accepts can be varied
+ * endlessly (w_1, w_2, … in front of a real public id) into "new" images to
+ * resize, each one spending quota. With this loader the widths requested are
+ * next/image's own fixed set, and there is no public endpoint to point at
+ * Cloudinary. Only for URLs cloudinaryResized accepts (see SkeletonImage).
+ */
+export function cloudinaryImageLoader({ src, width }: { src: string; width: number }): string {
+  return cloudinaryResized(src, width) ?? src;
+}
+
 /** src (1200 wide) + srcset for an <img>, or null for a non-Cloudinary url. */
 export function cloudinaryResponsive(url: string): { src: string; srcSet: string } | null {
   const src = cloudinaryResized(url, 1200);

@@ -40,35 +40,24 @@ const contentSecurityPolicy = [
 ].join("; ");
 
 // Which remote images /_next/image will resize. Each one it serves is work on
-// Vercel's image-optimization quota, and the endpoint is public — so it takes
-// only the images this site actually shows through next/image:
-//   - photos uploaded to OUR Cloudinary account. res.cloudinary.com is shared
-//     by every Cloudinary account, and /image/fetch/ on any of them pulls in
-//     an arbitrary web image, so the path is pinned to our cloud's
-//     /image/upload/. Stored URLs are upload secure_urls, which carry no query
-//     string — `search: ""` stops "?1", "?2"... turning one photo into
-//     unlimited optimizations. No CLOUDINARY_CLOUD_NAME at build: no pattern
-//     (fail closed, like documents/proxy) — /api/health reports the missing
-//     variable.
-//   - the navbar's language flags (flagcdn.com/w40/xx.png).
+// Vercel's image-optimization quota, and the endpoint is public: anyone can
+// ask it to resize any URL a pattern matches. So it takes ONLY the navbar's
+// language flags (flagcdn.com/w40/xx.png — a small, fixed set).
+//
+// Cloudinary is deliberately NOT here. Even pinned to our own cloud's
+// /image/upload/, a pattern let anyone mint endless "new" images to resize —
+// Cloudinary accepts any transformation in front of a real public id (w_1/,
+// w_2/, …), each a distinct URL and a fresh optimization. Product and content
+// photos are resized by Cloudinary itself instead, through next/image's
+// `loader` (components/SkeletonImage.tsx, lib/cloudinaryUrl.ts), so nothing
+// public points the optimizer at Cloudinary at all.
+//
 // The LINE QR code (api.qrserver.com) renders `unoptimized`: a generator that
 // draws any text it is given has no place behind a resizer. The browser loads
-// it directly, which is why img-src still lists it.
-const cloudName = process.env.CLOUDINARY_CLOUD_NAME ?? "";
-
+// it — and Cloudinary photos — directly, which is why img-src lists both.
 const remotePatterns: NonNullable<NonNullable<NextConfig["images"]>["remotePatterns"]> = [
   { protocol: "https", hostname: "flagcdn.com", pathname: "/w40/*.png", search: "" },
 ];
-// A cloud name is letters, digits, - and _ — anything else would be read as
-// glob syntax in the pattern.
-if (/^[\w-]+$/.test(cloudName)) {
-  remotePatterns.push({
-    protocol: "https",
-    hostname: "res.cloudinary.com",
-    pathname: `/${cloudName}/image/upload/**`,
-    search: "",
-  });
-}
 
 const nextConfig: NextConfig = {
   images: {

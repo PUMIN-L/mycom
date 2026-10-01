@@ -12,10 +12,9 @@ import {
 import {
   LOGIN_FAIL_PREFIX,
   clearLoginFailures,
-  isLockedOut,
   loginIpLimiter,
   loginLockKey,
-  recordLoginFailure,
+  takeLoginAttempt,
 } from "../../../lib/loginThrottle";
 import { LOGIN_2FA_COOKIE, LOGIN_2FA_COOKIE_OPTIONS, issueTwoFactorPendingToken } from "../../../lib/twoFactorPending";
 import { clientKey } from "../../../lib/rateLimit";
@@ -76,7 +75,10 @@ export const POST = withRoute(
     const deviceId = await loginDeviceIdFor(request.cookies.get(LOGIN_DEVICE_COOKIE)?.value, username);
     const lockKey = deviceId ? `${LOGIN_FAIL_PREFIX}dev_${deviceId}` : loginLockKey(username);
 
-    if (await isLockedOut(lockKey, now)) {
+    // The attempt is counted BEFORE the password is checked, in one locked
+    // step, so a burst of parallel guesses cannot all get past the lockout
+    // (see takeLoginAttempt). A right password resets the bucket below.
+    if (!(await takeLoginAttempt(lockKey, now))) {
       return NextResponse.json(
         { error: "เข้าสู่ระบบผิดพลาดหลายครั้งเกินไป กรุณารอสักครู่" },
         { status: 429 }
@@ -106,9 +108,7 @@ export const POST = withRoute(
       user?.passwordHash ?? DUMMY_PASSWORD_HASH
     );
     if (!user || !passwordMatches) {
-      // Record the failed attempt against this username.
-      await recordLoginFailure(lockKey, now);
-
+      // Already counted by takeLoginAttempt above.
       return NextResponse.json(
         { error: "username หรือ password ไม่ถูกต้อง" },
         { status: 401 }

@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, it, expect } from "vitest";
-import { cloudinaryResized, cloudinaryResponsive, RESPONSIVE_WIDTHS } from "@/app/lib/cloudinaryUrl";
+import { cloudinaryImageLoader, cloudinaryResized, cloudinaryResponsive, RESPONSIVE_WIDTHS } from "@/app/lib/cloudinaryUrl";
 
 const BASE = "https://res.cloudinary.com/demo/image/upload";
 
@@ -42,5 +42,18 @@ describe("cloudinaryResponsive", () => {
 
   it("is null for anything else", () => {
     expect(cloudinaryResponsive("/images/x.png")).toBeNull();
+  });
+});
+
+describe("cloudinaryImageLoader", () => {
+  it("hands next/image a Cloudinary-resized URL for the width it asks for", () => {
+    expect(cloudinaryImageLoader({ src: `${BASE}/v1/p.jpg`, width: 640 })).toBe(
+      `${BASE}/f_auto,q_auto,c_limit,w_640/v1/p.jpg`
+    );
+  });
+
+  it("returns anything it cannot resize unchanged, never an optimizer URL", () => {
+    expect(cloudinaryImageLoader({ src: `${BASE}/w_800/v1/p.jpg`, width: 640 })).toBe(`${BASE}/w_800/v1/p.jpg`);
+    expect(cloudinaryImageLoader({ src: "/images/hero-bg.jpg", width: 640 })).toBe("/images/hero-bg.jpg");
   });
 });

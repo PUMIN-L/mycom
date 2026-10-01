@@ -8,7 +8,12 @@ import {
   LOGIN_DEVICE_COOKIE_OPTIONS,
   issueLoginDeviceToken,
 } from "../../../../lib/loginDevice";
-import { clearLoginFailures, isLockedOut, recordLoginFailure, twoFactorLockKey } from "../../../../lib/loginThrottle";
+import {
+  clearLoginFailures,
+  refundLoginAttempt,
+  takeLoginAttempt,
+  twoFactorLockKey,
+} from "../../../../lib/loginThrottle";
 import { confirmTotpSetup, getTwoFactorUser } from "../../../../lib/twoFactor";
 import { NO_STORE, requirePassword } from "../../../../lib/twoFactorReauth";
 
@@ -42,8 +47,10 @@ export const POST = withRoute(
     if (typeof code !== "string" || !code.trim() || code.length > 64) {
       return NextResponse.json({ error: "กรุณากรอกรหัส 6 หลักจากแอป" }, { status: 400 });
     }
+    // Taken before the code is checked (takeLoginAttempt) so parallel guesses
+    // cannot all get past the lockout.
     const lockKey = twoFactorLockKey(user.id);
-    if (await isLockedOut(lockKey)) {
+    if (!(await takeLoginAttempt(lockKey))) {
       return NextResponse.json(
         { error: "ใส่รหัสผิดหลายครั้งเกินไป กรุณารอ 15 นาทีแล้วลองใหม่" },
         { status: 429 }
@@ -53,12 +60,13 @@ export const POST = withRoute(
     const result = await confirmTotpSetup(user.id, code);
     if (!result.ok) {
       if (result.reason === "wrong_code") {
-        await recordLoginFailure(lockKey);
         return NextResponse.json(
           { error: "รหัสไม่ถูกต้อง — ตรวจว่าสแกน QR อันล่าสุด และเวลาในมือถือตั้งเป็นอัตโนมัติ" },
           { status: 403 }
         );
       }
+      // Not a guess at a code: give the attempt back.
+      await refundLoginAttempt(lockKey);
       if (result.reason === "already_enabled") {
         return NextResponse.json({ error: "เปิดการยืนยันตัวตน 2 ขั้นอยู่แล้ว" }, { status: 409 });
       }

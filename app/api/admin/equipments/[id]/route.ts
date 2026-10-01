@@ -9,7 +9,7 @@ import {
 import { isValidDateString } from "../../../../lib/dateFormat";
 import { EQUIPMENT_OWNERSHIP_SOURCES } from "../../../../lib/types";
 import { getSetting, setSetting } from "../../../../lib/settingsStore";
-import { recordOtpFailure, clearOtpAttempts } from "../../../../lib/otpAttempts";
+import { takeOtpAttempt, clearOtpAttempts, OTP_TOO_MANY_ATTEMPTS } from "../../../../lib/otpAttempts";
 
 /**
  * Guards the two ownership columns (spec: equipment-ownership). Returns a Thai
@@ -142,20 +142,21 @@ export const DELETE = withRoute(
       const savedOtp = await getSetting(otpKey);
       const expiresAtStr = await getSetting(otpExpiresKey);
 
-      if (!savedOtp || otp !== savedOtp) {
-        if (savedOtp) {
-          const { locked } = await recordOtpFailure(otpKey, otpExpiresKey);
-          if (locked) {
-            return NextResponse.json(
-              { error: "กรอกรหัส OTP ผิดเกินจำนวนที่กำหนด กรุณาขอรหัสใหม่", needOtp: true },
-              { status: 400 }
-            );
-          }
-        }
-        return NextResponse.json(
-          { error: "รหัส OTP ไม่ถูกต้อง", needOtp: true },
-          { status: 400 }
-        );
+      if (!savedOtp) {
+        // No code issued: nothing to guess at, so nothing is counted.
+        return NextResponse.json({ error: "รหัส OTP ไม่ถูกต้อง", needOtp: true }, { status: 400 });
+      }
+      // The guess is taken BEFORE comparing (takeOtpAttempt), so a burst of
+      // parallel guesses gets five comparisons, not one each.
+      const attempt = await takeOtpAttempt(otpKey);
+      const wrong = otp !== savedOtp;
+      if (!attempt.allowed || (wrong && attempt.last)) {
+        await setSetting(otpKey, "");
+        await setSetting(otpExpiresKey, "0");
+        return NextResponse.json({ error: OTP_TOO_MANY_ATTEMPTS, needOtp: true }, { status: 400 });
+      }
+      if (wrong) {
+        return NextResponse.json({ error: "รหัส OTP ไม่ถูกต้อง", needOtp: true }, { status: 400 });
       }
 
       const expiresAt = parseInt(expiresAtStr || "0", 10);

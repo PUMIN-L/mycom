@@ -155,9 +155,11 @@ describe("POST /api/auth/2fa/enable", () => {
     expect(db.settings.get("login_fail_2fa_admin-001")?.startsWith("1|")).toBe(true);
   });
 
-  it("says to start over when nothing is pending", async () => {
+  it("says to start over when nothing is pending — and that is not counted as a guess", async () => {
     const res = await enablePOST(post("/api/auth/2fa/enable", { password: PASSWORD, code: "123456" }));
     expect(res.status).toBe(400);
+    // The attempt taken before checking is handed back: no code was guessed.
+    expect(db.settings.get("login_fail_2fa_admin-001")?.startsWith("0|")).toBe(true);
   });
 
   it("turns it on, hands the backup codes over once, and logs every other browser out", async () => {

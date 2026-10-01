@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { revalidateTag } from "next/cache";
 import { withRoute, requireAuth } from "../../../lib/apiHelpers";
 import { getCompanyProfile, updateCompanyProfile, getSetting, setSetting, type CompanyProfile } from "../../../lib/settingsStore";
-import { recordOtpFailure, clearOtpAttempts } from "../../../lib/otpAttempts";
+import { takeOtpAttempt, clearOtpAttempts, OTP_TOO_MANY_ATTEMPTS } from "../../../lib/otpAttempts";
 import { COMPANY_PROFILE_FIELD_LIMITS } from "../../../lib/companyProfileValidation";
 
 export const GET = withRoute("โหลดข้อมูลบริษัทไม่สำเร็จ", async () => {
@@ -42,16 +42,16 @@ export const PUT = withRoute("บันทึกข้อมูลบริษ�
     return NextResponse.json({ error: "รหัส OTP หมดอายุแล้ว กรุณาขอรหัสใหม่" }, { status: 400 });
   }
 
-  if (state.otp !== providedOtp) {
-    // The 2nd arg only needs a key name recordOtpFailure can wipe on
-    // lockout — the real combined state is cleared explicitly below instead,
-    // since its "0" numeric-expiry wipe format doesn't fit the JSON blob here.
-    const { locked } = await recordOtpFailure("company_profile_otp", "company_profile_otp_legacy_expires_unused");
-    if (locked) await setSetting("company_profile_otp_state", "");
-    return NextResponse.json(
-      { error: locked ? "กรอกรหัส OTP ผิดเกินจำนวนที่กำหนด กรุณาขอรหัสใหม่" : "รหัส OTP ไม่ถูกต้อง" },
-      { status: 400 }
-    );
+  // The guess is taken BEFORE comparing (takeOtpAttempt), so a burst of
+  // parallel guesses gets five comparisons, not one each.
+  const attempt = await takeOtpAttempt("company_profile_otp");
+  const wrong = state.otp !== providedOtp;
+  if (!attempt.allowed || (wrong && attempt.last)) {
+    await setSetting("company_profile_otp_state", "");
+    return NextResponse.json({ error: OTP_TOO_MANY_ATTEMPTS }, { status: 400 });
+  }
+  if (wrong) {
+    return NextResponse.json({ error: "รหัส OTP ไม่ถูกต้อง" }, { status: 400 });
   }
 
   // Defensive re-check: only apply keys this route actually recognizes, in

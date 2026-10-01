@@ -33,6 +33,10 @@ describe('parsePositiveMoney', () => {
     [1.005, 1.01], // 1.005 * 100 is 100.49999… in floating point
     [12.344, 12.34],
     [MAX_MONEY_AMOUNT, MAX_MONEY_AMOUNT],
+    ['1500.00', 1500], // a DECIMAL column read back as a string (editing a recurring expense)
+    ['.5', 0.5],
+    ['5.', 5],
+    ['0012.50', 12.5],
   ])('%p → %p', (input, amount) => {
     expect(parsePositiveMoney(input)).toEqual({ ok: true, amount });
   });
@@ -44,6 +48,15 @@ describe('parsePositiveMoney', () => {
 
   it.each([0, -1, -0.01, NaN, Infinity, -Infinity, '', '   ', 'abc', '1,000', null, undefined, true, false, {}, [5]])(
     '%p is not a positive amount',
+    (input) => {
+      expect(parsePositiveMoney(input)).toEqual({ ok: false, error: 'จำนวนเงินต้องมากกว่า 0' });
+    }
+  );
+
+  // Number() reads all of these as positive amounts — 16, 5, 8, 1000, 5, 1.
+  // Nobody typed them as money; a plain decimal string only.
+  it.each(['0x10', '0X10', '0b101', '0o10', '1e3', '1E3', '5e-0', '+1', '1.2.3', '١٢', 'Infinity', '1_000'])(
+    '%p is not a decimal amount',
     (input) => {
       expect(parsePositiveMoney(input)).toEqual({ ok: false, error: 'จำนวนเงินต้องมากกว่า 0' });
     }

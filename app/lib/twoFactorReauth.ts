@@ -3,9 +3,9 @@ import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import {
   clearLoginFailures,
-  isLockedOut,
   loginLockKey,
-  recordLoginFailure,
+  refundLoginAttempt,
+  takeLoginAttempt,
   twoFactorLockKey,
 } from "./loginThrottle";
 import { verifySecondFactor, type TwoFactorUser } from "./twoFactor";
@@ -20,23 +20,28 @@ import { verifySecondFactor, type TwoFactorUser } from "./twoFactor";
 //
 // Each check returns null when it passes, or the response to send.
 // 403 rather than 401 for a wrong answer: the settings page reads 401 as
-// "your session has expired".
+// "your session has expired". Like the login screen, every check takes its
+// attempt BEFORE comparing (takeLoginAttempt), so parallel guesses cannot
+// all slip past the lockout.
 
 export async function requirePassword(user: TwoFactorUser, password: unknown): Promise<NextResponse | null> {
   if (typeof password !== "string" || !password) {
     return NextResponse.json({ error: "กรุณากรอกรหัสผ่าน" }, { status: 400 });
   }
   const lockKey = loginLockKey(user.username);
-  if (await isLockedOut(lockKey)) {
+  if (!(await takeLoginAttempt(lockKey))) {
     return NextResponse.json(
       { error: "ใส่รหัสผ่านผิดหลายครั้งเกินไป กรุณารอ 15 นาทีแล้วลองใหม่" },
       { status: 429 }
     );
   }
   if (!(await bcrypt.compare(password, user.passwordHash))) {
-    await recordLoginFailure(lockKey);
     return NextResponse.json({ error: "รหัสผ่านไม่ถูกต้อง" }, { status: 403 });
   }
+  // Right: hand the attempt back rather than reset the bucket. This is the
+  // USERNAME's bucket, which strangers on the login page also fill; a correct
+  // password here must not wipe a lock someone else is still hammering.
+  await refundLoginAttempt(lockKey);
   return null;
 }
 
@@ -47,7 +52,7 @@ export async function requireSecondFactor(user: TwoFactorUser, code: unknown): P
     return NextResponse.json({ error: "กรุณากรอกรหัส 6 หลักจากแอป หรือรหัสสำรอง" }, { status: 400 });
   }
   const lockKey = twoFactorLockKey(user.id);
-  if (await isLockedOut(lockKey)) {
+  if (!(await takeLoginAttempt(lockKey))) {
     return NextResponse.json(
       { error: "ใส่รหัสผิดหลายครั้งเกินไป กรุณารอ 15 นาทีแล้วลองใหม่" },
       { status: 429 }
@@ -55,7 +60,6 @@ export async function requireSecondFactor(user: TwoFactorUser, code: unknown): P
   }
   const result = await verifySecondFactor(user.id, code);
   if (!result.ok) {
-    await recordLoginFailure(lockKey);
     return NextResponse.json(
       {
         error:

@@ -6,7 +6,7 @@ import {
 } from "../../../lib/cloudinaryHelper";
 import { getAllUsedImageUrls } from "../../../lib/imageUsageHelper";
 import { getSetting, setSetting } from "../../../lib/settingsStore";
-import { recordOtpFailure, clearOtpAttempts } from "../../../lib/otpAttempts";
+import { takeOtpAttempt, clearOtpAttempts } from "../../../lib/otpAttempts";
 
 /**
  * GET /api/cloudinary/orphans  (admin only)
@@ -86,23 +86,24 @@ export const DELETE = withRoute(
     const expiresAtStr = await getSetting("orphan_delete_otp_expires");
     const expiresAt = expiresAtStr ? parseInt(expiresAtStr, 10) : 0;
 
-    if (!savedOtp || otp !== savedOtp) {
-      if (savedOtp) {
-        const { locked } = await recordOtpFailure(
-          "orphan_delete_otp",
-          "orphan_delete_otp_expires"
-        );
-        if (locked) {
-          return NextResponse.json(
-            { error: "กรอกรหัสยืนยันผิดเกินจำนวนที่กำหนด กรุณาขอรหัสใหม่" },
-            { status: 403 }
-          );
-        }
-      }
+    if (!savedOtp) {
+      // No code issued: nothing to guess at, so nothing is counted.
+      return NextResponse.json({ error: "รหัสยืนยันไม่ถูกต้อง" }, { status: 403 });
+    }
+    // The guess is taken BEFORE comparing (takeOtpAttempt), so a burst of
+    // parallel guesses gets five comparisons, not one each.
+    const attempt = await takeOtpAttempt("orphan_delete_otp");
+    const wrong = otp !== savedOtp;
+    if (!attempt.allowed || (wrong && attempt.last)) {
+      await setSetting("orphan_delete_otp", "");
+      await setSetting("orphan_delete_otp_expires", "0");
       return NextResponse.json(
-        { error: "รหัสยืนยันไม่ถูกต้อง" },
+        { error: "กรอกรหัสยืนยันผิดเกินจำนวนที่กำหนด กรุณาขอรหัสใหม่" },
         { status: 403 }
       );
+    }
+    if (wrong) {
+      return NextResponse.json({ error: "รหัสยืนยันไม่ถูกต้อง" }, { status: 403 });
     }
 
     if (Date.now() > expiresAt) {

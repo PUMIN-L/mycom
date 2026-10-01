@@ -127,7 +127,7 @@ export async function sendContactEmail(
     // SECURITY: pass structured {name, address} objects, never hand-built
     // `"name" <addr>` strings — nodemailer re-parses raw strings BEFORE
     // escaping, so a visitor-controlled name like `x" <evil@x.com>, "y`
-    // would inject an extra From/Reply-To address (verified against v9).
+    // would inject an extra From/Reply-To address (verified against v9 and v10).
     // Structured objects get the display name properly quoted/encoded.
     from: {
       name: `${msg.name} (เว็บไซต์)`,

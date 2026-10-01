@@ -52,15 +52,17 @@ const conn = {
       const v = sharedState.get(key);
       return [v !== undefined ? [{ value: v }] : []];
     }
-    // claimOtpIssue: make sure the row exists, never overwrite it.
-    if (sql.includes("VALUES (?, '') ON DUPLICATE KEY UPDATE name = name")) {
-      const [key] = params as [string];
-      if (!sharedState.has(key)) sharedState.set(key, '');
-      return [{ affectedRows: 1 }];
-    }
     if (sql.includes('UPDATE settings SET value = ? WHERE name = ?')) {
       const [value, key] = params as [string, string];
       sharedState.set(key, value);
+      return [{ affectedRows: 1 }];
+    }
+    // takeOtpAttempt / claimOtpIssue: create the row with its literal default
+    // if missing — never overwrite an existing one.
+    if (sql.includes('ON DUPLICATE KEY UPDATE name = name')) {
+      const [key] = params as [string];
+      const literal = sql.includes("VALUES (?, '0')") ? '0' : '';
+      if (!sharedState.has(key)) sharedState.set(key, literal);
       return [{ affectedRows: 1 }];
     }
     if (sql.includes('INSERT INTO settings')) {
@@ -431,6 +433,39 @@ describe('Admin Equipments API', () => {
     expect(res.status).toBe(400);
     expect((await res.json()).error).toContain('หมดอายุ');
     expect(deleteEquipment).not.toHaveBeenCalled();
+  });
+
+  it('DELETE locks the code after 5 wrong guesses — the right one afterwards deletes nothing', async () => {
+    vi.mocked(getSession).mockResolvedValue(admin);
+    vi.mocked(countProtectedServiceHistory).mockResolvedValue({ completedSchedules: 1, jobLogs: 0, total: 1 });
+    const state = mockSettingsState({
+      'equipment_delete_otp_eq-1': '123456',
+      'equipment_delete_otp_expires_eq-1': String(Date.now() + 100000),
+    });
+    let last;
+    for (let i = 0; i < 5; i++) last = await DELETE(mutReqId('DELETE', { otp: '000000' }), ctx('eq-1'));
+    expect((await last!.json()).error).toContain('เกินจำนวนที่กำหนด');
+    expect(state.get('equipment_delete_otp_eq-1')).toBe('');
+
+    await DELETE(mutReqId('DELETE', { otp: '123456' }), ctx('eq-1'));
+    expect(deleteEquipment).not.toHaveBeenCalled();
+  });
+
+  // A burst of parallel guesses: the five guesses are taken but the code is
+  // not wiped yet. The right code arriving then must still be refused.
+  it('DELETE refuses even the right code once five guesses are taken, before the code is wiped', async () => {
+    vi.mocked(getSession).mockResolvedValue(admin);
+    vi.mocked(countProtectedServiceHistory).mockResolvedValue({ completedSchedules: 1, jobLogs: 0, total: 1 });
+    const state = mockSettingsState({
+      'equipment_delete_otp_eq-1': '123456',
+      'equipment_delete_otp_expires_eq-1': String(Date.now() + 100000),
+      'equipment_delete_otp_eq-1_attempts': '5',
+    });
+    const res = await DELETE(mutReqId('DELETE', { otp: '123456' }), ctx('eq-1'));
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toContain('เกินจำนวนที่กำหนด');
+    expect(deleteEquipment).not.toHaveBeenCalled();
+    expect(state.get('equipment_delete_otp_eq-1')).toBe('');
   });
 
   // ── POST [id]/delete-otp ──────────────────────────────────────────────────

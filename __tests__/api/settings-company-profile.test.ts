@@ -26,6 +26,19 @@ const conn = {
       const v = sharedState.get(key);
       return [v !== undefined ? [{ value: v }] : []];
     }
+    // takeOtpAttempt / claimOtpIssue: create the row with its literal default
+    // if missing — never overwrite an existing one.
+    if (sql.includes('ON DUPLICATE KEY UPDATE name = name')) {
+      const [key] = params as [string];
+      const literal = sql.includes("VALUES (?, '0')") ? '0' : '';
+      if (!sharedState.has(key)) sharedState.set(key, literal);
+      return [{ affectedRows: 1 }];
+    }
+    if (sql.includes('UPDATE settings SET value = ? WHERE name = ?')) {
+      const [value, key] = params as [string, string];
+      sharedState.set(key, value);
+      return [{ affectedRows: 1 }];
+    }
     if (sql.includes('INSERT INTO settings')) {
       const [key, value] = params as [string, string];
       sharedState.set(key, value);
@@ -161,6 +174,22 @@ describe('PUT /api/settings/company-profile', () => {
     expect(afterLockout.status).toBe(400);
     expect(updateCompanyProfile).not.toHaveBeenCalled();
     // Lockout must wipe the real combined state, not just a throwaway key.
+    expect(state.get('company_profile_otp_state')).toBe('');
+  });
+
+  // A burst of parallel guesses: the five guesses are taken but the code is
+  // not wiped yet. The right code arriving then must still be refused — the
+  // count, not the wipe, is what closes the door.
+  it('refuses even the right code once five guesses are taken, before the code is wiped', async () => {
+    vi.mocked(getSession).mockResolvedValue(adminSession);
+    const state = mockSettingsState();
+    seedOtpState(state, { otp: '123456', expiresAt: Date.now() + 100000, pending: { phone: '099-999-9999' } });
+    state.set('company_profile_otp_attempts', '5');
+
+    const res = await PUT(putRequest({ otp: '123456' }));
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toContain('เกินจำนวนที่กำหนด');
+    expect(updateCompanyProfile).not.toHaveBeenCalled();
     expect(state.get('company_profile_otp_state')).toBe('');
   });
 

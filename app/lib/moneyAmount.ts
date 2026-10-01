@@ -24,14 +24,18 @@ export type ParsedMoney = { ok: true; amount: number } | { ok: false; error: str
  * as a bare 500. Above the column's ceiling is refused too, rather than
  * becoming a database error (payments) or silently clamped (expenses, costs).
  *
- * A number or a numeric string only: Number(true) is 1 and Number("") is 0,
- * and neither is an amount anyone typed.
+ * A number or a plain decimal string only: Number(true) is 1 and Number("")
+ * is 0, and neither is an amount anyone typed. Number() also reads "0x10" as
+ * 16, "0b101" as 5 and "1e3" as 1000 — so a string must be digits with an
+ * optional decimal point ("1500", "1500.00", ".5") before Number() sees it.
  */
+const DECIMAL_STRING = /^\s*(?:\d+(?:\.\d*)?|\.\d+)\s*$/;
+
 export function parsePositiveMoney(value: unknown): ParsedMoney {
   const n =
     typeof value === "number"
       ? value
-      : typeof value === "string" && value.trim() !== ""
+      : typeof value === "string" && DECIMAL_STRING.test(value)
         ? Number(value)
         : NaN;
   if (!Number.isFinite(n) || n <= 0) return { ok: false, error: "จำนวนเงินต้องมากกว่า 0" };

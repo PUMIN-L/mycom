@@ -8,7 +8,7 @@ import {
   CONTACT_EMAIL_SETTING,
 } from "../../../lib/settingsStore";
 import { isMailConfigured, sendContactRecipientChangedEmail } from "../../../lib/mailer";
-import { recordOtpFailure, clearOtpAttempts } from "../../../lib/otpAttempts";
+import { takeOtpAttempt, clearOtpAttempts, OTP_TOO_MANY_ATTEMPTS } from "../../../lib/otpAttempts";
 
 // Rejects <>"',; too — this value ends up in an SMTP To: header (mailer.ts).
 const EMAIL_RE = /^[^\s@<>"',;]+@[^\s@<>"',;]+\.[^\s@<>"',;]+$/;
@@ -75,23 +75,16 @@ export const PUT = withRoute(
       );
     }
 
-    if (state.otp !== providedOtp) {
-      // The 2nd arg only needs a key name recordOtpFailure can wipe on
-      // lockout — the real combined state is cleared explicitly below instead,
-      // since its "0" numeric-expiry wipe format doesn't fit the JSON blob here.
-      const { locked } = await recordOtpFailure(
-        "contact_email_otp",
-        "contact_email_otp_legacy_expires_unused"
-      );
-      if (locked) await setSetting("contact_email_otp_state", "");
-      return NextResponse.json(
-        {
-          error: locked
-            ? "กรอกรหัส OTP ผิดเกินจำนวนที่กำหนด กรุณาขอรหัสใหม่"
-            : "รหัส OTP ไม่ถูกต้อง",
-        },
-        { status: 400 }
-      );
+    // The guess is taken BEFORE comparing (takeOtpAttempt), so a burst of
+    // parallel guesses gets five comparisons, not one each.
+    const attempt = await takeOtpAttempt("contact_email_otp");
+    const wrong = state.otp !== providedOtp;
+    if (!attempt.allowed || (wrong && attempt.last)) {
+      await setSetting("contact_email_otp_state", "");
+      return NextResponse.json({ error: OTP_TOO_MANY_ATTEMPTS }, { status: 400 });
+    }
+    if (wrong) {
+      return NextResponse.json({ error: "รหัส OTP ไม่ถูกต้อง" }, { status: 400 });
     }
 
     if (state.pendingEmail !== value) {
