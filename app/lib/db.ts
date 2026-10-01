@@ -12,7 +12,7 @@ import type { QueryResult, FieldPacket, RowDataPacket } from "mysql2";
 // did not lower the 33 already written to `settings`, so the next change to
 // reuse 33 was skipped entirely and its tables were never created in
 // production. Reverting a migration means moving FORWARD to a new number.
-const SCHEMA_VERSION = 44;
+const SCHEMA_VERSION = 45;
 
 type DbPool = ReturnType<typeof mysql.createPool>;
 
@@ -129,6 +129,37 @@ async function bootstrapSchemaOnce(): Promise<void> {
           username VARCHAR(255) NOT NULL UNIQUE,
           passwordHash VARCHAR(255) NOT NULL,
           createdAt VARCHAR(255) NOT NULL
+        )
+      `);
+
+    // Two-factor login (schema v45) — see app/lib/twoFactor.ts. One ALTER per
+    // column with its own try/catch (the billing_documents note below explains
+    // why a multi-column ALTER is not safe to re-run). Every column is nullable
+    // or has a literal default, so each is a metadata-only change. totpEnabled
+    // defaults to 0: nobody is asked for a code until they turn it on.
+    for (const columnDef of [
+      "ADD COLUMN IF NOT EXISTS totpEnabled TINYINT(1) NOT NULL DEFAULT 0",
+      "ADD COLUMN IF NOT EXISTS totpSecret TEXT DEFAULT NULL",
+      "ADD COLUMN IF NOT EXISTS totpPendingSecret TEXT DEFAULT NULL",
+      "ADD COLUMN IF NOT EXISTS totpLastStep BIGINT DEFAULT NULL",
+    ]) {
+      try {
+        await connection.query(`ALTER TABLE users ${columnDef}`);
+      } catch (error) {
+        if (!isBenignSchemaError(error)) throw error;
+      }
+    }
+
+    // One row per backup code, stored as an HMAC (never the code). usedAt is
+    // set when it is spent; a code is good exactly once.
+    await connection.query(`
+        CREATE TABLE IF NOT EXISTS user_backup_codes (
+          id VARCHAR(36) PRIMARY KEY,
+          userId VARCHAR(255) NOT NULL,
+          codeHash CHAR(64) NOT NULL,
+          usedAt VARCHAR(255) DEFAULT NULL,
+          createdAt VARCHAR(255) NOT NULL,
+          UNIQUE KEY uq_user_backup_code (userId, codeHash)
         )
       `);
 

@@ -40,14 +40,14 @@ process.env.DB_USER = 'tester';
 process.env.DB_PASSWORD = 'pw';
 process.env.DB_NAME = 'testdb';
 
-// A version SELECT result that MATCHES SCHEMA_VERSION (44) → bootstrap fast-path,
+// A version SELECT result that MATCHES SCHEMA_VERSION (45) → bootstrap fast-path,
 // skipping DDL. Value is a string because settings stores VARCHAR values.
 //
 // ⚠️ This constant only ever goes UP, in step with db.ts. The bootstrap's fast
 // path is `stored >= SCHEMA_VERSION`, so a number the live database has already
 // recorded can never trigger a migration again — reusing one silently skips the
 // entire migration in production (that is how v33 was burned).
-const SCHEMA_VERSION = '44';
+const SCHEMA_VERSION = '45';
 const SCHEMA_MATCH: [Array<{ value: string }>, unknown[]] = [[{ value: SCHEMA_VERSION }], []];
 // An empty result → no schema_version row / no admin row → full bootstrap.
 const EMPTY: [unknown[], unknown[]] = [[], []];
@@ -861,6 +861,29 @@ describe('db.ts', () => {
 
   // ── v35: task board tables + default-topic seed ──────────────────────────────
   describe('v35 task board', () => {
+    // v45 — two-factor login (app/lib/twoFactor.ts).
+    it('issues the v45 DDL: the four 2FA columns on users (one ALTER each) and user_backup_codes', async () => {
+      const db = await freshImport();
+      mockConnection.query.mockResolvedValue(EMPTY);
+
+      await db.getDbConnection();
+      const sql = bootstrapSql();
+      const hasSql = (re: RegExp) => sql.some((s) => re.test(s));
+
+      expect(hasSql(/ALTER TABLE users ADD COLUMN IF NOT EXISTS totpEnabled TINYINT\(1\) NOT NULL DEFAULT 0/)).toBe(true);
+      expect(hasSql(/ALTER TABLE users ADD COLUMN IF NOT EXISTS totpSecret TEXT DEFAULT NULL/)).toBe(true);
+      expect(hasSql(/ALTER TABLE users ADD COLUMN IF NOT EXISTS totpPendingSecret TEXT DEFAULT NULL/)).toBe(true);
+      expect(hasSql(/ALTER TABLE users ADD COLUMN IF NOT EXISTS totpLastStep BIGINT DEFAULT NULL/)).toBe(true);
+      // One column per statement: a multi-column ALTER that hits a duplicate
+      // column aborts the rest, and that error is swallowed on every later run.
+      expect(sql.filter((s) => /ALTER TABLE users ADD COLUMN/.test(s)).every((s) => (s.match(/ADD COLUMN/g) ?? []).length === 1)).toBe(true);
+
+      const backupDdl = sql.find((s) => /CREATE TABLE IF NOT EXISTS user_backup_codes/.test(s))!;
+      expect(backupDdl).toMatch(/codeHash CHAR\(64\) NOT NULL/);
+      expect(backupDdl).toMatch(/UNIQUE KEY uq_user_backup_code \(userId, codeHash\)/);
+      expect(backupDdl).not.toMatch(/REFERENCES|FOREIGN KEY/i);
+    });
+
     it('issues the whole v35 DDL: three tables, every standalone index, the composite PK — and NOT ONE foreign key', async () => {
       const db = await freshImport();
       mockConnection.query.mockResolvedValue(EMPTY);

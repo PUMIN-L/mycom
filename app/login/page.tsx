@@ -4,13 +4,18 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "../context/AuthContext";
 
 export default function LoginPage() {
-  const { login, isLoggedIn, isLoading, refresh } = useAuth();
+  const { login, verifyTwoFactor, isLoggedIn, isLoading, refresh } = useAuth();
   const router = useRouter();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [showPass, setShowPass] = useState(false);
+  // Two-factor accounts: after a correct password the form becomes the code
+  // form. No session exists until the code is accepted.
+  const [step, setStep] = useState<"password" | "code">("password");
+  const [code, setCode] = useState("");
+  const [useBackupCode, setUseBackupCode] = useState(false);
 
   // `isLoggedIn` was read when the app loaded. A tab whose session was revoked
   // since ("log out other devices") is sent here by a 401 — trusting the stale
@@ -34,9 +39,40 @@ export default function LoginPage() {
     setSubmitting(false);
     if (result.success) {
       router.push("/adminpanel");
+    } else if (result.twoFactorRequired) {
+      // The password has done its job; don't keep it in memory for step two.
+      setPassword("");
+      setCode("");
+      setUseBackupCode(false);
+      setStep("code");
     } else {
       setError(result.error ?? "เกิดข้อผิดพลาด");
     }
+  }
+
+  async function handleCodeSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError("");
+    setSubmitting(true);
+    const result = await verifyTwoFactor(code);
+    setSubmitting(false);
+    if (result.success) {
+      // A spent backup code usually means the phone is gone: straight to the
+      // 2FA settings, where the remaining count and "new codes" are.
+      router.push(result.backupCodesRemaining !== undefined ? "/settings#two-factor" : "/adminpanel");
+      return;
+    }
+    if (result.restart) {
+      setStep("password");
+      setCode("");
+    }
+    setError(result.error ?? "เกิดข้อผิดพลาด");
+  }
+
+  function backToPassword() {
+    setStep("password");
+    setCode("");
+    setError("");
   }
 
   return (
@@ -62,6 +98,7 @@ export default function LoginPage() {
           </div>
 
           {/* Form */}
+          {step === "password" ? (
           <form onSubmit={handleSubmit} className="space-y-5">
             {/* Username */}
             <div>
@@ -150,6 +187,80 @@ export default function LoginPage() {
               )}
             </button>
           </form>
+          ) : (
+          <form onSubmit={handleCodeSubmit} className="space-y-5" aria-label="ยืนยันตัวตน 2 ขั้น">
+            <div className="text-center">
+              <p className="text-white font-semibold">ยืนยันตัวตน 2 ขั้น</p>
+              <p className="text-gray-400 text-sm mt-1">
+                {useBackupCode
+                  ? "กรอกรหัสสำรองที่จดเก็บไว้ (ใช้ได้รหัสละครั้งเดียว)"
+                  : "เปิดแอป Google Authenticator แล้วกรอกรหัส 6 หลักของบัญชีนี้"}
+              </p>
+            </div>
+
+            <div>
+              <label htmlFor="two-factor-code" className="block text-sm font-medium text-gray-300 mb-2">
+                {useBackupCode ? "รหัสสำรอง" : "รหัส 6 หลัก"}
+              </label>
+              <input
+                id="two-factor-code"
+                key={useBackupCode ? "backup" : "totp"}
+                type="text"
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+                required
+                autoFocus
+                // One-time codes: let the phone offer the code from the app,
+                // and never let the browser save it.
+                autoComplete={useBackupCode ? "off" : "one-time-code"}
+                inputMode={useBackupCode ? "text" : "numeric"}
+                autoCapitalize={useBackupCode ? "characters" : "off"}
+                // The same length in both modes: the server takes either kind
+                // in either mode, and a backup code pasted without switching
+                // first must not be cut to 7 characters — that is a wrong
+                // answer, counted toward the lockout.
+                maxLength={12}
+                placeholder={useBackupCode ? "ABCD-EFGH" : "123456"}
+                className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white text-center text-2xl tracking-[0.3em] font-mono placeholder-gray-600 focus:outline-none focus:border-orange-500/50 transition"
+              />
+            </div>
+
+            {error && (
+              <div className="flex items-center gap-2 bg-red-500/10 border border-red-500/20 text-red-400 text-sm px-4 py-3 rounded-xl animate-fadeIn">
+                <span>❌</span> {error}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={submitting}
+              className="w-full py-3.5 bg-orange-500 hover:bg-orange-600 text-white font-bold rounded-xl transition duration-200 shadow-lg shadow-orange-500/20 disabled:opacity-60 flex items-center justify-center gap-2"
+            >
+              {submitting ? "กำลังตรวจสอบ..." : "ยืนยัน"}
+            </button>
+
+            <div className="flex items-center justify-between text-sm">
+              <button
+                type="button"
+                onClick={backToPassword}
+                className="text-gray-500 hover:text-gray-300 transition"
+              >
+                ← กลับไปใส่รหัสผ่าน
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setUseBackupCode((v) => !v);
+                  setCode("");
+                  setError("");
+                }}
+                className="text-orange-400 hover:text-orange-300 transition"
+              >
+                {useBackupCode ? "ใช้รหัสจากแอปแทน" : "ไม่มีมือถือ? ใช้รหัสสำรองแทน"}
+              </button>
+            </div>
+          </form>
+          )}
 
           {/* Back link */}
           <p className="text-center text-gray-600 text-sm mt-6">

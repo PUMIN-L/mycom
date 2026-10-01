@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useAuth } from "../context/AuthContext";
 import Toast from "../components/Toast";
 import ConfirmDialog from "../components/ConfirmDialog";
+import TwoFactorSettings from "../components/TwoFactorSettings";
 
 interface OrphanAsset {
   publicId: string;
@@ -994,6 +995,9 @@ export default function SettingsPage() {
 
         {/* ── ออกจากระบบอุปกรณ์อื่น ─────────────────────────────────────── */}
         <SessionsSection showToast={showToast} />
+
+        {/* ── ยืนยันตัวตน 2 ขั้น (2FA) ───────────────────────────────────── */}
+        <TwoFactorSettings showToast={showToast} />
 
         {/* Cloudinary Orphan Scanner */}
         <div className="mt-8 bg-white rounded-lg shadow p-6 space-y-4">

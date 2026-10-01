@@ -54,7 +54,7 @@ app/
 ├── products/ services/  Public catalog + service pages (§14).
 │
 ├── api/                  ── Route Handlers (the backend) ──
-│   ├── auth/             login · logout · me  (session lifecycle)
+│   ├── auth/             login (+ login/2fa) · logout · me · 2fa/  (session lifecycle, §10)
 │   ├── products/         CRUD products + nested categories/ (+ reorder)
 │   ├── contents/         CRUD showcase content + by-product/ lookup
 │   ├── documents/        CRUD PDF documents + proxy/ (inline PDF streaming)
@@ -220,6 +220,7 @@ manual auth checks — that's the duplication this replaced.
 | `GET /api/contents/[id]` (& `?all`), `by-product` | `POST` + `[id]` `PUT/DELETE` contents | |
 | `GET /api/documents`, `documents/proxy`         | `POST` + `[id]` `PUT/DELETE` documents | |
 | `GET /api/auth/me`, `POST /api/auth/login`/`logout` | `POST /api/upload`, `DELETE /api/upload/delete` | |
+| `POST /api/auth/login/2fa` (needs the 5-min pending cookie, §10) | `GET /api/auth/2fa`, `POST /api/auth/2fa/{setup,enable,disable,backup-codes}` — the last three also re-ask the password (+ a code once on) | |
 | `POST /api/contact` (sends email)               | all `/api/quotations/**` (GET/POST/[id]/docnos) | `cleanup` = **cron** (`CRON_SECRET`) |
 | `GET /api/health`                               | `GET`/`PUT /api/settings/contact-email` | |
 | —                                               | all `/api/admin/**`, incl. `POST`/`GET /api/admin/sales` + `[id]/items` and `GET /api/admin/equipments/serial-check` (§8a), plus the task board's `/api/admin/tasks/**` + `/api/admin/task-topics/**` (§8c) | |
@@ -913,6 +914,66 @@ stored in an httpOnly `session` cookie. `createSession` / `getSession` /
   token signed with the session key would be accepted as a session. Tests pin
   both directions (`__tests__/lib/loginDevice.test.ts`).
 
+**Two-factor login (TOTP, schema v45)** — opt-in per account, from /settings →
+"ยืนยันตัวตน 2 ขั้น". A 6-digit code from an authenticator app (Google
+Authenticator, Authy, Microsoft Authenticator…) on top of the password.
+Self-hosted, free: RFC 6238 in [`lib/totp.ts`](./app/lib/totp.ts) over
+`node:crypto` (pinned to the RFC test vectors), the QR drawn by the `qrcode`
+package. Storage and checks in [`lib/twoFactor.ts`](./app/lib/twoFactor.ts).
+- **The login is two requests.** `POST /api/auth/login` with a right password
+  on a 2FA account answers `{ twoFactorRequired: true }` and sets only a
+  **pending** cookie (`login_2fa`, 5 min, httpOnly, SameSite=Strict,
+  `Path=/api/auth/login`, [`lib/twoFactorPending.ts`](./app/lib/twoFactorPending.ts)).
+  `POST /api/auth/login/2fa { code }` checks the code and only then issues
+  the session and device cookies. Because the session cookie exists only after
+  both factors, **`proxy.ts` and `requireAuth()` are unchanged and no request
+  pays anything extra.**
+- ⚠️ The pending token's key is `"login-2fa:" + SESSION_SECRET` with its own
+  audience — same reason as the device key: signed with the session key it
+  WOULD be a session, and the code step would be decoration. It carries the
+  session epoch, so "log out other devices" voids a half-finished login too.
+- **A code works once.** `users.totpLastStep` records the 30-second step of the
+  last accepted code; the accepting `UPDATE … WHERE totpLastStep < ?` refuses
+  the same (or an older) step, so a code shoulder-surfed or replayed within its
+  ±30 s window is rejected, and two racing requests cannot both win. The code
+  that confirms setup is recorded the same way.
+- **Backup codes:** 10 × `ABCD-EFGH` (31 symbols, no 0/O/1/I/L), shown once at
+  setup or on "สร้างรหัสสำรองชุดใหม่", stored as HMAC-SHA256 in
+  `user_backup_codes`, each spent by an `UPDATE … WHERE usedAt IS NULL` (once
+  only). The same field takes either: six digits are TOTP, anything else is
+  tried as a backup code. Logging in with one sends the admin to
+  `/settings#two-factor`, where the remaining count is.
+- **Lockout:** wrong codes count in `login_fail_2fa_<userId>` — or
+  `login_fail_2fa_dev_<deviceId>` for a browser with a device cookie, so someone
+  who has the password cannot keep the admin's own browser locked out of the
+  code step. Same 5 / 15 min and the same per-IP brake as the password step;
+  the nightly purge cleans these rows by the shared `login_fail_` prefix.
+- **Turning it on/off needs more than a session** ([`lib/twoFactorReauth.ts`](./app/lib/twoFactorReauth.ts)):
+  `enable` needs the password + a code from the new secret (proof the phone
+  holds it); `disable` and `backup-codes` need the password + a code. Otherwise
+  a stolen session could switch 2FA on with an attacker's phone (locking the
+  admin out) or switch it off. Wrong passwords count in the username's login
+  bucket, wrong codes in the 2FA bucket. `setup` refuses while 2FA is on — a
+  live secret is replaced only by turning it off first. **Enabling bumps the
+  session epoch**: every session issued on the password alone is voided.
+- **Secrets at rest:** `users.totpSecret` / `totpPendingSecret` are AES-256-GCM
+  ("v1:" + base64(iv‖tag‖ciphertext)); the AES key and the backup-code HMAC key
+  are HKDF-derived from SESSION_SECRET. A database copy alone yields neither.
+  ⚠️ **Rotating SESSION_SECRET makes every stored secret and backup code
+  unreadable** — the code step then answers "ยืนยันรหัสไม่ได้" and the server
+  log says to reset 2FA. Reset it and set it up again.
+- **Recovery (phone AND backup codes lost), deliberately not a button** — a
+  bypass in the app is a new way in. Whoever has TiDB console access runs:
+  ```sql
+  UPDATE users SET totpEnabled = 0, totpSecret = NULL, totpPendingSecret = NULL,
+         totpLastStep = NULL WHERE username = 'admin';
+  DELETE FROM user_backup_codes WHERE userId = (SELECT id FROM users WHERE username = 'admin');
+  ```
+  then logs in with the password and sets 2FA up again.
+- Only one admin account exists today (`admin-001`, seeded from env). If several
+  people share it, they all scan the same QR — it is per ACCOUNT, not per
+  person. Per-person codes need per-person accounts first.
+
 **Emailed one-time codes (OTP)** gate the actions a stolen session should
 not be able to take alone: changing the contact email, the company profile,
 maintenance mode, deleting equipment with service history, and deleting
@@ -1168,7 +1229,9 @@ account with strict transformations) the image falls back to the original.
 DB_HOST=          DB_PORT=4000     DB_USER=
 DB_PASSWORD=      DB_NAME=
 
-# Auth — REQUIRED (session.ts throws without it)
+# Auth — REQUIRED (session.ts throws without it). Also the root of the keys that
+# encrypt 2FA secrets and hash backup codes (§10): changing it logs everyone out
+# AND makes every account's 2FA unusable until reset.
 SESSION_SECRET=
 
 # Admin seed — set ADMIN_PASSWORD to seed/create the admin user on DB init.

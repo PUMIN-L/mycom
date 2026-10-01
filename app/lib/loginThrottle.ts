@@ -1,21 +1,95 @@
 import { ResultSetHeader, RowDataPacket } from "mysql2";
-import { query } from "./db";
+import { query, withTransaction } from "./db";
+import { getSetting, setSetting } from "./settingsStore";
 import { createRateLimiter } from "./rateLimit";
 
-// The login route's two throttles that live outside the route file (a route
-// file may only export its HTTP handlers, and the tests need to reach these).
-// The per-account lockout itself stays in app/api/auth/login/route.ts.
+// The login throttles, outside any route file (a route file may only export
+// its HTTP handlers, and the password step, the two-factor step and the 2FA
+// settings routes all count failures the same way).
 
 /**
  * Every lockout row starts with this: `login_fail_<username>` for the
- * account's bucket, `login_fail_dev_<deviceId>` for a trusted browser's.
+ * account's bucket, `login_fail_dev_<deviceId>` for a trusted browser's,
+ * `login_fail_2fa_<userId>` / `login_fail_2fa_dev_<deviceId>` for the
+ * two-factor step's. The nightly purge cleans all of them by this prefix.
  */
 export const LOGIN_FAIL_PREFIX = "login_fail_";
+
+/** Wrong answers per bucket before it locks, and how long it stays locked. */
+export const LOGIN_FAILURE_LIMIT = 5;
+export const LOGIN_BLOCK_MS = 15 * 60 * 1000;
+const LOCK_KEY_MAX_LEN = 100;
+
+/**
+ * The password bucket for a username. Keyed on the account, not the client IP:
+ * x-forwarded-for is attacker-controlled and can be rotated per request. The
+ * key is lowercased and truncated to bound how large one settings row can get.
+ */
+export function loginLockKey(username: string): string {
+  return `${LOGIN_FAIL_PREFIX}${username.toLowerCase().slice(0, LOCK_KEY_MAX_LEN)}`;
+}
+
+/**
+ * The two-factor step's bucket. Separate from the password's: someone who has
+ * the password gets five guesses at the 6-digit code per 15 minutes, however
+ * many times he passes the password step. A browser with a valid device
+ * cookie is counted in its own bucket (same reasoning as the password step),
+ * so an attacker who has the password cannot keep the admin's own browser
+ * locked out of the code screen.
+ */
+export function twoFactorLockKey(userId: string): string {
+  return `${LOGIN_FAIL_PREFIX}2fa_${userId.slice(0, LOCK_KEY_MAX_LEN)}`;
+}
+
+export function twoFactorDeviceLockKey(deviceId: string): string {
+  return `${LOGIN_FAIL_PREFIX}2fa_dev_${deviceId.slice(0, LOCK_KEY_MAX_LEN)}`;
+}
 
 /** A lockout row's value, "count|expiresAt" (ms). Anything unreadable is 0|0. */
 export function parseLoginFailState(raw: string | null): { count: number; expiresAt: number } {
   const [countStr, expiresStr] = (raw || "0|0").split("|");
   return { count: parseInt(countStr, 10) || 0, expiresAt: parseInt(expiresStr, 10) || 0 };
+}
+
+/** Is this bucket locked right now? */
+export async function isLockedOut(lockKey: string, now: number = Date.now()): Promise<boolean> {
+  const { count, expiresAt } = parseLoginFailState(await getSetting(lockKey));
+  return count >= LOGIN_FAILURE_LIMIT && expiresAt > now;
+}
+
+/**
+ * Count one wrong answer against `lockKey`, as ONE locked read-modify-write.
+ * count + expiresAt live in one row ("count|expiresAt") so they can be locked
+ * and updated in a single step: two get-then-set round trips let concurrent
+ * failures read the same count and collapse into a single +1, so one burst of
+ * parallel requests blew through the limit.
+ */
+export async function recordLoginFailure(lockKey: string, now: number = Date.now()): Promise<void> {
+  await withTransaction(async (conn) => {
+    // Ensure the row exists so the SELECT below can actually take a row
+    // lock — locking a nonexistent row locks nothing.
+    await conn.query(
+      "INSERT INTO settings (name, value) VALUES (?, '0|0') ON DUPLICATE KEY UPDATE name = name",
+      [lockKey]
+    );
+    const [rows] = await conn.query<RowDataPacket[]>(
+      "SELECT value FROM settings WHERE name = ? FOR UPDATE",
+      [lockKey]
+    );
+    const { count, expiresAt } = parseLoginFailState(rows[0] ? String(rows[0].value) : null);
+    const stillInWindow = expiresAt > now;
+    const nextCount = stillInWindow ? count + 1 : 1;
+    const nextExpires = stillInWindow ? expiresAt : now + LOGIN_BLOCK_MS;
+    await conn.query("UPDATE settings SET value = ? WHERE name = ?", [
+      `${nextCount}|${nextExpires}`,
+      lockKey,
+    ]);
+  });
+}
+
+/** Reset a bucket after a correct answer. */
+export async function clearLoginFailures(lockKey: string): Promise<void> {
+  await setSetting(lockKey, "0|0");
 }
 
 /**

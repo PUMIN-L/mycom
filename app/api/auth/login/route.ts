@@ -1,87 +1,40 @@
 import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
-import { query, withTransaction } from "../../../lib/db";
+import { query } from "../../../lib/db";
 import { createSession } from "../../../lib/session";
 import { withRoute } from "../../../lib/apiHelpers";
-import { getSetting, setSetting } from "../../../lib/settingsStore";
 import {
   LOGIN_DEVICE_COOKIE,
   LOGIN_DEVICE_COOKIE_OPTIONS,
   issueLoginDeviceToken,
   loginDeviceIdFor,
 } from "../../../lib/loginDevice";
-import { LOGIN_FAIL_PREFIX, loginIpLimiter, parseLoginFailState } from "../../../lib/loginThrottle";
+import {
+  LOGIN_FAIL_PREFIX,
+  clearLoginFailures,
+  isLockedOut,
+  loginIpLimiter,
+  loginLockKey,
+  recordLoginFailure,
+} from "../../../lib/loginThrottle";
+import { LOGIN_2FA_COOKIE, LOGIN_2FA_COOKIE_OPTIONS, issueTwoFactorPendingToken } from "../../../lib/twoFactorPending";
 import { clientKey } from "../../../lib/rateLimit";
 import { RowDataPacket } from "mysql2";
 
 // Login throttle keyed on the *username* being targeted, persisted in the
-// settings table (same DB-backed pattern as otpAttempts.ts) so the limit is
-// shared across every serverless instance — an in-memory counter resets per
-// instance/cold-start and lets a distributed attacker get far more than
-// FAILURE_LIMIT guesses in total.
-// Keying on the account (not the client IP) is deliberate: x-forwarded-for is
-// attacker-controlled and can be rotated per request, so an IP-keyed limit is
-// trivially bypassed. A username-keyed limit throttles credential-guessing
-// against a given account regardless of the source IP, and — since it applies
-// to the raw input rather than only known accounts — an attacker can't tell
-// which usernames are real by seeing which ones eventually start 429'ing.
-// The key is truncated to bound how large a single settings row can get. The
-// *number* of distinct usernames tracked is bounded by two things outside this
-// file (app/lib/loginThrottle.ts): a per-IP attempt limit checked before any
-// of this runs, and the nightly cron deleting rows whose window has ended.
-const FAILURE_LIMIT = 5;
-const BLOCK_MS = 15 * 60 * 1000; // 15 minutes
-const LOCK_KEY_MAX_LEN = 100;
+// settings table (app/lib/loginThrottle.ts) so the limit is shared across
+// every serverless instance — an in-memory counter resets per instance and
+// lets a distributed attacker get far more than five guesses in total. Since
+// it applies to the raw input rather than only known accounts, an attacker
+// can't tell which usernames are real by seeing which ones start 429'ing.
+// The *number* of distinct usernames tracked is bounded by the per-IP limit
+// checked before any of this runs, and the nightly purge of ended windows.
 
 // A fixed, valid bcrypt hash used only to spend the same ~work when the
 // username doesn't exist, so response timing doesn't reveal whether an account
 // exists (user-enumeration side channel). It matches no real password.
 const DUMMY_PASSWORD_HASH =
   "$2b$12$k6Pr6AL.tywtgyDcnIA8pOK1FX5OK0QXvp14WbDsprFvAwmqj6bBu";
-
-function loginLockKey(username: string): string {
-  return `${LOGIN_FAIL_PREFIX}${username.toLowerCase().slice(0, LOCK_KEY_MAX_LEN)}`;
-}
-
-// count+expiresAt are kept in ONE settings row ("count|expiresAt") instead of
-// two, specifically so recordLoginFailure below can lock and update them in a
-// single atomic step — two separate get-then-set round trips (the previous
-// design) let concurrent failed attempts for the same username all read the
-// same pre-increment count and collapse into a single +1, letting an
-// attacker blow through FAILURE_LIMIT with one burst of parallel requests.
-const parseLockState = parseLoginFailState;
-
-async function isLockedOut(lockKey: string, now: number): Promise<boolean> {
-  const { count, expiresAt } = parseLockState(await getSetting(lockKey));
-  return count >= FAILURE_LIMIT && expiresAt > now;
-}
-
-async function recordLoginFailure(lockKey: string, now: number): Promise<void> {
-  await withTransaction(async (conn) => {
-    // Ensure the row exists so the SELECT below can actually take a row
-    // lock — locking a nonexistent row locks nothing.
-    await conn.query(
-      "INSERT INTO settings (name, value) VALUES (?, '0|0') ON DUPLICATE KEY UPDATE name = name",
-      [lockKey]
-    );
-    const [rows] = await conn.query<RowDataPacket[]>(
-      "SELECT value FROM settings WHERE name = ? FOR UPDATE",
-      [lockKey]
-    );
-    const { count, expiresAt } = parseLockState(rows[0] ? String(rows[0].value) : null);
-    const stillInWindow = expiresAt > now;
-    const nextCount = stillInWindow ? count + 1 : 1;
-    const nextExpires = stillInWindow ? expiresAt : now + BLOCK_MS;
-    await conn.query("UPDATE settings SET value = ? WHERE name = ?", [
-      `${nextCount}|${nextExpires}`,
-      lockKey,
-    ]);
-  });
-}
-
-async function clearLoginFailures(lockKey: string): Promise<void> {
-  await setSetting(lockKey, "0|0");
-}
 
 export const POST = withRoute(
   "เกิดข้อผิดพลาด กรุณาลองใหม่",
@@ -166,6 +119,22 @@ export const POST = withRoute(
     // counted in. A login from a trusted device must not clear the username's
     // bucket, or it would reopen a lock someone else is still hammering.
     await clearLoginFailures(lockKey);
+
+    // Two-factor accounts get NO session here — only a 5-minute pending token,
+    // good for nothing but POST /api/auth/login/2fa (its cookie path and its
+    // signing key both say so). The session, and the trusted-device cookie,
+    // are issued there once the authenticator code is right. Because the
+    // session cookie only ever exists after both factors, proxy.ts and every
+    // requireAuth() need no change at all.
+    if (Number(user.totpEnabled) === 1) {
+      const response = NextResponse.json({ twoFactorRequired: true });
+      response.cookies.set(
+        LOGIN_2FA_COOKIE,
+        await issueTwoFactorPendingToken(String(user.id), String(user.username)),
+        LOGIN_2FA_COOKIE_OPTIONS
+      );
+      return response;
+    }
 
     // Create JWT session cookie.
     await createSession(user.id, user.username);
