@@ -133,7 +133,7 @@ describe("POST /api/auth/2fa/enable", () => {
     expect(missing.status).toBe(400);
     const wrong = await enablePOST(post("/api/auth/2fa/enable", { password: "guess", code: codeFor(secret) }));
     expect(wrong.status).toBe(403);
-    expect((await wrong.json()).error).toBe("รหัสผ่านไม่ถูกต้อง");
+    expect((await wrong.json()).error).toBe("รหัสผ่านปัจจุบันไม่ถูกต้อง");
     expect(db.users.get("admin-001")!.totpEnabled).toBe(0);
   });
 

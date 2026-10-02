@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { MIN_PASSWORD_LENGTH, newPasswordProblem } from "../lib/passwordRules";
+import PasswordInput from "./PasswordInput";
 
 // /settings → "เปลี่ยนรหัสผ่าน". Two steps: the current and new password, then
 // "ส่งรหัส OTP" emails a 6-digit code to the admin's fixed address; the code
@@ -58,7 +59,11 @@ export default function PasswordSettings({ showToast }: { showToast: ShowToast }
     if (problem) return showToast(problem, "error");
     setBusy(true);
     try {
-      const res = await fetch("/api/auth/password/otp", { method: "POST" });
+      const res = await fetch("/api/auth/password/otp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ currentPassword }),
+      });
       if (!res.ok) {
         showToast(await errorFrom(res, "ส่งรหัส OTP ไม่สำเร็จ"), "error");
         return;
@@ -117,39 +122,36 @@ export default function PasswordSettings({ showToast }: { showToast: ShowToast }
         <div className="space-y-4">
           <div>
             <label htmlFor="password-current" className={labelClass}>รหัสผ่านปัจจุบัน</label>
-            <input
+            <PasswordInput
               id="password-current"
-              type="password"
               value={currentPassword}
-              onChange={(e) => setCurrentPassword(e.target.value)}
+              onChange={setCurrentPassword}
               required
               autoComplete="current-password"
-              className={inputClass}
+              inputClassName={inputClass}
             />
           </div>
           <div>
             <label htmlFor="password-new" className={labelClass}>รหัสผ่านใหม่</label>
-            <input
+            <PasswordInput
               id="password-new"
-              type="password"
               value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
+              onChange={setNewPassword}
               required
               autoComplete="new-password"
-              className={inputClass}
+              inputClassName={inputClass}
             />
             <p className="text-xs text-gray-500 mt-1">อย่างน้อย {MIN_PASSWORD_LENGTH} ตัวอักษร</p>
           </div>
           <div>
             <label htmlFor="password-confirm" className={labelClass}>ยืนยันรหัสผ่านใหม่</label>
-            <input
+            <PasswordInput
               id="password-confirm"
-              type="password"
               value={confirm}
-              onChange={(e) => setConfirm(e.target.value)}
+              onChange={setConfirm}
               required
               autoComplete="new-password"
-              className={inputClass}
+              inputClassName={inputClass}
             />
           </div>
         </div>

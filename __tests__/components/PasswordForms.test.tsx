@@ -73,6 +73,8 @@ describe("/settings → เปลี่ยนรหัสผ่าน", () => {
     fireEvent.click(screen.getByRole("button", { name: "เปลี่ยนรหัสผ่าน" }));
 
     await waitFor(() => expect(bodiesTo(fetchMock, "/api/auth/password")).toHaveLength(1));
+    // The current password goes with the code request too — checked there first.
+    expect(bodiesTo(fetchMock, "/api/auth/password/otp")).toEqual([{ currentPassword: "old-password-123" }]);
     expect(bodiesTo(fetchMock, "/api/auth/password")[0]).toEqual({
       currentPassword: "old-password-123",
       newPassword: "brand-new-password-456",
@@ -100,7 +102,7 @@ describe("/settings → เปลี่ยนรหัสผ่าน", () => {
     const fetchMock = mockNetwork({
       "/api/auth/password/otp": { status: 200, body: { success: true, sentTo: "am****@gmail.com", twoFactorRequired: false } },
       "/api/auth/password": [
-        { status: 403, body: { error: "รหัสผ่านไม่ถูกต้อง" } },
+        { status: 403, body: { error: "รหัสผ่านปัจจุบันไม่ถูกต้อง" } },
         { status: 200, body: { success: true } },
       ],
     });
@@ -112,7 +114,7 @@ describe("/settings → เปลี่ยนรหัสผ่าน", () => {
     await screen.findByLabelText("รหัส OTP จากอีเมล (6 หลัก)");
     type("รหัส OTP จากอีเมล (6 หลัก)", "482913");
     fireEvent.click(screen.getByRole("button", { name: "เปลี่ยนรหัสผ่าน" }));
-    await waitFor(() => expect(showToast).toHaveBeenCalledWith("รหัสผ่านไม่ถูกต้อง", "error"));
+    await waitFor(() => expect(showToast).toHaveBeenCalledWith("รหัสผ่านปัจจุบันไม่ถูกต้อง", "error"));
 
     expect(screen.getByLabelText("รหัสผ่านปัจจุบัน")).toBeEnabled();
     type("รหัสผ่านปัจจุบัน", "old-password-123");
@@ -135,6 +137,48 @@ describe("/settings → เปลี่ยนรหัสผ่าน", () => {
     type("รหัส OTP จากอีเมล (6 หลัก)", "000000");
     fireEvent.click(screen.getByRole("button", { name: "เปลี่ยนรหัสผ่าน" }));
     await waitFor(() => expect(showToast).toHaveBeenCalledWith("รหัส OTP ไม่ถูกต้อง", "error"));
+  });
+});
+
+// The eye button: a wrong current password — or an old one a browser
+// autofilled — is far easier to spot when it can be read.
+describe("the eye button on every password field", () => {
+  it("shows and hides each field of the settings form on its own", () => {
+    render(<PasswordSettings showToast={vi.fn()} />);
+    for (const label of ["รหัสผ่านปัจจุบัน", "รหัสผ่านใหม่", "ยืนยันรหัสผ่านใหม่"]) {
+      expect(screen.getByLabelText(label)).toHaveAttribute("type", "password");
+    }
+    const [currentEye] = screen.getAllByRole("button", { name: "แสดงรหัสผ่าน" });
+    fireEvent.click(currentEye);
+    expect(screen.getByLabelText("รหัสผ่านปัจจุบัน")).toHaveAttribute("type", "text");
+    expect(screen.getByLabelText("รหัสผ่านใหม่")).toHaveAttribute("type", "password");
+    fireEvent.click(screen.getByRole("button", { name: "ซ่อนรหัสผ่าน" }));
+    expect(screen.getByLabelText("รหัสผ่านปัจจุบัน")).toHaveAttribute("type", "password");
+    expect(screen.getAllByRole("button", { name: "แสดงรหัสผ่าน" })).toHaveLength(3);
+  });
+
+  it("the eye button never submits the form — not even a complete, valid one", async () => {
+    const fetchMock = mockNetwork({
+      "/api/auth/password/otp": { status: 200, body: { success: true, sentTo: "am****@gmail.com", twoFactorRequired: false } },
+    });
+    render(<PasswordSettings showToast={vi.fn()} />);
+    type("รหัสผ่านปัจจุบัน", "old-password-123");
+    type("รหัสผ่านใหม่", "brand-new-password-456");
+    type("ยืนยันรหัสผ่านใหม่", "brand-new-password-456");
+    for (const eye of screen.getAllByRole("button", { name: "แสดงรหัสผ่าน" })) fireEvent.click(eye);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("the forgot-password page has one on both new-password fields", async () => {
+    mockNetwork({ "/api/auth/forgot-password/otp": { status: 200, body: { success: true, message: "ok" } } });
+    render(<ForgotPasswordPage />);
+    type("Username", "admin");
+    fireEvent.click(screen.getByRole("button", { name: "ส่งรหัส OTP" }));
+    await screen.findByLabelText("รหัสผ่านใหม่");
+    expect(screen.getAllByRole("button", { name: "แสดงรหัสผ่าน" })).toHaveLength(2);
+    fireEvent.click(screen.getAllByRole("button", { name: "แสดงรหัสผ่าน" })[0]);
+    expect(screen.getByLabelText("รหัสผ่านใหม่")).toHaveAttribute("type", "text");
   });
 });
 
@@ -171,10 +215,10 @@ describe("/forgot-password", () => {
     fireEvent.click(screen.getByRole("button", { name: "ส่งรหัส OTP" }));
     await screen.findByLabelText("รหัส OTP จากอีเมล (6 หลัก)");
     type("รหัส OTP จากอีเมล (6 หลัก)", "482913");
-    type("รหัสผ่านใหม่", "short");
-    type("ยืนยันรหัสผ่านใหม่", "short");
+    type("รหัสผ่านใหม่", "abcd");
+    type("ยืนยันรหัสผ่านใหม่", "abcd");
     fireEvent.click(screen.getByRole("button", { name: "ตั้งรหัสผ่านใหม่" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("อย่างน้อย 12");
+    expect(await screen.findByRole("alert")).toHaveTextContent("อย่างน้อย 5");
     expect(bodiesTo(fetchMock, "/api/auth/forgot-password")).toHaveLength(0);
   });
 

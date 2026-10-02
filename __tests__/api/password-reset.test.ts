@@ -92,8 +92,8 @@ const post = (path: string, body?: unknown) =>
 
 /** POST /api/auth/password/otp WITH a request, as Next calls it — so the
  *  same-origin guard runs (the handler itself reads nothing from it). */
-const sendChangeOtp = () =>
-  (changeOtpPOST as unknown as (req: NextRequest) => Promise<Response>)(post("/api/auth/password/otp"));
+const sendChangeOtp = (currentPassword: string = OLD) =>
+  changeOtpPOST(post("/api/auth/password/otp", { currentPassword }));
 
 /** The code in the last email the admin received. */
 const lastOtp = () => String(vi.mocked(sendPasswordOtpEmail).mock.calls.at(-1)![1]);
@@ -182,10 +182,33 @@ describe("POST /api/auth/password — change, logged in", () => {
     expect(passwordIs(NEW)).toBe(true);
   });
 
+  // Checked when the code is asked for, so a mistyped current password is
+  // said before an email goes out — not after the admin fetched the code.
+  it("asking for a code with a wrong current password is refused, and nothing is issued or mailed", async () => {
+    const res = await sendChangeOtp("not-it-at-all");
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toBe("รหัสผ่านปัจจุบันไม่ถูกต้อง");
+    expect(sendPasswordOtpEmail).not.toHaveBeenCalled();
+    expect(db.settings.has("password_change_otp_state")).toBe(false);
+    // …and it did not use up the one-a-minute issue throttle either.
+    expect((await sendChangeOtp()).status).toBe(200);
+    // Counted like every other wrong password in /settings.
+    expect(db.settings.has("login_fail_reauth_pw_admin-001")).toBe(true);
+  });
+
+  it("asking for a code needs the current password at all", async () => {
+    const res = await changeOtpPOST(post("/api/auth/password/otp", {}));
+    expect(res.status).toBe(400);
+    expect(sendPasswordOtpEmail).not.toHaveBeenCalled();
+  });
+
   it("a wrong current password is refused — and does not spend the code", async () => {
     const otp = await sendCode();
     const wrong = await change({ currentPassword: "not-it-at-all", newPassword: NEW, otp });
     expect(wrong.status).toBe(403);
+    // Names the field: next to an OTP and a 2FA code, a bare "รหัสผ่านไม่ถูกต้อง"
+    // was read as "the code is wrong".
+    expect((await wrong.json()).error).toBe("รหัสผ่านปัจจุบันไม่ถูกต้อง");
     expect(passwordIs(OLD)).toBe(true);
     expect((await change({ currentPassword: OLD, newPassword: NEW, otp })).status).toBe(200);
   });
@@ -226,7 +249,7 @@ describe("POST /api/auth/password — change, logged in", () => {
   });
 
   it.each([
-    ["too short", "short-pw", "อย่างน้อย 12"],
+    ["too short (under 5 characters)", "abcd", "อย่างน้อย 5"],
     ["over bcrypt's 72 bytes (25 Thai characters are 75)", "ก".repeat(25), "ยาวเกินไป"],
     ["the same as the current one", OLD, "ไม่ซ้ำกับรหัสผ่านเดิม"],
     ["padded with spaces", " brand-new-password ", "ช่องว่าง"],

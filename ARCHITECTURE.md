@@ -1063,7 +1063,11 @@ rules in [`lib/passwordRules.ts`](./app/lib/passwordRules.ts)):
 - **Change** (/settings → เปลี่ยนรหัสผ่าน, `POST /api/auth/password/otp` then
   `POST /api/auth/password`) needs the session, the current password
   (`requirePassword`, the settings' own re-auth bucket), the emailed code and,
-  while 2FA is on, an app or backup code. **Forgot** (/forgot-password, public,
+  while 2FA is on, an app or backup code. The current password is checked
+  when the code is ASKED FOR too, so a wrong one is reported before an email
+  goes out. It is checked again at the end, because the field stays editable.
+  The refusal says "รหัสผ่านปัจจุบันไม่ถูกต้อง". A bare "รหัสผ่านไม่ถูกต้อง"
+  next to an OTP and a 2FA code was read as "the code is wrong". **Forgot** (/forgot-password, public,
   `POST /api/auth/forgot-password/otp` then `POST /api/auth/forgot-password`)
   needs the emailed code and, while 2FA is on, an app or backup code (its own
   bucket, `login_fail_reset_2fa_<id>`). Inbox access alone cannot take over a
@@ -1097,7 +1101,8 @@ rules in [`lib/passwordRules.ts`](./app/lib/passwordRules.ts)):
   transactions, milliseconds). "This account needs a 2FA code" is said only to
   whoever holds the emailed code. There is no "same as the old password?" check there:
   without the old password it would be a free password oracle.
-- **New password:** at least 12 characters and at most 72 BYTES (bcrypt
+- **New password:** at least 5 characters (the owner's choice; online guessing
+  stays capped by the lockout and 2FA) and at most 72 BYTES (bcrypt
   silently ignores the rest; 24 Thai characters), no leading or trailing
   space, not the username. Hashed with bcrypt cost 12.
 - **Afterwards every earlier session and trusted device is void** (session
@@ -1111,7 +1116,8 @@ rules in [`lib/passwordRules.ts`](./app/lib/passwordRules.ts)):
 ### 11. Shared UI components — don't re-implement inline
 [`app/components/`](./app/components/): `ConfirmDialog`, `Toast`, `Spinner`,
 `ColorPickerDropdown`, `BlockRangeControl` (image-size / block-spacing slider with
-−/+ steps + live readout), `RichTextEditor`. Import the shared version instead of
+−/+ steps + live readout), `RichTextEditor`, `PasswordInput` (a password field
+with an eye button that shows what was typed). Import the shared version instead of
 defining a local one.
 
 **Dropdowns are always [`SearchableDropdown`](./app/components/SearchableDropdown.tsx),

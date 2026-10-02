@@ -26,6 +26,8 @@ import { verifySecondFactor, type TwoFactorUser } from "./twoFactor";
 // attempt BEFORE comparing (takeLoginAttempt), so parallel guesses cannot
 // all slip past the lockout.
 
+export const CURRENT_PASSWORD_WRONG = "รหัสผ่านปัจจุบันไม่ถูกต้อง";
+
 export async function requirePassword(user: TwoFactorUser, password: unknown): Promise<NextResponse | null> {
   if (typeof password !== "string" || !password) {
     return NextResponse.json({ error: "กรุณากรอกรหัสผ่าน" }, { status: 400 });
@@ -38,7 +40,10 @@ export async function requirePassword(user: TwoFactorUser, password: unknown): P
     );
   }
   if (!(await bcrypt.compare(password, user.passwordHash))) {
-    return NextResponse.json({ error: "รหัสผ่านไม่ถูกต้อง" }, { status: 403 });
+    // "ปัจจุบัน": every form that asks for it labels the field รหัสผ่านปัจจุบัน,
+    // and next to an OTP and a 2FA code a bare "รหัสผ่านไม่ถูกต้อง" read as
+    // "the code you just typed is wrong".
+    return NextResponse.json({ error: CURRENT_PASSWORD_WRONG }, { status: 403 });
   }
   // Right: reset this user's re-auth bucket, as the login page resets its own.
   await clearLoginFailures(lockKey);

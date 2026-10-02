@@ -2,7 +2,9 @@
 // types, and the server (/api/auth/password, /api/auth/forgot-password)
 // checks it again, with these same rules, before anything is stored.
 
-export const MIN_PASSWORD_LENGTH = 12;
+/** The owner's choice (it was 12). Guessing online stays capped by the login
+ *  lockout — 5 tries per 15 minutes per username — and by 2FA. */
+export const MIN_PASSWORD_LENGTH = 5;
 /** bcrypt reads the first 72 BYTES and silently ignores the rest — a Thai
  *  character is 3 — so a longer password would be a shorter one in disguise. */
 export const MAX_PASSWORD_BYTES = 72;

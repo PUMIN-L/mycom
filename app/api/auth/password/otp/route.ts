@@ -1,8 +1,9 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { withRoute, requireAuth } from "../../../../lib/apiHelpers";
 import { getTwoFactorUser } from "../../../../lib/twoFactor";
 import { isMailConfigured, sendPasswordOtpEmail } from "../../../../lib/mailer";
 import { otpIssueRefused } from "../../../../lib/otpAttempts";
+import { requirePassword } from "../../../../lib/twoFactorReauth";
 import {
   issuePasswordOtp,
   maskEmail,
@@ -13,14 +14,22 @@ import {
 // POST /api/auth/password/otp — step one of "เปลี่ยนรหัสผ่าน" in /settings:
 // email a 6-digit code to the fixed address (lib/passwordReset.ts). The
 // password itself changes in POST /api/auth/password.
+//
+// Body: { currentPassword }. Checked HERE, before any code is issued or
+// mailed, so a mistyped current password is said at once rather than after
+// the admin has fetched a code from the inbox (and only then learned the code
+// was never the problem). POST /api/auth/password checks it again — the field
+// stays editable after this step. Counted in the same re-auth bucket.
 export const POST = withRoute(
   "ส่งรหัส OTP ไม่สำเร็จ",
-  // No parameter: nothing is read from the request. withRoute still receives
-  // it at runtime, so the same-origin guard applies all the same.
-  async () => {
+  async (request: NextRequest) => {
     const session = await requireAuth();
+    const body = (await request.json()) as { currentPassword?: unknown };
     const user = await getTwoFactorUser(session.userId);
     if (!user) return NextResponse.json({ error: "ไม่พบบัญชีผู้ใช้" }, { status: 404 });
+
+    const passwordRefusal = await requirePassword(user, body.currentPassword);
+    if (passwordRefusal) return passwordRefusal;
     if (!isMailConfigured()) {
       return NextResponse.json(
         { error: "ระบบอีเมลยังไม่ได้ตั้งค่า (SMTP_USER/PASS) จึงไม่สามารถส่ง OTP ได้" },

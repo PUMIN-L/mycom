@@ -3,6 +3,16 @@ import { describe, it, expect } from 'vitest';
 import { MAX_PASSWORD_BYTES, MIN_PASSWORD_LENGTH, newPasswordProblem } from '@/app/lib/passwordRules';
 
 describe('newPasswordProblem', () => {
+  it(`takes ${MIN_PASSWORD_LENGTH} characters and no fewer — the owner's minimum is 5`, () => {
+    expect(MIN_PASSWORD_LENGTH).toBe(5);
+    expect(newPasswordProblem('abcde', 'admin')).toBeNull();
+    expect(newPasswordProblem('abcd', 'admin')).toBe('รหัสผ่านใหม่ต้องยาวอย่างน้อย 5 ตัวอักษร');
+  });
+
+  it('refuses the username itself even at the minimum length', () => {
+    expect(newPasswordProblem('ADMIN', 'admin')).toBe('รหัสผ่านใหม่ต้องไม่เหมือนชื่อผู้ใช้');
+  });
+
   it('accepts a long enough password', () => {
     expect(newPasswordProblem('correct-horse-battery', 'admin')).toBeNull();
     expect(newPasswordProblem('x'.repeat(MAX_PASSWORD_BYTES), 'admin')).toBeNull();

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { MIN_PASSWORD_LENGTH, newPasswordProblem } from "../lib/passwordRules";
+import PasswordInput from "../components/PasswordInput";
 
 // "ลืมรหัสผ่าน" — public. Step one asks for the username and has a 6-digit
 // code emailed to the admin's fixed address; step two takes that code, the
@@ -153,27 +154,27 @@ export default function ForgotPasswordPage() {
               </div>
               <div>
                 <label htmlFor="forgot-new-password" className={labelClass}>รหัสผ่านใหม่</label>
-                <input
+                <PasswordInput
                   id="forgot-new-password"
-                  type="password"
                   value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
+                  onChange={setNewPassword}
                   required
                   autoComplete="new-password"
-                  className={inputClass}
+                  inputClassName={inputClass}
+                  tone="dark"
                 />
                 <p className="text-xs text-gray-500 mt-1">อย่างน้อย {MIN_PASSWORD_LENGTH} ตัวอักษร</p>
               </div>
               <div>
                 <label htmlFor="forgot-confirm" className={labelClass}>ยืนยันรหัสผ่านใหม่</label>
-                <input
+                <PasswordInput
                   id="forgot-confirm"
-                  type="password"
                   value={confirm}
-                  onChange={(e) => setConfirm(e.target.value)}
+                  onChange={setConfirm}
                   required
                   autoComplete="new-password"
-                  className={inputClass}
+                  inputClassName={inputClass}
+                  tone="dark"
                 />
               </div>
               <div>
