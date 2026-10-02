@@ -215,22 +215,35 @@ describe("emailed OTP codes under a burst", () => {
 describe("a right answer is not penalised by the counting", () => {
   it("a correct login resets the bucket it took from", async () => {
     await loginPOST(post("http://localhost/api/auth/login", { username: "admin", password: "nope" }, ipFor(0)));
-    expect(db.settings.get("login_fail_admin")?.startsWith("1|")).toBe(true);
+    expect(db.settings.get("login_fail_u_admin")?.startsWith("1|")).toBe(true);
     const ok = await loginPOST(post("http://localhost/api/auth/login", { username: "admin", password: "right-pw" }, ipFor(1)));
     expect(ok.status).toBe(200);
-    expect(db.settings.get("login_fail_admin")).toBe("0|0");
+    expect(db.settings.get("login_fail_u_admin")).toBe("0|0");
   });
 
-  // The username's bucket is also filled by strangers on the login page; a
-  // right password in settings hands back only its own attempt.
-  it("a correct password in settings gives back its attempt, without wiping others'", async () => {
+  // Settings re-auth counts in its own bucket: neither touches the other.
+  it("a correct password in settings leaves the login page's bucket exactly as strangers left it", async () => {
     await enrol();
     vi.mocked(getSession).mockResolvedValue({ userId: "admin-001", username: "admin", expiresAt: new Date() } as never);
     for (let i = 0; i < 3; i++) {
       await loginPOST(post("http://localhost/api/auth/login", { username: "admin", password: "nope" }, ipFor(i)));
     }
-    expect(db.settings.get("login_fail_admin")?.startsWith("3|")).toBe(true);
+    expect(db.settings.get("login_fail_u_admin")?.startsWith("3|")).toBe(true);
     await disablePOST(post("http://localhost/api/auth/2fa/disable", { password: "right-pw", code: "000000" }, ipFor(9)));
-    expect(db.settings.get("login_fail_admin")?.startsWith("3|")).toBe(true);
+    expect(db.settings.get("login_fail_u_admin")?.startsWith("3|")).toBe(true);
+    expect(db.settings.get("login_fail_reauth_pw_admin-001")).toBe("0|0"); // right password: its own bucket reset
   });
+
+  // The username is the one bucket name a stranger chooses. Unprefixed, the
+  // username "2fa_admin-001" WAS the admin's code bucket.
+  it.each(["2fa_admin-001", "reauth_pw_admin-001", "reauth_2fa_admin-001", "2fa_dev_x", "dev_x"])(
+    "logging in as %p fills only that made-up name's bucket, never one of the admin's",
+    async (name) => {
+      for (let i = 0; i < 5; i++) {
+        await loginPOST(post("http://localhost/api/auth/login", { username: name, password: "nope" }, ipFor(i)));
+      }
+      expect(db.settings.get(`login_fail_u_${name}`)?.startsWith("5|")).toBe(true);
+      expect(db.settings.has(`login_fail_${name}`)).toBe(false);
+    }
+  );
 });

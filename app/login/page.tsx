@@ -186,6 +186,12 @@ export default function LoginPage() {
                 "เข้าสู่ระบบ"
               )}
             </button>
+
+            <p className="text-center text-sm">
+              <a href="/forgot-password" className="text-orange-400 hover:text-orange-300 transition">
+                ลืมรหัสผ่าน?
+              </a>
+            </p>
           </form>
           ) : (
           <form onSubmit={handleCodeSubmit} className="space-y-5" aria-label="ยืนยันตัวตน 2 ขั้น">

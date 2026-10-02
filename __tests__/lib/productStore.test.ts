@@ -39,6 +39,8 @@ import {
   BestSellerRankConflictError,
 } from '@/app/lib/productStore';
 import type { ProductData } from '@/app/lib/productStore';
+import { RichTextTooLongError } from '@/app/lib/richTextLimits';
+import { stripHtml } from '@/app/lib/stripHtml';
 
 // A DB row as SELECT * returns it (isPublished stored as 0/1 by MySQL BOOLEAN).
 const makeRow = (over: Record<string, unknown> = {}) => ({
@@ -202,10 +204,14 @@ describe('productStore', () => {
       expect(params.slice(0, 3)).toEqual([stored!.name_th, stored!.name_en, stored!.name_zh]);
     });
 
-    it('caps each name at 255 characters like addCategory', async () => {
+    // It used to cut the name to 255 characters OF HTML — mid-tag, for a
+    // formatted name. Over 255 characters of text is refused, nothing written.
+    it('refuses a name over 255 characters of text (400), instead of cutting it', async () => {
       vi.mocked(query).mockResolvedValue([{ affectedRows: 1 }] as never);
-      const stored = await updateCategory(4, { name_th: 'ก'.repeat(300), name_en: 'e', name_zh: 'z' });
-      expect(stored!.name_th).toHaveLength(255);
+      const attempt = updateCategory(4, { name_th: 'ก'.repeat(256), name_en: 'e', name_zh: 'z' });
+      await expect(attempt).rejects.toBeInstanceOf(RichTextTooLongError);
+      await expect(attempt).rejects.toMatchObject({ status: 400, message: expect.stringContaining('ชื่อหมวดหมู่ (ภาษาไทย)') });
+      expect(query).not.toHaveBeenCalled();
     });
   });
 
@@ -908,5 +914,123 @@ describe('productStore', () => {
     it('treats a missing isPublished field as published (legacy rows)', () => {
       expect(isProductPublic({ isPublished: undefined as any, pendingDeleteAt: null })).toBe(true);
     });
+  });
+});
+
+// Rich text is limited by its TEXT — what the forms count — and refused when
+// over, never cut by length of HTML. The cut left "…</span></stro", which
+// swallowed the rest of the page when rendered (lib/richTextLimits.ts).
+describe('productStore — rich text is refused when too long, never cut', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  // What the editor hands over for a bold, large, partly coloured title.
+  const formatted = (text: string) =>
+    `<p><strong><span class="ql-size-large">${text}</span></strong> <span style="color: rgb(230, 0, 0);">รุ่นใหม่</span></p>`;
+  const base: ProductData = {
+    id: 'rt-1',
+    categoryId: 1,
+    image: '/img/x.png',
+    title_th: 'ท',
+    title_en: 'T',
+    title_zh: 'T',
+    desc_th: '',
+    desc_en: '',
+    desc_zh: '',
+    createdAt: '2026-10-02T00:00:00.000Z',
+    isPublished: true,
+    sortOrder: 0,
+  };
+  const stubInsert = () => {
+    const conn = { query: vi.fn().mockResolvedValue([{ affectedRows: 1 }] as never) };
+    vi.mocked(withTransaction).mockImplementation(async (fn) => fn(conn as never));
+    return () => conn.query.mock.calls.find((c) => String(c[0]).includes('INSERT INTO products'))!;
+  };
+
+  it('stores a formatted title whose HTML is far over 255 WHOLE, every tag closed', async () => {
+    const insertCall = stubInsert();
+    const title = formatted('Digital Analytical Balance 220g x 0.0001g with Internal Calibration '.repeat(3).trim());
+    expect(stripHtml(title).length).toBeLessThanOrEqual(255);
+    const product = await addProduct({ ...base, title_en: title });
+    expect(product.title_en.length).toBeGreaterThan(255);
+    expect(product.title_en.endsWith('</span></p>')).toBe(true);
+    expect(insertCall()[1]).toContain(product.title_en);
+  });
+
+  it('counts an entity as the one character the form counts — 255 "&" is a full title, not 1,275', async () => {
+    stubInsert();
+    const product = await addProduct({ ...base, title_en: `<p>${'&amp;'.repeat(255)}</p>` });
+    expect(stripHtml(product.title_en)).toBe('&'.repeat(255));
+  });
+
+  it.each([
+    ['title_th', 'ชื่อสินค้า (ภาษาไทย)', 256],
+    ['title_zh', 'ชื่อสินค้า (ภาษาจีน)', 256],
+    ['desc_en', 'รายละเอียดสินค้า (ภาษาอังกฤษ)', 10_001],
+  ] as const)('refuses %s over its limit with a 400 that names it, and writes nothing', async (field, label, length) => {
+    stubInsert();
+    const attempt = addProduct({ ...base, [field]: formatted('x'.repeat(length)) });
+    await expect(attempt).rejects.toBeInstanceOf(RichTextTooLongError);
+    await expect(attempt).rejects.toMatchObject({ status: 400, message: expect.stringContaining(label) });
+    expect(withTransaction).not.toHaveBeenCalled();
+  });
+
+  it('accepts a description of exactly 10,000 characters of text, formatting on top', async () => {
+    const insertCall = stubInsert();
+    const product = await addProduct({ ...base, desc_th: formatted('ก'.repeat(10_000 - 'รุ่นใหม่'.length - 1)) });
+    expect(stripHtml(product.desc_th).length).toBe(10_000);
+    expect(insertCall()[1]).toContain(product.desc_th);
+  });
+
+  it('refuses HTML past what the column can hold, even when the text fits', async () => {
+    stubInsert();
+    // 250 characters of text inside ~22,500 of HTML (TITLE_LIMIT.html is 16,000)
+    const tooMuchMarkup = `<p>${'<strong>x</strong>'.repeat(250)}${'<em></em>'.repeat(2_000)}</p>`;
+    expect(stripHtml(tooMuchMarkup).length).toBe(250);
+    await expect(addProduct({ ...base, title_en: tooMuchMarkup })).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringContaining('จัดรูปแบบ'),
+    });
+  });
+
+  it('updateProduct refuses a title over 255 characters of text, and writes nothing', async () => {
+    vi.mocked(query).mockImplementation(async (sql: string) => {
+      if (sql.includes('SELECT * FROM products')) return [[makeRow()]] as never;
+      return [[]] as never;
+    });
+    await expect(updateProduct('p1', { title_th: formatted('ก'.repeat(256)) })).rejects.toMatchObject({ status: 400 });
+    expect(withTransaction).not.toHaveBeenCalled();
+  });
+
+  it('updateProduct stores a long formatted title whole', async () => {
+    vi.mocked(query).mockImplementation(async (sql: string) => {
+      if (sql.includes('SELECT * FROM products')) return [[makeRow()]] as never;
+      return [[]] as never;
+    });
+    const conn = { query: vi.fn().mockResolvedValue([{ affectedRows: 1 }] as never) };
+    vi.mocked(withTransaction).mockImplementation(async (fn) => fn(conn as never));
+    const title = formatted('ก'.repeat(240));
+    await updateProduct('p1', { title_th: title });
+    const update = conn.query.mock.calls.find((c) => String(c[0]).startsWith('UPDATE products'))!;
+    expect((update[1] as unknown[])[0]).toMatch(/<\/span><\/p>$/);
+    expect(String((update[1] as unknown[])[0]).length).toBeGreaterThan(255);
+  });
+
+  it('addCategory stores a formatted name whole, and refuses one over 255 characters of text', async () => {
+    vi.mocked(query).mockImplementation(async (sql: string) =>
+      sql.includes('MAX(id)') ? ([[{ maxId: 3 }]] as never) : ([{ affectedRows: 1 }] as never)
+    );
+    const name = formatted('Precision Balances '.repeat(12).trim());
+    const cat = await addCategory({ name_th: name, name_en: 'E', name_zh: 'Z' });
+    expect(cat.name_th.length).toBeGreaterThan(255);
+    expect(cat.name_th.endsWith('</span></p>')).toBe(true);
+
+    vi.mocked(query).mockClear();
+    await expect(addCategory({ name_th: 'ก', name_en: 'e'.repeat(256), name_zh: 'Z' })).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringContaining('ชื่อหมวดหมู่ (ภาษาอังกฤษ)'),
+    });
+    expect(query).not.toHaveBeenCalled();
   });
 });

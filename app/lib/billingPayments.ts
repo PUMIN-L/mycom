@@ -122,15 +122,30 @@ export const RECEIPT_SUPERSEDED_VOID_REASON = "ถูกแทนที่ด้
  * Re-sum a document's LIVE payments and write the result to its cached
  * `paidAmount`. Always called on the transaction connection that just changed
  * those payments, never on its own.
+ *
+ * ⚠️ LOCK THE DOCUMENT, THEN SUM WITH A LOCKING READ. A plain SELECT reads the
+ * transaction's snapshot — on TiDB the one taken when it began — which does
+ * not hold a payment another transaction committed a moment ago. Two payments
+ * recorded on one invoice at once (two tabs, or a receipt saved while a
+ * payment is recorded) each summed only their own, and the cache kept
+ * whichever UPDATE ran last: one payment missing from paidAmount, and so from
+ * the receivables and open-invoice lists, until the next change to that
+ * invoice. Now every recompute takes the invoice's row lock first, which waits
+ * for any other transaction recomputing it to commit; the FOR UPDATE sum then
+ * reads the latest committed rows, so the last to commit counts everything.
+ * (FOR UPDATE alone is not enough: it does not wait for a payment another
+ * transaction has inserted but not yet committed — the invoice lock does.)
  */
 export async function recomputePaidAmount(
   conn: Queryable,
   billingDocumentId: string
 ): Promise<number> {
+  await conn.query("SELECT id FROM billing_documents WHERE id = ? FOR UPDATE", [billingDocumentId]);
   const [rows] = await conn.query<RowDataPacket[]>(
     `SELECT COALESCE(SUM(amount), 0) AS paid
        FROM billing_payments
-      WHERE billingDocumentId = ? AND voidedAt IS NULL`,
+      WHERE billingDocumentId = ? AND voidedAt IS NULL
+        FOR UPDATE`,
     [billingDocumentId]
   );
   const paid = Number(rows[0]?.paid) || 0;

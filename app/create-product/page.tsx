@@ -170,7 +170,9 @@ export default function CreateProduct() {
         });
 
         if (!catRes.ok) {
-          throw new Error("Failed to create new category");
+          // The server says why (e.g. a name over 255 characters) — show that.
+          const errData = await catRes.json().catch(() => ({}));
+          throw new Error(errData.error || "สร้างหมวดหมู่ใหม่ไม่สำเร็จ");
         }
 
         const newCat = await catRes.json();
@@ -200,9 +202,12 @@ export default function CreateProduct() {
       });
 
       if (!response.ok) {
+        // The server's own message first — a 400 names the field that is too
+        // long; `details` exists only outside production.
         let errMsg = "Failed to save product";
         try {
           const errData = await response.json();
+          if (errData.error) errMsg = errData.error;
           if (errData.details) errMsg += ` (${errData.details})`;
         } catch (_) {}
         throw new Error(errMsg);

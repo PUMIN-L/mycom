@@ -6,6 +6,7 @@ import { useAuth } from "../context/AuthContext";
 import Toast from "../components/Toast";
 import ConfirmDialog from "../components/ConfirmDialog";
 import TwoFactorSettings from "../components/TwoFactorSettings";
+import PasswordSettings from "../components/PasswordSettings";
 
 interface OrphanAsset {
   publicId: string;
@@ -995,6 +996,9 @@ export default function SettingsPage() {
 
         {/* ── ออกจากระบบอุปกรณ์อื่น ─────────────────────────────────────── */}
         <SessionsSection showToast={showToast} />
+
+        {/* ── เปลี่ยนรหัสผ่าน ─────────────────────────────────────────────── */}
+        <PasswordSettings showToast={showToast} />
 
         {/* ── ยืนยันตัวตน 2 ขั้น (2FA) ───────────────────────────────────── */}
         <TwoFactorSettings showToast={showToast} />

@@ -674,3 +674,46 @@ describe('contentStore', () => {
     });
   });
 });
+
+// The title is limited by its TEXT — what the form counts — and refused when
+// over, never cut by length of HTML (lib/richTextLimits.ts).
+describe('contentStore — the title is refused when too long, never cut', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const formatted = (text: string) =>
+    `<p><strong><span class="ql-size-huge" style="color: rgb(230, 0, 0);">${text}</span></strong></p>`;
+  const base: ContentData = {
+    id: 'c-rt',
+    title: 'x',
+    blocks: [],
+    createdAt: '2026-10-02T00:00:00Z',
+    productId: null,
+  };
+
+  it('addContent stores a formatted title whose HTML is over 255 WHOLE', async () => {
+    stubNoConflict();
+    const title = formatted('ก'.repeat(230));
+    const result = await addContent({ ...base, title });
+    const [, params] = connInsertCall();
+    expect(String(params[1]).length).toBeGreaterThan(255);
+    expect(params[1]).toMatch(/<\/span><\/strong><\/p>$/);
+    expect(result.title).toBe(params[1]);
+  });
+
+  it('addContent refuses a title over 255 characters of text (400), and inserts nothing', async () => {
+    stubNoConflict();
+    await expect(addContent({ ...base, title: formatted('ก'.repeat(256)) })).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringContaining('หัวข้อคอนเทนต์'),
+    });
+    expect(connInsertCall()).toBeUndefined();
+  });
+
+  it('updateContent refuses a title over 255 characters of text, and updates nothing', async () => {
+    mockedQuery.mockResolvedValueOnce([[{ id: 'c-1', title: 'Old', blocks: '[]', createdAt: '2026-01-01', productId: null }]] as never);
+    await expect(updateContent('c-1', { title: 'x'.repeat(256) })).rejects.toMatchObject({ status: 400 });
+    expect(mockedQuery.mock.calls.some(([sql]) => String(sql).startsWith('UPDATE'))).toBe(false);
+  });
+});

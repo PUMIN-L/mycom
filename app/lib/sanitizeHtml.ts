@@ -111,3 +111,19 @@ export function sanitizePlainText(text: string | null | undefined): string {
     .replace(/&gt;/g, ">")
     .replace(/&amp;/g, "&");
 }
+
+/**
+ * Stored rich text that an old `.substring(cap)` cut mid-tag ("…</span></stro"),
+ * well-formed again — for the v46 bootstrap repair (db.ts). A tag or entity
+ * left half-written at the end is dropped, and the sanitizer closes every
+ * element still open. The text that was cut off is gone; this only stops the
+ * broken markup from swallowing the page around it.
+ *
+ * Null when `stored` is not broken. Sanitizing again also turns its U+00A0
+ * characters into spaces (normalizeNbsp) — which every page does when it
+ * shows them anyway, so that alone is not damage and not worth a write.
+ */
+export function repairTruncatedRichText(stored: string): string | null {
+  const repaired = sanitizeRichText(stored.replace(/<[^>]*$/, "").replace(/&[#a-z0-9]*$/i, ""));
+  return repaired === normalizeNbsp(stored) ? null : repaired;
+}

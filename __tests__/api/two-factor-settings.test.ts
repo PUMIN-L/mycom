@@ -137,14 +137,15 @@ describe("POST /api/auth/2fa/enable", () => {
     expect(db.users.get("admin-001")!.totpEnabled).toBe(0);
   });
 
-  it("five wrong passwords lock it, in the same bucket as the login screen", async () => {
+  it("five wrong passwords lock it — in the settings' own bucket, not the login screen's", async () => {
     const secret = await startSetup();
     for (let i = 0; i < 5; i++) {
       await enablePOST(post("/api/auth/2fa/enable", { password: "guess", code: codeFor(secret) }));
     }
     const res = await enablePOST(post("/api/auth/2fa/enable", { password: PASSWORD, code: codeFor(secret) }));
     expect(res.status).toBe(429);
-    expect(db.settings.get("login_fail_admin")?.startsWith("5|")).toBe(true);
+    expect(db.settings.get("login_fail_reauth_pw_admin-001")?.startsWith("5|")).toBe(true);
+    expect(db.settings.has("login_fail_u_admin")).toBe(false);
   });
 
   it("needs a code from the phone that scanned THIS QR", async () => {
@@ -152,14 +153,15 @@ describe("POST /api/auth/2fa/enable", () => {
     const res = await enablePOST(post("/api/auth/2fa/enable", { password: PASSWORD, code: "000000" }));
     expect(res.status).toBe(403);
     expect(db.users.get("admin-001")!.totpEnabled).toBe(0);
-    expect(db.settings.get("login_fail_2fa_admin-001")?.startsWith("1|")).toBe(true);
+    expect(db.settings.get("login_fail_reauth_2fa_admin-001")?.startsWith("1|")).toBe(true);
+    expect(db.settings.has("login_fail_2fa_admin-001")).toBe(false); // the login step's bucket is not this one
   });
 
   it("says to start over when nothing is pending — and that is not counted as a guess", async () => {
     const res = await enablePOST(post("/api/auth/2fa/enable", { password: PASSWORD, code: "123456" }));
     expect(res.status).toBe(400);
     // The attempt taken before checking is handed back: no code was guessed.
-    expect(db.settings.get("login_fail_2fa_admin-001")?.startsWith("0|")).toBe(true);
+    expect(db.settings.get("login_fail_reauth_2fa_admin-001")?.startsWith("0|")).toBe(true);
   });
 
   it("turns it on, hands the backup codes over once, and logs every other browser out", async () => {
@@ -196,6 +198,46 @@ describe("POST /api/auth/2fa/enable", () => {
     await turnOn();
     const res = await enablePOST(post("/api/auth/2fa/enable", { password: PASSWORD, code: "123456" }));
     expect(res.status).toBe(409);
+  });
+});
+
+// The re-auth used to count in the LOGIN page's buckets, which anyone can
+// fill: five wrong logins as "admin" — or as "2fa_admin-001", which was the
+// admin's code bucket by name — kept him, logged in on his own browser, out of
+// every one of these settings for as long as someone kept it up.
+describe("strangers on the login page cannot lock the admin out of these settings", () => {
+  const LOCKED = () => `5|${Date.now() + 10 * 60_000}`;
+
+  it("with the username's bucket and the login code step's bucket full, he can still turn 2FA on", async () => {
+    db.settings.set("login_fail_u_admin", LOCKED());
+    db.settings.set("login_fail_2fa_admin-001", LOCKED());
+    const secret = await startSetup();
+    const res = await enablePOST(post("/api/auth/2fa/enable", { password: PASSWORD, code: codeFor(secret) }));
+    expect(res.status).toBe(200);
+  });
+
+  it("…and off again, and mint new backup codes", async () => {
+    const { secret } = await turnOn();
+    db.settings.set("login_fail_u_admin", LOCKED());
+    db.settings.set("login_fail_2fa_admin-001", LOCKED());
+    const later = Date.now() + 60_000; // a fresh code — the one turnOn used is spent
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(later);
+    const codes = await backupPOST(post("/api/auth/2fa/backup-codes", { password: PASSWORD, code: codeFor(secret) }));
+    vi.setSystemTime(later + 30_000);
+    const off = await disablePOST(post("/api/auth/2fa/disable", { password: PASSWORD, code: codeFor(secret) }));
+    vi.useRealTimers();
+    expect(codes.status).toBe(200);
+    expect(off.status).toBe(200);
+  });
+
+  it("and what he gets wrong here does not count against the login page", async () => {
+    const secret = await startSetup();
+    for (let i = 0; i < 3; i++) {
+      await enablePOST(post("/api/auth/2fa/enable", { password: "guess", code: codeFor(secret) }));
+    }
+    expect(db.settings.has("login_fail_u_admin")).toBe(false);
+    expect(db.settings.get("login_fail_reauth_pw_admin-001")?.startsWith("3|")).toBe(true);
   });
 });
 

@@ -3,10 +3,9 @@ import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import {
   clearLoginFailures,
-  loginLockKey,
-  refundLoginAttempt,
+  reauthCodeLockKey,
+  reauthPasswordLockKey,
   takeLoginAttempt,
-  twoFactorLockKey,
 } from "./loginThrottle";
 import { verifySecondFactor, type TwoFactorUser } from "./twoFactor";
 
@@ -15,8 +14,11 @@ import { verifySecondFactor, type TwoFactorUser } from "./twoFactor";
 // has walked up to an unlocked browser, or stolen a session cookie, could
 // otherwise switch 2FA on with HIS phone and lock the real admin out, or
 // switch it off. So these ask for the password again — and, once 2FA is on,
-// a code — each counted in the same lockout buckets as the login screen
-// (lib/loginThrottle.ts), so a stolen session cannot be used to guess either.
+// a code — each counted in a lockout bucket of its own per user
+// (reauthPasswordLockKey / reauthCodeLockKey in lib/loginThrottle.ts): five
+// guesses per 15 minutes, so a stolen session cannot guess its way through,
+// and NOT the login page's buckets, which strangers can fill — sharing the
+// username's let anyone keep the admin out of these settings.
 //
 // Each check returns null when it passes, or the response to send.
 // 403 rather than 401 for a wrong answer: the settings page reads 401 as
@@ -28,7 +30,7 @@ export async function requirePassword(user: TwoFactorUser, password: unknown): P
   if (typeof password !== "string" || !password) {
     return NextResponse.json({ error: "กรุณากรอกรหัสผ่าน" }, { status: 400 });
   }
-  const lockKey = loginLockKey(user.username);
+  const lockKey = reauthPasswordLockKey(user.id);
   if (!(await takeLoginAttempt(lockKey))) {
     return NextResponse.json(
       { error: "ใส่รหัสผ่านผิดหลายครั้งเกินไป กรุณารอ 15 นาทีแล้วลองใหม่" },
@@ -38,10 +40,8 @@ export async function requirePassword(user: TwoFactorUser, password: unknown): P
   if (!(await bcrypt.compare(password, user.passwordHash))) {
     return NextResponse.json({ error: "รหัสผ่านไม่ถูกต้อง" }, { status: 403 });
   }
-  // Right: hand the attempt back rather than reset the bucket. This is the
-  // USERNAME's bucket, which strangers on the login page also fill; a correct
-  // password here must not wipe a lock someone else is still hammering.
-  await refundLoginAttempt(lockKey);
+  // Right: reset this user's re-auth bucket, as the login page resets its own.
+  await clearLoginFailures(lockKey);
   return null;
 }
 
@@ -51,7 +51,7 @@ export async function requireSecondFactor(user: TwoFactorUser, code: unknown): P
   if (typeof code !== "string" || !code.trim() || code.length > 64) {
     return NextResponse.json({ error: "กรุณากรอกรหัส 6 หลักจากแอป หรือรหัสสำรอง" }, { status: 400 });
   }
-  const lockKey = twoFactorLockKey(user.id);
+  const lockKey = reauthCodeLockKey(user.id);
   if (!(await takeLoginAttempt(lockKey))) {
     return NextResponse.json(
       { error: "ใส่รหัสผิดหลายครั้งเกินไป กรุณารอ 15 นาทีแล้วลองใหม่" },

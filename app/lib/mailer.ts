@@ -249,3 +249,44 @@ export async function sendEquipmentDeleteOtpEmail(
   );
 }
 
+
+/**
+ * The 6-digit code for changing the admin password ("change", from /settings)
+ * or for setting a new one when it is forgotten ("reset", from the public
+ * /forgot-password page). Always to lib/passwordReset.ts's fixed address.
+ */
+export async function sendPasswordOtpEmail(
+  to: string,
+  otp: string,
+  purpose: "change" | "reset",
+  username: string,
+  ttlMinutes: number
+): Promise<void> {
+  const action = purpose === "change" ? "เปลี่ยนรหัสผ่าน" : "ตั้งรหัสผ่านใหม่ (ลืมรหัสผ่าน)";
+  await sendOtpNotification(
+    to,
+    `[รหัส OTP] ยืนยันการ${action} บัญชีผู้ดูแลระบบ`,
+    `มีการขอ${action} ของบัญชีผู้ดูแลระบบ "${username}"\n\n` +
+      `หากคุณเป็นผู้ดำเนินการ กรุณานำรหัสยืนยันด้านล่างนี้ไปกรอก:\n\n` +
+      `รหัสยืนยัน: ${otp}\n\n` +
+      `(รหัสนี้มีอายุ ${ttlMinutes} นาที และใช้ได้ครั้งเดียว)\n\n` +
+      `ห้ามบอกรหัสนี้กับผู้อื่น ไม่มีใครมีเหตุผลที่ต้องขอรหัสนี้จากคุณ\n\n` +
+      `หากคุณไม่ได้เป็นผู้ดำเนินการ แปลว่ามีผู้อื่นพยายามเปลี่ยนรหัสผ่านของบัญชีนี้ — อย่ากรอกรหัสนี้ที่ใด และตรวจสอบความปลอดภัยของบัญชีผู้ดูแลระบบทันที`
+  );
+}
+
+/** After the password HAS changed — so a change nobody meant to make is noticed. */
+export async function sendPasswordChangedEmail(
+  to: string,
+  username: string,
+  purpose: "change" | "reset"
+): Promise<void> {
+  const how = purpose === "change" ? "จากหน้าตั้งค่า (ขณะเข้าสู่ระบบอยู่)" : "ผ่านหน้า \"ลืมรหัสผ่าน\"";
+  await sendOtpNotification(
+    to,
+    `แจ้งเตือน: รหัสผ่านบัญชีผู้ดูแลระบบถูกเปลี่ยนแล้ว`,
+    `รหัสผ่านของบัญชีผู้ดูแลระบบ "${username}" ถูกเปลี่ยนแล้ว ${how}\n\n` +
+      `ทุกอุปกรณ์ที่เข้าสู่ระบบไว้ก่อนหน้านี้ถูกออกจากระบบแล้ว\n\n` +
+      `หากคุณไม่ได้เป็นผู้เปลี่ยน กรุณาตั้งรหัสผ่านใหม่ผ่านหน้า "ลืมรหัสผ่าน" ทันที และตรวจสอบการตั้งค่าการยืนยันตัวตน 2 ขั้น`
+  );
+}

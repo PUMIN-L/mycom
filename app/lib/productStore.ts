@@ -4,7 +4,7 @@ import { query, withTransaction } from "./db";
 import { RowDataPacket, ResultSetHeader } from "mysql2";
 import type { PoolConnection } from "mysql2/promise";
 import type { ProductCategory, ProductData } from "./types";
-import { sanitizeRichText } from "./sanitizeHtml";
+import { cleanRichText, DESCRIPTION_LIMIT, TITLE_LIMIT } from "./richTextLimits";
 import { saveRevision } from "./revisionStore";
 
 /** Pool or transaction connection — the same narrow shape `billingPayments`
@@ -59,6 +59,16 @@ export const getAllCategories = cache(
   )
 );
 
+/** The three names as stored: sanitized, and refused (400) when longer than a
+ *  title may be — see lib/richTextLimits.ts. Never cut. */
+function cleanCategoryNames(category: { name_th: string; name_en: string; name_zh: string }) {
+  return {
+    name_th: cleanRichText(category.name_th, "ชื่อหมวดหมู่ (ภาษาไทย)", TITLE_LIMIT),
+    name_en: cleanRichText(category.name_en, "ชื่อหมวดหมู่ (ภาษาอังกฤษ)", TITLE_LIMIT),
+    name_zh: cleanRichText(category.name_zh, "ชื่อหมวดหมู่ (ภาษาจีน)", TITLE_LIMIT),
+  };
+}
+
 export async function addCategory(
   category: Omit<ProductCategory, "id" | "sortOrder">
 ): Promise<ProductCategory> {
@@ -66,6 +76,7 @@ export async function addCategory(
   // compute the same next id; the loser hits a duplicate-key error and simply
   // retries with a freshly-read max, instead of failing the request (or
   // silently overwriting a sibling category).
+  const names = cleanCategoryNames(category);
   const MAX_ATTEMPTS = 5;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     const [maxRows] = await query<RowDataPacket[]>(
@@ -77,17 +88,15 @@ export async function addCategory(
         "INSERT INTO product_categories (id, name_th, name_en, name_zh, sortOrder) VALUES (?, ?, ?, ?, ?)",
         [
           nextId, 
-          sanitizeRichText(category.name_th).substring(0, 255), 
-          sanitizeRichText(category.name_en).substring(0, 255), 
-          sanitizeRichText(category.name_zh).substring(0, 255), 
+          names.name_th, 
+          names.name_en, 
+          names.name_zh, 
           nextId
         ]
       );
       return {
         id: nextId,
-        name_th: sanitizeRichText(category.name_th).substring(0, 255),
-        name_en: sanitizeRichText(category.name_en).substring(0, 255),
-        name_zh: sanitizeRichText(category.name_zh).substring(0, 255),
+        ...names,
         sortOrder: nextId,
       };
     } catch (error) {
@@ -121,11 +130,7 @@ export async function updateCategory(
   id: number,
   category: { name_th: string; name_en: string; name_zh: string }
 ): Promise<{ name_th: string; name_en: string; name_zh: string } | null> {
-  const stored = {
-    name_th: sanitizeRichText(category.name_th).substring(0, 255),
-    name_en: sanitizeRichText(category.name_en).substring(0, 255),
-    name_zh: sanitizeRichText(category.name_zh).substring(0, 255),
-  };
+  const stored = cleanCategoryNames(category);
   const [result] = await query<ResultSetHeader>(
     "UPDATE product_categories SET name_th = ?, name_en = ?, name_zh = ? WHERE id = ?",
     [stored.name_th, stored.name_en, stored.name_zh, id]
@@ -262,16 +267,27 @@ async function insertProductRow(
   }
 }
 
+const PRODUCT_FIELD_LABELS = {
+  title_th: "ชื่อสินค้า (ภาษาไทย)",
+  title_en: "ชื่อสินค้า (ภาษาอังกฤษ)",
+  title_zh: "ชื่อสินค้า (ภาษาจีน)",
+  desc_th: "รายละเอียดสินค้า (ภาษาไทย)",
+  desc_en: "รายละเอียดสินค้า (ภาษาอังกฤษ)",
+  desc_zh: "รายละเอียดสินค้า (ภาษาจีน)",
+} as const;
+
 export async function addProduct(product: ProductData): Promise<ProductData> {
   const isPublished = product.isPublished !== false;
   // Sanitize rich-text descriptions on write so stored HTML is always safe to
   // render with dangerouslySetInnerHTML on public pages.
-  const title_th = sanitizeRichText(product.title_th).substring(0, 255);
-  const title_en = sanitizeRichText(product.title_en).substring(0, 255);
-  const title_zh = sanitizeRichText(product.title_zh).substring(0, 255);
-  const desc_th = sanitizeRichText(product.desc_th).substring(0, 10000);
-  const desc_en = sanitizeRichText(product.desc_en).substring(0, 10000);
-  const desc_zh = sanitizeRichText(product.desc_zh).substring(0, 10000);
+  // Refused (400) when over the forms' own limits, never cut — a cut by length
+  // of HTML left a half-written tag (lib/richTextLimits.ts).
+  const title_th = cleanRichText(product.title_th, PRODUCT_FIELD_LABELS.title_th, TITLE_LIMIT);
+  const title_en = cleanRichText(product.title_en, PRODUCT_FIELD_LABELS.title_en, TITLE_LIMIT);
+  const title_zh = cleanRichText(product.title_zh, PRODUCT_FIELD_LABELS.title_zh, TITLE_LIMIT);
+  const desc_th = cleanRichText(product.desc_th, PRODUCT_FIELD_LABELS.desc_th, DESCRIPTION_LIMIT);
+  const desc_en = cleanRichText(product.desc_en, PRODUCT_FIELD_LABELS.desc_en, DESCRIPTION_LIMIT);
+  const desc_zh = cleanRichText(product.desc_zh, PRODUCT_FIELD_LABELS.desc_zh, DESCRIPTION_LIMIT);
   let sortOrder = product.sortOrder;
   await withTransaction(async (conn) => {
     if (sortOrder === undefined) {
@@ -405,10 +421,9 @@ export async function updateProduct(
   // which every surviving entry restores what is already there.
   //
   // Every comparison is against the value the UPDATE WILL WRITE (post
-  // sanitizeRichText, post substring), never the raw `updates` field. Compare
-  // the raw field and a save whose only difference was markup the sanitizer
-  // strips — or text past the cap — still looks like an edit and snapshots a
-  // value identical to the live row.
+  // sanitizeRichText), never the raw `updates` field. Compare the raw field
+  // and a save whose only difference was markup the sanitizer strips still
+  // looks like an edit and snapshots a value identical to the live row.
   const sets: string[] = [];
   const values: unknown[] = [];
   let changed = false;
@@ -417,24 +432,25 @@ export async function updateProduct(
     values.push(val);
     if (differs) changed = true;
   };
-  // Sanitize + truncate FIRST, compare the result. `current` is the value
+  // Sanitize (and check the length) FIRST, compare the result. `current` is the value
   // rowToProduct read back for this column, i.e. what a previous write of it
   // left behind — with its NULL already normalised to "" (rowToProduct does
   // `?? ""`), so writing "" over a stored NULL is not counted as an edit:
   // nothing that reads this row can tell the two apart.
-  const setText = (col: string, raw: string, cap: number, current: string) => {
-    const value = sanitizeRichText(raw).substring(0, cap);
+  const setText = (col: keyof typeof PRODUCT_FIELD_LABELS, raw: string, current: string) => {
+    const limit = col.startsWith("title_") ? TITLE_LIMIT : DESCRIPTION_LIMIT;
+    const value = cleanRichText(raw, PRODUCT_FIELD_LABELS[col], limit);
     set(col, value, value !== current);
   };
 
   if (updates.categoryId !== undefined) set("categoryId", updates.categoryId, updates.categoryId !== existing.categoryId);
   if (updates.image !== undefined) set("image", updates.image, updates.image !== existing.image);
-  if (updates.title_th !== undefined) setText("title_th", updates.title_th, 255, existing.title_th);
-  if (updates.title_en !== undefined) setText("title_en", updates.title_en, 255, existing.title_en);
-  if (updates.title_zh !== undefined) setText("title_zh", updates.title_zh, 255, existing.title_zh);
-  if (updates.desc_th !== undefined) setText("desc_th", updates.desc_th, 10000, existing.desc_th);
-  if (updates.desc_en !== undefined) setText("desc_en", updates.desc_en, 10000, existing.desc_en);
-  if (updates.desc_zh !== undefined) setText("desc_zh", updates.desc_zh, 10000, existing.desc_zh);
+  if (updates.title_th !== undefined) setText("title_th", updates.title_th, existing.title_th);
+  if (updates.title_en !== undefined) setText("title_en", updates.title_en, existing.title_en);
+  if (updates.title_zh !== undefined) setText("title_zh", updates.title_zh, existing.title_zh);
+  if (updates.desc_th !== undefined) setText("desc_th", updates.desc_th, existing.desc_th);
+  if (updates.desc_en !== undefined) setText("desc_en", updates.desc_en, existing.desc_en);
+  if (updates.desc_zh !== undefined) setText("desc_zh", updates.desc_zh, existing.desc_zh);
 
   if (updates.bestSellerRank !== undefined) {
     // Written raw, so compared raw. rowToProduct already normalises a stored

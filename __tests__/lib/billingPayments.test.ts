@@ -70,13 +70,15 @@ describe('addBillingPayment', () => {
   it('INSERTs the payment and re-sums paidAmount inside ONE transaction', async () => {
     conn.query
       .mockResolvedValueOnce([{ affectedRows: 1 }]) // INSERT billing_payments
+      .mockResolvedValueOnce([[{ id: 'inv' }]]) // invoice lock (recomputePaidAmount)
       .mockResolvedValueOnce([[{ paid: '30000.00' }]]) // SUM
       .mockResolvedValueOnce([{ affectedRows: 1 }]); // UPDATE billing_documents
 
     const result = await addBillingPayment(payment);
 
     expect(withTransaction).toHaveBeenCalledTimes(1);
-    expect(conn.query).toHaveBeenCalledTimes(3);
+    // INSERT, the invoice lock, the SUM, the UPDATE
+    expect(conn.query).toHaveBeenCalledTimes(4);
     expect(sqlOf(calls()[0])).toContain('INSERT INTO billing_payments');
     expect(calls()[0][1]).toEqual([
       'pay-1',
@@ -98,6 +100,7 @@ describe('addBillingPayment', () => {
     // unexplainable drift the first time a request is retried.
     conn.query
       .mockResolvedValueOnce([{ affectedRows: 1 }])
+      .mockResolvedValueOnce([[{ id: 'inv' }]]) // invoice lock (recomputePaidAmount)
       .mockResolvedValueOnce([[{ paid: '30000.00' }]])
       .mockResolvedValueOnce([{ affectedRows: 1 }]);
 
@@ -118,6 +121,7 @@ describe('addBillingPayment', () => {
 
   it('writes the cache as an absolute value, so re-running it is idempotent', async () => {
     conn.query
+      .mockResolvedValueOnce([[{ id: 'inv' }]]) // invoice lock (recomputePaidAmount)
       .mockResolvedValueOnce([[{ paid: '100000.00' }]])
       .mockResolvedValueOnce([{ affectedRows: 1 }]);
 
@@ -128,6 +132,7 @@ describe('addBillingPayment', () => {
 
   it('treats a document with no payment rows as ฿0, not NaN', async () => {
     conn.query
+      .mockResolvedValueOnce([[{ id: 'inv' }]]) // invoice lock (recomputePaidAmount)
       .mockResolvedValueOnce([[{ paid: null }]])
       .mockResolvedValueOnce([{ affectedRows: 1 }]);
 
@@ -140,6 +145,7 @@ describe('voidBillingPayment — corrections NEVER delete', () => {
     conn.query
       .mockResolvedValueOnce([[{ billingDocumentId: 'inv-1', voidedAt: null }]]) // lock
       .mockResolvedValueOnce([{ affectedRows: 1 }]) // UPDATE void
+      .mockResolvedValueOnce([[{ id: 'inv' }]]) // invoice lock (recomputePaidAmount)
       .mockResolvedValueOnce([[{ paid: '0.00' }]]) // SUM
       .mockResolvedValueOnce([{ affectedRows: 1 }]); // UPDATE cache
 
@@ -196,6 +202,7 @@ describe('syncReceiptPayment — issuing a receipt records the payment, in one a
       .mockResolvedValueOnce([[]]) // no existing payment
       .mockResolvedValueOnce([[]]) // the lock
       .mockResolvedValueOnce([{ affectedRows: 1 }]) // upsert
+      .mockResolvedValueOnce([[{ id: 'inv' }]]) // invoice lock (recomputePaidAmount)
       .mockResolvedValueOnce([[{ paid: '107000.00' }]])
       .mockResolvedValueOnce([{ affectedRows: 1 }]);
 
@@ -221,6 +228,7 @@ describe('syncReceiptPayment — issuing a receipt records the payment, in one a
     conn.query
       .mockResolvedValueOnce([[]]) // no existing payment
       .mockResolvedValueOnce([{ affectedRows: 1 }]) // upsert
+      .mockResolvedValueOnce([[{ id: 'inv' }]]) // invoice lock (recomputePaidAmount)
       .mockResolvedValueOnce([[{ paid: '107000.00' }]])
       .mockResolvedValueOnce([{ affectedRows: 1 }]);
 
@@ -239,8 +247,10 @@ describe('syncReceiptPayment — issuing a receipt records the payment, in one a
     conn.query
       .mockResolvedValueOnce([[{ billingDocumentId: 'inv-OLD', voidedAt: null }]])
       .mockResolvedValueOnce([{ affectedRows: 1 }]) // upsert (moves the row)
+      .mockResolvedValueOnce([[{ id: 'inv' }]]) // invoice lock (recomputePaidAmount)
       .mockResolvedValueOnce([[{ paid: '0.00' }]]) // re-sum OLD
       .mockResolvedValueOnce([{ affectedRows: 1 }])
+      .mockResolvedValueOnce([[{ id: 'inv' }]]) // invoice lock (recomputePaidAmount)
       .mockResolvedValueOnce([[{ paid: '107000.00' }]]) // re-sum NEW
       .mockResolvedValueOnce([{ affectedRows: 1 }]);
 
@@ -256,6 +266,7 @@ describe('syncReceiptPayment — issuing a receipt records the payment, in one a
     conn.query
       .mockResolvedValueOnce([[{ billingDocumentId: 'inv-1', voidedAt: null }]])
       .mockResolvedValueOnce([{ affectedRows: 1 }]) // void
+      .mockResolvedValueOnce([[{ id: 'inv' }]]) // invoice lock (recomputePaidAmount)
       .mockResolvedValueOnce([[{ paid: '0.00' }]])
       .mockResolvedValueOnce([{ affectedRows: 1 }]);
 
@@ -409,6 +420,7 @@ describe('voidSupersededReceiptPayment — แก้ไข (New Ver.) takes the 
     conn.query
       .mockResolvedValueOnce([[{ billingDocumentId: 'inv-1', voidedAt: null }]])
       .mockResolvedValueOnce([{ affectedRows: 1 }])
+      .mockResolvedValueOnce([[{ id: 'inv' }]]) // invoice lock (recomputePaidAmount)
       .mockResolvedValueOnce([[{ paid: '0.00' }]])
       .mockResolvedValueOnce([{ affectedRows: 1 }]);
 
@@ -468,6 +480,7 @@ describe('addBillingPayment — amount guard', () => {
     // has to be recordable, or the admin is forced to enter a false figure.
     conn.query
       .mockResolvedValueOnce([{ affectedRows: 1 }])
+      .mockResolvedValueOnce([[{ id: 'inv' }]]) // invoice lock (recomputePaidAmount)
       .mockResolvedValueOnce([[{ paid: '999999.00' }]])
       .mockResolvedValueOnce([{ affectedRows: 1 }]);
 
@@ -479,6 +492,7 @@ describe('addBillingPayment — amount guard', () => {
   it('stores the amount settled to the satang — the value it checked', async () => {
     conn.query
       .mockResolvedValueOnce([{ affectedRows: 1 }])
+      .mockResolvedValueOnce([[{ id: 'inv' }]]) // invoice lock (recomputePaidAmount)
       .mockResolvedValueOnce([[{ paid: '1.01' }]])
       .mockResolvedValueOnce([{ affectedRows: 1 }]);
 
@@ -490,6 +504,7 @@ describe('addBillingPayment — amount guard', () => {
     for (const amount of [0.005, 9_999_999_999.99]) {
       conn.query
         .mockResolvedValueOnce([{ affectedRows: 1 }])
+        .mockResolvedValueOnce([[{ id: 'inv' }]]) // invoice lock (recomputePaidAmount)
         .mockResolvedValueOnce([[{ paid: String(amount) }]])
         .mockResolvedValueOnce([{ affectedRows: 1 }]);
       await expect(addBillingPayment({ ...payment, amount })).resolves.toBeDefined();

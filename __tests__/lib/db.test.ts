@@ -40,14 +40,14 @@ process.env.DB_USER = 'tester';
 process.env.DB_PASSWORD = 'pw';
 process.env.DB_NAME = 'testdb';
 
-// A version SELECT result that MATCHES SCHEMA_VERSION (45) → bootstrap fast-path,
+// A version SELECT result that MATCHES SCHEMA_VERSION (46) → bootstrap fast-path,
 // skipping DDL. Value is a string because settings stores VARCHAR values.
 //
 // ⚠️ This constant only ever goes UP, in step with db.ts. The bootstrap's fast
 // path is `stored >= SCHEMA_VERSION`, so a number the live database has already
 // recorded can never trigger a migration again — reusing one silently skips the
 // entire migration in production (that is how v33 was burned).
-const SCHEMA_VERSION = '45';
+const SCHEMA_VERSION = '46';
 const SCHEMA_MATCH: [Array<{ value: string }>, unknown[]] = [[{ value: SCHEMA_VERSION }], []];
 // An empty result → no schema_version row / no admin row → full bootstrap.
 const EMPTY: [unknown[], unknown[]] = [[], []];
@@ -1477,6 +1477,46 @@ describe('db.ts', () => {
       expect(mockConnection.rollback).toHaveBeenCalledTimes(1); // rolled back the failed attempt
     });
 
+    // The database rolled the loser back already; running it again waits for
+    // the winner. recomputePaidAmount (invoice → payments) meeting a void
+    // (payment → invoice) on one invoice is such a pair.
+    it('retries the whole transaction when the database broke a deadlock by rolling it back', async () => {
+      const db = await freshImport();
+      mockConnection.query.mockResolvedValue(SCHEMA_MATCH);
+      const deadlock = Object.assign(new Error('Deadlock found when trying to get lock; try restarting transaction'), {
+        code: 'ER_LOCK_DEADLOCK',
+        errno: 1213,
+      });
+      const fn = vi.fn().mockRejectedValueOnce(deadlock).mockResolvedValue('ok');
+
+      const result = await db.withTransaction(fn);
+
+      expect(result).toBe('ok');
+      expect(fn).toHaveBeenCalledTimes(2);
+      expect(mockConnection.rollback).toHaveBeenCalledTimes(1);
+      expect(mockConnection.commit).toHaveBeenCalledTimes(1);
+    });
+
+    it('gives up on a deadlock that keeps happening, after the last attempt', async () => {
+      const db = await freshImport();
+      mockConnection.query.mockResolvedValue(SCHEMA_MATCH);
+      const deadlock = Object.assign(new Error('Deadlock'), { code: 'ER_LOCK_DEADLOCK' });
+      const fn = vi.fn().mockRejectedValue(deadlock);
+      await expect(db.withTransaction(fn)).rejects.toBe(deadlock);
+      expect(fn).toHaveBeenCalledTimes(3);
+    });
+
+    // A lock WAIT that timed out is not retried: the row is still held, and a
+    // retry would only make the admin wait the whole timeout again.
+    it('does NOT retry a lock-wait timeout', async () => {
+      const db = await freshImport();
+      mockConnection.query.mockResolvedValue(SCHEMA_MATCH);
+      const timeout = Object.assign(new Error('Lock wait timeout exceeded'), { code: 'ER_LOCK_WAIT_TIMEOUT' });
+      const fn = vi.fn().mockRejectedValue(timeout);
+      await expect(db.withTransaction(fn)).rejects.toBe(timeout);
+      expect(fn).toHaveBeenCalledTimes(1);
+    });
+
     it('does NOT retry a non-transient (business) error — propagates immediately', async () => {
       const db = await freshImport();
       mockConnection.query.mockResolvedValue(SCHEMA_MATCH);
@@ -1788,5 +1828,126 @@ describe('v44 plain-text decode', () => {
     await db.getDbConnection();
     expect(decodeCalls()).toEqual(['suppliers.taxId']);
     expect(mockConnection.query).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO settings'), [SCHEMA_VERSION]);
+  });
+});
+
+// v46 — rich text used to be cut to 255 (10,000 for descriptions) characters
+// OF HTML, mid-tag, into VARCHAR(255). The columns are widened to hold the
+// whole HTML, and values the old cut broke are mended.
+describe('v46 rich-text columns', () => {
+  const ALTER = /^ALTER TABLE (\w+) MODIFY `(\w+)` (TEXT NOT NULL|MEDIUMTEXT)$/;
+  const alters = () =>
+    bootstrapSql()
+      .map((s) => s.trim().match(ALTER))
+      .filter((m): m is RegExpMatchArray => m !== null)
+      .map((m) => `${m[1]}.${m[2]} ${m[3]}`);
+
+  it('widens every rich-text column: titles and names to TEXT, descriptions to MEDIUMTEXT', async () => {
+    const db = await freshImport();
+    mockConnection.query.mockResolvedValue(EMPTY);
+    await db.getDbConnection();
+    expect(alters()).toEqual([
+      'products.title_th TEXT NOT NULL',
+      'products.title_en TEXT NOT NULL',
+      'products.title_zh TEXT NOT NULL',
+      'products.desc_th MEDIUMTEXT',
+      'products.desc_en MEDIUMTEXT',
+      'products.desc_zh MEDIUMTEXT',
+      'product_categories.name_th TEXT NOT NULL',
+      'product_categories.name_en TEXT NOT NULL',
+      'product_categories.name_zh TEXT NOT NULL',
+      'contents.title TEXT NOT NULL',
+    ]);
+  });
+
+  it('creates them wide on a fresh database too', async () => {
+    const db = await freshImport();
+    mockConnection.query.mockResolvedValue(EMPTY);
+    await db.getDbConnection();
+    const create = (table: string) =>
+      bootstrapSql().find((s) => new RegExp(`CREATE TABLE IF NOT EXISTS ${table} \\(`).test(s))!.replace(/\s+/g, ' ');
+    expect(create('products')).toContain('title_th TEXT NOT NULL');
+    expect(create('products')).toContain('desc_th MEDIUMTEXT');
+    expect(create('product_categories')).toContain('name_th TEXT NOT NULL');
+    expect(create('contents')).toContain('title TEXT NOT NULL');
+    expect(create('products')).not.toMatch(/title_\w+ VARCHAR/);
+  });
+
+  // The old cut left exactly `cap` characters — that, and only that, is mended.
+  describe('mending values the old cut broke', () => {
+    const CUT = '<p><strong><span class="ql-size-large">' + 'x'.repeat(203) + '</span></stro';
+    const WHOLE_255 = '<p>' + 'y'.repeat(248) + '</p>';
+    const CUT_254 = CUT.slice(0, 254);
+
+    function runWith(rowsFor: (table: string, column: string) => Array<{ id: string; value: string }>) {
+      mockConnection.query.mockImplementation((sql: string) => {
+        const m = /^SELECT id, `(\w+)` AS value FROM (\w+) WHERE CHAR_LENGTH/.exec(String(sql).trim());
+        if (m) return Promise.resolve([rowsFor(m[2], m[1]), []]);
+        return Promise.resolve(EMPTY);
+      });
+    }
+    const repairs = () =>
+      mockConnection.query.mock.calls.filter((c) => /^UPDATE (products|product_categories|contents) SET `\w+` = \? WHERE id = \? AND `\w+` = \?$/.test(sqlOfCall(c)));
+
+    it('rewrites a value cut mid-tag, well-formed — guarded on the value it read', async () => {
+      expect(CUT).toHaveLength(255);
+      const db = await freshImport();
+      runWith((t, c) => (t === 'products' && c === 'title_en' ? [{ id: 'p1', value: CUT }] : []));
+      await db.getDbConnection();
+      expect(repairs()).toHaveLength(1);
+      const [sql, params] = repairs()[0] as [string, unknown[]];
+      expect(sql).toBe('UPDATE products SET `title_en` = ? WHERE id = ? AND `title_en` = ?');
+      expect(params).toEqual(['<p><strong><span class="ql-size-large">' + 'x'.repeat(203) + '</span></strong></p>', 'p1', CUT]);
+    });
+
+    it('asks the database only for long values, and mends only those exactly at the old cap', async () => {
+      const db = await freshImport();
+      runWith((t, c) => (t === 'products' && c === 'title_th' ? [{ id: 'a', value: WHOLE_255 }, { id: 'b', value: CUT_254 }] : []));
+      await db.getDbConnection();
+      // a: 255 long but intact → nothing to mend; b: broken but 254 — not what the cut left
+      expect(repairs()).toHaveLength(0);
+      const select = mockConnection.query.mock.calls.find((c) => sqlOfCall(c).startsWith('SELECT id, `title_th`'))!;
+      expect(select[1]).toEqual([127]);
+      const desc = mockConnection.query.mock.calls.find((c) => sqlOfCall(c).startsWith('SELECT id, `desc_th`'))!;
+      expect(desc[1]).toEqual([5000]);
+    });
+
+    it('mends a description at the old 10,000 cap', async () => {
+      const cutDesc = ('<p><em>' + 'd'.repeat(10_000)).slice(0, 10_000);
+      const db = await freshImport();
+      runWith((t, c) => (t === 'products' && c === 'desc_zh' ? [{ id: 'p9', value: cutDesc }] : []));
+      await db.getDbConnection();
+      expect(repairs()).toHaveLength(1);
+      expect((repairs()[0][1] as unknown[])[0]).toMatch(/<\/em><\/p>$/);
+    });
+
+    it('runs before the version is stamped', async () => {
+      const db = await freshImport();
+      runWith(() => []);
+      await db.getDbConnection();
+      const lastWiden = Math.max(...bootstrapSql().map((s, i) => (/^ALTER TABLE \w+ MODIFY `/.test(s.trim()) ? i : -1)));
+      const stamp = indexOfSql("('schema_version', ?)");
+      expect(lastWiden).toBeGreaterThan(-1);
+      expect(stamp).toBeGreaterThan(lastWiden);
+    });
+  });
+
+  it('a column that cannot be widened is logged, the rest still are, and the site stays up', async () => {
+    const db = await freshImport();
+    const refused = { code: 'ER_UNSUPPORTED_DDL', message: 'unsupported modify column' };
+    mockConnection.query.mockImplementation((sql: string) =>
+      /^ALTER TABLE products MODIFY `title_th`/.test(String(sql).trim()) ? Promise.reject(refused) : Promise.resolve(EMPTY)
+    );
+    await expect(db.getDbConnection()).resolves.toBeDefined();
+    expect(alters()).toContain('contents.title TEXT NOT NULL');
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('widening products.title_th to TEXT NOT NULL FAILED'), refused);
+    expect(indexOfSql("('schema_version', ?)")).toBeGreaterThan(-1);
+  });
+
+  it('never touches a plain-text column (those hold text, where a "<" is a character)', async () => {
+    const db = await freshImport();
+    for (const { table } of db.RICH_TEXT_COLUMNS) {
+      expect(Object.keys(db.PLAIN_TEXT_COLUMNS)).not.toContain(table);
+    }
   });
 });

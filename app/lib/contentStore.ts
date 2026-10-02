@@ -4,6 +4,7 @@ import { query, withTransaction } from "./db";
 import { RowDataPacket, ResultSetHeader } from "mysql2";
 import type { ContentBlock, ContentData, ContentMeta } from "./types";
 import { sanitizeRichText, sanitizePlainText } from "./sanitizeHtml";
+import { cleanRichText, TITLE_LIMIT } from "./richTextLimits";
 import { saveRevision } from "./revisionStore";
 
 // Re-exported so existing callers can keep importing these from "./contentStore".
@@ -114,9 +115,12 @@ function rowToContent(row: RowDataPacket): ContentData {
   };
 }
 
+const CONTENT_TITLE_LABEL = "หัวข้อคอนเทนต์";
+
 export async function addContent(content: ContentData): Promise<ContentData> {
   const blocks = sanitizeBlocks(content.blocks);
-  const sanitizedTitle = sanitizeRichText(content.title).substring(0, 255);
+  // Refused (400) when over the form's limit, never cut (lib/richTextLimits.ts).
+  const sanitizedTitle = cleanRichText(content.title, CONTENT_TITLE_LABEL, TITLE_LIMIT);
   const productId = content.productId ?? null;
 
   await withTransaction(async (conn) => {
@@ -248,7 +252,7 @@ export async function updateContent(
     return undefined;
   }
 
-  const title = updatedContent.title !== undefined ? sanitizeRichText(updatedContent.title).substring(0, 255) : existing.title;
+  const title = updatedContent.title !== undefined ? cleanRichText(updatedContent.title, CONTENT_TITLE_LABEL, TITLE_LIMIT) : existing.title;
   const blocks = sanitizeBlocks(
     updatedContent.blocks !== undefined ? updatedContent.blocks : existing.blocks
   );
@@ -290,7 +294,7 @@ export async function updateContent(
     if (differs) changed = true;
   };
   if (updatedContent.title !== undefined) {
-    // `title` here is already sanitizeRichText(...).substring(0, 255) —
+    // `title` here is already cleanRichText(...) —
     // compared against the stored string, which is what a previous write of
     // this same column left behind.
     set("title", title, title !== existing.title);

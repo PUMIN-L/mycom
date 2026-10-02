@@ -526,6 +526,12 @@ export default function ShowcaseClient({
       showToast("Title cannot be empty", "error");
       return;
     }
+    // Same limit, counted the same way, as the create form and the server
+    // (lib/richTextLimits.ts): characters of TEXT, formatting not counted.
+    if (stripHtml(editTitle).length > 255) {
+      showToast("หัวข้อคอนเทนต์ต้องมีความยาวไม่เกิน 255 ตัวอักษร", "error");
+      return;
+    }
     if (!editProductId) {
       showToast("กรุณาเลือก Product ที่จะผูกกับ Content นี้", "error");
       return;
@@ -543,7 +549,17 @@ export default function ShowcaseClient({
         setIsEditing(false);
         showToast("บันทึกสำเร็จ", "success");
       } else {
-        showToast("บันทึกไม่สำเร็จ", "error");
+        // The server says why (a title over 255 characters is refused, not
+        // cut) — show that, as saveBlocks does.
+        const body = await res.json().catch(() => null);
+        showToast(
+          res.status === 401
+            ? "เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่แล้วลองอีกครั้ง"
+            : body && typeof body.error === "string" && body.error
+              ? body.error
+              : "บันทึกไม่สำเร็จ",
+          "error"
+        );
       }
     } catch {
       showToast("เกิดข้อผิดพลาด", "error");

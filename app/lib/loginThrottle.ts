@@ -8,10 +8,14 @@ import { createRateLimiter } from "./rateLimit";
 // settings routes all count failures the same way).
 
 /**
- * Every lockout row starts with this: `login_fail_<username>` for the
+ * Every lockout row starts with this: `login_fail_u_<username>` for the
  * account's bucket, `login_fail_dev_<deviceId>` for a trusted browser's,
  * `login_fail_2fa_<userId>` / `login_fail_2fa_dev_<deviceId>` for the
- * two-factor step's. The nightly purge cleans all of them by this prefix.
+ * two-factor step's, `login_fail_reauth_pw_<userId>` /
+ * `login_fail_reauth_2fa_<userId>` for re-authentication in /settings (2FA and
+ * the password change), `login_fail_reset_2fa_<userId>` /
+ * `login_fail_reset_otp_<userId>` for the "ลืมรหัสผ่าน" page's codes.
+ * The nightly purge cleans all of them by this prefix.
  */
 export const LOGIN_FAIL_PREFIX = "login_fail_";
 
@@ -24,9 +28,16 @@ const LOCK_KEY_MAX_LEN = 100;
  * The password bucket for a username. Keyed on the account, not the client IP:
  * x-forwarded-for is attacker-controlled and can be rotated per request. The
  * key is lowercased and truncated to bound how large one settings row can get.
+ *
+ * ⚠️ The "u_" is what keeps strangers out of every OTHER bucket. This is the
+ * one key whose name the caller chooses — anyone can type any username — and
+ * it used to be `login_fail_<username>`, so the username "2fa_admin-001" WAS
+ * the admin's two-factor bucket (his id is the fixed "admin-001"): five wrong
+ * passwords for it from the login page locked his code screen without
+ * knowing anything. No other bucket's name starts with "u_".
  */
 export function loginLockKey(username: string): string {
-  return `${LOGIN_FAIL_PREFIX}${username.toLowerCase().slice(0, LOCK_KEY_MAX_LEN)}`;
+  return `${LOGIN_FAIL_PREFIX}u_${username.toLowerCase().slice(0, LOCK_KEY_MAX_LEN)}`;
 }
 
 /**
@@ -43,6 +54,44 @@ export function twoFactorLockKey(userId: string): string {
 
 export function twoFactorDeviceLockKey(deviceId: string): string {
   return `${LOGIN_FAIL_PREFIX}2fa_dev_${deviceId.slice(0, LOCK_KEY_MAX_LEN)}`;
+}
+
+/**
+ * The 2FA settings' re-authentication buckets (lib/twoFactorReauth.ts) — the
+ * password and the code, per user. Only a logged-in session reaches them, so
+ * nobody on the login page can fill them: they used to share the username's
+ * bucket, and five wrong logins as "admin" from anywhere kept the admin —
+ * logged in, on his own trusted browser — from turning 2FA on or off or
+ * minting new backup codes, for as long as someone kept doing it.
+ *
+ * The trade: a stolen session gets these five guesses per 15 minutes besides
+ * the login page's five. It is already inside the CMS; what the re-auth keeps
+ * from it is the 2FA settings, and five guesses a quarter-hour at a password
+ * still keep them.
+ */
+export function reauthPasswordLockKey(userId: string): string {
+  return `${LOGIN_FAIL_PREFIX}reauth_pw_${userId.slice(0, LOCK_KEY_MAX_LEN)}`;
+}
+
+export function reauthCodeLockKey(userId: string): string {
+  return `${LOGIN_FAIL_PREFIX}reauth_2fa_${userId.slice(0, LOCK_KEY_MAX_LEN)}`;
+}
+
+/**
+ * Wrong 2FA codes on the "ลืมรหัสผ่าน" page (lib/passwordReset.ts). Its own
+ * bucket: that page is public, and counting there in the LOGIN code step's
+ * bucket would let anyone holding a reset OTP lock the admin's code screen.
+ */
+export function resetCodeLockKey(userId: string): string {
+  return `${LOGIN_FAIL_PREFIX}reset_2fa_${userId.slice(0, LOCK_KEY_MAX_LEN)}`;
+}
+
+/**
+ * Wrong EMAILED codes on the "ลืมรหัสผ่าน" page, per account, across every
+ * code issued — see RESET_OTP_DAILY_LIMIT in lib/passwordReset.ts.
+ */
+export function resetOtpLockKey(userId: string): string {
+  return `${LOGIN_FAIL_PREFIX}reset_otp_${userId.slice(0, LOCK_KEY_MAX_LEN)}`;
 }
 
 /** A lockout row's value, "count|expiresAt" (ms). Anything unreadable is 0|0. */
@@ -68,7 +117,12 @@ export function parseLoginFailState(raw: string | null): { count: number; expire
  * attempt back (refundLoginAttempt) where resetting would be wrong. The row is
  * created first because a SELECT … FOR UPDATE on a missing row locks nothing.
  */
-export async function takeLoginAttempt(lockKey: string, now: number = Date.now()): Promise<boolean> {
+export async function takeLoginAttempt(
+  lockKey: string,
+  now: number = Date.now(),
+  limit: number = LOGIN_FAILURE_LIMIT,
+  windowMs: number = LOGIN_BLOCK_MS
+): Promise<boolean> {
   return withTransaction(async (conn) => {
     await conn.query(
       "INSERT INTO settings (name, value) VALUES (?, '0|0') ON DUPLICATE KEY UPDATE name = name",
@@ -80,9 +134,9 @@ export async function takeLoginAttempt(lockKey: string, now: number = Date.now()
     );
     const { count, expiresAt } = parseLoginFailState(rows[0] ? String(rows[0].value) : null);
     const inWindow = expiresAt > now;
-    if (inWindow && count >= LOGIN_FAILURE_LIMIT) return false;
+    if (inWindow && count >= limit) return false;
     const nextCount = inWindow ? count + 1 : 1;
-    const nextExpires = inWindow ? expiresAt : now + LOGIN_BLOCK_MS;
+    const nextExpires = inWindow ? expiresAt : now + windowMs;
     await conn.query("UPDATE settings SET value = ? WHERE name = ?", [
       `${nextCount}|${nextExpires}`,
       lockKey,

@@ -117,7 +117,7 @@ describe("login lockout — trusted device cookie", () => {
     const sameDevice = await login(req({ username: "admin", password: PASSWORD }, device));
     expect(sameDevice.status).toBe(429);
     // The username bucket was never written, so a plain login still works.
-    expect(state.has("login_fail_admin")).toBe(false);
+    expect(state.has("login_fail_u_admin")).toBe(false);
     const other = await login(req({ username: "admin", password: PASSWORD }));
     expect(other.status).toBe(200);
   });

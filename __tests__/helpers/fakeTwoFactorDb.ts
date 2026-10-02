@@ -118,6 +118,14 @@ export function createFakeTwoFactorDb(users: Partial<FakeUser>[] = []): FakeTwoF
       return ok(1);
     }
 
+    // lib/passwordReset.ts setPassword
+    if (sql === "UPDATE users SET passwordHash = ? WHERE id = ?") {
+      const u = db.users.get(String(p[1]));
+      if (!u) return ok(0);
+      u.passwordHash = String(p[0]);
+      return ok(1);
+    }
+
     // ── user_backup_codes ──
     if (sql === "SELECT COUNT(*) AS n FROM user_backup_codes WHERE userId = ? AND usedAt IS NULL") {
       return rows([{ n: db.backupCodes.filter((c) => c.userId === String(p[0]) && c.usedAt === null).length }]);
@@ -156,6 +164,17 @@ export function createFakeTwoFactorDb(users: Partial<FakeUser>[] = []): FakeTwoF
     // takeOtpAttempt's guess counter.
     if (sql === "INSERT INTO settings (name, value) VALUES (?, '0') ON DUPLICATE KEY UPDATE name = name") {
       if (!db.settings.has(String(p[0]))) db.settings.set(String(p[0]), "0");
+      return ok(1);
+    }
+    // claimOtpIssue's issue log.
+    if (sql === "INSERT INTO settings (name, value) VALUES (?, '') ON DUPLICATE KEY UPDATE name = name") {
+      if (!db.settings.has(String(p[0]))) db.settings.set(String(p[0]), "");
+      return ok(1);
+    }
+    // consumePasswordOtp: empty the code only if it is still the one read.
+    if (sql === "UPDATE settings SET value = '' WHERE name = ? AND value = ?") {
+      if (db.settings.get(String(p[0])) !== String(p[1])) return ok(0);
+      db.settings.set(String(p[0]), "");
       return ok(1);
     }
     if (sql === "SELECT value FROM settings WHERE name = ? FOR UPDATE") {

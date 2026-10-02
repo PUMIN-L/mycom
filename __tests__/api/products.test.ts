@@ -110,5 +110,20 @@ describe('Products API Route', () => {
       const res = await POST(mockRequest({ ...validProduct, bestSellerRank: 1 }));
       expect(res.status).toBe(409);
     });
+
+    // The store refuses a title over 255 characters of text (it used to cut
+    // it mid-tag). The admin must see WHICH field, not a bare 500.
+    it('passes the store\'s "too long" refusal through as a 400 naming the field, revalidating nothing', async () => {
+      vi.mocked(getSession).mockResolvedValue(adminSession);
+      const { RichTextTooLongError } = await import('@/app/lib/richTextLimits');
+      vi.mocked(addProduct).mockRejectedValue(
+        new RichTextTooLongError('ชื่อสินค้า (ภาษาไทย) ต้องมีความยาวไม่เกิน 255 ตัวอักษร')
+      );
+
+      const res = await POST(mockRequest(validProduct));
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toBe('ชื่อสินค้า (ภาษาไทย) ต้องมีความยาวไม่เกิน 255 ตัวอักษร');
+      expect(revalidateTag).not.toHaveBeenCalled();
+    });
   });
 });

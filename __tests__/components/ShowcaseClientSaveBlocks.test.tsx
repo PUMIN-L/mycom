@@ -274,3 +274,59 @@ describe("ShowcaseClient — the saved baseline is the server's copy", () => {
     await waitFor(() => expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("หัวข้อทดสอบ"));
   });
 });
+
+// A content title is limited by its TEXT and refused, never cut, when over 255
+// characters (lib/richTextLimits.ts). The edit form must say so — it used to
+// answer every refusal with a bare "บันทึกไม่สำเร็จ".
+describe("ShowcaseClient — saving the edited title (handleSaveEdit)", () => {
+  function renderWithTitle(title: string, put: () => Response) {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).startsWith("/api/contents/") && init?.method === "PUT") return put();
+      return { ok: true, status: 200, json: async () => ({}) } as unknown as Response;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <ShowcaseClient
+        initialContent={{ id: "c1", title, blocks: BLOCKS.map((b) => ({ ...b })), createdAt: "2026-09-01", productId: "p1" }}
+        initialAllContents={[]}
+        initialProducts={[]}
+        initialCategories={[]}
+        companyInfo={{ email: "x@y.z", phone: "0", address: "ที่อยู่" }}
+        maintenanceOn={false}
+      />
+    );
+    return fetchMock;
+  }
+  const puts = (m: ReturnType<typeof renderWithTitle>) =>
+    m.mock.calls.filter(([, init]) => (init as RequestInit | undefined)?.method === "PUT");
+
+  it("stops a title over 255 characters of text before saving, and says why", async () => {
+    const fetchMock = renderWithTitle(`<p><strong>${"ก".repeat(256)}</strong></p>`, ok);
+    await enterEditMode();
+    fireEvent.click(screen.getByRole("button", { name: "💾 บันทึก" }));
+    await waitFor(() => expect(toastText()).toMatch(/ไม่เกิน 255 ตัวอักษร/));
+    expect(puts(fetchMock)).toHaveLength(0);
+  });
+
+  it("counts text, not formatting: 255 characters in heavy formatting still saves", async () => {
+    const title = `<p><strong><span class="ql-size-huge">${"ก".repeat(255)}</span></strong></p>`;
+    // The PUT answers with the saved row, as the route does — the page shows it.
+    const savedRow = () =>
+      ({ ok: true, status: 200, json: async () => ({ id: "c1", title, blocks: BLOCKS, createdAt: "2026-09-01", productId: "p1" }) }) as unknown as Response;
+    const fetchMock = renderWithTitle(title, savedRow);
+    await enterEditMode();
+    fireEvent.click(screen.getByRole("button", { name: "💾 บันทึก" }));
+    await waitFor(() => expect(puts(fetchMock)).toHaveLength(1));
+    await waitFor(() => expect(toastText()).toMatch(/บันทึกสำเร็จ/));
+  });
+
+  it("shows a refusal in the server's own words", async () => {
+    renderWithTitle("หัวข้อทดสอบ", () =>
+      ({ ok: false, status: 400, json: async () => ({ error: "หัวข้อคอนเทนต์ ต้องมีความยาวไม่เกิน 255 ตัวอักษร" }) }) as unknown as Response
+    );
+    await enterEditMode();
+    fireEvent.click(screen.getByRole("button", { name: "💾 บันทึก" }));
+    await waitFor(() => expect(toastText()).toContain("หัวข้อคอนเทนต์ ต้องมีความยาวไม่เกิน 255 ตัวอักษร"));
+    expect(toastText()).not.toContain("บันทึกไม่สำเร็จ");
+  });
+});

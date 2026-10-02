@@ -223,6 +223,7 @@ manual auth checks — that's the duplication this replaced.
 | `GET /api/documents`, `documents/proxy`         | `POST` + `[id]` `PUT/DELETE` documents | |
 | `GET /api/auth/me`, `POST /api/auth/login`/`logout` | `POST /api/upload`, `DELETE /api/upload/delete` | |
 | `POST /api/auth/login/2fa` (needs the 5-min pending cookie, §10) | `GET /api/auth/2fa`, `POST /api/auth/2fa/{setup,enable,disable,backup-codes}` — the last three also re-ask the password (+ a code once on) | |
+| `POST /api/auth/forgot-password` + `/otp` (emailed code to the fixed address, + a 2FA code once on, §10) | `POST /api/auth/password` + `/otp` — the current password, an emailed code (+ a 2FA code once on) | |
 | `POST /api/contact` (sends email)               | all `/api/quotations/**` (GET/POST/[id]/docnos) | `cleanup` = **cron** (`CRON_SECRET`) |
 | `GET /api/health`                               | `GET`/`PUT /api/settings/contact-email` | |
 | —                                               | all `/api/admin/**`, incl. `POST`/`GET /api/admin/sales` + `[id]/items` and `GET /api/admin/equipments/serial-check` (§8a), plus the task board's `/api/admin/tasks/**` + `/api/admin/task-topics/**` (§8c) | |
@@ -252,6 +253,21 @@ server-side with [`sanitizeRichText`](./app/lib/sanitizeHtml.ts), which uses
   (blocks + title, create/update/restore) and categories (create AND rename:
   `updateCategory` stored the request verbatim until it was found in a
   security review, while the product sidebar renders these names as HTML).
+- **⚠️ Limit rich text by its TEXT and refuse it when over — never cut it.**
+  Product titles, category names and content titles allow 255 characters of
+  text, descriptions 10,000, counted with `stripHtml` exactly as the forms
+  count them ([`cleanRichText`](./app/lib/richTextLimits.ts) → a 400 that
+  names the field). The stores used to save `sanitizeRichText(x).substring(0,
+  255)` — a cut by length of HTML. Formatting is HTML (a bold, large title
+  carries ~60 characters of tags, each coloured word ~40), so a 203-character
+  title the form accepted was stored as `…</span></stro`. Server-rendered,
+  that half-written tag pulled the rest of the page into the `<h1>` in bold,
+  and the end of the title was lost silently. The columns hold the whole HTML
+  since v46 (TEXT for titles and names, MEDIUMTEXT for descriptions; the
+  bootstrap also mended the values the cut had broken). `RichTextLimit.html`
+  is only a ceiling the database can always hold. For descriptions that is
+  200,000 characters, because a whole product row (and its revision snapshot)
+  must stay well under TiDB's 6 MB entry limit, not the 16 MB of MEDIUMTEXT.
 - **After saving, render the server's copy, never your own editor output.**
   quill 2.0.3 (the latest) has an open advisory on its HTML export, so HTML
   from the editor is untrusted until the server has sanitized it. The category
@@ -901,10 +917,15 @@ stored in an httpOnly `session` cookie. `createSession` / `getSession` /
   wrong", and every request of a burst sent at once passed the first step
   before any reached the third: 20 wrong codes fired together were all checked
   (`__tests__/api/lockout-burst.test.ts`). A right answer then resets its
-  bucket, or — where the bucket is the username's and the check was a settings
-  re-auth — hands its one attempt back (`refundLoginAttempt`). Any new
-  "N wrong answers" limit must take before it checks; there is deliberately no
-  "is it locked?" read to build the old shape from.
+  bucket; an outcome that was not a guess (2FA setup not started) hands its
+  attempt back (`refundLoginAttempt`). Any new "N wrong answers" limit must
+  take before it checks; there is deliberately no "is it locked?" read to
+  build the old shape from.
+- ⚠️ **The username's bucket is `login_fail_u_<username>` — the "u_" is a
+  namespace, keep it.** The username is the one bucket name a stranger
+  chooses. Unprefixed, the username "2fa_admin-001" was the admin's 2FA bucket
+  (his id is the fixed `admin-001`): five wrong passwords for that made-up name
+  locked his code step without knowing anything. No other bucket starts "u_".
 - **Per-IP brake, in front of the lockout** (`app/lib/loginThrottle.ts`):
   10 attempts / minute per `clientKey` (in memory, per instance), checked
   after the body's type check and before the lockout row is read or bcrypt
@@ -914,8 +935,8 @@ stored in an httpOnly `session` cookie. `createSession` / `getSession` /
   replacement for the lockout (an IP is not an identity, and the counter is per
   instance). Failures for unknown usernames are still recorded, so the
   lockout does not reveal which usernames exist.
-- **Lockout rows are purged nightly.** Rows are `login_fail_<username>` /
-  `login_fail_dev_<deviceId>` = `"count|expiresAt"`. The cleanup cron's
+- **Lockout rows are purged nightly.** Rows are `login_fail_u_<username>` /
+  `login_fail_dev_<deviceId>` (and the 2FA ones below) = `"count|expiresAt"`. The cleanup cron's
   `purgeExpiredLoginFailures` deletes those whose window has ended (an ended
   window already counts as no failures, so no login's outcome changes). It
   reads them in keyset pages, with the prefix escaped in LIKE (`_` is a
@@ -981,8 +1002,13 @@ package. Storage and checks in [`lib/twoFactor.ts`](./app/lib/twoFactor.ts).
   `enable` needs the password + a code from the new secret (proof the phone
   holds it); `disable` and `backup-codes` need the password + a code. Otherwise
   a stolen session could switch 2FA on with an attacker's phone (locking the
-  admin out) or switch it off. Wrong passwords count in the username's login
-  bucket, wrong codes in the 2FA bucket. `setup` refuses while 2FA is on — a
+  admin out) or switch it off. Wrong answers count in **the settings' own
+  per-user buckets**, `login_fail_reauth_pw_<userId>` and
+  `login_fail_reauth_2fa_<userId>` (5 / 15 min), which only a logged-in session
+  reaches. They used to share the login page's buckets, and anyone who sent
+  five wrong logins as "admin" kept the admin, logged in on his own browser,
+  out of these settings. The trade: a stolen session gets these five guesses
+  besides the login page's. `setup` refuses while 2FA is on — a
   live secret is replaced only by turning it off first. **Enabling bumps the
   session epoch**: every session issued on the password alone is voided.
 - **Secrets at rest:** `users.totpSecret` / `totpPendingSecret` are AES-256-GCM
@@ -1024,6 +1050,63 @@ route verifies them. All go through
   `otpIssueRefused` = 429 + `Retry-After` + a Thai "wait N" message, and no
   code stored, no email sent. It is called after the request validates, so a
   bad request uses nothing up. A new OTP route must call it.
+
+**Changing the password, and "ลืมรหัสผ่าน"** ([`lib/passwordReset.ts`](./app/lib/passwordReset.ts),
+rules in [`lib/passwordRules.ts`](./app/lib/passwordRules.ts)):
+- **The 6-digit code goes to ONE fixed address, `PASSWORD_OTP_EMAIL`
+  (ampumin@gmail.com), never to the contact email.** The contact email can be
+  edited from /settings; a stolen session that pointed it at its own inbox
+  could then mint its own password. The fixed address changes only with a
+  deploy. Codes for the two pages are separate (`password_change_otp` /
+  `password_reset_otp`); each follows the OTP rules above (issue throttle,
+  5 guesses taken before compared, 10 minutes).
+- **Change** (/settings → เปลี่ยนรหัสผ่าน, `POST /api/auth/password/otp` then
+  `POST /api/auth/password`) needs the session, the current password
+  (`requirePassword`, the settings' own re-auth bucket), the emailed code and,
+  while 2FA is on, an app or backup code. **Forgot** (/forgot-password, public,
+  `POST /api/auth/forgot-password/otp` then `POST /api/auth/forgot-password`)
+  needs the emailed code and, while 2FA is on, an app or backup code (its own
+  bucket, `login_fail_reset_2fa_<id>`). Inbox access alone cannot take over a
+  2FA account.
+- **The public page has a daily budget of wrong codes:** 10 per account per
+  24 hours, across every code issued (`RESET_OTP_DAILY_LIMIT`,
+  `login_fail_reset_otp_<id>`; a right code hands its attempt back). Five
+  guesses a code is no limit there on its own: each new code resets the count,
+  and anyone may ask for five codes an hour. That was 25 guesses an hour,
+  indefinitely, at a 6-digit code (roughly one chance in five of a hit within a
+  year on an account without 2FA). The price is that a stranger can use the ten
+  up and close the page for that account for a day. Every code he asks for
+  emails the admin, and the logged-in change is unaffected.
+- **Nothing is spent until every check passes**, and the emailed code is then
+  consumed atomically (`UPDATE … WHERE value = <the code read>`). Two requests
+  with the same right code set ONE password, and a mistyped 2FA code does not
+  cost a new email.
+- **The forgot page tells a stranger nothing.** "Send a code" answers the same,
+  and in the same time, for a real and a made-up username, for a throttled
+  request and for a failed send (logged). Issuing the code and sending the
+  email run in `after()` (Next's post-response hook, `waitUntil` on Vercel).
+  Done before the reply, the SMTP round trip made a real username answer a
+  second or two later. The password rules are judged before the lookup, and
+  **every refusal of the emailed code is one message**
+  (`PASSWORD_RESET_OTP_REFUSED`): unknown username, no code asked for,
+  expired, wrong, five wrong, daily budget spent. Separate messages were an
+  oracle. Ask for a code for "admin", send a wrong one, and "wrong code"
+  (where a made-up name got "no code asked for") said the account was real.
+  A made-up username still has the code row read. The one difference left is
+  that a real account with a live code also spends a guess (two short
+  transactions, milliseconds). "This account needs a 2FA code" is said only to
+  whoever holds the emailed code. There is no "same as the old password?" check there:
+  without the old password it would be a free password oracle.
+- **New password:** at least 12 characters and at most 72 BYTES (bcrypt
+  silently ignores the rest; 24 Thai characters), no leading or trailing
+  space, not the username. Hashed with bcrypt cost 12.
+- **Afterwards every earlier session and trusted device is void** (session
+  epoch). Change re-issues this browser's session and device token. Forgot
+  issues none (log in again) and clears the username's login lockout. A notice
+  email ("รหัสผ่านถูกเปลี่ยนแล้ว") goes to the same address.
+- The seeded admin is inserted only when `admin-001` does not exist, so a
+  password changed here is not overwritten by `ADMIN_PASSWORD` on a deploy, and
+  that env var no longer says what the password is.
 
 ### 11. Shared UI components — don't re-implement inline
 [`app/components/`](./app/components/): `ConfirmDialog`, `Toast`, `Spinner`,
@@ -1207,6 +1290,25 @@ account with strict transformations) the image falls back to the original.
   Cloud closes idle connections server-side, so a pooled socket can be dead when
   grabbed; mysql2 drops it on error and the retry gets a fresh one. Retry is safe
   because INSERTs use explicit primary keys and UPDATE/DELETE are idempotent.
+- **⚠️ A cached total recomputed in a transaction must lock its parent row
+  FIRST and then sum with a locking read (`FOR UPDATE`).** A plain SELECT reads
+  the transaction's snapshot (on TiDB, the one taken when it began), which
+  misses rows another transaction committed meanwhile. `recomputePaidAmount`
+  ([`billingPayments.ts`](./app/lib/billingPayments.ts)) summed that way: two
+  payments recorded on one invoice at once each counted only their own, and
+  `paidAmount` (which receivables and open invoices read) lost one of them.
+  It now locks the invoice row, then sums `FOR UPDATE`. `FOR UPDATE` alone is
+  not enough, because it does not wait for another transaction's uncommitted
+  INSERT; the parent lock does. `__tests__/lib/billingPaymentsConcurrency.test.ts`
+  runs the real code, and the real `withTransaction`, against a stand-in pool
+  with those snapshot/lock rules.
+- **`withTransaction` replays a transaction the database rolled back to break
+  a DEADLOCK** (`ER_LOCK_DEADLOCK`), as it does after a dropped connection.
+  The sum above locks an invoice and then its payments, while a void locks a
+  payment and then its invoice, so two changes to one invoice at once can
+  deadlock. The loser used to surface as a 500; now it waits for the winner and
+  works on what it committed. A lock-WAIT timeout is not retried: the row is
+  still held. Only the transaction level retries; `query()` does not.
 - **Schema-version bootstrap:** on the first `query()`, `db.ts` lazily creates
   tables if missing and seeds default categories/products/admin, then writes
   `settings.schema_version`. A cold instance whose stored version already matches
@@ -1229,6 +1331,14 @@ account with strict transformations) the image falls back to the original.
   `plaintext_decode_v44_attempts`: a column that fails every time then gets a
   "giving up" log line and the version is stamped, so cold starts stop
   re-running the whole bootstrap.
+- **v46 widens the rich-text columns** (`RICH_TEXT_COLUMNS`: product
+  titles/descriptions, category names, content title — VARCHAR(255) → TEXT,
+  descriptions → MEDIUMTEXT) and mends the values the old cut left broken:
+  only a value EXACTLY at the old cap (255 / 10,000 — what `.substring` left)
+  and only if `repairTruncatedRichText` finds it broken, written with a guard
+  on the value it read. A column that cannot be widened is logged and skipped,
+  like the task-board charset widening: the site stays up, and a save too long
+  for the old column is refused by the database instead of cut.
 - **Preview deploys never mutate the DB.** Bootstrap (CREATE/ALTER/seed) is
   skipped when `VERCEL_ENV === "preview"`, because previews share the production
   database — a branch bumping `SCHEMA_VERSION` must not alter prod before merge.
@@ -1251,7 +1361,7 @@ account with strict transformations) the image falls back to the original.
 > `ADMIN_PASSWORD` (env, **not** source) — but only if the row doesn't already
 > exist, and it **skips seeding entirely when `ADMIN_PASSWORD` is unset** (no weak
 > default). Changing `ADMIN_PASSWORD` does **not** rotate an already-seeded
-> password — update the existing user's hash in the DB directly.
+> password — change it from /settings → เปลี่ยนรหัสผ่าน, or /forgot-password (§10).
 
 ---
 

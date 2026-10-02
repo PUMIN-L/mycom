@@ -1,6 +1,7 @@
 import mysql from "mysql2/promise";
 import bcrypt from "bcryptjs";
 import type { QueryResult, FieldPacket, RowDataPacket } from "mysql2";
+import { repairTruncatedRichText } from "./sanitizeHtml";
 
 // Bump whenever the schema below changes — a mismatch re-runs the (idempotent)
 // bump; a match lets returning cold instances skip it in one SELECT.
@@ -12,7 +13,7 @@ import type { QueryResult, FieldPacket, RowDataPacket } from "mysql2";
 // did not lower the 33 already written to `settings`, so the next change to
 // reuse 33 was skipped entirely and its tables were never created in
 // production. Reverting a migration means moving FORWARD to a new number.
-const SCHEMA_VERSION = 45;
+const SCHEMA_VERSION = 46;
 
 type DbPool = ReturnType<typeof mysql.createPool>;
 
@@ -91,7 +92,7 @@ async function bootstrapSchemaOnce(): Promise<void> {
     await connection.query(`
         CREATE TABLE IF NOT EXISTS contents (
           id VARCHAR(255) PRIMARY KEY,
-          title VARCHAR(255) NOT NULL,
+          title TEXT NOT NULL,
           blocks JSON NOT NULL,
           createdAt VARCHAR(255) NOT NULL,
           productId VARCHAR(255) NULL,
@@ -355,9 +356,9 @@ async function bootstrapSchemaOnce(): Promise<void> {
     await connection.query(`
         CREATE TABLE IF NOT EXISTS product_categories (
           id INT PRIMARY KEY,
-          name_th VARCHAR(255) NOT NULL,
-          name_en VARCHAR(255) NOT NULL,
-          name_zh VARCHAR(255) NOT NULL,
+          name_th TEXT NOT NULL,
+          name_en TEXT NOT NULL,
+          name_zh TEXT NOT NULL,
           sortOrder INT DEFAULT 0
         )
       `);
@@ -368,12 +369,12 @@ async function bootstrapSchemaOnce(): Promise<void> {
           id VARCHAR(255) PRIMARY KEY,
           categoryId INT NOT NULL,
           image VARCHAR(1024) NOT NULL,
-          title_th VARCHAR(255) NOT NULL,
-          title_en VARCHAR(255) NOT NULL,
-          title_zh VARCHAR(255) NOT NULL,
-          desc_th TEXT,
-          desc_en TEXT,
-          desc_zh TEXT,
+          title_th TEXT NOT NULL,
+          title_en TEXT NOT NULL,
+          title_zh TEXT NOT NULL,
+          desc_th MEDIUMTEXT,
+          desc_en MEDIUMTEXT,
+          desc_zh MEDIUMTEXT,
           createdAt VARCHAR(255) NOT NULL,
           isPublished BOOLEAN DEFAULT TRUE,
           sortOrder INT DEFAULT 0,
@@ -1804,6 +1805,10 @@ async function bootstrapSchemaOnce(): Promise<void> {
     //   );
     // }
 
+    // v46 — rich-text columns hold the WHOLE sanitized HTML (see
+    // lib/richTextLimits.ts and widenRichTextColumns below).
+    await widenRichTextColumns(connection);
+
     // v44 — plain-text columns hold text, not HTML entities (see
     // decodeStoredPlainText). Last, so every table it touches exists.
     //
@@ -2043,6 +2048,13 @@ export async function withTransaction<T>(
   // pass idempotent bodies — so retrying is safe and mirrors query()'s behavior.
   // Without this, saves that the old query()-based path would have retried now
   // spuriously 500 after an idle period.
+  //
+  // A DEADLOCK is retried the same way, here and only here: the database has
+  // already rolled the losing transaction back, so running it again simply
+  // waits for the winner and then works on what it committed. Two
+  // transactions that lock the same rows in opposite orders can meet like
+  // that — recomputePaidAmount locks an invoice and then its payments, while a
+  // void locks the payment first — and the loser used to come back as a 500.
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     const conn = await p.getConnection();
     try {
@@ -2059,9 +2071,9 @@ export async function withTransaction<T>(
       lastError = error;
       // Business errors (e.g. DocNoConflictError) have no transient DB code, so
       // they propagate immediately instead of being retried.
-      if (!isTransientDbError(error) || attempt === MAX_ATTEMPTS) throw error;
+      if (!(isTransientDbError(error) || isDeadlock(error)) || attempt === MAX_ATTEMPTS) throw error;
       console.warn(
-        `DB transaction transient error (attempt ${attempt}/${MAX_ATTEMPTS}), retrying:`,
+        `DB transaction ${isDeadlock(error) ? "deadlock" : "transient error"} (attempt ${attempt}/${MAX_ATTEMPTS}), retrying:`,
         (error as { code?: string }).code
       );
       await new Promise((resolve) => setTimeout(resolve, 150 * attempt));
@@ -2095,6 +2107,11 @@ const TRANSIENT_DB_ERROR_CODES = new Set([
 function isTransientDbError(error: unknown): boolean {
   const code = (error as { code?: string } | null | undefined)?.code;
   return code !== undefined && TRANSIENT_DB_ERROR_CODES.has(code);
+}
+
+/** MySQL/TiDB error 1213 — the transaction was rolled back to break a deadlock. */
+function isDeadlock(error: unknown): boolean {
+  return (error as { code?: string } | null | undefined)?.code === "ER_LOCK_DEADLOCK";
 }
 
 function isDuplicateKeyError(error: unknown): boolean {
@@ -2160,6 +2177,81 @@ function isBenignSchemaError(error: unknown): boolean {
     return DUPLICATE_CONSTRAINT_MESSAGE_HINTS.some((hint) => text.includes(hint));
   }
   return false;
+}
+
+// ── v46: rich text is limited by its text, never cut by length of HTML ──────
+//
+// The stores used to save sanitizeRichText(x).substring(0, cap) into a
+// VARCHAR(255) (titles, category names) or cut descriptions at 10,000. The cap
+// counted the HTML, so a formatted title the form accepted (it counts TEXT)
+// was cut mid-tag — "…</span></stro" — and that half-written tag swallowed the
+// page rendered after it. The columns now hold the whole HTML: TEXT for titles
+// and names, MEDIUMTEXT for descriptions (lib/richTextLimits.ts keeps the HTML
+// under what each can hold). VARCHAR → TEXT keeps every byte stored.
+//
+// Then each value that is EXACTLY a cap long — what .substring(0, cap) leaves
+// when it cut — is made well-formed again (repairTruncatedRichText): the
+// half-written tag at its end is dropped and every element left open is
+// closed. A value that was never cut is left exactly as it is. The text that was cut off is gone for good; the admin
+// sees the shortened title in the editor and can finish it.
+//
+// Deliberately NOT fatal, like the task-board widening: an unwidened column is
+// today's state. A save whose HTML does not fit is then refused by the
+// database (an error, not a cut), which is still better than the site down.
+export const RICH_TEXT_COLUMNS: ReadonlyArray<{
+  table: string;
+  column: string;
+  type: "TEXT NOT NULL" | "MEDIUMTEXT";
+  /** The length the old code cut this column to. */
+  oldCap: number;
+}> = [
+  { table: "products", column: "title_th", type: "TEXT NOT NULL", oldCap: 255 },
+  { table: "products", column: "title_en", type: "TEXT NOT NULL", oldCap: 255 },
+  { table: "products", column: "title_zh", type: "TEXT NOT NULL", oldCap: 255 },
+  { table: "products", column: "desc_th", type: "MEDIUMTEXT", oldCap: 10000 },
+  { table: "products", column: "desc_en", type: "MEDIUMTEXT", oldCap: 10000 },
+  { table: "products", column: "desc_zh", type: "MEDIUMTEXT", oldCap: 10000 },
+  { table: "product_categories", column: "name_th", type: "TEXT NOT NULL", oldCap: 255 },
+  { table: "product_categories", column: "name_en", type: "TEXT NOT NULL", oldCap: 255 },
+  { table: "product_categories", column: "name_zh", type: "TEXT NOT NULL", oldCap: 255 },
+  { table: "contents", column: "title", type: "TEXT NOT NULL", oldCap: 255 },
+];
+
+async function widenRichTextColumns(connection: mysql.PoolConnection): Promise<void> {
+  for (const { table, column, type, oldCap } of RICH_TEXT_COLUMNS) {
+    const col = `\`${column}\``;
+    try {
+      await connection.query(`ALTER TABLE ${table} MODIFY ${col} ${type}`);
+    } catch (error) {
+      if (!isBenignSchemaError(error)) {
+        console.error(
+          `[db:bootstrap] widening ${table}.${column} to ${type} FAILED — a save whose HTML is longer than the old column is refused until it is widened:`,
+          error
+        );
+      }
+    }
+    try {
+      // CHAR_LENGTH counts code points, .substring UTF-16 units: an emoji is
+      // one and two. Fetch generously and match the exact JS length below.
+      const [rows] = await connection.query<RowDataPacket[]>(
+        `SELECT id, ${col} AS value FROM ${table} WHERE CHAR_LENGTH(${col}) >= ?`,
+        [Math.floor(oldCap / 2)]
+      );
+      for (const row of rows) {
+        const stored = row.value == null ? "" : String(row.value);
+        if (stored.length !== oldCap) continue;
+        const repaired = repairTruncatedRichText(stored);
+        if (repaired === null) continue;
+        await connection.query(`UPDATE ${table} SET ${col} = ? WHERE id = ? AND ${col} = ?`, [
+          repaired,
+          row.id,
+          stored,
+        ]);
+      }
+    } catch (error) {
+      console.error(`[db:bootstrap] repairing cut rich text in ${table}.${column} FAILED:`, error);
+    }
+  }
 }
 
 // ── Lightweight connectivity probe (for /api/health) ─────────────────────────

@@ -10,9 +10,9 @@ import {
 } from "../../../../lib/loginDevice";
 import {
   clearLoginFailures,
+  reauthCodeLockKey,
   refundLoginAttempt,
   takeLoginAttempt,
-  twoFactorLockKey,
 } from "../../../../lib/loginThrottle";
 import { confirmTotpSetup, getTwoFactorUser } from "../../../../lib/twoFactor";
 import { NO_STORE, requirePassword } from "../../../../lib/twoFactorReauth";
@@ -49,7 +49,7 @@ export const POST = withRoute(
     }
     // Taken before the code is checked (takeLoginAttempt) so parallel guesses
     // cannot all get past the lockout.
-    const lockKey = twoFactorLockKey(user.id);
+    const lockKey = reauthCodeLockKey(user.id);
     if (!(await takeLoginAttempt(lockKey))) {
       return NextResponse.json(
         { error: "ใส่รหัสผิดหลายครั้งเกินไป กรุณารอ 15 นาทีแล้วลองใหม่" },

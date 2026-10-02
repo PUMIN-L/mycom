@@ -14,6 +14,7 @@ export default function robots(): MetadataRoute.Robots {
       disallow: [
         "/api/",
         "/login",
+        "/forgot-password",
         "/create-product",
         "/create-content",
         "/edit-product",

@@ -166,12 +166,12 @@ describe('login rate limiting (settings-table backed, shared across instances)',
     const res = await login(req({ username: 'admin', password: 'correct-horse' }));
     expect(res.status).toBe(429);
     expect(createSession).not.toHaveBeenCalled();
-    expect(state.get('login_fail_admin')).toBe('5|' + state.get('login_fail_admin')!.split('|')[1]);
+    expect(state.get('login_fail_u_admin')).toBe('5|' + state.get('login_fail_u_admin')!.split('|')[1]);
   });
 
   it('rejects a request before even querying the user row when already locked out', async () => {
     // Simulates a second instance seeing lockout state written by the first.
-    state.set('login_fail_admin', `5|${Date.now() + 60_000}`);
+    state.set('login_fail_u_admin', `5|${Date.now() + 60_000}`);
 
     const res = await login(req({ username: 'admin', password: 'correct-horse' }));
     expect(res.status).toBe(429);
@@ -185,7 +185,7 @@ describe('login rate limiting (settings-table backed, shared across instances)',
     for (let i = 0; i < 5; i++) {
       await login(req({ username: 'admin', password: 'WRONG' }));
     }
-    expect(state.get('login_fail_admin')?.startsWith('5|')).toBe(true);
+    expect(state.get('login_fail_u_admin')?.startsWith('5|')).toBe(true);
 
     vi.mocked(query).mockResolvedValue([[{ id: '2', username: 'someone-else', passwordHash }]] as never);
     const res = await login(req({ username: 'someone-else', password: 'correct-horse' }));
@@ -193,13 +193,13 @@ describe('login rate limiting (settings-table backed, shared across instances)',
   });
 
   it('clears the lockout counter after a successful login', async () => {
-    state.set('login_fail_admin', `4|${Date.now() + 60_000}`);
+    state.set('login_fail_u_admin', `4|${Date.now() + 60_000}`);
     const passwordHash = bcrypt.hashSync('correct-horse', 10);
     vi.mocked(query).mockResolvedValue([[{ id: '1', username: 'admin', passwordHash }]] as any);
 
     const res = await login(req({ username: 'admin', password: 'correct-horse' }));
     expect(res.status).toBe(200);
-    expect(state.get('login_fail_admin')).toBe('0|0');
+    expect(state.get('login_fail_u_admin')).toBe('0|0');
   });
 
   it('clears the block once the 15-minute window has passed, allowing the next attempt through', async () => {
@@ -241,6 +241,6 @@ describe('login rate limiting (settings-table backed, shared across instances)',
     expect(forUpdateCall).toBeDefined();
     // setSetting (the old, non-atomic write path) must not be used for the
     // failure counter itself.
-    expect(setSetting).not.toHaveBeenCalledWith('login_fail_admin', expect.any(String));
+    expect(setSetting).not.toHaveBeenCalledWith('login_fail_u_admin', expect.any(String));
   });
 });

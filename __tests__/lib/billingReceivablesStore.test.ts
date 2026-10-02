@@ -141,6 +141,7 @@ describe('cancelBillingDocument — the non-destructive alternative', () => {
       .mockResolvedValueOnce([{ affectedRows: 1 }]) // the cancel
       .mockResolvedValueOnce([[{ billingDocumentId: 'inv-1', voidedAt: null, voidReason: null }]])
       .mockResolvedValueOnce([{ affectedRows: 1 }]) // the void
+      .mockResolvedValueOnce([[{ id: 'inv' }]]) // invoice lock (recomputePaidAmount)
       .mockResolvedValueOnce([[{ paid: '0.00' }]]) // re-sum
       .mockResolvedValueOnce([{ affectedRows: 1 }]); // write paidAmount
 
@@ -166,6 +167,7 @@ describe('cancelBillingDocument — the non-destructive alternative', () => {
       ])
       .mockResolvedValueOnce([[]]) // no LIVE newer version has taken its place
       .mockResolvedValueOnce([{ affectedRows: 1 }])
+      .mockResolvedValueOnce([[{ id: 'inv' }]]) // invoice lock (recomputePaidAmount)
       .mockResolvedValueOnce([[{ paid: '107000.00' }]])
       .mockResolvedValueOnce([{ affectedRows: 1 }]);
 
