@@ -102,6 +102,9 @@ interface ShowcaseClientProps {
   /** Server-read maintenance flag, forwarded to Footer so the contact block is
    * already hidden in the first paint rather than after a client fetch. */
   maintenanceOn: boolean;
+  /** Whether the server rendered the admin's copy (Draft Mode + a session —
+   * every product for the edit picker) or the cached visitor's copy. */
+  adminView: boolean;
 }
 
 /**
@@ -301,15 +304,32 @@ export default function ShowcaseClient({
   relatedCategory = null,
   companyInfo,
   maintenanceOn,
+  adminView,
 }: ShowcaseClientProps) {
   const router = useRouter();
   const { lang } = useLanguage();
   const t = useT();
+  const { isLoggedIn, isLoading: authLoading } = useAuth();
+
+  // A copy rendered for the other kind of viewer: the cached visitor's copy
+  // shown to an admin (prefetched before logging in, or what a session
+  // without Draft Mode got before /api/auth/me gave it back), or an admin's
+  // copy kept in this tab's router cache after logging out. Render this page
+  // again, once, for whoever is looking — page.tsx keys this component on the
+  // copy, so the fresh data reseeds the state below. Checked once per mount,
+  // when the login check has settled: logging out ON this page is not a
+  // reason (the logout already navigates away), and a refresh that comes back
+  // the same (Draft Mode cookie refused) does not remount, so it cannot loop.
+  const checkedViewer = useRef(false);
+  useEffect(() => {
+    if (authLoading || checkedViewer.current) return;
+    checkedViewer.current = true;
+    if (isLoggedIn !== adminView) router.refresh();
+  }, [authLoading, isLoggedIn, adminView, router]);
 
   // Seeded from server-fetched data (no client loading spinner / waterfall).
   const [content, setContent] = useState<ContentData>(initialContent);
   const [allContents, setAllContents] = useState<ContentMeta[]>(initialAllContents);
-  const { isLoggedIn } = useAuth();
 
   // Edit mode
   const [isEditing, setIsEditing] = useState(false);

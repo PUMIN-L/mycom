@@ -322,6 +322,35 @@ describe('Documents API Route', () => {
       expect(res.headers.get('x-robots-tag')).toBeNull();
     });
 
+    // Every view used to stream the whole PDF through this function again.
+    // A versioned URL names one fixed file: a day at the CDN, an hour in the
+    // browser — not a year, so a file an admin deletes stops being served.
+    it('lets the CDN keep a versioned PDF a day and the browser an hour — the download too', async () => {
+      fetchMock.mockResolvedValue({ status: 200, ok: true, body: null } as never);
+      const inline = await PROXY_GET(proxyRequest(cloudUrl));
+      expect(inline.headers.get('Cache-Control')).toBe('public, max-age=3600, s-maxage=86400');
+      const download = await PROXY_GET(proxyRequest(cloudUrl, true));
+      expect(download.headers.get('Cache-Control')).toBe('public, max-age=3600, s-maxage=86400');
+    });
+
+    it('caches a URL without a version (it could be overwritten in place) far shorter', async () => {
+      fetchMock.mockResolvedValue({ status: 200, ok: true, body: null } as never);
+      const res = await PROXY_GET(proxyRequest('https://res.cloudinary.com/demo/raw/upload/folder/doc.pdf'));
+      expect(res.headers.get('Cache-Control')).toBe('public, max-age=300, s-maxage=3600');
+    });
+
+    it('never marks a refusal or an upstream error cacheable', async () => {
+      const notAllowed = await PROXY_GET(proxyRequest('https://evil.example.com/x.pdf'));
+      expect(notAllowed.headers.get('Cache-Control') ?? '').not.toContain('public');
+      fetchMock.mockResolvedValue({ status: 404, ok: false, body: null } as never);
+      const gone = await PROXY_GET(proxyRequest(cloudUrl));
+      expect(gone.status).toBe(404);
+      expect(gone.headers.get('Cache-Control') ?? '').not.toContain('public');
+      fetchMock.mockResolvedValue({ status: 302, ok: false, body: null } as never);
+      const redirect = await PROXY_GET(proxyRequest(cloudUrl));
+      expect(redirect.headers.get('Cache-Control') ?? '').not.toContain('public');
+    });
+
     it('refuses to follow an upstream redirect (502)', async () => {
       fetchMock.mockResolvedValue({ status: 302, ok: false, body: null } as any);
 

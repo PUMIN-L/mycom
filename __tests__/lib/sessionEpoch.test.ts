@@ -20,6 +20,8 @@ vi.mock("next/headers", () => ({
     set: setCookie,
     delete: vi.fn(),
   })),
+  // createSession turns Draft Mode on (lib/session.ts).
+  draftMode: vi.fn(async () => ({ isEnabled: false, enable: vi.fn(), disable: vi.fn() })),
 }));
 
 import { encrypt, decrypt, getSession, createSession } from "@/app/lib/session";

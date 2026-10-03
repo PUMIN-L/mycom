@@ -30,6 +30,7 @@ import Services from "@/app/components/Services";
 import Clients from "@/app/components/Clients";
 import AboutSection from "@/app/components/AboutSection";
 import ProductCatalogView from "@/app/components/ProductCatalogView";
+import ProductsSkeleton from "@/app/components/ProductsSkeleton";
 
 afterEach(cleanup);
 
@@ -219,5 +220,19 @@ describe("anchor jumps stop below the fixed menu bar", () => {
     // a JS comment written inside JSX renders as text — none next to it
     const after = src.slice(src.indexOf('<section id="products"'), src.indexOf('<section id="products"') + 400);
     expect(after).not.toMatch(/^\s*\/\/ /m);
+  });
+});
+
+// The skeleton stands in for the products section while it loads; its box
+// must match the real one, or the page jumps when the products arrive — and
+// an anchor jump to /#products made during loading lands under the menu bar.
+describe("the products skeleton matches the real section", () => {
+  it("same padding at every width, and the same scroll margin", () => {
+    const src = (file: string) => fs.readFileSync(path.resolve(__dirname, "../..", file), "utf8");
+    const real = src("app/components/Products.tsx").match(/<section id="products" className="([^"]*)"/)![1].split(/\s+/);
+    const { container } = render(<ProductsSkeleton />);
+    const skeleton = classesOf(container.querySelector("section#products"));
+    const layout = (classes: string[]) => classes.filter((c) => /^((sm|md|lg|xl):)?(py|pt|pb|scroll-mt)-/.test(c)).sort();
+    expect(layout(skeleton)).toEqual(layout(real));
   });
 });

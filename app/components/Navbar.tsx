@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import Image from "next/image";
+import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useLanguage, useT } from "../i18n/LanguageContext";
 import { useNav } from "../context/NavContext";
@@ -18,6 +19,9 @@ const langLabels: Record<Language, string> = {
   en: "EN",
   zh: "CN",
 };
+
+/** Set once the first Navbar of this document has run its load-time scroll. */
+let handledInitialLoad = false;
 
 interface NavbarProps {
   isHomePage?: boolean;
@@ -48,9 +52,16 @@ export default function Navbar({ isHomePage: forceIsHome }: NavbarProps = {}) {
   }, [langDropdown]);
 
   useEffect(() => {
-    // Force scroll to top on page load if no hash is present in URL
-    if (typeof window !== "undefined" && !window.location.hash) {
-      window.scrollTo(0, 0);
+    // Force scroll to top on page LOAD if no hash is present in URL — the
+    // first Navbar of this document only. Changing page through next/link
+    // scrolls by itself: to the top for a new page, and BACK to where the
+    // reader was for the browser's back button. Forcing the top on every
+    // mount undid the second — back from a product lost the place in the list.
+    if (!handledInitialLoad) {
+      handledInitialLoad = true;
+      if (typeof window !== "undefined" && !window.location.hash) {
+        window.scrollTo(0, 0);
+      }
     }
     
     const handleScroll = () => {
@@ -68,6 +79,14 @@ export default function Navbar({ isHomePage: forceIsHome }: NavbarProps = {}) {
       window.removeEventListener("scroll", handleScroll);
     };
   }, [pathname]);
+
+  // Links are next/link now, so changing page no longer reloads it — and the
+  // menu's open state (NavProvider, in the root layout) would survive onto
+  // the next page when the change came from anything but a tap in the menu,
+  // the browser's back button above all. Close it on every page change.
+  useEffect(() => {
+    setMobileOpen(false);
+  }, [pathname, setMobileOpen]);
 
   // While the phone menu is open the page behind it must not scroll (it
   // did: a swipe on the menu moved the page underneath).
@@ -118,7 +137,10 @@ export default function Navbar({ isHomePage: forceIsHome }: NavbarProps = {}) {
           It used to switch at md (768px), crowding an iPad held upright. */}
       <div className="w-full px-4 md:px-8 xl:px-16 flex items-center justify-between h-20 md:h-24">
         {/* Logo */}
-        <a href="/" className="flex items-center group relative z-10">
+        {/* next/link throughout: a plain <a> reloaded the whole page on every
+            click — all the JS, the fonts, the login check — where Link swaps
+            the page in place and fetches the next one ahead of the click. */}
+        <Link href="/" className="flex items-center group relative z-10">
           <div className="relative w-8 h-18 transition-transform group-hover:scale-110">
             <Image
               src="/images/profin-logo-3.png"
@@ -136,7 +158,7 @@ export default function Navbar({ isHomePage: forceIsHome }: NavbarProps = {}) {
               โปรฟิน แล็บสเกล · Premium Testing Equipments
             </span>
           </div>
-        </a>
+        </Link>
 
         {/* Mobile Toggle - Moved before Desktop Nav for better DOM flow */}
         <button
@@ -157,7 +179,7 @@ export default function Navbar({ isHomePage: forceIsHome }: NavbarProps = {}) {
         {/* Desktop Nav */}
         <div className="hidden lg:flex items-center gap-6 xl:gap-10">
           {navLinks.map((link) => (
-            <a
+            <Link
               key={link.href}
               href={link.href}
               className={`text-[15px] font-medium font-thai uppercase transition-all relative group
@@ -165,7 +187,7 @@ export default function Navbar({ isHomePage: forceIsHome }: NavbarProps = {}) {
             >
               {link.label}
               <span className="absolute bottom-[-8px] left-1/2 w-0 h-[1px] bg-[var(--accent)] transition-all duration-300 -translate-x-1/2 group-hover:w-full" />
-            </a>
+            </Link>
           ))}
 
           {/* Language Switcher */}
@@ -227,7 +249,7 @@ export default function Navbar({ isHomePage: forceIsHome }: NavbarProps = {}) {
         <div className="lg:hidden bg-white border-t border-gray-100 animate-fade-in h-[calc(100vh-5rem)] md:h-[calc(100vh-6rem)] supports-[height:100dvh]:h-[calc(100dvh-5rem)] supports-[height:100dvh]:md:h-[calc(100dvh-6rem)] overflow-y-auto overscroll-contain">
           <div className="section-wrapper py-10 flex flex-col gap-8">
             {navLinks.map((link, index) => (
-              <a
+              <Link
                 key={link.href}
                 href={link.href}
                 onClick={() => setMobileOpen(false)}
@@ -235,7 +257,7 @@ export default function Navbar({ isHomePage: forceIsHome }: NavbarProps = {}) {
                   }`}
               >
                 {link.label}
-              </a>
+              </Link>
             ))}
             <div className="flex flex-col gap-4 pt-10 border-t border-gray-100">
               <span className="text-[10px] uppercase tracking-widest text-gray-400">Select Language</span>

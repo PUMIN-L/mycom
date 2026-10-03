@@ -4,6 +4,7 @@ import React from "react";
 import { useT } from "../i18n/LanguageContext";
 import { translations } from "../i18n/translations";
 import Image from "next/image";
+import Link from "next/link";
 import LineQrModal from "./LineQrModal";
 
 export default function Hero() {
@@ -81,12 +82,12 @@ export default function Hero() {
             <span className="relative z-10">{t(translations.hero.cta)}</span>
             <div className="absolute inset-0 bg-[var(--accent)] transition-transform duration-500 -translate-x-full group-hover:translate-x-0" />
           </a> */}
-            <a
+            <Link
               href="/contact"
               className="px-8 py-3 border-2 border-white text-white font-bold text-center transition-all hover:bg-white hover:text-black"
             >
               {t(translations.hero.cta)}
-            </a>
+            </Link>
             <button
               type="button"
               onClick={handleLineClick}

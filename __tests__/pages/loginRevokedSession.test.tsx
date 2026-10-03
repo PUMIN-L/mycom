@@ -44,14 +44,23 @@ function AuthProbe() {
 const meCalls = (m: ReturnType<typeof mockMe>) =>
   m.mock.calls.filter(([u]) => String(u) === "/api/auth/me").length;
 
+// A browser that was given a session carries the script-readable
+// "a session exists" hint (lib/sessionHint.ts); AuthProvider only asks
+// /api/auth/me on load when it is there.
+const giveSessionHint = () => {
+  document.cookie = "has_session=1; path=/";
+};
+
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.clearAllMocks();
+  document.cookie = "has_session=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
 });
 
 describe("/login — a session revoked after the app loaded", () => {
   it("shows the form instead of bouncing back to /adminpanel", async () => {
     // Valid when the app loaded, revoked by the time the tab reaches /login.
+    giveSessionHint();
     const fetchMock = mockMe(admin, null);
     render(<AuthProvider><LoginPage /><AuthProbe /></AuthProvider>);
 
@@ -66,6 +75,7 @@ describe("/login — a session revoked after the app loaded", () => {
 
   it("lets the revoked tab log in again", async () => {
     // Valid at load, revoked at /login, valid again once the form is used.
+    giveSessionHint();
     const fetchMock = mockMe(admin, null, admin);
     const { container } = render(<AuthProvider><LoginPage /></AuthProvider>);
     await waitFor(() => expect(meCalls(fetchMock)).toBe(2));
@@ -78,19 +88,32 @@ describe("/login — a session revoked after the app loaded", () => {
   });
 
   it("still sends a live session on to /adminpanel", async () => {
+    giveSessionHint();
     mockMe(admin);
     render(<AuthProvider><LoginPage /></AuthProvider>);
 
     await waitFor(() => expect(replace).toHaveBeenCalledWith("/adminpanel"));
   });
 
-  it("does not redirect a visitor who was never logged in", async () => {
+  // No hint cookie: no session to find, so nobody is asked — that call used to
+  // be made on every page view of every visitor.
+  it("does not redirect a visitor who was never logged in — and does not even ask the server", async () => {
     const fetchMock = mockMe(null);
-    render(<AuthProvider><LoginPage /></AuthProvider>);
+    render(<AuthProvider><LoginPage /><AuthProbe /></AuthProvider>);
 
+    await act(async () => {});
+    expect(meCalls(fetchMock)).toBe(0);
+    expect(replace).not.toHaveBeenCalled();
+    expect(screen.getByTestId("probe")).toHaveTextContent("out");
+  });
+
+  it("a browser with the hint but no live session asks once, and is logged out", async () => {
+    giveSessionHint();
+    const fetchMock = mockMe(null);
+    render(<AuthProvider><LoginPage /><AuthProbe /></AuthProvider>);
     await waitFor(() => expect(meCalls(fetchMock)).toBe(1));
     await act(async () => {});
-
+    expect(screen.getByTestId("probe")).toHaveTextContent("out");
     expect(replace).not.toHaveBeenCalled();
   });
 });

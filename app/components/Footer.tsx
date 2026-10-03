@@ -95,13 +95,13 @@ export default function Footer({ email, phone, address, maintenanceOn }: FooterP
             <ul className="space-y-4">
               {quickLinks.map((link) => (
                 <li key={link.href}>
-                  <a
+                  <Link
                     href={link.href}
                     className="text-white/70 hover:text-white transition-all text-base font-light flex items-center group"
                   >
                     <span className="w-0 h-[1px] bg-[var(--accent)] transition-all group-hover:w-4 group-hover:mr-3" />
                     {link.label}
-                  </a>
+                  </Link>
                 </li>
               ))}
             </ul>

@@ -70,6 +70,7 @@ function renderView(blocks: ContentBlock[], title = "หัวข้อทดส
       initialCategories={[]}
       companyInfo={{ email: "x@y.z", phone: "0", address: "ที่อยู่" }}
       maintenanceOn={false}
+      adminView={false}
     />
   );
 }

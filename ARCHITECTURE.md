@@ -538,6 +538,15 @@ optional `name` (the document's title, passed by `/document/[id]`) and names
 the file after it — `filename*=UTF-8''…` with an ASCII `filename` fallback
 (`lib/pdfFilename.ts`); without one it stays `document.pdf`.
 
+**The proxy's PDF is cacheable** (it used to carry no `Cache-Control`, so
+every view streamed the whole file through the function again). A versioned
+Cloudinary URL (`/v123…/`) names one fixed file, so it gets `public,
+max-age=3600, s-maxage=86400` (an hour in the browser, a day at the CDN). An
+unversioned one gets five minutes and an hour. Deliberately not a year: these
+caches cannot be purged from the app, so their lifetime is how long a document
+an admin deletes stays reachable. Only a 200 carries it; refusals and upstream
+errors are never stored.
+
 ### 8. Quotation builder
 [`app/quotation/page.tsx`](./app/quotation/page.tsx) builds a quote and exports a
 single-page PDF **client-side** (`jspdf` + `html2canvas-pro`, dynamically imported
@@ -955,10 +964,38 @@ stored in an httpOnly `session` cookie. `createSession` / `getSession` /
   protected API goes through `getSession()` and rejects it (the one admin page
   that reads server-side, `/documents`, reads the list `GET /api/documents`
   already serves publicly). On the client, `AuthContext` reads `/api/auth/me`
-  once per page load, so a tab open during a revocation still says logged in:
+  once per page load, **only in a browser carrying the `has_session` hint**
+  ([`lib/sessionHint.ts`](./app/lib/sessionHint.ts)). It is a script-readable
+  cookie that only says a session cookie was issued: no secret, grants
+  nothing. Without it there is no session to find, and asking was one function
+  run per page view of every visitor. `createSession` sets it with the session's
+  expiry and `deleteSession` removes it. `/api/auth/me` clears it when the
+  session behind it is gone, and `proxy.ts` gives one to a valid session that
+  lacks it (sessions from before the hint). Even so, a tab open during a revocation still says logged in:
   `/login` calls `refresh()` before redirecting a "logged-in" visitor to
   /adminpanel, or a revoked tab sent there by a 401 would bounce straight back
   (`__tests__/pages/loginRevokedSession.test.tsx`).
+- **A logged-in browser is in Next's Draft Mode** — that is how an admin gets
+  fresh renders of pages cached for visitors (`/showcase/[id]` is ISR, §14).
+  `createSession` calls `enableDraftMode(expiresAt)` and `deleteSession` calls
+  `draftMode().disable()` (every caller is a Route Handler, the only place they
+  are allowed). The `__prerender_bypass` cookie is a per-build secret that
+  grants nothing: a page still decides from `getSession()` what an admin may
+  see. Next sets it as a browser-session cookie with SameSite=None. That
+  outlives the session in a browser that restores its tabs, leaving every page
+  uncached with nothing to turn it off. `enableDraftMode` re-issues it with the
+  **session's expiry and SameSite=Lax**, so it lives exactly as long as the
+  session and the hint. A live session can still lack it: sessions from before
+  this, or a cookie from an earlier build. `/api/auth/me` turns Draft Mode back
+  on for such a session (until its expiry) and answers `draftStarted: true`.
+  `AuthContext` then calls `router.refresh()` once, because the page it landed
+  on was the visitor's copy (a hidden product's page is a 404 there).
+  `/api/auth/me` also turns Draft Mode off when the session behind it is gone. **Cost, by design:** Draft Mode
+  skips `unstable_cache` and ISR for that browser, in pages and Route Handlers
+  alike. Every request from a logged-in admin reads the DB directly. That is
+  one admin against every visitor; the bell polls every 5 minutes. The PDF
+  proxy's own `Cache-Control` is untouched (dynamic Route Handlers return
+  before Next's Draft Mode header).
 - ⚠️ The device key is `"login-device:" + SESSION_SECRET`, deliberately NOT the
   session key: `getSession()` and `proxy.ts` check only the signature, so a
   token signed with the session key would be accepted as a session. Tests pin
@@ -1265,6 +1302,24 @@ anywhere but the sitemap:
   when the content title is only a model number; image alt text is that title.
 - Data for these pages is converted to plain text and clipped on the server
   (`lib/catalogPages.ts`) — see "Page weight" above.
+- `/showcase/[id]` is **ISR (`revalidate = 60`), not force-dynamic.** It is
+  the page search results send visitors to, and force-dynamic made every view
+  a server render no CDN could hold. Every content, product, category and
+  revision-restore write calls `revalidateTag("products")`. The page reads
+  tagged data (`getAllProducts` / `getAllCategories` / `getAllContentsMeta`),
+  so an edit shows at once and 60 s is only the backstop. ⚠️ **Keep a
+  `products`-tagged read in this page:** `getContent` itself is uncached, so
+  without one a content edit would wait out the 60 s. What only an admin may see
+  is rendered **only in Draft Mode** (§10). `adminSession()` does not even read
+  the session outside it, so the cached copy never depends on who asked: a
+  hidden product's page is a 404 in it, and the edit picker lists public
+  products only. `ShowcaseClient` is keyed on the copy it was given
+  (`adminView`), since it seeds its state from props once. When it has a
+  copy made for the other kind of viewer, it calls `router.refresh()` once
+  per mount, after the login check settles. That covers a copy prefetched
+  before logging in, an admin's copy kept in the tab after logging out, and a
+  session that lacked Draft Mode until `/api/auth/me` restored it. `__tests__/pages/showcasePayload.test.tsx` and
+  `__tests__/components/ShowcaseClientViewerCheck.test.tsx` pin this.
 
 **Sitemap.** No `lastModified` on static pages (it was "now" on every fetch,
 which Google learns to ignore). Content pages use **`contents.updatedAt`**
@@ -1528,14 +1583,18 @@ Tackle in small, verifiable steps — the test suite is now a safety net for the
 4. **DB bootstrap/seed runs on first request.** Move to an explicit migration +
    seed step for production (the `SCHEMA_VERSION` sentinel already makes it cheap
    to skip, but first-request seeding is still implicit).
-5. **Contents are read fresh, not cached — by design.** Unlike products (cached
-   across requests via `unstable_cache` tag `products`, so their mutations call
-   `revalidateTag("products")`), the showcase pages are `force-dynamic` and read
-   contents straight from the DB. That's why contents mutations correctly do
-   **not** call `revalidateTag` — there is no cache to bust. If you ever add
-   caching for contents, remember to `revalidateTag` on every content write.
+5. **A single content is read fresh; the page around it is cached.**
+   `getContent` is not in `unstable_cache`, but `/showcase/[id]` is ISR and its
+   cache entry carries the `products` tag through the lists it also reads. Every
+   content write calls `revalidateTag("products")` (it also busts
+   `getAllContentsMeta`). Any new content writer must do the same (§14).
 6. **Pre-existing lint debt** (`<a>` instead of `<Link>`, `<img>` instead of
-   `next/image`) remains in some components — fix opportunistically.
+   `next/image`) remains in some components — fix opportunistically. The site
+   navigation is `next/link` already (menu, hero button, footer links): a plain
+   `<a>` reloaded the whole page on every click. Because the page now changes in
+   place, the Navbar closes the phone menu on every page change. It also forces
+   scroll-to-top only on the document's first load, so Next can restore the
+   back button's position.
 
 ---
 

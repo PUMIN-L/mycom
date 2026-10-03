@@ -45,6 +45,29 @@ const rateLimiter = createRateLimiter({
 // internal networks / cloud-metadata services (e.g. 169.254.169.254).
 const ALLOWED_HOSTS = new Set(["res.cloudinary.com"]);
 
+// ── Caching ──────────────────────────────────────────────────────────────────
+// Without a Cache-Control every view of a catalog streamed the whole PDF
+// (often several MB) Cloudinary → this function → the reader, again on every
+// re-open — slow for the reader, and paid for in function time and bandwidth.
+//
+// A URL with a version segment (/v1712345678/) names one fixed file: a
+// replaced document gets a new version, so a new URL and a new cache key (the
+// key is the whole query string, name and download flag included). Such a
+// response is cached for a day by the CDN and an hour by the browser.
+//
+// Deliberately NOT a year: a document an admin deletes — uploaded by mistake,
+// say — must stop being served. These caches cannot be purged from here, so
+// their lifetime is how long a deleted file stays reachable: a day at most.
+// A URL without a version could in principle be overwritten in place, so it
+// gets an hour and five minutes. Only a successful response is cached; every
+// refusal and error below carries no Cache-Control and is never stored.
+const PDF_CACHE_VERSIONED = "public, max-age=3600, s-maxage=86400";
+const PDF_CACHE_UNVERSIONED = "public, max-age=300, s-maxage=3600";
+
+function cacheControlFor(url: URL): string {
+  return /\/v\d+\//.test(url.pathname) ? PDF_CACHE_VERSIONED : PDF_CACHE_UNVERSIONED;
+}
+
 function parseAllowedUrl(raw: string): URL | null {
   let url: URL;
   try {
@@ -119,6 +142,7 @@ export async function GET(request: NextRequest) {
     // mostly product names and specs — but only the inline copy should be
     // indexed: the download variant is the same file under a second URL.
     if (isDownload) headers.set("X-Robots-Tag", "noindex");
+    headers.set("Cache-Control", cacheControlFor(url));
 
     return new NextResponse(response.body, { headers });
   } catch (error) {

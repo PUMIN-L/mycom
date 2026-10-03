@@ -99,3 +99,33 @@ describe('proxy — the file convention', () => {
     }
   });
 });
+
+// A session issued before the "a session exists" hint existed has none, and
+// AuthContext would then never ask /api/auth/me for it. The admin page gate
+// gives such a session its hint, expiring with the session.
+describe('proxy — the session hint for older sessions', () => {
+  const visitWith = (cookie: string) =>
+    proxy(new NextRequest('http://localhost:3000/dashboard', { headers: { cookie } }));
+  const setCookie = (res: Response) => res.headers.get('set-cookie') ?? '';
+
+  it('adds has_session to a valid session that lacks it, expiring with the session', async () => {
+    const token = await encrypt({ userId: '1', username: 'admin', expiresAt: new Date(Date.now() + 60_000) });
+    const res = await visitWith(`session=${token}`);
+    expect(passedThrough(res)).toBe(true);
+    expect(setCookie(res)).toMatch(/has_session=1/);
+    expect(setCookie(res)).not.toMatch(/HttpOnly/i);
+    expect(setCookie(res)).toMatch(/Expires=/i);
+  });
+
+  it('leaves a session that already has it alone', async () => {
+    const token = await encrypt({ userId: '1', username: 'admin', expiresAt: new Date(Date.now() + 60_000) });
+    const res = await visitWith(`session=${token}; has_session=1`);
+    expect(setCookie(res)).not.toMatch(/has_session/);
+  });
+
+  it('never gives one to a visitor without a valid session', async () => {
+    const res = await visitWith('session=not-a-token');
+    expect(redirectedToLogin(res)).toBe(true);
+    expect(setCookie(res)).not.toMatch(/has_session/);
+  });
+});

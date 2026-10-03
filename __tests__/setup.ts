@@ -30,7 +30,10 @@ vi.mock('next/headers', () => ({
     set: vi.fn(),
     delete: vi.fn()
   })),
-  headers: vi.fn(() => new Headers())
+  headers: vi.fn(() => new Headers()),
+  // Draft mode: off unless a test turns it on (session.ts enables it for a
+  // logged-in admin; the showcase page reads it).
+  draftMode: vi.fn(async () => ({ isEnabled: false, enable: vi.fn(), disable: vi.fn() })),
 }))
 
 // Mock server-only

@@ -66,6 +66,7 @@ function renderPage({
       }
       companyInfo={{ email: "x@y.z", phone: "0", address: "ที่อยู่" }}
       maintenanceOn={false}
+      adminView={isLoggedIn}
     />
   );
 }
@@ -127,6 +128,7 @@ describe("ShowcaseClient — a multi-line product title in the badge", () => {
         initialCategories={[]}
         companyInfo={{ email: "x@y.z", phone: "0", address: "ที่อยู่" }}
         maintenanceOn={false}
+        adminView={isLoggedIn}
       />
     );
   };
@@ -169,6 +171,7 @@ describe("ShowcaseClient — the content column widens on large screens", () => 
         initialCategories={[]}
         companyInfo={{ email: "x@y.z", phone: "0", address: "ที่อยู่" }}
         maintenanceOn={false}
+        adminView={isLoggedIn}
       />
     );
   };

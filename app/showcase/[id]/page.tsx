@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
+import { draftMode } from "next/headers";
 import {
   getContent,
   getAllContentsMeta,
@@ -21,7 +22,25 @@ import ShowcaseClient, {
   type RelatedCategory as ShowcaseRelatedCategory,
 } from "./ShowcaseClient";
 
-export const dynamic = "force-dynamic";
+// Cached (ISR), not rendered per request: this is the page search engines
+// send visitors to, and force-dynamic made every view a server render the
+// CDN could not hold. Every write that changes what it shows — a content, a
+// product, a category — calls revalidateTag("products"), which this page
+// reads through (getAllProducts / getAllCategories / getAllContentsMeta), so
+// an edit shows at once; 60 s is only the backstop. getContent itself is not
+// cached: keep one of those tagged reads here, or a content edit waits 60 s.
+//
+// What only an admin may see (a hidden product's page, every product in the
+// edit picker) is rendered for a browser in Draft Mode — which session.ts
+// turns on for a logged-in admin — and there only: the session is read ONLY
+// in Draft Mode, so the cached copy never depends on who asked. Draft Mode
+// responses are private, never stored.
+export const revalidate = 60;
+
+/** The admin's session — read only in Draft Mode (see above); null otherwise. */
+async function adminSession() {
+  return (await draftMode()).isEnabled ? getSession() : null;
+}
 
 // Pull readable text out of the content blocks for the meta description.
 // Block content is rich text: it goes through htmlToText, or the description
@@ -56,7 +75,7 @@ export async function generateMetadata({
   params: Promise<{ id: string }>;
 }): Promise<Metadata> {
   const { id } = await params;
-  const [content, session] = await Promise.all([getContent(id), getSession()]);
+  const [content, session] = await Promise.all([getContent(id), adminSession()]);
 
   if (!content || (await isHiddenFromAnonymous(content.productId, !!session))) {
     return { title: "ไม่พบเนื้อหา", robots: { index: false, follow: false } };
@@ -105,7 +124,7 @@ export default async function ShowcaseContentPage({
     getAllContentsMeta(),
     getAllProducts(),
     getAllCategories(),
-    getSession(),
+    adminSession(),
     getCompanyInfo(),
     isMaintenanceMode(),
   ]);
@@ -237,6 +256,12 @@ export default async function ShowcaseContentPage({
         dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbLd).replace(/</g, '\\u003c') }}
       />
       <ShowcaseClient
+        // A new component when the copy changes between the visitor's and the
+        // admin's — its state is seeded from these props once, and the
+        // re-render that swaps the copies (ShowcaseClient, AuthContext) must
+        // reseed it.
+        key={session ? "admin" : "visitor"}
+        adminView={!!session}
         initialContent={content}
         initialAllContents={visibleAllContents}
         initialProducts={productItems}

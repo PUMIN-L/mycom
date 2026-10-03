@@ -7,10 +7,10 @@ vi.mock('@/app/lib/settingsStore', () => ({ getSessionEpoch: vi.fn(async () => 0
 
 // We must set the env variable BEFORE importing session.ts
 process.env.SESSION_SECRET = 'test-secret-key-12345678901234567890';
-const { encrypt, decrypt, createSession, deleteSession, getSession } = await import('@/app/lib/session');
+const { encrypt, decrypt, createSession, deleteSession, getSession, enableDraftMode } = await import('@/app/lib/session');
 
 // In __tests__/setup.ts we mocked next/headers: cookies()
-import { cookies } from 'next/headers';
+import { cookies, draftMode } from 'next/headers';
 
 describe('session', () => {
   const mockCookies = {
@@ -90,6 +90,70 @@ describe('session', () => {
       
       expect(cookies).toHaveBeenCalled();
       expect(mockCookies.delete).toHaveBeenCalledWith('session');
+    });
+
+    it('deletes the "a session exists" hint with it', async () => {
+      await deleteSession();
+      expect(mockCookies.delete).toHaveBeenCalledWith('has_session');
+    });
+  });
+
+  // Draft Mode: the admin's browser gets fresh renders of cached pages (the
+  // /showcase content pages are ISR) — on with the session, off with it, and
+  // its cookie expiring WITH the session (Next's own is a browser-session
+  // cookie, which a tab-restoring browser keeps long after the session).
+  describe('Draft Mode follows the session', () => {
+    const draftOff = () => {
+      const state = { isEnabled: false, enable: vi.fn(), disable: vi.fn() };
+      vi.mocked(draftMode).mockResolvedValue(state as never);
+      return state;
+    };
+    const bypassCookie = (value: string | undefined) =>
+      mockCookies.get.mockImplementation((name: string) =>
+        name === '__prerender_bypass' && value !== undefined ? { value } : undefined
+      );
+
+    it('createSession turns it on, deleteSession turns it off', async () => {
+      const state = draftOff();
+      await createSession('2', 'editor');
+      expect(state.enable).toHaveBeenCalledTimes(1);
+      await deleteSession();
+      expect(state.disable).toHaveBeenCalledTimes(1);
+    });
+
+    it("re-issues Next's bypass cookie to expire with the session, SameSite=Lax", async () => {
+      draftOff();
+      bypassCookie('build-preview-id');
+      await createSession('2', 'editor');
+      const sessionCall = mockCookies.set.mock.calls.find(([name]) => name === 'session')!;
+      const bypassCall = mockCookies.set.mock.calls.find(([name]) => name === '__prerender_bypass')!;
+      expect(bypassCall[1]).toBe('build-preview-id');
+      expect(bypassCall[2]).toMatchObject({ httpOnly: true, sameSite: 'lax', path: '/' });
+      expect(bypassCall[2].expires).toEqual(sessionCall[2].expires);
+    });
+
+    it("leaves Next's own cookie alone when it cannot find it, or has no usable expiry", async () => {
+      draftOff();
+      bypassCookie(undefined);
+      await enableDraftMode(new Date(Date.now() + 1000));
+      draftOff();
+      bypassCookie('build-preview-id');
+      await enableDraftMode(new Date('not a date'));
+      expect(mockCookies.set.mock.calls.find(([name]) => name === '__prerender_bypass')).toBeUndefined();
+    });
+  });
+
+  // The script-readable hint (lib/sessionHint.ts) lets AuthContext skip
+  // /api/auth/me in a browser with no session. It must expire WITH the
+  // session, be readable by script, and carry nothing secret.
+  describe('createSession — the session hint', () => {
+    it('sets has_session=1, script-readable, expiring with the session', async () => {
+      await createSession('2', 'editor');
+      const sessionCall = mockCookies.set.mock.calls.find(([name]) => name === 'session')!;
+      const hintCall = mockCookies.set.mock.calls.find(([name]) => name === 'has_session')!;
+      expect(hintCall[1]).toBe('1');
+      expect(hintCall[2]).toMatchObject({ httpOnly: false, path: '/', sameSite: 'lax' });
+      expect(hintCall[2].expires).toEqual(sessionCall[2].expires);
     });
   });
 

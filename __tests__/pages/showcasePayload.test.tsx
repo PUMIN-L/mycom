@@ -30,7 +30,16 @@ import { getContent, getAllContentsMeta } from "@/app/lib/contentStore";
 import { getSession } from "@/app/lib/session";
 import { getAllProducts, getAllCategories } from "@/app/lib/productStore";
 import { getCompanyInfo } from "@/app/lib/companyInfo";
-import ShowcaseContentPage from "@/app/showcase/[id]/page";
+import { draftMode } from "next/headers";
+import { notFound } from "next/navigation";
+import ShowcaseContentPage, { generateMetadata, revalidate } from "@/app/showcase/[id]/page";
+import fs from "fs";
+import path from "path";
+
+/** The browser asking: Draft Mode on (a logged-in admin, see session.ts) or off. */
+function asked({ draft }: { draft: boolean }) {
+  vi.mocked(draftMode).mockResolvedValue({ isEnabled: draft, enable: vi.fn(), disable: vi.fn() } as never);
+}
 
 function productRow(id: string, over: Record<string, unknown> = {}) {
   return {
@@ -69,6 +78,7 @@ async function clientProps(): Promise<Record<string, unknown>> {
 }
 
 beforeEach(() => {
+  asked({ draft: false });
   vi.mocked(getContent).mockResolvedValue({
     id: "c1",
     title: "<p>GM-4</p>",
@@ -111,7 +121,8 @@ describe("/showcase/[id] — product data shipped to the page", () => {
     expect(ids.map((p) => p.id)).toEqual(["p-linked", "p-other"]);
   });
 
-  it("an admin still gets every product for the edit-mode picker, trimmed the same way", async () => {
+  it("an admin (in Draft Mode) still gets every product for the edit-mode picker, trimmed the same way", async () => {
+    asked({ draft: true });
     vi.mocked(getSession).mockResolvedValue({ userId: "1" } as never);
     const products = (await clientProps()).initialProducts as Record<string, unknown>[];
     expect(products.map((p) => p.id)).toEqual(["p-linked", "p-other", "p-hidden"]);
@@ -122,5 +133,80 @@ describe("/showcase/[id] — product data shipped to the page", () => {
     vi.mocked(getSession).mockResolvedValue(null as never);
     const cats = (await clientProps()).initialCategories as Record<string, unknown>[];
     expect(cats).toEqual([{ id: 1, name_th: "หมวด", name_en: "Cat", name_zh: "类" }]);
+  });
+});
+
+// The page is CACHED (ISR) for visitors — it used to be force-dynamic, a
+// server render on every view that no CDN could hold. What only an admin may
+// see is rendered in Draft Mode alone, so the cached copy can never depend on
+// who asked: outside Draft Mode the session is not even read.
+describe("/showcase/[id] — cached for visitors, fresh for an admin", () => {
+  it("is ISR (revalidated), not force-dynamic", () => {
+    expect(revalidate).toBe(60);
+    const src = fs.readFileSync(path.resolve(__dirname, "../../app/showcase/[id]/page.tsx"), "utf8");
+    expect(src).not.toMatch(/export const dynamic\s*=/);
+  });
+
+  it("outside Draft Mode it never reads the session — even a logged-in admin gets the visitor's copy", async () => {
+    asked({ draft: false });
+    vi.mocked(getSession).mockClear().mockResolvedValue({ userId: "1" } as never);
+    const ids = ((await clientProps()).initialProducts as { id: string }[]).map((p) => p.id);
+    expect(ids).toEqual(["p-linked", "p-other"]);
+    await generateMetadata({ params: Promise.resolve({ id: "c1" }) });
+    expect(getSession).not.toHaveBeenCalled();
+  });
+
+  it("a hidden product's page is a 404 for the cached copy, and renders for an admin in Draft Mode", async () => {
+    vi.mocked(getContent).mockResolvedValue({
+      id: "c-hidden", title: "<p>X</p>", blocks: [], createdAt: "2026-01-01T00:00:00.000Z", productId: "p-hidden",
+    } as never);
+    // notFound() is a bare spy in the test setup (it throws in Next).
+    vi.mocked(notFound).mockClear();
+    asked({ draft: false });
+    vi.mocked(getSession).mockResolvedValue({ userId: "1" } as never); // a session, but not asked in Draft Mode
+    await ShowcaseContentPage({ params: Promise.resolve({ id: "c-hidden" }) });
+    expect(notFound).toHaveBeenCalled();
+    const meta = await generateMetadata({ params: Promise.resolve({ id: "c-hidden" }) });
+    expect(meta.robots).toMatchObject({ index: false });
+
+    vi.mocked(notFound).mockClear();
+    asked({ draft: true });
+    await ShowcaseContentPage({ params: Promise.resolve({ id: "c-hidden" }) });
+    expect(notFound).not.toHaveBeenCalled();
+    const adminMeta = await generateMetadata({ params: Promise.resolve({ id: "c-hidden" }) });
+    expect(adminMeta.robots).not.toMatchObject({ index: false, follow: false });
+  });
+
+  it("Draft Mode without a live session is still the visitor's view", async () => {
+    asked({ draft: true });
+    vi.mocked(getSession).mockResolvedValue(null as never);
+    const ids = ((await clientProps()).initialProducts as { id: string }[]).map((p) => p.id);
+    expect(ids).toEqual(["p-linked", "p-other"]);
+  });
+});
+
+// ShowcaseClient seeds its state from these props once: the re-render that
+// swaps the visitor's copy for the admin's must give it a new component.
+describe("/showcase/[id] — which copy ShowcaseClient was given", () => {
+  async function clientElement() {
+    const jsx = (await ShowcaseContentPage({ params: Promise.resolve({ id: "c1" }) })) as ReactElement<{
+      children: ReactNode;
+    }>;
+    return Children.toArray(jsx.props.children).find(
+      (c) => typeof c === "object" && c !== null && "props" in c && "adminView" in (c as ReactElement<object>).props
+    ) as ReactElement<{ adminView: boolean }>;
+  }
+
+  it("is keyed on the copy, and told which one it is", async () => {
+    asked({ draft: false });
+    const visitor = await clientElement();
+    expect(visitor.props.adminView).toBe(false);
+
+    asked({ draft: true });
+    vi.mocked(getSession).mockResolvedValue({ userId: "1" } as never);
+    const admin = await clientElement();
+    expect(admin.props.adminView).toBe(true);
+
+    expect(String(admin.key)).not.toBe(String(visitor.key));
   });
 });

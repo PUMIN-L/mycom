@@ -1,6 +1,7 @@
 "use client";
-import { createContext, useCallback, useContext, useEffect, useState, ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useEffectEvent, useState, ReactNode } from "react";
 import { useRouter } from "next/navigation";
+import { hasSessionHint } from "../lib/sessionHint";
 
 interface AuthUser {
   username: string;
@@ -53,13 +54,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const router = useRouter();
 
-  // Check session on mount
+  // Not a dependency of the mount effect below: it only reads the router.
+  const rerenderPage = useEffectEvent(() => router.refresh());
+
+  // Check session on mount — only for a browser that has one. Without the
+  // hint cookie (lib/sessionHint.ts) there is no session to find, and asking
+  // anyway was a server function run on every page view of every visitor.
   useEffect(() => {
-    fetch("/api/auth/me")
-      .then((r) => r.json())
-      .then((data) => {
-        setUser(data.user ?? null);
-      })
+    const check: Promise<AuthUser | null> = hasSessionHint(document.cookie)
+      ? fetch("/api/auth/me")
+          .then((r) => r.json())
+          .then((data) => {
+            // A logged-in browser without Draft Mode (a session from before
+            // it, or a bypass cookie from an earlier build) was shown the
+            // cached, visitor's copy of this page (a hidden product's page is
+            // a 404 there). /api/auth/me has just turned Draft Mode back on;
+            // render this page again so the admin gets the admin's copy.
+            if (data.user && data.draftStarted) rerenderPage();
+            return data.user ?? null;
+          })
+      : Promise.resolve(null);
+    check
+      .then((found) => setUser(found))
       .catch(() => setUser(null))
       .finally(() => setIsLoading(false));
   }, []);

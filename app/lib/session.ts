@@ -1,7 +1,8 @@
 import "server-only";
 import { SignJWT, jwtVerify } from "jose";
-import { cookies } from "next/headers";
+import { cookies, draftMode } from "next/headers";
 import { getSessionEpoch } from "./settingsStore";
+import { SESSION_HINT_COOKIE, sessionHintCookieOptions } from "./sessionHint";
 
 const secretKey = process.env.SESSION_SECRET;
 if (!secretKey) throw new Error("SESSION_SECRET is not set");
@@ -57,11 +58,53 @@ export async function createSession(userId: string, username: string, epoch?: nu
     sameSite: "lax",
     path: "/",
   });
+  // The script-readable "a session exists" hint, with the same lifetime
+  // (lib/sessionHint.ts): lets AuthContext skip /api/auth/me without one.
+  cookieStore.set(SESSION_HINT_COOKIE, "1", sessionHintCookieOptions(expiresAt));
+  await enableDraftMode(expiresAt);
+}
+
+// Next's Draft Mode cookie — the name is documented (draftMode() API docs).
+const PRERENDER_BYPASS_COOKIE = "__prerender_bypass";
+
+/**
+ * Draft Mode for this browser until `expires` — the session's own expiry.
+ *
+ * Cached and prerendered pages (the /showcase content pages are ISR) are
+ * rendered fresh for a browser in Draft Mode, so a logged-in admin sees what
+ * only an admin may — hidden products' pages, the edit picker's full list —
+ * while visitors keep the cached copy. The bypass cookie is a per-build secret
+ * and grants nothing by itself: those pages still decide from getSession().
+ *
+ * draftMode().enable() sets it as a browser-session cookie with SameSite=None
+ * (made for a CMS previewing in a cross-site iframe). That outlives the
+ * three-day session in a browser that restores its tabs — every page left
+ * uncached after the session is gone, with nothing to turn it off — and dies
+ * early in one that does not. Re-issued here with the session's expiry and
+ * SameSite=Lax, it lives exactly as long as the session and the hint.
+ *
+ * Route Handlers only (where enable() is allowed): every caller is one.
+ */
+export async function enableDraftMode(expires: Date) {
+  (await draftMode()).enable();
+  if (Number.isNaN(expires.getTime())) return; // no usable expiry: Next's own cookie stands
+  const cookieStore = await cookies();
+  const bypass = cookieStore.get(PRERENDER_BYPASS_COOKIE)?.value;
+  if (!bypass) return; // renamed in some Next upgrade: Next's own cookie stands
+  cookieStore.set(PRERENDER_BYPASS_COOKIE, bypass, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    expires,
+  });
 }
 
 export async function deleteSession() {
   const cookieStore = await cookies();
   cookieStore.delete("session");
+  cookieStore.delete(SESSION_HINT_COOKIE);
+  (await draftMode()).disable();
 }
 
 export async function getSession(): Promise<SessionPayload | null> {

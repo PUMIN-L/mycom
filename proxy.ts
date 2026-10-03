@@ -9,6 +9,7 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { jwtVerify } from "jose";
+import { SESSION_HINT_COOKIE, sessionHintCookieOptions } from "./app/lib/sessionHint";
 
 const secretKey = process.env.SESSION_SECRET;
 const encodedKey = secretKey ? new TextEncoder().encode(secretKey) : null;
@@ -33,7 +34,14 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(new URL('/login', request.url));
   }
 
-  return NextResponse.next();
+  // A signed session without the "a session exists" hint — one issued before
+  // the hint existed (lib/sessionHint.ts). Give it one, expiring with the
+  // session, so AuthContext asks /api/auth/me for this browser again.
+  const response = NextResponse.next();
+  if (!request.cookies.has(SESSION_HINT_COOKIE) && typeof payload.exp === "number") {
+    response.cookies.set(SESSION_HINT_COOKIE, "1", sessionHintCookieOptions(new Date(payload.exp * 1000)));
+  }
+  return response;
 }
 
 export const config = {

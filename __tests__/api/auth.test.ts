@@ -28,7 +28,8 @@ import bcrypt from 'bcryptjs';
 vi.mock('@/app/lib/session', () => ({
   getSession: vi.fn(),
   createSession: vi.fn(),
-  deleteSession: vi.fn()
+  deleteSession: vi.fn(),
+  enableDraftMode: vi.fn()
 }));
 import { getSession, createSession, deleteSession } from '@/app/lib/session';
 
@@ -53,7 +54,9 @@ describe('Auth API Routes', () => {
       });
       const res = await getMe();
       expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ user: { username: 'testadmin', userId: '1' } });
+      // Not yet in Draft Mode (the setup's draftMode mock): /api/auth/me turns
+      // it on and says so — see __tests__/api/auth-me-hint.test.ts.
+      expect(await res.json()).toEqual({ user: { username: 'testadmin', userId: '1' }, draftStarted: true });
     });
   });
 

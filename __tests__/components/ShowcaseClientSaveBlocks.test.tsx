@@ -66,6 +66,7 @@ function renderEditor(put: () => Response) {
       initialCategories={[]}
       companyInfo={{ email: "x@y.z", phone: "0", address: "ที่อยู่" }}
       maintenanceOn={false}
+      adminView={mockIsLoggedIn}
     />
   );
   return fetchMock;
@@ -297,6 +298,7 @@ describe("ShowcaseClient — saving the edited title (handleSaveEdit)", () => {
         initialCategories={[]}
         companyInfo={{ email: "x@y.z", phone: "0", address: "ที่อยู่" }}
         maintenanceOn={false}
+        adminView={mockIsLoggedIn}
       />
     );
     return fetchMock;
