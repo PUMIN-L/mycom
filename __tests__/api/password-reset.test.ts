@@ -51,6 +51,13 @@ vi.mock("@/app/lib/settingsStore", () => ({
 }));
 import { bumpSessionEpoch } from "@/app/lib/settingsStore";
 vi.mock("next/cache", () => ({ revalidateTag: vi.fn() }));
+// Real bcrypt, at cost 4 instead of the app's 12: setPassword hashes the new
+// password, and a dozen cost-12 hashes timed these tests out on a busy
+// machine. compare() is untouched, so what is stored is still checked for real.
+vi.mock("bcryptjs", async (importOriginal) => {
+  const real = ((await importOriginal()) as { default: typeof import("bcryptjs") }).default;
+  return { default: { ...real, hash: (password: string) => real.hash(password, 4) } };
+});
 vi.mock("@/app/lib/session", () => ({ createSession: vi.fn(), getSession: vi.fn(), deleteSession: vi.fn() }));
 import { createSession, getSession } from "@/app/lib/session";
 vi.mock("@/app/lib/mailer", () => ({

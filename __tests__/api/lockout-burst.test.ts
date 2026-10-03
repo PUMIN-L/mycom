@@ -238,11 +238,13 @@ describe("a right answer is not penalised by the counting", () => {
   // username "2fa_admin-001" WAS the admin's code bucket.
   it.each(["2fa_admin-001", "reauth_pw_admin-001", "reauth_2fa_admin-001", "2fa_dev_x", "dev_x"])(
     "logging in as %p fills only that made-up name's bucket, never one of the admin's",
+    // One wrong login is enough to see WHICH bucket it counts in. (Five, as
+    // this was first written, ran a cost-12 bcrypt five times per case — an
+    // unknown username is compared against a dummy hash, to keep its timing —
+    // and timed out on a busy machine.)
     async (name) => {
-      for (let i = 0; i < 5; i++) {
-        await loginPOST(post("http://localhost/api/auth/login", { username: name, password: "nope" }, ipFor(i)));
-      }
-      expect(db.settings.get(`login_fail_u_${name}`)?.startsWith("5|")).toBe(true);
+      await loginPOST(post("http://localhost/api/auth/login", { username: name, password: "nope" }, ipFor(0)));
+      expect(db.settings.get(`login_fail_u_${name}`)?.startsWith("1|")).toBe(true);
       expect(db.settings.has(`login_fail_${name}`)).toBe(false);
     }
   );

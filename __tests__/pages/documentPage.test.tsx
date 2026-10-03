@@ -66,3 +66,29 @@ describe("/document/[id]", () => {
     expect(ld.itemListElement.map((c: { name: string }) => c.name)).toEqual(["Home", "แคตตาล็อกสินค้า", "Catalog 2026"]);
   });
 });
+
+// On a phone: the page is the visible screen's height (dvh), with 100vh as the
+// fallback — a browser without dvh drops h-dvh, and with no height at all the
+// PDF viewer in this column collapsed to nothing. And a long title must not
+// push the download button off a narrow screen.
+describe("/document/[id] on a phone", () => {
+  const classesOf = (el: Element | null) => (el?.getAttribute("class") ?? "").split(/\s+/);
+
+  it("fills the visible screen, with a fallback where dvh is not supported", async () => {
+    const { container } = render(await DocumentPreviewPage(params));
+    const page = container.firstElementChild!;
+    expect(classesOf(page)).toEqual(expect.arrayContaining(["h-screen", "supports-[height:100dvh]:h-dvh"]));
+    expect(classesOf(page)).not.toContain("h-dvh");
+  });
+
+  it("lets a long title shrink to one line, and keeps the buttons their size", async () => {
+    vi.mocked(getDocument).mockResolvedValue({ ...doc, title: "แคตตาล็อกเครื่องมือวัดและเครื่องทดสอบวัสดุ ฉบับปรับปรุงประจำปี 2026" } as never);
+    const { container } = render(await DocumentPreviewPage(params));
+    const h1 = container.querySelector("h1")!;
+    expect(classesOf(h1)).toContain("line-clamp-1");
+    expect(classesOf(h1.parentElement)).toContain("min-w-0");
+    expect(classesOf(h1.parentElement!.parentElement)).toEqual(expect.arrayContaining(["min-w-0", "flex-1"]));
+    const download = Array.from(container.querySelectorAll("a")).find((a) => a.getAttribute("rel") === "nofollow")!;
+    expect(classesOf(download.parentElement)).toContain("shrink-0");
+  });
+});

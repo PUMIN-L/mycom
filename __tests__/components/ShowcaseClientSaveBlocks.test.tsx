@@ -101,6 +101,10 @@ function toastText(): string {
 
 beforeEach(() => {
   mockIsLoggedIn = true;
+  // jsdom has no scrollIntoView. Adding a block scrolls to it 100 ms later
+  // (scrollToBlock); on a busy machine that timer fired while the block was
+  // still mounted and threw an unhandled TypeError that failed the whole run.
+  Element.prototype.scrollIntoView = vi.fn();
 });
 
 afterEach(() => {

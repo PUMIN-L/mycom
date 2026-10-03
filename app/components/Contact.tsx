@@ -1,6 +1,7 @@
 "use client";
 
 import { useLineContact } from "../hooks/useLineContact";
+import PhoneText from "./PhoneText";
 import { useEffect, useRef, useState } from "react";
 import { useT } from "../i18n/LanguageContext";
 import { translations } from "../i18n/translations";
@@ -92,10 +93,12 @@ export default function Contact({ email, phone, address, addressMapsQuery }: Con
   };
 
   return (
-    <section id="contact" className="py-32 md:py-48 bg-white relative">
+    // The header's -100px pull-up only from md, so on a phone the heading
+    // sits 40px under the menu bar instead of relying on it.
+    <section id="contact" className="pt-10 pb-20 md:py-48 bg-white relative">
       <div className="section-wrapper relative z-10">
         {/* Section Header */}
-        <div className="text-center mb-24 mt-[-100px] ">
+        <div className="text-center mb-12 md:mb-24 md:mt-[-100px]">
           <span className="inline-block text-xl font-bold uppercase tracking-[0.4em] text-[var(--accent)] mb-4">
             {t(translations.contact.sectionTag)}
           </span>
@@ -111,7 +114,7 @@ export default function Contact({ email, phone, address, addressMapsQuery }: Con
           </p>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-16 items-start">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 lg:gap-16 items-start">
           {/* Contact Info */}
           <div className="space-y-12">
             <h3 className="text-2xl md:text-3xl font-bold text-[var(--brand-navy)] mb-8">Get in Touch</h3>
@@ -132,8 +135,9 @@ export default function Contact({ email, phone, address, addressMapsQuery }: Con
                 <h4 className="text-sm font-bold uppercase tracking-widest text-[var(--accent)]">
                   {t(translations.contact.phoneLabel)}
                 </h4>
+                {/* Each number is a tel: link — on a phone, tapping it calls. */}
                 <p className="text-lg text-[var(--text-secondary)] font-normal">
-                  {phone}
+                  <PhoneText phone={phone} linkClassName="hover:text-[var(--accent)] transition-colors" />
                 </p>
               </div>
 
@@ -142,7 +146,7 @@ export default function Contact({ email, phone, address, addressMapsQuery }: Con
                 <h4 className="text-sm font-bold uppercase tracking-widest text-[var(--accent)]">
                   {t(translations.contact.emailLabel)}
                 </h4>
-                <a href={`mailto:${email}`} className="text-lg text-[var(--text-secondary)] hover:text-[var(--accent)] transition-colors font-normal">
+                <a href={`mailto:${email}`} className="text-lg text-[var(--text-secondary)] hover:text-[var(--accent)] transition-colors font-normal break-all">
                   {email}
                 </a>
               </div>
@@ -211,7 +215,9 @@ export default function Contact({ email, phone, address, addressMapsQuery }: Con
           </div>
 
           {/* Contact Form */}
-          <div className="bg-[var(--bg-secondary)] p-12 md:p-16">
+          {/* p-6 on a phone: p-12 (48px a side) left the inputs ~216px wide
+              on a 360px screen. */}
+          <div className="bg-[var(--bg-secondary)] p-6 sm:p-10 md:p-16">
             <form onSubmit={handleSubmit} className="space-y-8 relative">
               {/* Spam trap: off-screen, out of the tab order and hidden from
                   screen readers, so no person fills it — a bot that fills every

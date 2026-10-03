@@ -684,7 +684,8 @@ export default function Products({ dataPromise }: ProductsProps) {
 
   return (
     <>
-    <section id="products" className="py-24 md:py-32 lg:py-10 bg-[var(--bg-secondary)] relative overflow-hidden">
+    <section id="products" className="py-16 md:py-32 lg:py-10 scroll-mt-20 md:scroll-mt-24 bg-[var(--bg-secondary)] relative overflow-hidden">
+      {/* scroll-mt = the fixed menu bar: the menu links to /#products (see Services). */}
       {toast && <Toast message={toast.message} type={toast.type} />}
       {/* Decorative background element */}
       <div className="absolute top-0 right-0 w-1/3 h-1/3 bg-[var(--accent)] opacity-[0.03] rounded-full blur-[120px] -translate-y-1/2 translate-x-1/2" />

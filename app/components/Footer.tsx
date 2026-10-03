@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import PhoneText from "./PhoneText";
 import { useT } from "../i18n/LanguageContext";
 import { translations } from "../i18n/translations";
 import { useAuth } from "../context/AuthContext";
@@ -118,11 +119,15 @@ export default function Footer({ email, phone, address, maintenanceOn }: FooterP
                 <>
                   <p className="leading-relaxed">{address}</p>
                   <div className="space-y-2">
+                    {/* The numbers are tel: links (tap to call on a phone);
+                        min-w-0 + break-all so a long email wraps on a phone
+                        instead of running off the screen. */}
                     <p className="flex items-center gap-3">
-                      <span className="text-[var(--accent)]">P:</span> {phone}
+                      <span className="text-[var(--accent)]">P:</span>
+                      <span><PhoneText phone={phone} linkClassName="hover:text-white transition-colors" /></span>
                     </p>
-                    <p className="flex items-center gap-3">
-                      <span className="text-[var(--accent)]">E:</span> {email}
+                    <p className="flex items-center gap-3 min-w-0">
+                      <span className="text-[var(--accent)]">E:</span> <span className="min-w-0 break-all">{email}</span>
                     </p>
                     <p className="flex items-center gap-3">
                       <span className="text-[var(--accent)]">L:</span> @puminkmutnb

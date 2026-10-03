@@ -250,27 +250,5 @@ export function companyAddressQuery(profile: CompanyProfile): string {
   return `${profile.addressStreet}, ${profile.addressLocality}, ${profile.addressRegion} ${profile.addressPostalCode}, ${profile.addressCountry}`;
 }
 
-/**
- * Thai domestic phone display format (e.g. "062-012-9895") -> E.164 (e.g.
- * "+66620129895") for structured data. Thai mobile/landline numbers drop the
- * leading 0 and prepend the country code.
- */
-// Admin-entered free text, so it may already be in international format
-// (e.g. "+66-62-012-9895") — only bare local numbers ("062-012-9895") get the
-// leading 0 stripped and +66 prepended; anything already carrying the
-// country code is passed through as-is instead of getting +66 doubled up.
-export function toThaiE164(phone: string): string {
-  const trimmed = phone.trim();
-  if (trimmed.startsWith("+")) {
-    return `+${trimmed.replace(/\D/g, "")}`;
-  }
-  const digits = trimmed.replace(/\D/g, "");
-  // A real Thai local number always starts with "0" once stripped of
-  // formatting — a leading "66" (with no "+") only happens when the country
-  // code was typed without the plus sign.
-  if (digits.startsWith("66") && digits.length > 9) {
-    return `+${digits}`;
-  }
-  const local = digits.startsWith("0") ? digits.slice(1) : digits;
-  return `+66${local}`;
-}
+/** Thai phone → E.164. Moved to lib/phone.ts (client components need it too); kept here for existing importers. */
+export { toThaiE164 } from "./phone";

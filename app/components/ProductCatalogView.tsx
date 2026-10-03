@@ -127,6 +127,8 @@ export default function ProductCatalogView({
 
         {otherCategories.length > 0 && (
           <section aria-labelledby="other-categories" className="mb-16">
+            {/* rounded-2xl, not rounded-full: a long category name wraps on a
+                phone, and a full pill bent two lines into a blob. */}
             <h2 id="other-categories" className="mb-5 text-xl font-bold text-[var(--brand-navy)]">
               {t(translations.productPages.otherCategories)}
             </h2>
@@ -135,7 +137,7 @@ export default function ProductCatalogView({
                 <li key={c.id}>
                   <Link
                     href={c.path}
-                    className="inline-block rounded-full border border-gray-200 px-4 py-2 text-sm text-gray-700 transition hover:border-[var(--accent)] hover:text-[var(--accent)]"
+                    className="inline-block rounded-2xl border border-gray-200 px-4 py-2 text-sm text-gray-700 transition hover:border-[var(--accent)] hover:text-[var(--accent)]"
                   >
                     {name(c)}
                   </Link>

@@ -1,9 +1,18 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import { Document, Page, pdfjs } from "react-pdf";
+import type { PDFDocumentProxy } from "pdfjs-dist";
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
+import {
+  PDF_ZOOM_MAX,
+  PDF_ZOOM_MIN,
+  PDF_ZOOM_STEP,
+  pdfDevicePixelRatio,
+  pdfGutter,
+  pdfPageWidth,
+} from "../../lib/pdfViewerSizing";
 
 // Configure PDF.js worker using Next.js App Router approach
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
@@ -15,43 +24,93 @@ interface PdfViewerClientProps {
   url: string;
 }
 
+/** A4 portrait, until the first page says otherwise. */
+const DEFAULT_ASPECT = 297 / 210;
+
+// The public catalog viewer. Each page is drawn AS WIDE AS IT IS SHOWN
+// (lib/pdfViewerSizing.ts): "100%" fills the viewer's width, on a phone as on
+// a desktop. It used to draw every page at scale 1.5 and shrink it with CSS:
+// on a phone, canvases several times the screen, for every page at once.
+//
+// Only pages near the screen are drawn (LazyPage). A catalog of 40 pages
+// keeps a handful of canvases alive, not 40; the rest are blank boxes of the
+// right size, so the scrollbar and "page N" positions stay true.
 export default function PdfViewerClient({ url }: PdfViewerClientProps) {
   const [numPages, setNumPages] = useState<number>();
-  const [scale, setScale] = useState(1.5);
+  const [zoom, setZoom] = useState(1);
+  const [aspect, setAspect] = useState(DEFAULT_ASPECT);
+  const [containerWidth, setContainerWidth] = useState(0);
+  const scrollerRef = useRef<HTMLDivElement>(null);
 
-  function onDocumentLoadSuccess({ numPages }: { numPages: number }) {
-    setNumPages(numPages);
+  useEffect(() => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    const measure = () => setContainerWidth(el.clientWidth);
+    measure();
+    // A phone turned sideways, a window resized: redraw at the new width.
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  async function onDocumentLoadSuccess(pdf: PDFDocumentProxy) {
+    setNumPages(pdf.numPages);
+    try {
+      const viewport = (await pdf.getPage(1)).getViewport({ scale: 1 });
+      if (viewport.width > 0) setAspect(viewport.height / viewport.width);
+    } catch {
+      // Keep the A4 guess: it only sizes the boxes of pages not drawn yet.
+    }
   }
+
+  const width = pdfPageWidth(containerWidth, zoom);
+  const gutter = pdfGutter(containerWidth);
+  const zoomBy = (delta: number) =>
+    setZoom((z) => Math.min(PDF_ZOOM_MAX, Math.max(PDF_ZOOM_MIN, Math.round((z + delta) * 100) / 100)));
 
   return (
     <div className="flex flex-col h-full w-full bg-gray-200">
       {/* Viewer Toolbar */}
-      <div className="flex items-center justify-center gap-4 py-2 bg-gray-800 text-white shrink-0 shadow-md z-10 sticky top-0">
-        <span className="font-mono text-sm">
+      <div className="flex items-center justify-center gap-2 sm:gap-4 px-2 py-2 bg-gray-800 text-white shrink-0 shadow-md z-10 sticky top-0">
+        <span className="font-mono text-xs sm:text-sm whitespace-nowrap">
           ทั้งหมด {numPages || "?"} หน้า
         </span>
-        
-        <div className="w-px h-6 bg-gray-600 mx-2" />
-        
+
+        <div className="w-px h-6 bg-gray-600 mx-1 sm:mx-2" />
+
         <button
-          onClick={() => setScale(s => Math.max(0.5, s - 0.25))}
-          className="px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded"
+          onClick={() => zoomBy(-PDF_ZOOM_STEP)}
+          disabled={zoom <= PDF_ZOOM_MIN}
+          className="min-w-9 px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded disabled:opacity-40"
           title="ซูมออก"
+          aria-label="ซูมออก"
         >
           -
         </button>
-        <span className="font-mono text-sm min-w-[3rem] text-center">{Math.round(scale * 100)}%</span>
+        {/* 100% = the page fills the viewer's width. Tapping it goes back there. */}
         <button
-          onClick={() => setScale(s => Math.min(3, s + 0.25))}
-          className="px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded"
+          onClick={() => setZoom(1)}
+          className="font-mono text-xs sm:text-sm min-w-14 text-center rounded hover:bg-gray-700 py-1"
+          title="พอดีความกว้าง"
+          aria-label={`ขนาด ${Math.round(zoom * 100)}% — แตะเพื่อกลับเป็นพอดีความกว้าง`}
+        >
+          {Math.round(zoom * 100)}%
+        </button>
+        <button
+          onClick={() => zoomBy(PDF_ZOOM_STEP)}
+          disabled={zoom >= PDF_ZOOM_MAX}
+          className="min-w-9 px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded disabled:opacity-40"
           title="ซูมเข้า"
+          aria-label="ซูมเข้า"
         >
           +
         </button>
       </div>
 
-      {/* Main PDF Canvas */}
-      <div className="flex-1 overflow-auto p-4 flex justify-center custom-scrollbar pb-24">
+      {/* Main PDF Canvas — block, not flex + justify-center: a page zoomed
+          wider than the viewer would overflow BOTH sides of a centred flex
+          item, and its left part could never be scrolled to. */}
+      <div ref={scrollerRef} className="flex-1 overflow-auto custom-scrollbar pb-24" style={{ paddingTop: gutter }}>
         <Document
           file={url}
           onLoadSuccess={onDocumentLoadSuccess}
@@ -67,32 +126,94 @@ export default function PdfViewerClient({ url }: PdfViewerClientProps) {
               <p>ไม่สามารถโหลดเอกสารได้</p>
             </div>
           }
-          className="flex flex-col gap-8 items-center"
+          className="flex flex-col gap-4 sm:gap-8 items-center w-fit min-w-full mx-auto"
         >
-          {Array.from(new Array(numPages || 0), (el, index) => (
-            <div key={`page_${index + 1}`} id={`pdf-page-${index + 1}`} className="shadow-2xl">
-              <Page
+          {width !== null &&
+            Array.from(new Array(numPages || 0), (_, index) => (
+              <LazyPage
+                key={`page_${index + 1}`}
                 pageNumber={index + 1}
-                scale={scale}
-                renderTextLayer={true}
-                renderAnnotationLayer={true}
-                className="bg-white max-w-full"
+                width={width}
+                aspect={aspect}
+                gutter={gutter}
+                scrollerRef={scrollerRef}
               />
-            </div>
-          ))}
+            ))}
         </Document>
       </div>
-      
+
       <style>{`
         .custom-scrollbar::-webkit-scrollbar { width: 8px; height: 8px; }
         .custom-scrollbar::-webkit-scrollbar-track { background: rgba(0,0,0,0.05); }
         .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(156, 163, 175, 0.5); border-radius: 4px; }
         .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(107, 114, 128, 0.8); }
-        
-        /* Ensure pages don't overflow on small screens */
-        .react-pdf__Page { max-width: 100%; }
-        .react-pdf__Page__canvas { max-width: 100% !important; height: auto !important; }
       `}</style>
+    </div>
+  );
+}
+
+/**
+ * One page: drawn while it is within about a screen and a half of the
+ * viewport, a blank box of the same size otherwise. Leaving the range drops
+ * the canvas again — that is what keeps a long catalog light on a phone.
+ *
+ * The box is sized by page 1's proportions until this page has loaded once,
+ * then by its OWN, kept after the canvas is dropped. With page 1's alone, a
+ * landscape page in a portrait catalog sat in a box far too tall, and a page
+ * taller than page 1 shrank back when dropped above the screen — jerking
+ * everything below it up.
+ */
+function LazyPage({
+  pageNumber,
+  width,
+  aspect,
+  gutter,
+  scrollerRef,
+}: {
+  pageNumber: number;
+  width: number;
+  aspect: number;
+  gutter: number;
+  scrollerRef: RefObject<HTMLDivElement | null>;
+}) {
+  const boxRef = useRef<HTMLDivElement>(null);
+  const [near, setNear] = useState(false);
+  const [ownAspect, setOwnAspect] = useState<number | null>(null);
+
+  useEffect(() => {
+    const box = boxRef.current;
+    if (!box) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => setNear(entry.isIntersecting),
+      { root: scrollerRef.current, rootMargin: "150% 0px" }
+    );
+    observer.observe(box);
+    return () => observer.disconnect();
+  }, [scrollerRef]);
+
+  const pageAspect = ownAspect ?? aspect;
+  const height = Math.round(width * pageAspect);
+  return (
+    <div
+      ref={boxRef}
+      id={`pdf-page-${pageNumber}`}
+      data-page={pageNumber}
+      className="shadow-2xl bg-white"
+      style={{ width, minHeight: height, marginLeft: gutter, marginRight: gutter }}
+    >
+      {near && (
+        <Page
+          pageNumber={pageNumber}
+          width={width}
+          devicePixelRatio={pdfDevicePixelRatio(width, pageAspect, typeof window === "undefined" ? 1 : window.devicePixelRatio)}
+          onLoadSuccess={(page) => {
+            if (page.originalWidth > 0) setOwnAspect(page.originalHeight / page.originalWidth);
+          }}
+          renderTextLayer={true}
+          renderAnnotationLayer={true}
+          className="bg-white"
+        />
+      )}
     </div>
   );
 }

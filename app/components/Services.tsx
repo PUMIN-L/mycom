@@ -16,13 +16,16 @@ export default function Services() {
   const t = useT();
 
   return (
-    <section id="services" className="py-28 md:py-30 bg-white relative overflow-hidden ">
+    <section id="services" className="py-16 md:py-30 scroll-mt-20 md:scroll-mt-24 bg-white relative overflow-hidden">
+      {/* scroll-mt = the fixed menu bar (h-20 / md:h-24): the menu links to
+          /#services, and with the phone padding now smaller than the bar, the
+          jump would otherwise land with the heading under it. */}
       {/* Background Decorative Element */}
       <div className="absolute top-0 right-0 w-1/3 h-full bg-[var(--bg-secondary)] -skew-x-12 translate-x-1/2" />
 
       <div className="section-wrapper relative z-10 ">
         {/* Section Header */}
-        <div className="mb-20 max-w-3xl">
+        <div className="mb-12 md:mb-20 max-w-3xl">
           {/* <span className="inline-block text-[10px] font-bold uppercase tracking-[0.4em] text-[var(--accent)] mb-4">
             {t(translations.services.sectionTag)}
           </span> */}

@@ -22,10 +22,10 @@ export default function Clients() {
   const t = useT();
 
   return (
-    <section id="clients" className="py-32 md:py-48 bg-white relative overflow-hidden">
+    <section id="clients" className="py-16 md:py-48 bg-white relative overflow-hidden">
       <div className="section-wrapper relative z-10">
         {/* Section Header */}
-        <div className="text-center mb-24">
+        <div className="text-center mb-12 md:mb-24">
           {/* <span className="inline-block text-[10px] font-bold uppercase tracking-[0.4em] text-[var(--accent)] mb-4">
             {t(translations.clients.sectionTag)}
           </span> */}

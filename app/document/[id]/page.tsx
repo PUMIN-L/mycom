@@ -46,16 +46,22 @@ export default async function DocumentPreviewPage({ params }: { params: Promise<
   };
 
   return (
-    <div className="flex flex-col h-screen bg-gray-50">
+    // h-dvh, not h-screen: on a phone 100vh is the height WITHOUT the
+    // browser's bars, so the bottom of the viewer sat behind them. h-screen
+    // stays as the fallback: a browser without dvh drops h-dvh, and with no
+    // height at all this column — and the PDF viewer in it — collapsed.
+    <div className="flex flex-col h-screen supports-[height:100dvh]:h-dvh bg-gray-50">
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdHtml(breadcrumbLd) }} />
       {/* Header Bar */}
-      <div className="flex items-center justify-between px-6 py-4 bg-white border-b border-gray-200 shadow-sm shrink-0">
-        <div className="flex items-center gap-4">
+      {/* min-w-0 down the title's side, so a long title is cut to one line
+          (line-clamp) instead of pushing the download button off a phone. */}
+      <div className="flex items-center justify-between gap-2 sm:gap-4 px-3 sm:px-6 py-3 sm:py-4 bg-white border-b border-gray-200 shadow-sm shrink-0">
+        <div className="flex items-center gap-2 sm:gap-4 min-w-0 flex-1">
           {/* Back to the public catalog this page is opened from. It used to
               go to /adminpanel — login-only, so a visitor landed on /login. */}
           <Link
             href="/catalog"
-            className="p-2 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition"
+            className="shrink-0 p-2 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition"
             title="กลับไปแคตตาล็อก"
             aria-label="กลับไปแคตตาล็อก"
           >
@@ -63,15 +69,15 @@ export default async function DocumentPreviewPage({ params }: { params: Promise<
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
             </svg>
           </Link>
-          <div>
-            <h1 className="text-xl font-bold text-gray-900 line-clamp-1">{doc.title}</h1>
+          <div className="min-w-0">
+            <h1 className="text-base sm:text-xl font-bold text-gray-900 line-clamp-1 wrap-break-word">{doc.title}</h1>
             {doc.description && (
               <p className="text-sm text-gray-500 line-clamp-1">{doc.description}</p>
             )}
           </div>
         </div>
         
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 shrink-0">
           {/* A plain link to the PDF itself: the viewer below loads it with
               JavaScript, so without this a crawler never sees the file. */}
           <a

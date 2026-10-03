@@ -69,6 +69,32 @@ export default function Navbar({ isHomePage: forceIsHome }: NavbarProps = {}) {
     };
   }, [pathname]);
 
+  // While the phone menu is open the page behind it must not scroll (it
+  // did: a swipe on the menu moved the page underneath).
+  useEffect(() => {
+    if (!mobileOpen) return;
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previous;
+    };
+  }, [mobileOpen]);
+
+  // Widened to desktop (a tablet turned sideways) with the menu open: the
+  // menu and its close button are hidden from lg, so close it rather than
+  // leave the page locked.
+  useEffect(() => {
+    if (!mobileOpen) return;
+    const desktop = window.matchMedia?.("(min-width: 1024px)");
+    if (!desktop) return;
+    const close = () => {
+      if (desktop.matches) setMobileOpen(false);
+    };
+    close();
+    desktop.addEventListener?.("change", close);
+    return () => desktop.removeEventListener?.("change", close);
+  }, [mobileOpen, setMobileOpen]);
+
   const navLinks = [
     { href: "/", label: t(translations.nav.home) },
     { href: "/#services", label: t(translations.nav.services) },
@@ -87,7 +113,10 @@ export default function Navbar({ isHomePage: forceIsHome }: NavbarProps = {}) {
         : "bg-transparent border-transparent"
         }`}
     >
-      <div className="w-full px-4 md:px-16 flex items-center justify-between h-20 md:h-24">
+      {/* The full menu (6 links + language) needs about 1,000px, so it shows
+          from lg (1024px); below that — phones AND tablets — the menu button.
+          It used to switch at md (768px), crowding an iPad held upright. */}
+      <div className="w-full px-4 md:px-8 xl:px-16 flex items-center justify-between h-20 md:h-24">
         {/* Logo */}
         <a href="/" className="flex items-center group relative z-10">
           <div className="relative w-8 h-18 transition-transform group-hover:scale-110">
@@ -112,8 +141,9 @@ export default function Navbar({ isHomePage: forceIsHome }: NavbarProps = {}) {
         {/* Mobile Toggle - Moved before Desktop Nav for better DOM flow */}
         <button
           onClick={() => setMobileOpen(!mobileOpen)}
-          className={`md:hidden p-2 transition-all duration-300 relative z-[60] flex items-center justify-center ${scrolled || !isHome || mobileOpen ? "text-[var(--brand-navy)]" : "text-white"}`}
+          className={`lg:hidden p-2 transition-all duration-300 relative z-[60] flex items-center justify-center ${scrolled || !isHome || mobileOpen ? "text-[var(--brand-navy)]" : "text-white"}`}
           aria-label="Toggle menu"
+          aria-expanded={mobileOpen}
         >
           <svg className="w-10 h-10 drop-shadow-2xl" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             {mobileOpen ? (
@@ -125,7 +155,7 @@ export default function Navbar({ isHomePage: forceIsHome }: NavbarProps = {}) {
         </button>
 
         {/* Desktop Nav */}
-        <div className="hidden md:flex items-center gap-10">
+        <div className="hidden lg:flex items-center gap-6 xl:gap-10">
           {navLinks.map((link) => (
             <a
               key={link.href}
@@ -190,7 +220,11 @@ export default function Navbar({ isHomePage: forceIsHome }: NavbarProps = {}) {
 
       {/* Mobile Menu */}
       {mobileOpen && (
-        <div className="md:hidden bg-white border-t border-gray-100 animate-fade-in h-screen">
+        // The rest of the screen below the bar (h-20 / md:h-24), scrolling
+        // inside itself if a short phone cannot fit it. It was h-screen —
+        // taller than the space left, its bottom out of reach. The 100vh
+        // values are the fallback for a browser without dvh.
+        <div className="lg:hidden bg-white border-t border-gray-100 animate-fade-in h-[calc(100vh-5rem)] md:h-[calc(100vh-6rem)] supports-[height:100dvh]:h-[calc(100dvh-5rem)] supports-[height:100dvh]:md:h-[calc(100dvh-6rem)] overflow-y-auto overscroll-contain">
           <div className="section-wrapper py-10 flex flex-col gap-8">
             {navLinks.map((link, index) => (
               <a

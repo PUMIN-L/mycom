@@ -1282,6 +1282,54 @@ re-encodes them from the URL (`lib/cloudinaryUrl.ts`, `f_auto,q_auto,c_limit,w_�
 + srcset), the stored URL never changes, and if the resized URL fails (an
 account with strict transformations) the image falls back to the original.
 
+**The /showcase/[id] column widens with the screen** (`ShowcaseClient.tsx`):
+max-w-4xl, then lg max-w-5xl, xl max-w-6xl, 2xl max-w-7xl (the 1280px of
+`.section-wrapper`). That gives 960, 1088 and 1216px of content. It was one
+864px column on every screen, which left a large monitor mostly empty. Header
+and blocks share the container. Every image `sizes` there comes from
+`COLUMN_PX` through `columnSizes()`, so a photo is fetched as wide as it is
+shown. Change the container and you must change `COLUMN_PX` with it. The product badge under
+the title is a box (`rounded-xl`), not a pill: product titles are often
+several lines (brand / type / model).
+
+**Public pages on a phone** (admin pages are desktop-only by design). Rules
+the public pages follow; `__tests__/components/MobileLayout.test.tsx` pins them:
+- **Screen heights use `svh` / `dvh`, never `h-screen` / `100vh`.** On a
+  phone 100vh is the height WITHOUT the browser's bars. The home Hero (laid
+  out from the bottom) put its buttons under the toolbar, and the PDF viewer
+  and the phone menu had their bottoms out of reach. The Hero is `min-h-svh`
+  with no max height, so a short screen grows it rather than cutting the top.
+  **Always keep the 100vh value as a fallback** and apply svh/dvh through
+  `supports-[height:100dvh]:`. Chrome < 108, Safari < 15.4 and older in-app
+  browsers drop a bare `h-dvh`. Without the fallback the `/document` column
+  had no height at all, and its PDF viewer collapsed.
+- **Every section the menu links to (`/#services`, `/#products`) carries
+  `scroll-mt-20 md:scroll-mt-24`**, the fixed bar's height. The phone padding
+  is smaller than the bar, so an anchor jump otherwise lands with the heading
+  under it.
+- **The full menu shows from `lg` (1024px)**, the menu button below that. It
+  needs about 1,000px (6 links + language), and from `md` it crowded an iPad
+  held upright. While the phone menu is open the page behind it does not
+  scroll, and widening to desktop closes it.
+- **Phone numbers are `tel:` links** (`PhoneText` → `lib/phone.ts`
+  `phoneParts`): each number in the company phone field, extension kept on
+  screen but not dialled. Only a number of a real Thai shape is linked
+  (landline 0[2-7]+7 digits, mobile 0[689]+8). "02-123-4567-8" (4567 or 4568)
+  would otherwise dial a wrong number. `toThaiE164` moved to `lib/phone.ts`, because client
+  components need it, and is re-exported from `settingsStore`.
+- **The PDF viewer draws each page as wide as it is shown, and only pages
+  near the screen** (`lib/pdfViewerSizing.ts`, `PdfViewerClient` → `LazyPage`).
+  A page not drawn yet is a box sized by page 1. Once a page has loaded, its
+  box keeps that page's own proportions, also after the canvas is dropped, so
+  a landscape page in a portrait catalog does not leave a gap or jerk the view.
+  The device pixel ratio is capped at 2, and lower when zoomed far, to keep
+  one canvas under iOS Safari's limit. It used to draw every page at scale
+  1.5 and shrink it with CSS: on a phone, canvases several times the screen,
+  for every page of a catalog at once. 100% means fit to width.
+- **Section spacing is smaller on a phone** (`py-16` and `mb-12` where the
+  desktop has `py-28`/`py-48` and `mb-20`/`mb-24`). Desktop values start
+  at `md`.
+
 ---
 
 ## Database (`lib/db.ts`)

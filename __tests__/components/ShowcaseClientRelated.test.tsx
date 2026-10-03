@@ -112,3 +112,88 @@ describe("ShowcaseClient — image alt text", () => {
     expect(container.querySelector("img[alt='Content']")).toBeNull();
   });
 });
+
+// A product title is often several lines (brand / type / model). In a
+// rounded-full pill those bent into a blob, with the English name stuck at
+// the top line beside it.
+describe("ShowcaseClient — a multi-line product title in the badge", () => {
+  const renderWith = (title_th: string, blocks: ContentBlock[] = []) => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, status: 200, json: async () => ({}) }) as unknown as Response));
+    return render(
+      <ShowcaseClient
+        initialContent={{ id: "c1", title: "<p>PR Series Analytical</p>", blocks, createdAt: "2026-09-01", productId: "p1" }}
+        initialAllContents={[]}
+        initialProducts={[{ id: "p1", categoryId: 1, title_th, title_en: "<p>OHUAS PR Series Analytical</p>", title_zh: "" }]}
+        initialCategories={[]}
+        companyInfo={{ email: "x@y.z", phone: "0", address: "ที่อยู่" }}
+        maintenanceOn={false}
+      />
+    );
+  };
+  const THREE_LINES =
+    '<p><span style="color: rgb(255, 153, 0);">OHUAS</span></p><p><strong>เครื่องชั่งวิเคราะห์</strong></p><p>PR Series Analytical</p>';
+
+  it("keeps every line, in order, in a box that is not a pill", () => {
+    const { container } = renderWith(THREE_LINES);
+    const lines = Array.from(container.querySelectorAll("span.rich-text")).find((el) =>
+      el.textContent?.includes("เครื่องชั่งวิเคราะห์")
+    )!;
+    expect(lines.querySelectorAll("br")).toHaveLength(2);
+    expect(lines.textContent).toBe("OHUASเครื่องชั่งวิเคราะห์PR Series Analytical");
+    const box = lines.closest("span.rounded-xl")!;
+    expect(box).not.toBeNull();
+    expect(box.closest(".rounded-full")).toBeNull();
+    // The admin's colour on a line survives (no tinted background to fight it).
+    expect(lines.innerHTML).toContain("color: rgb(255, 153, 0)");
+  });
+
+  it("puts the English name beside the box, not inside it", () => {
+    const { container } = renderWith(THREE_LINES);
+    const en = screen.getByText("OHUAS PR Series Analytical");
+    expect(en.closest("span.rounded-xl")).toBeNull();
+    expect(en.parentElement).toBe(container.querySelector("span.rounded-xl")!.parentElement);
+  });
+});
+
+// The page widened from one 864px column (max-w-4xl on every screen) to the
+// site's own widths. An image must be fetched as wide as it is now shown.
+describe("ShowcaseClient — the content column widens on large screens", () => {
+  const PHOTO = "https://res.cloudinary.com/demo/image/upload/v1/x.jpg";
+  const renderBlocks = (blocks: ContentBlock[]) => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, status: 200, json: async () => ({}) }) as unknown as Response));
+    return render(
+      <ShowcaseClient
+        initialContent={{ id: "c1", title: "<p>T</p>", blocks, createdAt: "2026-09-01", productId: null }}
+        initialAllContents={[]}
+        initialProducts={[]}
+        initialCategories={[]}
+        companyInfo={{ email: "x@y.z", phone: "0", address: "ที่อยู่" }}
+        maintenanceOn={false}
+      />
+    );
+  };
+
+  it("an image block asks for its share of the column at every width — 960 / 1088 / 1216px", () => {
+    const { container } = renderBlocks([{ id: "b1", type: "image", imageUrl: PHOTO, imageWidth: 50 } as ContentBlock]);
+    expect(container.querySelector("img")!.getAttribute("sizes")).toBe(
+      "(max-width: 1023px) 50vw, (max-width: 1279px) 480px, (max-width: 1535px) 544px, 608px"
+    );
+  });
+
+  it("a text-and-image block asks for half the column, less the gap", () => {
+    const { container } = renderBlocks([
+      { id: "b1", type: "text-image", imageUrl: PHOTO, content: "<p>x</p>", imagePosition: "right" } as ContentBlock,
+    ]);
+    expect(container.querySelector("img")!.getAttribute("sizes")).toBe(
+      "(max-width: 767px) 100vw, (max-width: 1023px) 50vw, (max-width: 1279px) 464px, (max-width: 1535px) 528px, 592px"
+    );
+  });
+
+  it("the header and the blocks share one container that grows to the site's 1280px", () => {
+    const { container } = renderBlocks([]);
+    const wide = Array.from(container.querySelectorAll("div")).filter(
+      (el) => el.classList.contains("xl:max-w-6xl") && el.classList.contains("2xl:max-w-7xl")
+    );
+    expect(wide).toHaveLength(2);
+  });
+});

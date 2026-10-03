@@ -133,6 +133,24 @@ const PRODUCT_PLACEHOLDER = "-- กรุณาเลือก Product --";
 
 
 
+// ── The content column, and image `sizes` worked from it ───────────────────
+// The page used to be one max-w-4xl column (864px of content) on every screen,
+// which left a large monitor mostly empty. It now widens with the screen, up
+// to the 1280px the rest of the site uses (.section-wrapper):
+//   lg  max-w-5xl  1024 − 2×32 padding =  960px
+//   xl  max-w-6xl  1152 − 64           = 1088px
+//   2xl max-w-7xl  1280 − 64           = 1216px
+// Every image `sizes` below comes from these, so the browser asks Cloudinary
+// for a photo as wide as it is shown. Fixed widths from the old column would
+// have fetched one too small, and blurred it.
+const COLUMN_PX = { lg: 1024 - 64, xl: 1152 - 64, xxl: 1280 - 64 } as const;
+
+/** `sizes` for an image: `small` below lg, then `px(column)` at each width. */
+function columnSizes(small: string, px: (column: number) => number): string {
+  const at = (column: number) => `${Math.round(px(column))}px`;
+  return `${small}, (max-width: 1279px) ${at(COLUMN_PX.lg)}, (max-width: 1535px) ${at(COLUMN_PX.xl)}, ${at(COLUMN_PX.xxl)}`;
+}
+
 function GalleryViewer({
   block,
   isEditing,
@@ -175,12 +193,14 @@ function GalleryViewer({
       {/* Main Image */}
       <div className="w-full flex items-center justify-center bg-gray-50 rounded-lg p-4 min-h-[300px] border border-gray-200">
         {images.length > 0 ? (
-          <div className="relative w-full h-100">
+          // Shorter on a phone (400px was most of its screen), taller on a
+          // wide one, where the column is too.
+          <div className="relative w-full h-72 sm:h-100 xl:h-128">
             <SkeletonImage
               src={images[activeIndex]}
               alt={images.length > 1 ? `${imageAlt} – รูปที่ ${activeIndex + 1}` : imageAlt}
               fill
-              sizes="(max-width: 768px) 100vw, 700px"
+              sizes={columnSizes("(max-width: 1023px) 100vw", (column) => column - 32)}
               className="object-contain rounded-lg shadow-sm"
               priority={isFirstBlock}
               loading={isFirstBlock ? undefined : "lazy"}
@@ -209,7 +229,7 @@ function GalleryViewer({
           {images.map((url, idx) => (
             <div key={idx} className="relative group">
               <div
-                className={`relative w-24 h-24 rounded-md overflow-hidden border-4 cursor-pointer ${activeIndex === idx ? "border-orange-500 shadow-md" : "border-transparent"
+                className={`relative w-16 h-16 sm:w-24 sm:h-24 rounded-md overflow-hidden border-4 cursor-pointer ${activeIndex === idx ? "border-orange-500 shadow-md" : "border-transparent"
                   } hover:border-orange-300 transition-all`}
                 onClick={() => setIndex(idx)}
               >
@@ -897,7 +917,7 @@ export default function ShowcaseClient({
 
         {/* ── Header ── */}
         <div className="bg-white">
-          <div className="max-w-4xl mx-auto px-4 py-12">
+          <div className="max-w-4xl lg:max-w-5xl xl:max-w-6xl 2xl:max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-12">
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
               <div className="flex-1 min-w-0">
                 {isEditing ? (
@@ -911,7 +931,7 @@ export default function ShowcaseClient({
                 ) : (
                   // Every line of the title as it was typed — it used to be one
                   // truncated line, its paragraphs run together.
-                  <h1 className="rich-text text-4xl font-bold text-gray-900" dangerouslySetInnerHTML={{ __html: richTextHtml(content.title) }} />
+                  <h1 className="rich-text text-3xl sm:text-4xl font-bold text-gray-900 wrap-break-word" dangerouslySetInnerHTML={{ __html: richTextHtml(content.title) }} />
                 )}
 
                 {/* Product badge / selector */}
@@ -930,9 +950,16 @@ export default function ShowcaseClient({
                     />
                   </div>
                 ) : content.productId ? (
-                  <div className="mt-2">
-                    <span className="inline-flex items-center gap-1.5 text-xs font-semibold bg-orange-100 text-orange-700 px-3 py-1 rounded-full">
-                      <span className="rich-text" dangerouslySetInnerHTML={{
+                  <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2">
+                    {/* A box, not a pill. Product titles are often several
+                        lines (brand / type / model), and rounded-full bent
+                        those into a blob. White, so the colour the admin gave
+                        each line reads as chosen rather than tinted orange. */}
+                    <span className="inline-flex max-w-full items-start gap-2 rounded-xl border border-orange-200 bg-white px-3 py-2 text-sm font-semibold leading-snug text-gray-800 shadow-sm">
+                      <svg className="mt-0.5 h-4 w-4 shrink-0 text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
+                      </svg>
+                      <span className="rich-text min-w-0 wrap-break-word" dangerouslySetInnerHTML={{
                         __html: (() => {
                           const p = allProducts.find((p) => p.id === content.productId);
                           // An id with no product behind it: text, never markup.
@@ -951,7 +978,7 @@ export default function ShowcaseClient({
                       const en = htmlToText(linkedProductItem.title_en);
                       const shown = htmlToText(localize(linkedProductItem, "title", lang));
                       return en && en.toLowerCase() !== shown.toLowerCase() ? (
-                        <span className="ml-2 text-xs font-medium text-gray-500">{en}</span>
+                        <span className="text-sm text-gray-500">{en}</span>
                       ) : null;
                     })()}
                   </div>
@@ -1026,7 +1053,7 @@ export default function ShowcaseClient({
 
 
         {/* ── Content Blocks ── */}
-        <div className="max-w-4xl mx-auto px-4 py-10">
+        <div className="max-w-4xl lg:max-w-5xl xl:max-w-6xl 2xl:max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-10">
           {isEditing && (
             <div className="mb-4 space-y-3">
               <div className="p-3 bg-orange-50 border border-orange-200 rounded-lg text-sm text-orange-700 font-medium">
@@ -1171,11 +1198,14 @@ export default function ShowcaseClient({
                         </div>
                       ) : block.imageUrl ? (
                         // Resized by Cloudinary to the width it is shown at:
-                        // imageWidth % of the ~864px content column.
+                        // imageWidth % of the content column (COLUMN_PX).
                         <ResponsiveImage
                           src={block.imageUrl}
                           alt={imageAlt}
-                          sizes={`(max-width: 896px) ${block.imageWidth ?? 100}vw, ${Math.round((864 * (block.imageWidth ?? 100)) / 100)}px`}
+                          sizes={columnSizes(
+                            `(max-width: 1023px) ${block.imageWidth ?? 100}vw`,
+                            (column) => (column * (block.imageWidth ?? 100)) / 100
+                          )}
                           loading={blockIndex === 0 ? "eager" : "lazy"}
                           className="h-auto"
                           style={{ width: `${block.imageWidth ?? 100}%` }}
@@ -1237,11 +1267,14 @@ export default function ShowcaseClient({
                             <span className="text-sm text-gray-500">กำลังอัปโหลด...</span>
                           </div>
                         ) : block.imageUrl ? (
-                          // Half of the content column on desktop.
+                          // Half of the content column (less the gap-8) from md.
                           <ResponsiveImage
                             src={block.imageUrl}
                             alt={imageAlt}
-                            sizes={`(max-width: 768px) ${block.imageWidth ?? 100}vw, ${Math.round((432 * (block.imageWidth ?? 100)) / 100)}px`}
+                            sizes={columnSizes(
+                              `(max-width: 767px) ${block.imageWidth ?? 100}vw, (max-width: 1023px) ${(block.imageWidth ?? 100) / 2}vw`,
+                              (column) => (((column - 32) / 2) * (block.imageWidth ?? 100)) / 100
+                            )}
                             loading={blockIndex === 0 ? "eager" : "lazy"}
                             className="h-auto object-cover mx-auto"
                             style={{ width: `${block.imageWidth ?? 100}%` }}
@@ -1374,7 +1407,7 @@ export default function ShowcaseClient({
                               src={item.image}
                               alt={title}
                               fill
-                              sizes="(max-width: 768px) 50vw, 220px"
+                              sizes={columnSizes("(max-width: 767px) 50vw, (max-width: 1023px) 25vw", (column) => (column - 48) / 4)}
                               className="object-contain p-4"
                             />
                           )}

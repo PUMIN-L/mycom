@@ -11,7 +11,7 @@ export default function AboutSection() {
     <div className="pt-32 pb-24">
       <div className="section-wrapper">
         {/* Header */}
-        <div className="max-w-5xl mb-20 animate-fade-in-up">
+        <div className="max-w-5xl mb-12 md:mb-20 animate-fade-in-up">
           <span className="text-[var(--accent)] font-bold uppercase tracking-[0.4em] text-xs mb-8 block">
             {t(translations.aboutPage.tag)}
           </span>
@@ -23,8 +23,9 @@ export default function AboutSection() {
           </p>
         </div>
 
-        {/* Hero Image */}
-        <div className="relative aspect-[21/9] w-full overflow-hidden mb-24 rounded-2xl shadow-2xl animate-fade-in delay-200">
+        {/* Hero Image — 21:9 only on a wide screen: on a phone that was a
+            strip ~150px tall. */}
+        <div className="relative aspect-[4/3] sm:aspect-[16/9] lg:aspect-[21/9] w-full overflow-hidden mb-12 md:mb-24 rounded-2xl shadow-2xl animate-fade-in delay-200">
           <Image
             src="/images/about-hero.png"
             alt="Modern Laboratory"
@@ -36,7 +37,7 @@ export default function AboutSection() {
         </div>
 
         {/* Content Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-20 items-start">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-12 md:gap-20 items-start">
           <div className="space-y-8 animate-slide-in-left delay-300">
             <h2 className="text-2xl md:text-3xl font-bold text-[var(--brand-navy)]">
               {t(translations.aboutPage.visionTitle)}
