@@ -176,10 +176,10 @@ describe("ShowcaseClient — the content column widens on large screens", () => 
     );
   };
 
-  it("an image block asks for its share of the column at every width — 960 / 1088 / 1216px", () => {
+  it("an image block asks for its share of the column at every width — 928 / 1056 / 1184px", () => {
     const { container } = renderBlocks([{ id: "b1", type: "image", imageUrl: PHOTO, imageWidth: 50 } as ContentBlock]);
     expect(container.querySelector("img")!.getAttribute("sizes")).toBe(
-      "(max-width: 1023px) 50vw, (max-width: 1279px) 480px, (max-width: 1535px) 544px, 608px"
+      "(max-width: 1023px) 50vw, (max-width: 1279px) 464px, (max-width: 1535px) 528px, 592px"
     );
   });
 
@@ -188,7 +188,7 @@ describe("ShowcaseClient — the content column widens on large screens", () => 
       { id: "b1", type: "text-image", imageUrl: PHOTO, content: "<p>x</p>", imagePosition: "right" } as ContentBlock,
     ]);
     expect(container.querySelector("img")!.getAttribute("sizes")).toBe(
-      "(max-width: 767px) 100vw, (max-width: 1023px) 50vw, (max-width: 1279px) 464px, (max-width: 1535px) 528px, 592px"
+      "(max-width: 767px) 100vw, (max-width: 1023px) 50vw, (max-width: 1279px) 448px, (max-width: 1535px) 512px, 576px"
     );
   });
 

@@ -140,13 +140,13 @@ const PRODUCT_PLACEHOLDER = "-- กรุณาเลือก Product --";
 // The page used to be one max-w-4xl column (864px of content) on every screen,
 // which left a large monitor mostly empty. It now widens with the screen, up
 // to the 1280px the rest of the site uses (.section-wrapper):
-//   lg  max-w-5xl  1024 − 2×32 padding =  960px
-//   xl  max-w-6xl  1152 − 64           = 1088px
-//   2xl max-w-7xl  1280 − 64           = 1216px
+//   lg  max-w-5xl  1024 − 2×48 padding =  928px
+//   xl  max-w-6xl  1152 − 96           = 1056px
+//   2xl max-w-7xl  1280 − 96           = 1184px
 // Every image `sizes` below comes from these, so the browser asks Cloudinary
 // for a photo as wide as it is shown. Fixed widths from the old column would
 // have fetched one too small, and blurred it.
-const COLUMN_PX = { lg: 1024 - 64, xl: 1152 - 64, xxl: 1280 - 64 } as const;
+const COLUMN_PX = { lg: 1024 - 96, xl: 1152 - 96, xxl: 1280 - 96 } as const;
 
 /** `sizes` for an image: `small` below lg, then `px(column)` at each width. */
 function columnSizes(small: string, px: (column: number) => number): string {
@@ -937,7 +937,7 @@ export default function ShowcaseClient({
 
         {/* ── Header ── */}
         <div className="bg-white">
-          <div className="max-w-4xl lg:max-w-5xl xl:max-w-6xl 2xl:max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-12">
+          <div className="max-w-4xl lg:max-w-5xl xl:max-w-6xl 2xl:max-w-7xl mx-auto px-5 sm:px-8 lg:px-12 py-8 sm:py-12">
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
               <div className="flex-1 min-w-0">
                 {isEditing ? (
@@ -1073,7 +1073,7 @@ export default function ShowcaseClient({
 
 
         {/* ── Content Blocks ── */}
-        <div className="max-w-4xl lg:max-w-5xl xl:max-w-6xl 2xl:max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-10">
+        <div className="max-w-4xl lg:max-w-5xl xl:max-w-6xl 2xl:max-w-7xl mx-auto px-5 sm:px-8 lg:px-12 py-6 sm:py-10">
           {isEditing && (
             <div className="mb-4 space-y-3">
               <div className="p-3 bg-orange-50 border border-orange-200 rounded-lg text-sm text-orange-700 font-medium">
