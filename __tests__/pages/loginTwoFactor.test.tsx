@@ -47,9 +47,37 @@ async function renderAndSubmitPassword() {
 }
 
 afterEach(() => {
+  window.history.replaceState({}, '', '/');
   cleanup();
   vi.unstubAllGlobals();
   vi.clearAllMocks();
+});
+
+// proxy.ts sends a logged-out browser to /login?next=<the page>; once in, it
+// goes back there — a sticker's QR scanned on a phone opens the piece.
+describe("/login — back to the page it was sent away from", () => {
+  it("password only: to ?next=", async () => {
+    window.history.replaceState({}, "", "/login?next=%2Fstock%2Fitem%2Fabc");
+    mockNetwork({ status: 200, body: { success: true, username: "admin" } });
+    await renderAndSubmitPassword();
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/stock/item/abc"));
+  });
+
+  it("after the 2FA code: to ?next=", async () => {
+    window.history.replaceState({}, "", "/login?next=%2Fassets%2Fitem%2Fxyz");
+    mockNetwork(NEEDS_CODE, { status: 200, body: { success: true, username: "admin" } });
+    await renderAndSubmitPassword();
+    fireEvent.change(await screen.findByLabelText("รหัส 6 หลัก"), { target: { value: "123456" } });
+    fireEvent.click(screen.getByRole("button", { name: "ยืนยัน" }));
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/assets/item/xyz"));
+  });
+
+  it("another site in ?next= is ignored", async () => {
+    window.history.replaceState({}, "", "/login?next=%2F%2Fevil.example");
+    mockNetwork({ status: 200, body: { success: true, username: "admin" } });
+    await renderAndSubmitPassword();
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/adminpanel"));
+  });
 });
 
 describe("/login — two-factor", () => {

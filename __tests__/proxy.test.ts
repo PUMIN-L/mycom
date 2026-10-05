@@ -34,6 +34,12 @@ describe('proxy — the admin page gate', () => {
     expect(redirectedToLogin(await visit('/dashboard'))).toBe(true);
   });
 
+  it('remembers where it was going, so the login can send it back — a sticker QR opens the piece', async () => {
+    const res = await visit('/stock/item/abc-123?x=1');
+    expect(redirectedToLogin(res)).toBe(true);
+    expect(new URL(res.headers.get('location')!).searchParams.get('next')).toBe('/stock/item/abc-123?x=1');
+  });
+
   it('lets a session the app issued through', async () => {
     const token = await encrypt({ userId: '1', username: 'admin', expiresAt: new Date(Date.now() + 60_000) });
     expect(passedThrough(await visit('/dashboard', token))).toBe(true);
@@ -86,9 +92,9 @@ describe('proxy — the file convention', () => {
   it('still gates every admin area, and never the public pages beside them', () => {
     const matcher = config.matcher as string[];
     for (const area of [
-      '/adminpanel', '/billing', '/create-content', '/create-product', '/crm', '/customers',
+      '/adminpanel', '/assets', '/billing', '/create-content', '/create-product', '/crm', '/customers',
       '/dashboard', '/documents', '/edit-product', '/expenses', '/product-specs',
-      '/purchase-order', '/quotation', '/service-job', '/settings', '/suppliers', '/tools',
+      '/purchase-order', '/quotation', '/service-job', '/settings', '/stock', '/suppliers', '/tools',
     ]) {
       expect(matcher, area).toContain(area);
       expect(matcher, `${area}/:path*`).toContain(`${area}/:path*`);

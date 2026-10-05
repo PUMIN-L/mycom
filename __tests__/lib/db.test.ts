@@ -40,14 +40,14 @@ process.env.DB_USER = 'tester';
 process.env.DB_PASSWORD = 'pw';
 process.env.DB_NAME = 'testdb';
 
-// A version SELECT result that MATCHES SCHEMA_VERSION (46) → bootstrap fast-path,
+// A version SELECT result that MATCHES SCHEMA_VERSION (47) → bootstrap fast-path,
 // skipping DDL. Value is a string because settings stores VARCHAR values.
 //
 // ⚠️ This constant only ever goes UP, in step with db.ts. The bootstrap's fast
 // path is `stored >= SCHEMA_VERSION`, so a number the live database has already
 // recorded can never trigger a migration again — reusing one silently skips the
 // entire migration in production (that is how v33 was burned).
-const SCHEMA_VERSION = '46';
+const SCHEMA_VERSION = '47';
 const SCHEMA_MATCH: [Array<{ value: string }>, unknown[]] = [[{ value: SCHEMA_VERSION }], []];
 // An empty result → no schema_version row / no admin row → full bootstrap.
 const EMPTY: [unknown[], unknown[]] = [[], []];
@@ -1949,5 +1949,42 @@ describe('v46 rich-text columns', () => {
     for (const { table } of db.RICH_TEXT_COLUMNS) {
       expect(Object.keys(db.PLAIN_TEXT_COLUMNS)).not.toContain(table);
     }
+  });
+});
+
+// v47 — the asset register + stock (lib/inventoryStore.ts). Four tables told
+// apart by `kind`, soft links only, a unique code per kind, every typed column
+// utf8mb4, and each index also created standalone.
+describe('v47 asset register + stock', () => {
+  it('creates the four tables, their indexes, and NOT ONE foreign key', async () => {
+    const db = await freshImport();
+    mockConnection.query.mockResolvedValue(EMPTY);
+    await db.getDbConnection();
+    const sql = bootstrapSql();
+    const ddl = (table: string) => sql.find((s) => s.includes(`CREATE TABLE IF NOT EXISTS ${table} (`))!;
+
+    for (const table of ['inventory_groups', 'inventory_items', 'inventory_events', 'inventory_counters']) {
+      expect(ddl(table), table).toBeDefined();
+      expect(ddl(table), table).not.toMatch(/REFERENCES|FOREIGN KEY/i);
+    }
+    expect(ddl('inventory_items')).toMatch(/UNIQUE INDEX idx_ii_kind_code \(kind, code\)/);
+    expect(ddl('inventory_items')).toMatch(/price DECIMAL\(12,2\)/);
+    expect(ddl('inventory_counters')).toMatch(/kind VARCHAR\(10\) PRIMARY KEY/);
+    for (const col of ['name', 'brand', 'model', 'category']) {
+      expect(ddl('inventory_groups')).toContain(`${col} VARCHAR(255) CHARACTER SET utf8mb4`);
+    }
+    for (const col of ['serialNumber', 'supplierName', 'location', 'custodian', 'statusParty']) {
+      expect(ddl('inventory_items')).toContain(`${col} VARCHAR(255) CHARACTER SET utf8mb4`);
+    }
+    for (const idx of [
+      /CREATE INDEX idx_ig_kind ON inventory_groups \(kind\)/,
+      /CREATE UNIQUE INDEX idx_ii_kind_code ON inventory_items \(kind, code\)/,
+      /CREATE INDEX idx_ii_group ON inventory_items \(groupId\)/,
+      /CREATE INDEX idx_ii_kind_status ON inventory_items \(kind, status\)/,
+      /CREATE INDEX idx_ie_item ON inventory_events \(itemId\)/,
+    ]) {
+      expect(sql.some((s) => idx.test(s)), String(idx)).toBe(true);
+    }
+    expect(mockConnection.query).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO settings'), [SCHEMA_VERSION]);
   });
 });

@@ -13,7 +13,7 @@ import { repairTruncatedRichText } from "./sanitizeHtml";
 // did not lower the 33 already written to `settings`, so the next change to
 // reuse 33 was skipped entirely and its tables were never created in
 // production. Reverting a migration means moving FORWARD to a new number.
-const SCHEMA_VERSION = 46;
+const SCHEMA_VERSION = 47;
 
 type DbPool = ReturnType<typeof mysql.createPool>;
 
@@ -1731,6 +1731,102 @@ async function bootstrapSchemaOnce(): Promise<void> {
         "v33 line-item backfill lost a race with a concurrent bootstrap; the other instance owns it:",
         (error as { code?: string }).code
       );
+    }
+
+    // ── v47: asset register + stock (lib/inventoryStore.ts) ───────────────
+    // One set of tables for both pages, told apart by `kind` ('asset' |
+    // 'stock'): the two registers are identical in shape, and keeping them in
+    // the same tables means one store, one set of routes, one UI. Keeping them
+    // apart is the store's job — every query filters on kind, and an item only
+    // ever joins a group of its own kind. Like the task board, NO foreign keys:
+    // a group is deleted only when empty (checked in the store's transaction),
+    // an item's events go in the same transaction as the item, and
+    // `supplierId` is a soft link to `suppliers` (deleting a supplier keeps
+    // the name the item carries in `supplierName`).
+    //
+    // Every column a person types into is utf8mb4 (see the task board above).
+    // Dates are "YYYY-MM-DD" VARCHARs, compared lexically, like crm_tasks.
+    await connection.query(`
+        CREATE TABLE IF NOT EXISTS inventory_groups (
+          id VARCHAR(36) PRIMARY KEY,
+          kind VARCHAR(10) NOT NULL,
+          name VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+          brand VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '',
+          model VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '',
+          category VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '',
+          note TEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL,
+          createdAt VARCHAR(255) NOT NULL,
+          updatedAt VARCHAR(255) NOT NULL,
+          INDEX idx_ig_kind (kind)
+        )
+      `);
+    // `code` ("AS-0001" / "ST-0001") is handed out from inventory_counters and
+    // never reused; `seq` is its number, for sorting. `statusParty` /
+    // `statusDate` carry the extra fields of the current status (borrower +
+    // return date, repair shop, reserved for, sold to + date, disposal date) —
+    // what each means is lib/inventoryStatus.ts's, and the store clears them
+    // whenever the status does not use them.
+    await connection.query(`
+        CREATE TABLE IF NOT EXISTS inventory_items (
+          id VARCHAR(36) PRIMARY KEY,
+          kind VARCHAR(10) NOT NULL,
+          groupId VARCHAR(36) NOT NULL,
+          code VARCHAR(20) NOT NULL,
+          seq INT NOT NULL,
+          serialNumber VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '',
+          purchaseDate VARCHAR(10) NOT NULL,
+          price DECIMAL(12,2) NOT NULL DEFAULT 0,
+          supplierId VARCHAR(255) DEFAULT NULL,
+          supplierName VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '',
+          location VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '',
+          custodian VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '',
+          warrantyUntil VARCHAR(10) DEFAULT NULL,
+          status VARCHAR(20) NOT NULL,
+          statusParty VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '',
+          statusDate VARCHAR(10) DEFAULT NULL,
+          note TEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL,
+          createdAt VARCHAR(255) NOT NULL,
+          updatedAt VARCHAR(255) NOT NULL,
+          UNIQUE INDEX idx_ii_kind_code (kind, code),
+          INDEX idx_ii_group (groupId),
+          INDEX idx_ii_kind_status (kind, status)
+        )
+      `);
+    // The timeline of one item: written by the store in the same transaction
+    // as the change it records, never edited, deleted with its item.
+    await connection.query(`
+        CREATE TABLE IF NOT EXISTS inventory_events (
+          id VARCHAR(36) PRIMARY KEY,
+          itemId VARCHAR(36) NOT NULL,
+          kind VARCHAR(10) NOT NULL,
+          eventType VARCHAR(20) NOT NULL,
+          fromValue VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '',
+          toValue VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '',
+          detail VARCHAR(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '',
+          createdAt VARCHAR(255) NOT NULL,
+          INDEX idx_ie_item (itemId)
+        )
+      `);
+    // The last code number handed out per kind. Only ever goes up, so a code
+    // whose item was deleted is never given to another.
+    await connection.query(`
+        CREATE TABLE IF NOT EXISTS inventory_counters (
+          kind VARCHAR(10) PRIMARY KEY,
+          lastNo INT NOT NULL DEFAULT 0
+        )
+      `);
+    for (const indexDef of [
+      "CREATE INDEX idx_ig_kind ON inventory_groups (kind)",
+      "CREATE UNIQUE INDEX idx_ii_kind_code ON inventory_items (kind, code)",
+      "CREATE INDEX idx_ii_group ON inventory_items (groupId)",
+      "CREATE INDEX idx_ii_kind_status ON inventory_items (kind, status)",
+      "CREATE INDEX idx_ie_item ON inventory_events (itemId)",
+    ]) {
+      try {
+        await connection.query(indexDef);
+      } catch (error) {
+        if (!isBenignSchemaError(error)) throw error;
+      }
     }
 
     // ── Seed default admin user ────────────────────────────────────────────

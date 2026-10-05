@@ -533,3 +533,70 @@ export interface RecurringExpense {
   lastGeneratedMonth: string | null;
   createdAt: string;
 }
+
+// ── Asset register + stock (lib/inventoryStore.ts, /assets and /stock) ──────
+
+/** Which register: the company's own things ("asset") or goods bought to
+ *  sell on ("stock"). Same tables, kept apart by this column. */
+export const INVENTORY_KINDS = ["asset", "stock"] as const;
+export type InventoryKind = (typeof INVENTORY_KINDS)[number];
+
+/** A model of thing — what every piece of it shares. */
+export interface InventoryGroup {
+  id: string;
+  kind: InventoryKind;
+  name: string;
+  brand: string;
+  model: string;
+  category: string;
+  note: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** One physical piece. Statuses and what `statusParty` / `statusDate` mean
+ *  for each are in lib/inventoryStatus.ts. */
+export interface InventoryItem {
+  id: string;
+  kind: InventoryKind;
+  groupId: string;
+  /** "AS-0001" / "ST-0001" — handed out once, never reused. */
+  code: string;
+  seq: number;
+  serialNumber: string;
+  purchaseDate: string; // YYYY-MM-DD
+  price: number;
+  /** Set when the supplier was picked from the Suppliers list. */
+  supplierId: string | null;
+  /** The supplier's CURRENT name when linked and still there; otherwise the
+   *  name stored with the item (typed, or the linked supplier's at the time). */
+  supplierName: string;
+  location: string;
+  /** Assets only. */
+  custodian: string;
+  /** Assets only. YYYY-MM-DD or null. */
+  warrantyUntil: string | null;
+  status: string;
+  statusParty: string;
+  statusDate: string | null;
+  note: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export const INVENTORY_EVENT_TYPES = ["created", "status", "location", "group"] as const;
+export type InventoryEventType = (typeof INVENTORY_EVENT_TYPES)[number];
+
+/** One line of an item's timeline. Written by the store, never edited. */
+export interface InventoryEvent {
+  id: string;
+  itemId: string;
+  eventType: InventoryEventType;
+  /** status: status keys · location: places · group: group names · created: "" */
+  fromValue: string;
+  toValue: string;
+  /** The status's extra fields at the time ("ผู้ยืม: สมชาย · กำหนดคืน: …"),
+   *  or, for created, the starting place. */
+  detail: string;
+  createdAt: string;
+}

@@ -46,3 +46,23 @@ export function parsePositiveMoney(value: unknown): ParsedMoney {
   }
   return { ok: true, amount };
 }
+
+/**
+ * A money amount that may be zero (a price: something given free is still
+ * worth recording), with the same rules as parsePositiveMoney otherwise — a
+ * number or a plain decimal string, to the satang, not past the column.
+ */
+export function parseNonNegativeMoney(value: unknown): ParsedMoney {
+  const n =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && DECIMAL_STRING.test(value)
+        ? Number(value)
+        : NaN;
+  if (!Number.isFinite(n) || n < 0) return { ok: false, error: "จำนวนเงินต้องเป็นตัวเลขตั้งแต่ 0 ขึ้นไป" };
+  const amount = toSatang(n);
+  if (amount > MAX_MONEY_AMOUNT) {
+    return { ok: false, error: "จำนวนเงินสูงเกินไป (สูงสุด 9,999,999,999.99 บาท)" };
+  }
+  return { ok: true, amount };
+}

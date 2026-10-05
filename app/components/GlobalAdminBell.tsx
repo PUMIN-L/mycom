@@ -18,6 +18,7 @@ import { useAuth } from "../context/AuthContext";
  */
 const ADMIN_PATH_PREFIXES = [
   "/adminpanel",
+  "/assets",
   "/billing",
   "/create-content",
   "/create-product",
@@ -33,6 +34,7 @@ const ADMIN_PATH_PREFIXES = [
   "/quotation",
   "/service-job",
   "/settings",
+  "/stock",
   "/suppliers",
   "/tools",
 ];

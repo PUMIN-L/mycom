@@ -31,7 +31,11 @@ export async function proxy(request: NextRequest) {
   const payload = await decrypt(session);
 
   if (!payload) {
-    return NextResponse.redirect(new URL('/login', request.url));
+    // Back here after the login (app/lib/loginDestination.ts) — a sticker's
+    // QR scanned on a logged-out phone opens the piece, not the admin panel.
+    const login = new URL('/login', request.url);
+    login.searchParams.set('next', request.nextUrl.pathname + request.nextUrl.search);
+    return NextResponse.redirect(login);
   }
 
   // A signed session without the "a session exists" hint — one issued before
@@ -85,6 +89,12 @@ export const config = {
     '/dashboard/:path*',
     '/expenses',
     '/expenses/:path*',
+    // Asset register + stock — also the pages a sticker's QR opens, so a
+    // phone that is not logged in lands on /login first.
+    '/assets',
+    '/assets/:path*',
+    '/stock',
+    '/stock/:path*',
     // Admin Panel hub (moved from /showcase). NOTE: /showcase/{id} content
     // pages and /showcase/product/{pid} are PUBLIC — never add /showcase back
     // here (doing so bounced customers + Google to /login).

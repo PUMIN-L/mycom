@@ -203,7 +203,9 @@ export default function SearchableDropdown({
                 </svg>
                 <input
                   type="text"
-                  className="w-full bg-white border border-gray-200 rounded-lg pl-9 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500 transition-shadow"
+                  // text-base below sm: iOS Safari zooms the page into any
+                  // field under 16px (the /assets and /stock pages are used on phones).
+                  className="w-full bg-white border border-gray-200 rounded-lg pl-9 pr-3 py-2 text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-orange-500 transition-shadow"
                   placeholder="ค้นหา..."
                   value={search}
                   onChange={(e) => updateSearch(e.target.value)}

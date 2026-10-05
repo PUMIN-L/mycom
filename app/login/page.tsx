@@ -2,6 +2,15 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "../context/AuthContext";
+import { loginDestination } from "../lib/loginDestination";
+
+/** The page proxy.ts sent this browser away from (?next=), when it is one of
+ *  ours — e.g. the piece a sticker's QR opens — else the admin panel. Read
+ *  from the address bar when needed, so the page needs no Suspense boundary
+ *  for useSearchParams. */
+function afterLogin(): string {
+  return loginDestination(new URLSearchParams(window.location.search).get("next"));
+}
 
 export default function LoginPage() {
   const { login, verifyTwoFactor, isLoggedIn, isLoading, refresh } = useAuth();
@@ -24,7 +33,7 @@ export default function LoginPage() {
     if (isLoading || !isLoggedIn) return;
     let cancelled = false;
     refresh().then((stillIn) => {
-      if (!cancelled && stillIn) router.replace("/adminpanel");
+      if (!cancelled && stillIn) router.replace(afterLogin());
     });
     return () => {
       cancelled = true;
@@ -38,7 +47,7 @@ export default function LoginPage() {
     const result = await login(username, password);
     setSubmitting(false);
     if (result.success) {
-      router.push("/adminpanel");
+      router.push(afterLogin());
     } else if (result.twoFactorRequired) {
       // The password has done its job; don't keep it in memory for step two.
       setPassword("");
@@ -59,7 +68,7 @@ export default function LoginPage() {
     if (result.success) {
       // A spent backup code usually means the phone is gone: straight to the
       // 2FA settings, where the remaining count and "new codes" are.
-      router.push(result.backupCodesRemaining !== undefined ? "/settings#two-factor" : "/adminpanel");
+      router.push(result.backupCodesRemaining !== undefined ? "/settings#two-factor" : afterLogin());
       return;
     }
     if (result.restart) {

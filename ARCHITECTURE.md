@@ -77,6 +77,7 @@ app/
 │   ├── settingsStore.ts  Key/value settings (contact_email).
 │   ├── contactMessageStore.ts  Persisted contact-form leads (admin inbox).
 │   ├── revisionStore.ts  Edit-history snapshots for product/content/document/customer.
+│   ├── inventoryStore.ts Asset register + stock (groups, pieces, timelines) — §8d.
 │   ├── session.ts        JWT encrypt/decrypt + cookie helpers (server-only).
 │   ├── apiHelpers.ts     ⭐ withRoute / requireAuth / jsonError / ApiError + CSRF guard.
 │   ├── cloudinaryHelper.ts  upload / delete / collect-image-urls / pdf-cover.
@@ -96,12 +97,18 @@ app/
 ├── document/            PDF document viewer/manager page.
 ├── quotation/           Admin quotation builder (client-side PDF export).
 ├── settings/            Admin settings (change contact-email recipient).
+├── assets/ stock/       Asset register + stock (admin, phone-friendly) — §8d.
 ├── login/               Admin login page.
 └── showcase/            Public content browsing + admin in-place editing.
 
 proxy.ts                 Next 16's `proxy` convention (formerly middleware.ts —
                          deprecated): admin pages in `config.matcher` redirect to
-                         /login without a validly SIGNED session cookie (§10).
+                         /login?next=<that page> without a validly SIGNED session
+                         cookie (§10); after the login, /login goes back to
+                         `next` when it is a page of this site
+                         (`lib/loginDestination.ts` — never another site), else
+                         /adminpanel. That is what makes a sticker's QR, scanned
+                         on a logged-out phone, open the piece (§8d).
 instrumentation.ts       Next 16 server error hook (onRequestError) — structured
                          error logging; wire Sentry here (see §Observability).
 __tests__/               Vitest suites (unit tests for lib/* + api/*). See §Testing.
@@ -226,7 +233,7 @@ manual auth checks — that's the duplication this replaced.
 | `POST /api/auth/forgot-password` + `/otp` (emailed code to the fixed address, + a 2FA code once on, §10) | `POST /api/auth/password` + `/otp` — the current password, an emailed code (+ a 2FA code once on) | |
 | `POST /api/contact` (sends email)               | all `/api/quotations/**` (GET/POST/[id]/docnos) | `cleanup` = **cron** (`CRON_SECRET`) |
 | `GET /api/health`                               | `GET`/`PUT /api/settings/contact-email` | |
-| —                                               | all `/api/admin/**`, incl. `POST`/`GET /api/admin/sales` + `[id]/items` and `GET /api/admin/equipments/serial-check` (§8a), plus the task board's `/api/admin/tasks/**` + `/api/admin/task-topics/**` (§8c) | |
+| —                                               | all `/api/admin/**`, incl. `POST`/`GET /api/admin/sales` + `[id]/items` and `GET /api/admin/equipments/serial-check` (§8a), plus the task board's `/api/admin/tasks/**` + `/api/admin/task-topics/**` (§8c), and the asset register / stock's `/api/admin/inventory/[kind]/**` (§8d) | |
 
 A public read returns only what a visitor may see: `GET /api/products/[id]`
 drops `supplierIds` (which suppliers a product comes from) unless the caller is
@@ -797,6 +804,66 @@ purged. Do not "fix" it into a live lookup.
 `customerCallFollowUpsTotal` (the true count) and `dueTaskCount`. The last is
 composed in the route from `countDueTasks()` — `crmStore` must not learn about
 the board.
+
+### 8d. Asset register + stock (schema v47)
+
+Two admin pages: `/assets` (the company's own things) and `/stock` (bought
+to sell on). Spec: `openspec/changes/add-inventory-tracking`.
+
+- **One set of tables, told apart by `kind`** (`'asset'` | `'stock'`):
+  `inventory_groups` (a model: name, brand, model, category),
+  `inventory_items` (one physical piece each), `inventory_events` (each
+  piece's timeline) and `inventory_counters` (the last code number per
+  kind). One store (`lib/inventoryStore.ts`), one set of routes
+  (`/api/admin/inventory/[kind]/**`) and one UI (`components/inventory/*`)
+  serve both. Keeping them apart is the store's job: every statement filters
+  on kind, and a piece only joins a group of its own kind. A kind in the URL
+  other than asset/stock is a 404.
+- **No foreign keys**, like the task board. A group is deleted only when
+  empty. The store checks that with a LOCKING read inside its transaction, so
+  an item added concurrently is seen. A piece's events are written and
+  deleted in the piece's own transaction. `supplierId` is a soft link: a
+  piece shows the supplier's CURRENT name (`LEFT JOIN suppliers`), and once
+  the supplier is deleted it shows the `supplierName` it carries.
+- **Codes** `AS-0001` / `ST-0001` come from `inventory_counters`, in the
+  same transaction as the INSERT. The counter only goes up, so a deleted
+  piece's code is never handed out again. It also starts past `MAX(seq)`, so
+  a lost counter row cannot collide with `UNIQUE (kind, code)`.
+- **Statuses** live in `lib/inventoryStatus.ts`, and the two kinds have
+  different sets. A status's extra fields share two columns, `statusParty` /
+  `statusDate`: borrower + return date, repair shop, reserved for, sold to +
+  date, disposal date. The store **clears them whenever the status does not
+  use them**. When the status changes, they come from the request alone
+  (`mergeItemPatch`), so the old status's borrower can never become the new
+  one's "reserved for". The old values stay on the timeline. "Gone" statuses
+  (sold, disposed, broken, returned) are hidden by default and left out of
+  the total value.
+- **A PATCH is checked whole.** The fields sent are laid over the stored row
+  and the result is validated. A sale date is checked against the purchase
+  date even when only one of them changed. Prices go through
+  `parseNonNegativeMoney`, which allows 0 and is otherwise
+  `parsePositiveMoney`'s rules.
+- **Lock order:** group rows first (ascending id), then item rows. A move
+  locks the target group before the piece.
+- **The page loads a whole register** (no timelines) and searches and filters
+  it in the browser (`lib/inventorySearch.ts`, pure, tested). Every word must
+  match, across the group and the piece. The free-text fields (place,
+  category, borrower) and the supplier field ("pick from Suppliers or type")
+  are built on `SearchableDropdown` (`components/SuggestField.tsx`,
+  `InventoryFields.tsx`). They are never a `<datalist>`, which the OS
+  paints. **These two pages are phone-friendly**, unlike the rest of the admin
+  side: they are used walking round the storeroom, and from a sticker's QR.
+- **Stickers are optional.** `/[assets|stock]/labels` takes the chosen ids
+  from `sessionStorage` (or `?ids=` for one piece). Paper sizes are in
+  `lib/inventoryLabels.ts`; add a new stock there. QR codes are made in the
+  browser with `qrcode` and point at `<origin>/<assets|stock>/item/<id>`.
+  The printed copy is portalled to `<body>`, and print CSS hides everything
+  else.
+- Tests: `__tests__/lib/inventoryStore.test.ts` runs the store against an
+  in-memory database that executes its statements and rolls back failed
+  transactions (`__tests__/helpers/fakeInventoryDb.ts`). Teach it any new
+  statement shape. Also `inventoryPure.test.ts`,
+  `api/admin-inventory.test.ts` and `components/Inventory.test.tsx`.
 
 ### 9. Email (contact form) + lead persistence
 [`app/lib/mailer.ts`](./app/lib/mailer.ts) sends via SMTP (`nodemailer`, Gmail by

@@ -84,6 +84,20 @@ export default function DashboardActions() {
       color: "bg-amber-50 text-amber-600 border-amber-200 hover:border-amber-400 hover:shadow-amber-100",
     },
     {
+      href: "/assets",
+      title: "ทรัพย์สินบริษัท",
+      description: "ของที่ซื้อมาใช้เอง ซื้อเมื่อไหร่ ราคาเท่าไหร่ อยู่ที่ไหน สถานะเป็นยังไง",
+      icon: "🗄️",
+      color: "bg-teal-50 text-teal-600 border-teal-200 hover:border-teal-400 hover:shadow-teal-100",
+    },
+    {
+      href: "/stock",
+      title: "สต็อกสินค้า",
+      description: "ของที่ซื้อมาเพื่อขาย เหลือพร้อมขายกี่ชิ้น จองให้ใคร ขายไปเมื่อไหร่",
+      icon: "📦",
+      color: "bg-lime-50 text-lime-700 border-lime-200 hover:border-lime-400 hover:shadow-lime-100",
+    },
+    {
       href: "/purchase-order",
       title: "ใบสั่งซื้อ (Purchase Order)",
       description: "ออกใบสั่งซื้อให้ซัพพลายเออร์ พร้อมดาวน์โหลด PDF/Excel",
