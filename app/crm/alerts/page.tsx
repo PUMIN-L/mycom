@@ -50,7 +50,7 @@ import {
   ALERT_SCHEDULE_DAYS,
   ALERT_LIST_DISPLAY_LIMIT,
 } from "../../lib/alertThresholds";
-import { daysBetweenDateStrings } from "../../lib/dateFormat";
+import { daysBetweenDateStrings, daysUntil } from "../../lib/dateFormat";
 import RecordPaymentModal, {
   type PaymentTargetDoc,
 } from "../../components/modals/RecordPaymentModal";
@@ -409,21 +409,15 @@ export default function AlertsPage() {
     }
   };
 
-  const warrantyDaysLeft = (endDate: string | null) => {
-    if (!endDate) return null;
-    return Math.ceil((new Date(endDate).getTime() - Date.now()) / 86400000);
-  };
+  // Counted on Bangkok's calendar, like the server's alert queries (daysUntil).
+  const warrantyDaysLeft = (endDate: string | null) => daysUntil(endDate);
 
   // A calibration is valid for 1 year (no separate stored due-date column —
   // see getAlerts() in crmStore.ts, which alerts starting 2 months before
   // this same anniversary).
   const calibrationDueDate = (calibrationDate: string | null | undefined) =>
     calibrationDate ? addMonthsToDateString(calibrationDate, CALIBRATION_VALIDITY_MONTHS) : null;
-  const calibrationDaysLeft = (calibrationDate: string | null | undefined) => {
-    const due = calibrationDueDate(calibrationDate);
-    if (!due) return null;
-    return Math.ceil((new Date(due).getTime() - Date.now()) / 86400000);
-  };
+  const calibrationDaysLeft = (calibrationDate: string | null | undefined) => daysUntil(calibrationDueDate(calibrationDate));
 
   if (authLoading || !isLoggedIn) {
     return (

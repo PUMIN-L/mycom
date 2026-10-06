@@ -8,6 +8,7 @@ import {
   addMonthsToDateString,
   addDaysToDateString,
   daysBetweenDateStrings,
+  daysUntil,
   formatDisplayDate,
   formatDisplayDateTime,
   displayDateTimeParts,
@@ -306,5 +307,29 @@ describe('daysBetweenDateStrings', () => {
     expect(daysBetweenDateStrings(null, '2026-09-06')).toBeNull();
     expect(daysBetweenDateStrings('2026-09-06', undefined)).toBeNull();
     expect(daysBetweenDateStrings('not-a-date', '2026-09-06')).toBeNull();
+  });
+});
+
+// Days left until a "YYYY-MM-DD" date, on Bangkok's calendar. The page used
+// new Date(str) - Date.now(): str parses as UTC midnight (07:00 in Bangkok),
+// so before 7 a.m. Bangkok time the due day itself read as "1 day left".
+describe('daysUntil', () => {
+  it('is 0 on the day itself, at any hour in Bangkok', () => {
+    expect(daysUntil('2026-10-07', new Date('2026-10-06T17:30:00.000Z'))).toBe(0); // 00:30 Bangkok
+    expect(daysUntil('2026-10-07', new Date('2026-10-06T23:59:00.000Z'))).toBe(0); // 06:59 Bangkok
+    expect(daysUntil('2026-10-07', new Date('2026-10-07T16:59:00.000Z'))).toBe(0); // 23:59 Bangkok
+  });
+
+  it("counts forward and back from Bangkok's today", () => {
+    const lateEvening = new Date('2026-10-06T16:00:00.000Z'); // 23:00 on the 6th in Bangkok
+    expect(daysUntil('2026-10-07', lateEvening)).toBe(1);
+    expect(daysUntil('2026-10-01', lateEvening)).toBe(-5);
+    expect(daysUntil('2026-10-07T00:00:00.000Z', lateEvening)).toBe(1);
+  });
+
+  it('null for no date or not a date', () => {
+    expect(daysUntil(null)).toBeNull();
+    expect(daysUntil('')).toBeNull();
+    expect(daysUntil('soon')).toBeNull();
   });
 });

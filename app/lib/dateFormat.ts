@@ -199,6 +199,22 @@ export function daysBetweenDateStrings(
 }
 
 /**
+ * Whole days from TODAY IN BANGKOK to `dateStr` ("YYYY-MM-DD", or a datetime
+ * whose first 10 characters are one): 0 on the day itself, negative once past.
+ * null when it is not a date.
+ *
+ * `new Date("2026-10-07").getTime() - Date.now()` is the trap this replaces:
+ * the string parses as UTC midnight — 07:00 in Bangkok — so between midnight
+ * and 7 a.m. Bangkok time the count was one day too high ("1 day left" on the
+ * due day itself), and the server-side alerts, which use Bangkok's calendar,
+ * disagreed with what the page printed.
+ */
+export function daysUntil(dateStr: string | null | undefined, now: Date = new Date()): number | null {
+  if (!dateStr) return null;
+  return daysBetweenDateStrings(bangkokDateString(now), String(dateStr).trim().slice(0, 10));
+}
+
+/**
  * `dateStr` ("YYYY-MM-DD") shifted forward by `months` calendar months — for
  * "N months after X" reminders (e.g. calibration due 10 months after the last
  * calibration date). Uses UTC internally so the result never shifts by a day
