@@ -16,6 +16,26 @@
 //   vat              = afterDiscount × 7%   (when vatEnabled)
 //   grandTotal       = afterDiscount + vat
 //
+// ── Two versions of the arithmetic (`totalsVersion`) ──────────────────────
+// The original arithmetic carries full precision from line to line and only
+// rounds on paper. With a bill-level % discount that can print a sheet whose
+// own rows do not add up — "หลังหักส่วนลด" + "VAT 7%" one satang off
+// "ยอดรวมสุทธิ" — because each row was rounded separately from a sum that never
+// was. Version 2 settles EVERY figure to the satang as it is computed (each
+// line, each sum, the discount, the base, the VAT, the total), so every row on
+// the sheet is a number the next row was computed from, and they always add up.
+//
+// Only a document that SAYS it is version 2 gets it. The builders stamp
+// `totalsVersion: 2` on every FRESH document from 2026-10-07 on; a document
+// saved before has no such key and keeps computing to the exact floats it
+// always did, so nothing already sent to a customer, and no stored total, ever
+// moves. A document that CONTINUES another keeps that one's arithmetic, because
+// the two must agree to the satang: a new version (แก้ไข New Ver., a PO's
+// replacement) inherits its source's, and a receipt takes the version of the
+// invoice it settles — the two arithmetics differ by a satang on roughly one
+// document in four that carries a % bill discount, and a receipt a satang off
+// its invoice would leave "ค้าง ฿0.01" in the ledger for good.
+//
 // ── Backwards compatibility ─────────────────────────────────────────────────
 // A quotation is stored as one JSON blob, so every quote saved before per-line
 // discounts existed simply has no `discount`/`discountType` key on its items.
@@ -38,6 +58,17 @@ export interface QuoteTotalsInput {
   discount?: number;
   discountType?: "amount" | "percent";
   vatEnabled?: boolean;
+  /** Which arithmetic the document was issued under — see the header. Missing
+   *  ⇒ the original; 2 ⇒ every figure settled to the satang. */
+  totalsVersion?: number;
+}
+
+/** The version every NEW document is stamped with (see the header). */
+export const CURRENT_TOTALS_VERSION = 2;
+
+/** Does this document settle every figure to the satang (version 2+)? */
+function settlesEachStep(totalsVersion: unknown): boolean {
+  return Number(totalsVersion) >= 2;
 }
 
 /** Per-line breakdown, so the UI can print a "ราคาหลังลด" column and the
@@ -78,8 +109,9 @@ export const VAT_RATE = 0.07;
  * rather than being dragged down by its binary representation (7.5% of 1234.60
  * is 92.595, which floats store as 92.59499999999998 → 92.60, not 92.59).
  *
- * Exported because `grandTotal` itself is NOT rounded (only per-line discounts
- * pass through here), so 7% VAT on an odd base leaves float dust. The billing
+ * Exported because, under the original arithmetic, `grandTotal` itself is NOT
+ * rounded (only per-line discounts pass through here), so 7% VAT on an odd
+ * base leaves float dust (version 2 rounds every figure here — see the header). The billing
  * store settles that dust with THIS function before writing
  * `billing_documents.totalAmount`, so the number in the receivables column is
  * the same satang the printed sheet shows.
@@ -108,9 +140,12 @@ export function round2(n: number): number {
  *   printed subtotal instead of drifting by a fraction of a satang.
  * - A negative line amount (bad input — see hasNegativeLineItem) gets a cap of
  *   0, i.e. no discount, so a per-line discount can never deepen it.
+ * - Under `totalsVersion` 2 the gross amount itself is settled to the satang
+ *   first, and everything after is computed from that.
  */
-export function computeLineTotal(item: QuoteLineInput): QuoteLineTotal {
-  const amount = (Number(item?.qty) || 0) * (Number(item?.unitPrice) || 0);
+export function computeLineTotal(item: QuoteLineInput, totalsVersion?: number): QuoteLineTotal {
+  const gross = (Number(item?.qty) || 0) * (Number(item?.unitPrice) || 0);
+  const amount = settlesEachStep(totalsVersion) ? round2(gross) : gross;
   const discount = Math.max(Number(item?.discount) || 0, 0);
 
   // No discount on this line (the old-quote path): pass the amount straight
@@ -203,22 +238,27 @@ export function hasNegativeLineItem(input: QuoteTotalsInput): boolean {
 
 export function computeQuoteTotals(input: QuoteTotalsInput): QuoteTotals {
   const items = Array.isArray(input.items) ? input.items : [];
+  // Version 2 settles each figure as it is made (see the header); the original
+  // passes every one through untouched, so its floats stay bit-for-bit what
+  // they always were.
+  const settle = settlesEachStep(input.totalsVersion) ? round2 : (n: number) => n;
 
-  const lines = items.map(computeLineTotal);
-  const subtotal = lines.reduce((sum, l) => sum + l.amount, 0);
-  const lineDiscountTotal = lines.reduce((sum, l) => sum + l.discountValue, 0);
-  const afterLineDiscounts = lines.reduce((sum, l) => sum + l.netAmount, 0);
+  const lines = items.map((item) => computeLineTotal(item, input.totalsVersion));
+  const subtotal = settle(lines.reduce((sum, l) => sum + l.amount, 0));
+  const lineDiscountTotal = settle(lines.reduce((sum, l) => sum + l.discountValue, 0));
+  const afterLineDiscounts = settle(lines.reduce((sum, l) => sum + l.netAmount, 0));
 
   const discount = Math.max(Number(input.discount) || 0, 0);
   // The document-level discount comes off the ALREADY line-discounted sum.
   // Percent discounts are capped at 100%; ฿ discounts can't exceed that sum.
-  const discountValue =
+  const discountValue = settle(
     input.discountType === "percent"
       ? (afterLineDiscounts * Math.min(discount, 100)) / 100
-      : Math.min(discount, afterLineDiscounts);
-  const afterDiscount = afterLineDiscounts - discountValue;
-  const vat = input.vatEnabled ? afterDiscount * VAT_RATE : 0;
-  const grandTotal = afterDiscount + vat;
+      : Math.min(discount, afterLineDiscounts)
+  );
+  const afterDiscount = settle(afterLineDiscounts - discountValue);
+  const vat = input.vatEnabled ? settle(afterDiscount * VAT_RATE) : 0;
+  const grandTotal = settle(afterDiscount + vat);
 
   return {
     subtotal,

@@ -110,7 +110,7 @@ describe('PUT /api/admin/sales/[id]/costs/[costId]', () => {
       costCtx('sale-1', 'ci-1')
     );
     expect(res.status).toBe(200);
-    expect(updateCostItem).toHaveBeenCalledWith('ci-1', { label: 'ใหม่' });
+    expect(updateCostItem).toHaveBeenCalledWith('sale-1', 'ci-1', { label: 'ใหม่' });
   });
 
   it('updates with a valid amount', async () => {
@@ -132,7 +132,7 @@ describe('PUT /api/admin/sales/[id]/costs/[costId]', () => {
 
     vi.mocked(updateCostItem).mockResolvedValue({ id: 'ci-1' } as never);
     await PUT(req('http://localhost:3000/api/admin/sales/sale-1/costs/ci-1', 'PUT', { amount: 1.005 }), costCtx('sale-1', 'ci-1'));
-    expect(updateCostItem).toHaveBeenCalledWith('ci-1', { amount: 1.01 });
+    expect(updateCostItem).toHaveBeenCalledWith('sale-1', 'ci-1', { amount: 1.01 });
   });
 
   it('404s when the cost item does not exist', async () => {
@@ -146,13 +146,14 @@ describe('PUT /api/admin/sales/[id]/costs/[costId]', () => {
 });
 
 describe('DELETE /api/admin/sales/[id]/costs/[costId]', () => {
-  it('deletes a cost item', async () => {
+  it('deletes a cost item — of the sale the URL names', async () => {
     vi.mocked(deleteCostItem).mockResolvedValue(true);
     const res = await DELETE(
       req('http://localhost:3000/api/admin/sales/sale-1/costs/ci-1', 'DELETE'),
       costCtx('sale-1', 'ci-1')
     );
     expect(res.status).toBe(200);
+    expect(deleteCostItem).toHaveBeenCalledWith('sale-1', 'ci-1');
   });
 
   it('404s when nothing was deleted', async () => {

@@ -109,9 +109,11 @@ describe("/purchase-order — a fresh visit", () => {
     fireEvent.click(screen.getByRole("button", { name: "บันทึก" }));
 
     await waitFor(() => expect(createCalls).toHaveLength(1));
-    const saved = createCalls[0] as { data: { supplierCompany: string; items: unknown[] } };
+    const saved = createCalls[0] as { data: { supplierCompany: string; items: unknown[]; totalsVersion?: number } };
     expect(saved.data.supplierCompany).toBe("บริษัท ทดสอบ จำกัด");
     expect(saved.data.items).toHaveLength(1);
+    // A PO issued now is computed with the current arithmetic (lib/quotationTotals.ts).
+    expect(saved.data.totalsVersion).toBe(2);
   });
 
   it("filters the recent-PO list by docNo or supplier name", async () => {
@@ -209,8 +211,11 @@ describe("/purchase-order?id=... — viewing an issued PO", () => {
 
     await waitFor(() => expect(supersedeCalls).toHaveLength(1));
     expect(supersedeCalls[0].oldId).toBe("po1");
-    const body = supersedeCalls[0].body as { id: string; data: { supplierCompany: string } };
+    const body = supersedeCalls[0].body as { id: string; data: { supplierCompany: string; totalsVersion?: number } };
     expect(body.id).not.toBe("po1");
     expect(body.data.supplierCompany).toBe("บริษัท ก จำกัด");
+    // The replacement continues the PO it replaces, in its arithmetic — that
+    // one was saved before the change, so the original (no version).
+    expect(body.data.totalsVersion).toBeUndefined();
   });
 });

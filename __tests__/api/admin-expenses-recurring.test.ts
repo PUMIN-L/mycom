@@ -218,3 +218,22 @@ describe('POST /api/admin/expenses/recurring/generate', () => {
     expect(generateExpensesForMonth).not.toHaveBeenCalled();
   });
 });
+
+// The same text rule as the one-off expense routes (lib/expenseInput.ts): a
+// number reached the sanitizer and came back a bare 500, and an edit could
+// blank the title the create form requires.
+describe('recurring expense text fields', () => {
+  it('POST refuses a title or note that is not text — nothing saved', async () => {
+    for (const body of [{ title: 5, amount: 100 }, { title: 'ค่าเช่า', amount: 100, note: {} }, null]) {
+      const res = await POST(req('http://localhost:3000/api/admin/expenses/recurring', 'POST', body));
+      expect(res.status, JSON.stringify(body)).toBe(400);
+    }
+    expect(addRecurringExpense).not.toHaveBeenCalled();
+  });
+
+  it('PUT refuses a blanked title — nothing saved', async () => {
+    const res = await PUT(req('http://localhost:3000/api/admin/expenses/recurring/r1', 'PUT', { title: '  ' }), ctx('r1'));
+    expect(res.status).toBe(400);
+    expect(updateRecurringExpense).not.toHaveBeenCalled();
+  });
+});

@@ -547,17 +547,64 @@ describe('productStore', () => {
     });
   });
 
+  // A machine linked to a catalog product keeps no name of its own — every
+  // read resolves it from the product row. A hard delete must give those
+  // machines the name first, or a discontinued model's machines lose it
+  // everywhere in the CRM.
   describe('deleteProduct', () => {
-    it('returns true when a row was deleted', async () => {
-      vi.mocked(query).mockResolvedValue([{ affectedRows: 1 }] as any);
+    function txWith(answer: (sql: string) => unknown) {
+      const conn = { query: vi.fn(async (sql: string, _params?: unknown[]) => answer(sql)) };
+      vi.mocked(withTransaction).mockImplementation(async (fn: any) => fn(conn));
+      return conn;
+    }
+
+    it("copies the title, as text, onto this model's nameless machines, then deletes", async () => {
+      const conn = txWith((sql) =>
+        /^SELECT title_th/.test(sql)
+          ? [[{ title_th: '<p>เครื่องชั่ง <b>PX224</b></p>', title_en: 'Scale' }]]
+          : [{ affectedRows: 1 }]
+      );
       expect(await deleteProduct('p1')).toBe(true);
-      expect(vi.mocked(query).mock.calls[0][0]).toContain('DELETE FROM products');
-      expect(vi.mocked(query).mock.calls[0][1]).toEqual(['p1']);
+      const sqls = conn.query.mock.calls.map((c) => String(c[0]));
+      expect(sqls[0]).toMatch(/FOR UPDATE/);
+      const copy = conn.query.mock.calls.find((c) => /^UPDATE customer_equipments/.test(String(c[0])))!;
+      expect(copy[0]).toMatch(/productName IS NULL OR productName = ''/);
+      expect(copy[1]).toEqual(['เครื่องชั่ง PX224', 'p1']);
+      // The copy happens BEFORE the row it copies from is gone.
+      expect(sqls.findIndex((s) => /^UPDATE customer_equipments/.test(s))).toBeLessThan(
+        sqls.findIndex((s) => /^DELETE FROM products/.test(s))
+      );
     });
 
-    it('returns false when no row matched', async () => {
-      vi.mocked(query).mockResolvedValue([{ affectedRows: 0 }] as any);
+    it('returns false and touches nothing when the product is already gone', async () => {
+      const conn = txWith(() => [[]]);
       expect(await deleteProduct('missing')).toBe(false);
+      expect(conn.query.mock.calls.map((c) => String(c[0])).some((s) => /^(UPDATE|DELETE)\b/.test(s.trim()))).toBe(false);
+      // …and the check above can fail: it does see the writes a delete makes.
+      expect(/^(UPDATE|DELETE)\b/.test('DELETE FROM products WHERE id = ?')).toBe(true);
+    });
+
+    it('takes the first title with TEXT in it — markup with nothing to read does not count', async () => {
+      const conn = txWith((sql) =>
+        /^SELECT title_th/.test(sql)
+          ? [[{ title_th: '<p><br></p>', title_en: '  ', title_zh: '<p>天平</p>' }]]
+          : [{ affectedRows: 1 }]
+      );
+      expect(await deleteProduct('p1')).toBe(true);
+      const copy = conn.query.mock.calls.find((c) => /^UPDATE customer_equipments/.test(String(c[0])))!;
+      expect(copy[1]).toEqual(['天平', 'p1']);
+    });
+
+    it('writes no name when no title has any text — and still deletes', async () => {
+      const conn = txWith((sql) =>
+        /^SELECT title_th/.test(sql)
+          ? [[{ title_th: '<p></p>', title_en: null, title_zh: '' }]]
+          : [{ affectedRows: 1 }]
+      );
+      expect(await deleteProduct('p1')).toBe(true);
+      const sqls = conn.query.mock.calls.map((c) => String(c[0]));
+      expect(sqls.some((s) => /^UPDATE customer_equipments/.test(s))).toBe(false);
+      expect(sqls.some((s) => /^DELETE FROM products/.test(s))).toBe(true);
     });
   });
 

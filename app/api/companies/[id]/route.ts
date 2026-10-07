@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import type { ResultSetHeader } from "mysql2";
+import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { query } from "../../../lib/db";
 import { withRoute, requireAuth, jsonError } from "../../../lib/apiHelpers";
 import { readCompanyInput } from "../companyInput";
@@ -54,6 +54,11 @@ export const DELETE = withRoute(
     const [customers] = await query("SELECT id FROM customers WHERE companyId = ?", [id]) as any[];
     if (customers.length > 0) {
       return jsonError("ลบบริษัทนี้ไม่ได้ เพราะยังมีลูกค้าที่ผูกกับบริษัทนี้อยู่", 400);
+    }
+    // ใบ Job reads the company's name live too (see the customer DELETE).
+    const [jobs] = await query<RowDataPacket[]>("SELECT id FROM service_jobs WHERE companyId = ? LIMIT 1", [id]);
+    if (jobs.length > 0) {
+      return jsonError("ลบบริษัทนี้ไม่ได้ เพราะยังมีใบ Job ที่ผูกกับบริษัทนี้อยู่", 400);
     }
 
     try {

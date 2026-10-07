@@ -632,6 +632,51 @@ conversion-rate analytics, and the function remains for manual use.
 > `?limit=`. Both are optional — omitting them behaves exactly as before. Filter
 > the picker through these params; do not raise the cap.
 
+**Two arithmetics — `totalsVersion` (2026-10-07).** The original
+`computeQuoteTotals` carries full precision from row to row and rounds only on
+paper, so with a bill-level **%** discount a sheet could print rows that do not
+add up: 1 × ฿100.37 less 3% printed หลังหักส่วนลด 97.36 + VAT 6.82 = 104.18 over
+a ยอดรวมสุทธิ of 104.17. Version 2 settles **every** figure to the satang as it
+is made (each line's gross, every sum, the bill discount, the VAT base, the VAT,
+the total), so each printed row is the number the next one was computed from.
+It is opt-in **per document**, by a `totalsVersion: 2` key in the document's own
+`data` blob:
+- The quotation, billing and PO builders stamp `CURRENT_TOTALS_VERSION` on every
+  **fresh** document (a new page, `?new=1`, `?type=…`, the reset button).
+- A document that **continues** another keeps that one's arithmetic, because
+  the two must agree to the satang — and with a % bill discount the two
+  arithmetics differ by a satang on roughly one document in four:
+  - "แก้ไข (New Ver.)" (the in-place button and `?action=clone`) and a PO's
+    ออกใบใหม่แทนใบนี้ carry the source's `totalsVersion` over untouched.
+  - A **receipt takes the version of the invoice it settles**: choosing the
+    invoice in ชำระให้ใบแจ้งหนี้ sets it (`listOpenInvoices` returns each
+    invoice's `totalsVersion`). The payment a receipt records is its own total,
+    so a receipt a satang off an invoice issued before 2026-10-07 would leave
+    "ค้าง ฿0.01" in the ledger for good.
+  - Importing a quotation into an invoice (นำเข้าจากใบเสนอราคา) does NOT change
+    the invoice's version: a tax invoice must add up on its own paper, so a
+    fresh invoice from an old quotation with a % discount can be a satang off
+    that quotation — the deliberate trade-off.
+- It is **deliberately not in `emptyState()`**: every reopened document is
+  spread over `emptyState()`, so putting it there would silently move the
+  totals of every document already sent to a customer. A blob without the key
+  computes bit-for-bit as before, forever — the stored `totalAmount`, the
+  ledger and every re-download included. `quotationTotals.test.ts` pins that
+  against a frozen copy of the old function over 2,000 random documents.
+- Everything that computes a document's money passes its blob, so it follows
+  the document's version without being told: the builders, the saved lists,
+  `deriveBillingColumns`, and the quotation → sale conversion
+  (`buildLineDrafts({ …, totalsVersion })`).
+- `computeLineTotal(item, totalsVersion?)` takes the version as a 2nd
+  argument, so never pass it bare to `.map()` — the index would arrive as the
+  version and line 2 would compute as version 2.
+
+**A version suffix is read only after a digit** (`splitDocNoVersion` in
+`quotationNumber.ts`): "QT050926-23v2" → base "QT050926-23", version 2. The old
+`/(?:-V|v)\d+$/i` matched the "V" of the **INV** prefix, so New Ver. of a
+hand-typed "INV001" became "INv2". No lookbehind in that regex: older iOS Safari
+cannot parse one and the whole page would fail to load.
+
 ### 8a. Sales records → line items (schema v33)
 A sale is **two** tables: `sales_records` (one row per bill) and
 `sales_record_items` (one row per product line — `productId`, `productName`,
@@ -954,6 +999,21 @@ call logs are imported, so:
    > breaks the tie so the order is total and deterministic, and the row just
    > inserted is pinned to the front so neither a tie nor a skewed serverless
    > clock can make the newest write the one thrown away.
+
+**A restore checks what the snapshot names still exists** (2026-10-07).
+- A product snapshot whose **best-seller rank** another product holds now is
+  answered **409** with the reason (`BestSellerRankConflictError`), as the edit
+  page answers it — it used to be a bare 500.
+- A product snapshot whose **picture was deleted from Cloudinary** since is
+  restored **without** `image`: the product keeps its current picture and the
+  answer carries a Thai `warning` saying so. A **content** snapshot with deleted
+  pictures is **refused** (409, naming how many) — its pictures are inside
+  blocks, and publishing them would put broken images on the public page.
+- "Deleted" is asked of the **Admin API** (`isCloudinaryImageMissing` in
+  `cloudinaryHelper.ts`), never the CDN, which serves a deleted image from
+  cache for a while. Only a definite 404 counts; a foreign URL, missing
+  credentials, a rate limit or a network error all read as "not missing", so an
+  outage can never block a restore.
 
 ### 9b. Observability
 [`instrumentation.ts`](./instrumentation.ts) (Next 16, project root) exports
@@ -1819,3 +1879,61 @@ feature — do not go looking for a migration.
   thresholds, same snooze keys, same number on the bell. A row reschedule does
   not touch `alert_snoozes`; a snoozed item can still turn up in a search and
   moving its date does not un-snooze it.
+
+## Recent Architectural Changes (October 2026)
+
+From the whole-project adversarial review. Each is pinned by tests that fail
+when the fix is removed.
+
+**1. Hard-deleting a product keeps the customers' machine names.**
+`deleteProduct` (`productStore.ts`) runs in one transaction: it copies the
+product's plain-text name (`htmlToText`, first non-empty of th/en/zh) into
+`customer_equipments.productName` for every machine linked to it that has no
+name of its own, **then** deletes. `customer_equipments.productId` has no
+foreign key and the CRM reads a linked machine's name from the product, so the
+delete used to leave those machines nameless. `updateEquipment` (`crmStore.ts`)
+treats a `productId` whose product no longer exists as unlinked
+(`productExists`), so editing such a machine keeps the stored name instead of
+blanking it.
+
+**2. A customer or company with a ใบ Job cannot be deleted.** `service_jobs`
+reads both names live (§13) and has no foreign key, so the DELETE routes in
+`app/api/customers/[id]` and `app/api/companies/[id]` check it alongside the
+equipment / sales / schedule guards and refuse with 400 in Thai.
+
+**3. Every amount and date is checked, never quietly fixed.**
+- **Expenses** (`app/api/admin/expenses`): `parsePositiveMoney` and
+  `isValidDateString` on POST, and on PUT for whichever is sent. The store's
+  own fallbacks had turned "abc" into ฿0, "1e3" into ฿1,000 and a date that
+  does not exist into today, all with a 201. The text fields go through
+  `expenseTextError` (`lib/expenseInput.ts`) in all four expense routes,
+  recurring included: the title is required text on create and cannot be
+  blanked on edit; category and note are text or absent.
+- **Salespeople**: `salespersonInputError` (`salesStore.ts`) — every field must
+  be text; a number reached `.trim()` and came back a 500.
+- **Documents** (`POST /api/documents`): the id must be a plain URL segment
+  (`/^[A-Za-z0-9_-]{1,100}$/`, it is the page's address), both files must be in
+  **our** Cloudinary cloud (the only thing the PDF proxy will fetch; fails
+  closed without `CLOUDINARY_CLOUD_NAME`), `sortOrder` must be an integer, and
+  a duplicate id is 409 instead of a 500.
+
+**4. A saved billing document keeps its type.** `saveBillingDocumentAtomic`
+reads the row's `docType` under `FOR UPDATE` (after the docNo reservation, so
+the lock order stays used_docnos → billing_documents) and throws
+`BillingDocTypeChangeError` if a re-save names another one; the route answers
+409. /billing never changes a type, but the API took the upsert's word for it,
+so an invoice with payments could be turned into a "receipt".
+
+**5. A missing customer is a 404, not a saved edit.** `PUT /api/customers/[id]`
+used to answer 200 for a customer deleted in another tab — the UPDATE matched
+nothing and the admin was told the edit was kept.
+
+**6. A sale's cost item is reached only through its own sale.**
+`updateCostItem(salesRecordId, id, …)` / `deleteCostItem(salesRecordId, id)`
+scope every SELECT / UPDATE / DELETE to `salesRecordId`, and a synthetic
+`product-cost:<saleId>` id must name the same sale. The route only checked that
+the sale in the URL existed, so /sales/A/costs/<an item of B> edited B's costs.
+
+**7. Totals add up on paper for new documents** — `totalsVersion`, §8.
+
+**8. Revision restore checks what it brings back** — §9a.

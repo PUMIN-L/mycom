@@ -9,10 +9,12 @@ import {
   nextDocNo,
   quotationDocNoPrefix,
   quotationDocNoPrefixes,
+  splitDocNoVersion,
 } from "../lib/quotationNumber";
 import { toLocalDateString } from "../lib/dateFormat";
 import {
   computeQuoteTotals,
+  CURRENT_TOTALS_VERSION,
   setLineDiscountAmount,
   setLineDiscountType,
 } from "../lib/quotationTotals";
@@ -91,6 +93,10 @@ interface QuoteState {
   discount: number;
   discountType: "amount" | "percent";
   vatEnabled: boolean;
+  /** Which arithmetic this document was issued under (lib/quotationTotals.ts).
+   *  A FRESH document gets the current one (2026-10-07 on); a new version keeps
+   *  its source's, so a saved document without it keeps the original for good. */
+  totalsVersion?: number;
   paymentTerms?: string;
   deliveryTerms?: string;
   warrantyTerms?: string;
@@ -133,10 +139,10 @@ function randomId(): string {
 // Strip a trailing version marker: "QT050926-23v2" / "…-V2" → "QT050926-23".
 // Format-agnostic on purpose — it must keep working for the legacy YYMMDD
 // numbers that are already out with customers (see quotationNumber.ts).
-const baseOfDocNo = (docNo: string) => docNo.replace(/(?:-V|v)\d+$/i, "");
+const baseOfDocNo = (docNo: string) => splitDocNoVersion(docNo).base;
 
 /** Does this number already carry a version suffix ("…-23v2")? */
-const hasVersionSuffix = (docNo: string) => /(?:-V|v)\d+$/i.test(docNo.trim());
+const hasVersionSuffix = (docNo: string) => splitDocNoVersion(docNo.trim()).version !== null;
 
 /**
  * The owner we file a number under when the SERVER has just refused it: we know
@@ -339,12 +345,16 @@ export default function QuotationPage() {
     // in BOTH shapes — see quotationDocNoPrefixes().
     const newDocNo = `${quotationDocNoPrefix(iso)}${pad2(DOCNO_START)}`;
     lastAutoDocNoRef.current = newDocNo;
+    // A NEW document: the current arithmetic. Not in emptyState() — every
+    // reopened quotation is spread over that, and one saved without the key
+    // must keep the arithmetic it was issued under.
     setQ({
       ...emptyState(),
       id: randomId(),
       docDate: iso,
       docNo: newDocNo,
       items: [newItem()],
+      totalsVersion: CURRENT_TOTALS_VERSION,
     });
   }, []);
 
@@ -372,17 +382,15 @@ export default function QuotationPage() {
       const list = await res.json();
       const docs: { docNo?: string }[] = Array.isArray(list) ? list : [];
       for (const d of docs) {
-        if (!d?.docNo || !d.docNo.startsWith(base)) continue;
-        const match = d.docNo.match(/(?:-V|v)(\d+)$/i);
-        if (match) {
-          const v = parseInt(match[1], 10);
-          if (!Number.isNaN(v) && v > maxV) maxV = v;
-        }
+        if (!d?.docNo) continue;
+        // A version OF THIS BASE — not of "…-230", which merely starts with it.
+        const { base: dBase, version } = splitDocNoVersion(d.docNo);
+        if (dBase !== base || version === null) continue;
+        if (!Number.isNaN(version) && version > maxV) maxV = version;
       }
     } catch {
       // Ledger unreachable — fall back to bumping this document's own version.
-      const vMatch = docNo.match(/(?:-V|v)(\d+)$/i);
-      if (vMatch) maxV = parseInt(vMatch[1], 10) || 0;
+      maxV = splitDocNoVersion(docNo).version ?? 0;
     }
     return `${base}v${maxV + 1}`;
   }
@@ -422,6 +430,8 @@ export default function QuotationPage() {
               setCloneSource({ id: rec.id || reopenId, docNo: migrated.docNo });
               migrated.docNo = await nextVersionDocNo(migrated.docNo);
               migrated.id = randomId();
+              // `totalsVersion` is carried over untouched: a new version
+              // continues its source, in its arithmetic (quotationTotals.ts).
             }
 
             adoptState(migrated);
@@ -1097,6 +1107,8 @@ export default function QuotationPage() {
     setStartingNewVersion(true);
     try {
       const docNo = await nextVersionDocNo(source.docNo);
+      // `totalsVersion` travels with `q`: a new version continues its source,
+      // in its arithmetic (quotationTotals.ts).
       adoptState({ ...q, id: randomId(), docNo });
       setCloneSource(source);
       setIsViewOnly(false);
@@ -1254,6 +1266,7 @@ export default function QuotationPage() {
               docDate: iso,
               docNo: resetDocNo,
               items: [newItem()],
+              totalsVersion: CURRENT_TOTALS_VERSION,
             });
           }}
           onCancel={() => setShowResetConfirm(false)}
@@ -2051,7 +2064,7 @@ export default function QuotationPage() {
                         which is what the discount column and the totals below
                         add up to. */}
                     <td className="border border-gray-300 px-2 py-1.5 text-right">
-                      {fmt(hasLineDiscounts ? lines[idx].netAmount : it.qty * it.unitPrice)}
+                      {fmt(hasLineDiscounts ? lines[idx].netAmount : lines[idx]?.amount ?? 0)}
                     </td>
                   </tr>
                 ))}

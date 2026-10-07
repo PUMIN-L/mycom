@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   computeQuoteTotals,
   computeLineTotal,
+  CURRENT_TOTALS_VERSION,
   hasNegativeLineItem,
   setLineDiscountAmount,
   setLineDiscountType,
@@ -670,5 +671,154 @@ describe('quotationTotals', () => {
         })
       ).toBe(true);
     });
+  });
+});
+
+// ── totalsVersion 2: every figure settled to the satang ──────────────────────
+//
+// The original arithmetic carried full precision and only rounded on paper, so
+// with a bill-level % discount the printed rows could miss each other by a
+// satang. Version 2 is stamped on documents issued from 2026-10-07 on; a
+// document without it must keep computing EXACTLY as before.
+
+type RefLine = { qty?: number; unitPrice?: number; discount?: number; discountType?: 'amount' | 'percent' };
+
+/** The pre-v2 computeQuoteTotals, frozen verbatim as the reference. */
+function referenceV1(input: { items?: RefLine[]; discount?: number; discountType?: 'amount' | 'percent'; vatEnabled?: boolean }) {
+  const round2 = (n: number) => {
+    const scaled = n * 100;
+    const rounded = Math.round(scaled + Math.sign(scaled) * Math.abs(scaled) * 1e-12) / 100;
+    return rounded === 0 ? 0 : rounded;
+  };
+  const lineOf = (item: RefLine) => {
+    const amount = (Number(item?.qty) || 0) * (Number(item?.unitPrice) || 0);
+    const discount = Math.max(Number(item?.discount) || 0, 0);
+    if (discount === 0) return { amount, discountValue: 0, netAmount: amount };
+    const cap = Math.max(amount, 0);
+    const raw = item.discountType === 'percent' ? (cap * Math.min(discount, 100)) / 100 : Math.min(discount, cap);
+    const discountValue = round2(raw);
+    return { amount, discountValue, netAmount: round2(amount - discountValue) };
+  };
+  const items = Array.isArray(input.items) ? input.items : [];
+  const lines = items.map((item) => lineOf(item));
+  const subtotal = lines.reduce((sum, l) => sum + l.amount, 0);
+  const lineDiscountTotal = lines.reduce((sum, l) => sum + l.discountValue, 0);
+  const afterLineDiscounts = lines.reduce((sum, l) => sum + l.netAmount, 0);
+  const discount = Math.max(Number(input.discount) || 0, 0);
+  const discountValue =
+    input.discountType === 'percent'
+      ? (afterLineDiscounts * Math.min(discount, 100)) / 100
+      : Math.min(discount, afterLineDiscounts);
+  const afterDiscount = afterLineDiscounts - discountValue;
+  const vat = input.vatEnabled ? afterDiscount * VAT_RATE : 0;
+  const grandTotal = afterDiscount + vat;
+  return { subtotal, lines, lineDiscountTotal, afterLineDiscounts, discountValue, afterDiscount, vat, grandTotal };
+}
+
+/** A deterministic pseudo-random document (no Math.random — reproducible). */
+function makeDoc(seed: number) {
+  let x = (seed * 2654435761) % 4294967296;
+  const next = () => (x = (x * 1664525 + 1013904223) % 4294967296) / 4294967296;
+  const items = Array.from({ length: 1 + Math.floor(next() * 6) }, () => {
+    const line: RefLine = {
+      qty: 1 + Math.floor(next() * 12),
+      unitPrice: Math.round(next() * 9999999) / 100,
+    };
+    const r = next();
+    if (r < 0.3) {
+      line.discount = Math.round(next() * 50 * 2) / 2;
+      line.discountType = 'percent';
+    } else if (r < 0.5) {
+      line.discount = Math.round(next() * 50000) / 100;
+    }
+    return line;
+  });
+  const pct = next() < 0.6;
+  return {
+    items,
+    discount: pct ? Math.round(next() * 30 * 4) / 4 : Math.round(next() * 100000) / 100,
+    discountType: (pct ? 'percent' : 'amount') as 'percent' | 'amount',
+    vatEnabled: next() < 0.8,
+  };
+}
+
+const satang = (n: number) => Math.round(n * 100);
+
+describe('computeQuoteTotals — totalsVersion', () => {
+  // The document that showed the bug: 1 × ฿100.37, 3% off the bill, VAT on.
+  const PROBE = { items: [{ qty: 1, unitPrice: 100.37 }], discount: 3, discountType: 'percent' as const, vatEnabled: true };
+
+  it('the original arithmetic really prints rows that miss by a satang (why v2 exists)', () => {
+    const t = computeQuoteTotals(PROBE);
+    // หลังหักส่วนลด 97.36 + VAT 6.82 = 104.18, but ยอดรวมสุทธิ prints 104.17.
+    expect(satang(t.afterDiscount) + satang(t.vat)).toBe(10418);
+    expect(satang(t.grandTotal)).toBe(10417);
+  });
+
+  it('v2: the same document adds up on paper, row by row', () => {
+    const t = computeQuoteTotals({ ...PROBE, totalsVersion: 2 });
+    expect(t.discountValue).toBe(3.01);
+    expect(t.afterDiscount).toBe(97.36);
+    expect(t.vat).toBe(6.82);
+    expect(t.grandTotal).toBe(104.18);
+  });
+
+  it('v2 on 2,000 random documents: every figure is whole satang and every printed row adds up', () => {
+    for (let seed = 1; seed <= 2000; seed++) {
+      const t = computeQuoteTotals({ ...makeDoc(seed), totalsVersion: 2 });
+      for (const v of [t.subtotal, t.lineDiscountTotal, t.afterLineDiscounts, t.discountValue, t.afterDiscount, t.vat, t.grandTotal]) {
+        expect(Math.abs(v * 100 - Math.round(v * 100)), `seed ${seed}`).toBeLessThan(1e-6);
+      }
+      for (const l of t.lines) {
+        expect(satang(l.amount) - satang(l.discountValue), `seed ${seed}`).toBe(satang(l.netAmount));
+      }
+      expect(t.lines.reduce((s, l) => s + satang(l.amount), 0), `seed ${seed}`).toBe(satang(t.subtotal));
+      expect(t.lines.reduce((s, l) => s + satang(l.netAmount), 0), `seed ${seed}`).toBe(satang(t.afterLineDiscounts));
+      expect(satang(t.afterLineDiscounts) - satang(t.discountValue), `seed ${seed}`).toBe(satang(t.afterDiscount));
+      expect(satang(t.afterDiscount) + satang(t.vat), `seed ${seed}`).toBe(satang(t.grandTotal));
+    }
+  });
+
+  it('a document WITHOUT the key computes bit-for-bit what it always did (2,000 random documents)', () => {
+    const keys = ['subtotal', 'lineDiscountTotal', 'afterLineDiscounts', 'discountValue', 'afterDiscount', 'vat', 'grandTotal'] as const;
+    let differsUnderV2 = 0;
+    for (let seed = 1; seed <= 2000; seed++) {
+      const doc = makeDoc(seed);
+      const ref = referenceV1(doc);
+      for (const version of [undefined, 0, 1, 'abc' as unknown as number]) {
+        const t = computeQuoteTotals({ ...doc, totalsVersion: version });
+        for (const k of keys) {
+          expect(Object.is(t[k], ref[k]), `seed ${seed} v=${String(version)} ${k}: ${t[k]} vs ${ref[k]}`).toBe(true);
+        }
+        t.lines.forEach((l, i) => {
+          expect(Object.is(l.amount, ref.lines[i].amount)).toBe(true);
+          expect(Object.is(l.netAmount, ref.lines[i].netAmount)).toBe(true);
+          expect(Object.is(l.discountValue, ref.lines[i].discountValue)).toBe(true);
+        });
+      }
+      if (keys.some((k) => !Object.is(computeQuoteTotals({ ...doc, totalsVersion: 2 })[k], ref[k]))) differsUnderV2++;
+    }
+    // …and the sample is one where v2 really does compute differently, so the
+    // comparison above is not passing for want of a case that could fail it.
+    expect(differsUnderV2).toBeGreaterThan(100);
+  });
+
+  it("a line's position never changes its arithmetic (the version is not the map index)", () => {
+    // items.map(fn) hands fn the INDEX as its second argument; a line at index
+    // 2 must not be read as "version 2".
+    const dusty = { qty: 7, unitPrice: 19.99 }; // 139.92999999999998
+    const t = computeQuoteTotals({ items: [dusty, dusty, dusty] });
+    expect(t.lines.map((l) => l.amount)).toEqual([7 * 19.99, 7 * 19.99, 7 * 19.99]);
+    expect(t.lines[2].amount).not.toBe(139.93);
+  });
+
+  it('computeLineTotal settles the gross amount first under v2 only', () => {
+    expect(computeLineTotal({ qty: 7, unitPrice: 19.99 }).amount).toBe(139.92999999999998);
+    expect(computeLineTotal({ qty: 7, unitPrice: 19.99 }, 2).amount).toBe(139.93);
+    expect(computeLineTotal({ qty: 7, unitPrice: 19.99 }, 2).netAmount).toBe(139.93);
+  });
+
+  it('new documents are stamped with version 2', () => {
+    expect(CURRENT_TOTALS_VERSION).toBe(2);
   });
 });

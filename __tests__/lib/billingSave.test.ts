@@ -7,7 +7,7 @@ vi.mock('@/app/lib/db', () => ({
   withTransaction: vi.fn(async (fn: (c: typeof conn) => Promise<unknown>) => fn(conn)),
 }));
 
-import { saveBillingDocumentAtomic, BillingDocNoConflictError } from '@/app/lib/billingStore';
+import { saveBillingDocumentAtomic, BillingDocNoConflictError, BillingDocTypeChangeError } from '@/app/lib/billingStore';
 import { computeQuoteTotals, round2 } from '@/app/lib/quotationTotals';
 
 beforeEach(() => {
@@ -37,14 +37,16 @@ describe('saveBillingDocumentAtomic', () => {
   it('reserves a FREE docNo via an atomic ledger INSERT, then upserts the document', async () => {
     conn.query
       .mockResolvedValueOnce([{ affectedRows: 1 }]) // INSERT used_docnos succeeds
+      .mockResolvedValueOnce([[]]) // no saved row yet — nothing to compare the type with
       .mockResolvedValueOnce([{ affectedRows: 1 }]); // INSERT billing_documents
 
     await saveBillingDocumentAtomic(rec as any);
 
-    expect(conn.query).toHaveBeenCalledTimes(2);
+    expect(conn.query).toHaveBeenCalledTimes(3);
     expect(conn.query.mock.calls[0][0]).toContain('INSERT INTO used_docnos');
     expect(conn.query.mock.calls[0][1]).toEqual([rec.docNo, rec.id, rec.createdAt]);
-    expect(conn.query.mock.calls[1][0]).toContain('INSERT INTO billing_documents');
+    expect(conn.query.mock.calls[1][0]).toContain('SELECT docType FROM billing_documents');
+    expect(conn.query.mock.calls[2][0]).toContain('INSERT INTO billing_documents');
   });
 
   it('allows re-saving the SAME document that already owns the docNo', async () => {
@@ -52,12 +54,13 @@ describe('saveBillingDocumentAtomic', () => {
       .mockResolvedValueOnce(Promise.reject(dupEntryError()))
       .mockResolvedValueOnce([[{ quotationId: 'b1' }]]) // fallback lock+check: same owner
       .mockResolvedValueOnce([{ affectedRows: 1 }]) // refresh ledger createdAt
+      .mockResolvedValueOnce([[{ docType: 'invoice' }]]) // the saved row: same type
       .mockResolvedValueOnce([{ affectedRows: 1 }]); // INSERT billing_documents (upsert)
 
     await expect(saveBillingDocumentAtomic(rec as any)).resolves.toBeUndefined();
-    expect(conn.query).toHaveBeenCalledTimes(4);
+    expect(conn.query).toHaveBeenCalledTimes(5);
     expect(conn.query.mock.calls[1][0]).toContain('FOR UPDATE');
-    expect(conn.query.mock.calls[3][0]).toContain('INSERT INTO billing_documents');
+    expect(conn.query.mock.calls[4][0]).toContain('INSERT INTO billing_documents');
   });
 
   it('throws BillingDocNoConflictError and writes NOTHING to billing_documents when a DIFFERENT document owns the docNo', async () => {
@@ -77,10 +80,28 @@ describe('saveBillingDocumentAtomic', () => {
   });
 
   it('skips the ledger entirely when the document has no docNo', async () => {
-    conn.query.mockResolvedValueOnce([{ affectedRows: 1 }]);
+    conn.query.mockResolvedValueOnce([[]]).mockResolvedValueOnce([{ affectedRows: 1 }]);
     await saveBillingDocumentAtomic({ ...rec, docNo: '' } as any);
-    expect(conn.query).toHaveBeenCalledTimes(1);
-    expect(conn.query.mock.calls[0][0]).toContain('INSERT INTO billing_documents');
+    expect(conn.query).toHaveBeenCalledTimes(2);
+    expect(conn.query.mock.calls[0][0]).toContain('SELECT docType FROM billing_documents');
+    expect(conn.query.mock.calls[1][0]).toContain('INSERT INTO billing_documents');
+  });
+
+  // /billing never changes a saved document's type; the API used to take the
+  // upsert's word for it, turning an invoice with payments into a "receipt".
+  it('refuses to re-save a document as a different type — nothing is written', async () => {
+    conn.query
+      .mockResolvedValueOnce(Promise.reject(dupEntryError()))
+      .mockResolvedValueOnce([[{ quotationId: 'b1' }]]) // same owner of the docNo
+      .mockResolvedValueOnce([{ affectedRows: 1 }]) // refresh ledger createdAt (rolled back)
+      .mockResolvedValueOnce([[{ docType: 'invoice' }]]); // the saved row is an invoice
+
+    const err = await saveBillingDocumentAtomic({ ...rec, docType: 'receipt', settlesDocId: 'x' } as never).catch((e) => e);
+    expect(err).toBeInstanceOf(BillingDocTypeChangeError);
+    expect(err).toMatchObject({ id: 'b1', from: 'invoice', to: 'receipt' });
+    expect(String(conn.query.mock.calls[3][0])).toContain('FOR UPDATE');
+    expect(conn.query.mock.calls.some(([sql]) => String(sql).includes('INSERT INTO billing_documents'))).toBe(false);
+    expect(conn.query.mock.calls.some(([sql]) => /billing_payments/.test(String(sql)))).toBe(false);
   });
 });
 

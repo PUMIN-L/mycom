@@ -85,6 +85,14 @@ describe('Documents API Route', () => {
   });
 
   describe('POST /api/documents', () => {
+    // validDoc's files live in the "demo" cloud; only our own cloud is accepted.
+    beforeEach(() => {
+      vi.stubEnv('CLOUDINARY_CLOUD_NAME', 'demo');
+    });
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
     it('rejects anonymous callers with 401 (real requireAuth path)', async () => {
       vi.mocked(getSession).mockResolvedValue(null);
 
@@ -122,6 +130,48 @@ describe('Documents API Route', () => {
       const passed = vi.mocked(addDocument).mock.calls[0][0];
       expect(passed.id).toBe('doc-1');
       expect(typeof passed.createdAt).toBe('string'); // assigned server-side
+    });
+
+    it.each([
+      ['an id that is not a plain URL segment', { id: '../x' }],
+      ['an id that is not text', { id: 42 }],
+      ['a title that is not text', { title: 7 }],
+      ['a description that is not text', { description: { a: 1 } }],
+      ['a PDF from another site', { pdfUrl: 'https://evil.example/doc.pdf' }],
+      ['a PDF from another Cloudinary account', { pdfUrl: 'https://res.cloudinary.com/someone-else/raw/upload/v1/doc.pdf' }],
+      ['a cover over plain http', { coverUrl: 'http://res.cloudinary.com/demo/image/upload/v1/doc.jpg' }],
+      ['a sort order that is not a whole number', { sortOrder: 1.5 }],
+      ['a sort order sent as text', { sortOrder: '3' }],
+    ])('refuses %s with 400 — nothing saved', async (_label, patch) => {
+      vi.mocked(getSession).mockResolvedValue(adminSession);
+      const res = await POST(mutatingRequest('POST', { ...validDoc, ...patch }));
+      expect(res.status).toBe(400);
+      expect(addDocument).not.toHaveBeenCalled();
+    });
+
+    it('refuses every URL when the cloud name is not configured (fail closed)', async () => {
+      vi.stubEnv('CLOUDINARY_CLOUD_NAME', '');
+      vi.mocked(getSession).mockResolvedValue(adminSession);
+      const res = await POST(mutatingRequest('POST', validDoc));
+      expect(res.status).toBe(400);
+      expect(addDocument).not.toHaveBeenCalled();
+    });
+
+    it('defaults a missing sort order to 0', async () => {
+      vi.mocked(getSession).mockResolvedValue(adminSession);
+      const { sortOrder: _omit, ...rest } = validDoc;
+      void _omit;
+      const res = await POST(mutatingRequest('POST', rest));
+      expect(res.status).toBe(201);
+      expect(vi.mocked(addDocument).mock.calls[0][0].sortOrder).toBe(0);
+    });
+
+    it('answers 409, not 500, when a document already has that id', async () => {
+      vi.mocked(getSession).mockResolvedValue(adminSession);
+      vi.mocked(addDocument).mockRejectedValue(Object.assign(new Error('dup'), { code: 'ER_DUP_ENTRY' }));
+      const res = await POST(mutatingRequest('POST', validDoc));
+      expect(res.status).toBe(409);
+      expect((await res.json()).error).toBe('มีเอกสารรหัสนี้อยู่แล้ว');
     });
   });
 

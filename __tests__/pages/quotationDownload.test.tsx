@@ -114,3 +114,71 @@ describe("quotation ⬇️ ดาวน์โหลด PDF — saves first, and 
     expect(pdfSave).not.toHaveBeenCalled();
   });
 });
+
+// Which arithmetic a quotation is saved under (lib/quotationTotals.ts,
+// `totalsVersion`): one saved before keeps the original for good — what the
+// customer was sent never moves — a FRESH one gets 2, and a new version keeps
+// the arithmetic of the quotation it continues.
+describe("quotation — the arithmetic a document is saved under", () => {
+  const savedData = (fetchMock: ReturnType<typeof mockFetch>) => {
+    const calls = fetchMock.mock.calls.filter(([u, i]) => String(u) === "/api/quotations" && i?.method === "POST");
+    return JSON.parse(String(calls.at(-1)![1]!.body)).data;
+  };
+
+  it("a quotation saved before the change writes back NO version — it keeps the original", async () => {
+    const fetchMock = mockFetch({ status: 200 });
+    await clickDownload();
+    await waitFor(() => expect(pdfSave).toHaveBeenCalledTimes(1));
+    expect(savedData(fetchMock)).not.toHaveProperty("totalsVersion");
+  });
+
+  it("a NEW quotation is issued under version 2", async () => {
+    window.history.replaceState(null, "", "/quotation");
+    const fetchMock = mockFetch({ status: 200 });
+    render(<QuotationPage />);
+    fireEvent.click(await screen.findByRole("button", { name: /💾 เซฟ/ }));
+    await waitFor(() => expect(savedData(fetchMock).totalsVersion).toBe(2));
+  });
+
+  /** Run `body` with the saved quotation carrying `totalsVersion` (or not). */
+  async function withSourceVersion(version: number | undefined, body: () => Promise<void>) {
+    const data = RECORD.data as Record<string, unknown>;
+    if (version === undefined) delete data.totalsVersion;
+    else data.totalsVersion = version;
+    try {
+      await body();
+    } finally {
+      delete data.totalsVersion;
+    }
+  }
+
+  it.each([[undefined], [2]])(
+    "แก้ไข (New Ver.) keeps the arithmetic of the quotation it continues (source: %s)",
+    async (version) => {
+      await withSourceVersion(version, async () => {
+        const fetchMock = mockFetch({ status: 200 });
+        render(<QuotationPage />);
+        await waitFor(() => expect(document.body.textContent).toContain(DOC_NO));
+        fireEvent.click(screen.getByRole("button", { name: /แก้ไข \(New Ver\.\)/ }));
+        fireEvent.click(await screen.findByRole("button", { name: /💾 เซฟ/ }));
+        await waitFor(() => expect(savedData(fetchMock).docNo).toBe(`${DOC_NO}v1`));
+        expect(savedData(fetchMock).totalsVersion).toBe(version);
+      });
+    }
+  );
+
+  it.each([[undefined], [2]])(
+    "a new version opened by link (?action=clone) keeps its source's arithmetic too (source: %s)",
+    async (version) => {
+      await withSourceVersion(version, async () => {
+        window.history.replaceState(null, "", "/quotation?id=q1&action=clone");
+        const fetchMock = mockFetch({ status: 200 });
+        render(<QuotationPage />);
+        await screen.findByText(/เวอร์ชันใหม่ QT250926-7v1/);
+        fireEvent.click(await screen.findByRole("button", { name: /💾 เซฟ/ }));
+        await waitFor(() => expect(savedData(fetchMock).docNo).toBe(`${DOC_NO}v1`));
+        expect(savedData(fetchMock).totalsVersion).toBe(version);
+      });
+    }
+  );
+});

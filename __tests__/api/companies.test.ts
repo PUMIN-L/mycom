@@ -14,7 +14,7 @@ vi.mock('@/app/lib/session', () => ({ getSession: vi.fn() }));
 import { getSession } from '@/app/lib/session';
 
 import { POST } from '@/app/api/companies/route';
-import { PUT } from '@/app/api/companies/[id]/route';
+import { PUT, DELETE } from '@/app/api/companies/[id]/route';
 
 const admin = { userId: '1', username: 'admin', expiresAt: new Date() } as never;
 
@@ -129,5 +129,40 @@ describe('POST /api/companies', () => {
     expect(res.status).toBe(400);
     expect((await res.json()).error).toBe('ช่อง "หมายเหตุ" ต้องเป็นข้อความ');
     expect(query).not.toHaveBeenCalled();
+  });
+});
+
+describe('DELETE /api/companies/[id]', () => {
+  const del = () => new NextRequest('http://localhost:3000/api/companies/c1', {
+    method: 'DELETE',
+    headers: { origin: 'http://localhost:3000', host: 'localhost:3000' },
+  });
+
+  it('refuses while customers still belong to it', async () => {
+    vi.mocked(query).mockResolvedValueOnce([[{ id: 'cust-1' }]] as never);
+    const res = await DELETE(del(), ctx);
+    expect(res.status).toBe(400);
+  });
+
+  // ใบ Job reads the company's name live: a company left only on job sheets
+  // must not be deletable, or those sheets name no company.
+  it('refuses while job sheets name it', async () => {
+    vi.mocked(query)
+      .mockResolvedValueOnce([[]] as never) // no customers
+      .mockResolvedValueOnce([[{ id: 'job-1' }]] as never); // a ใบ Job
+    const res = await DELETE(del(), ctx);
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe('ลบบริษัทนี้ไม่ได้ เพราะยังมีใบ Job ที่ผูกกับบริษัทนี้อยู่');
+    expect(vi.mocked(query).mock.calls.some((c) => String(c[0]).startsWith('DELETE'))).toBe(false);
+  });
+
+  it('deletes when nothing references it', async () => {
+    vi.mocked(query)
+      .mockResolvedValueOnce([[]] as never)
+      .mockResolvedValueOnce([[]] as never)
+      .mockResolvedValueOnce([{ affectedRows: 1 }] as never);
+    const res = await DELETE(del(), ctx);
+    expect(res.status).toBe(200);
+    expect(String(vi.mocked(query).mock.calls[2][0])).toContain('DELETE FROM companies');
   });
 });

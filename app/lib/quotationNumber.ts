@@ -188,3 +188,23 @@ export function nextDocNo(
   while (taken.has(`${issueUnder}${pad2(n)}`)) n++;
   return `${issueUnder}${pad2(n)}`;
 }
+
+// The version a "แก้ไข (New Ver.)" adds: "QT050926-23v2" (or the older
+// "…-23-V2"). The marker counts only right after a DIGIT — the end of the
+// running number — because "INV" is a PREFIX: matched anywhere, the "V" of a
+// hand-typed "INV001" read as version 1 of a document called "IN", and its
+// next version came out as "INv2". No lookbehind: older iOS Safari, which
+// this admin tool is opened from, cannot parse one, and the whole page would
+// fail to load.
+const VERSION_SUFFIX = /(\d)(?:-V|v)(\d+)$/i;
+
+/** A number's base and its version — `{ base: "QT050926-23", version: 2 }`,
+ *  or the whole number and `null` when it carries no version. */
+export function splitDocNoVersion(docNo: string): { base: string; version: number | null } {
+  const match = VERSION_SUFFIX.exec(docNo);
+  if (!match) return { base: docNo, version: null };
+  return {
+    base: docNo.slice(0, match.index + 1),
+    version: parseInt(match[2], 10),
+  };
+}

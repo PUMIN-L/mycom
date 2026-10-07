@@ -1714,13 +1714,21 @@ export async function addCostItem(
  * The synthetic ต้นทุนสินค้า entry is a real target: PUT on its id writes the
  * new amount straight onto the sale's line item. An absolute SET, so the
  * result of two concurrent edits is one of the two amounts — never their sum.
+ *
+ * `salesRecordId` is the sale the request is addressed to, and the item must
+ * be ONE OF ITS OWN: an item of another sale answers null (404), exactly like
+ * one that does not exist. The route used to check only that the sale in the
+ * URL existed, so /sales/A/costs/<an item of B> edited B's cost sheet and
+ * recalculated B's margin through a URL that named A.
  */
 export async function updateCostItem(
+  salesRecordId: string,
   id: string,
   data: Partial<CostItem>
 ): Promise<CostItem | null> {
   const productCostSaleId = saleIdOfProductCostItem(id);
   if (productCostSaleId) {
+    if (productCostSaleId !== salesRecordId) return null;
     if (data.costType !== undefined && normalizeCostType(data.costType) !== "product_cost") {
       throw new ProductCostIsPerLineError();
     }
@@ -1731,8 +1739,8 @@ export async function updateCostItem(
   }
 
   const [existing] = await query<RowDataPacket[]>(
-    `SELECT * FROM sale_cost_items WHERE id = ?`,
-    [id]
+    `SELECT * FROM sale_cost_items WHERE id = ? AND salesRecordId = ?`,
+    [id, salesRecordId]
   );
   if (!existing[0]) return null;
   const v = cleanCostInput({ ...existing[0], ...data });
@@ -1742,8 +1750,8 @@ export async function updateCostItem(
     throw new ProductCostIsPerLineError();
   }
   await query(
-    `UPDATE sale_cost_items SET costType = ?, label = ?, amount = ?, note = ? WHERE id = ?`,
-    [v.costType, v.label, v.amount, v.note, id]
+    `UPDATE sale_cost_items SET costType = ?, label = ?, amount = ?, note = ? WHERE id = ? AND salesRecordId = ?`,
+    [v.costType, v.label, v.amount, v.note, id, salesRecordId]
   );
   await recalcCostAmount(existing[0].salesRecordId);
   const [rows] = await query<RowDataPacket[]>(
@@ -1764,21 +1772,25 @@ export async function updateCostItem(
  * COST_AMOUNT_SUM_SQL never counted it: its money sits on the line item and
  * stays there. Taking that amount off the line instead would destroy live
  * product cost the row does not own.
+ *
+ * Only an item of `salesRecordId` itself is deleted (see updateCostItem): one
+ * of another sale answers false (404) and stays where it is.
  */
-export async function deleteCostItem(id: string): Promise<boolean> {
+export async function deleteCostItem(salesRecordId: string, id: string): Promise<boolean> {
   const productCostSaleId = saleIdOfProductCostItem(id);
   if (productCostSaleId) {
+    if (productCostSaleId !== salesRecordId) return false;
     await setProductCost(productCostSaleId, 0);
     return true;
   }
 
   const [existing] = await query<RowDataPacket[]>(
-    `SELECT salesRecordId, costType, amount FROM sale_cost_items WHERE id = ?`,
-    [id]
+    `SELECT salesRecordId, costType, amount FROM sale_cost_items WHERE id = ? AND salesRecordId = ?`,
+    [id, salesRecordId]
   );
   const [res] = await query<ResultSetHeader>(
-    `DELETE FROM sale_cost_items WHERE id = ?`,
-    [id]
+    `DELETE FROM sale_cost_items WHERE id = ? AND salesRecordId = ?`,
+    [id, salesRecordId]
   );
   if (res.affectedRows > 0 && existing[0]) {
     await recalcCostAmount(existing[0].salesRecordId);

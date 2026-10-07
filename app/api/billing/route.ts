@@ -3,6 +3,7 @@ import { withRoute, requireAuth } from "../../lib/apiHelpers";
 import {
   saveBillingDocumentAtomic,
   BillingDocNoConflictError,
+  BillingDocTypeChangeError,
   listBillingDocuments,
 } from "../../lib/billingStore";
 import type { BillingDocType } from "../../lib/billingNumber";
@@ -135,6 +136,12 @@ export const POST = withRoute(
       if (err instanceof BillingDocNoConflictError) {
         return NextResponse.json(
           { error: "เลขที่เอกสารนี้ถูกใช้ไปแล้ว กรุณาเปลี่ยนเลขที่" },
+          { status: 409 }
+        );
+      }
+      if (err instanceof BillingDocTypeChangeError) {
+        return NextResponse.json(
+          { error: "เปลี่ยนประเภทของเอกสารที่บันทึกแล้วไม่ได้ กรุณาออกเป็นเอกสารใหม่" },
           { status: 409 }
         );
       }

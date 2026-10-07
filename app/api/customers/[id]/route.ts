@@ -31,6 +31,8 @@ export const GET = withRoute(
   }
 );
 
+const NOT_FOUND = Symbol("customer not found");
+
 export const PUT = withRoute(
   // Thai: this is the message an admin actually reads when the save fails —
   // including the case that matters most here, a snapshot into `revisions`
@@ -86,11 +88,12 @@ export const PUT = withRoute(
         [id]
       );
 
-      // A row that is not there has no previous value to lose, so there is
-      // nothing to snapshot and nothing this UPDATE can destroy — it simply
-      // affects 0 rows, exactly as it did before this change. The snapshot is
-      // skipped rather than written as `null`, which would put a revision in
-      // the history that restores a customer into existence with no fields.
+      // A row that is not there (deleted in another tab, or a mistyped id) is
+      // answered 404, not "saved": the UPDATE would match nothing, and a 200
+      // told the admin their edit was kept when it had gone nowhere. No
+      // snapshot either — a revision holding `null` would restore a customer
+      // into existence with no fields.
+      if (rows.length === 0) return NOT_FOUND;
       //
       // NO CHANGE, NO SNAPSHOT. A revision of a customer restores exactly one
       // column, `note` (see the restore route), so a save that leaves the note
@@ -108,15 +111,13 @@ export const PUT = withRoute(
       // to the live row. A stored NULL and an incoming "" are the same empty
       // note, so neither is treated as an edit.
       let noteChanged = false;
-      if (rows.length > 0) {
-        const storedNote =
-          rows[0].note === null || rows[0].note === undefined
-            ? ""
-            : String(rows[0].note);
-        if (storedNote !== note) {
-          noteChanged = true;
-          await saveRevision("customer", id, rows[0], conn);
-        }
+      const storedNote =
+        rows[0].note === null || rows[0].note === undefined
+          ? ""
+          : String(rows[0].note);
+      if (storedNote !== note) {
+        noteChanged = true;
+        await saveRevision("customer", id, rows[0], conn);
       }
 
       // `noteUpdatedAt` moves on exactly the same condition as the snapshot
@@ -145,8 +146,9 @@ export const PUT = withRoute(
         ]
       );
 
-      return stamp !== undefined ? stamp : ((rows[0]?.noteUpdatedAt as string | null | undefined) ?? null);
+      return stamp !== undefined ? stamp : ((rows[0].noteUpdatedAt as string | null | undefined) ?? null);
     });
+    if (noteUpdatedAt === NOT_FOUND) return jsonError("ไม่พบลูกค้า", 404);
 
     // Returned so a caller that patches its list in place (CustomerDetailsModal)
     // shows the server's timestamp instead of guessing one.
@@ -190,6 +192,19 @@ export const DELETE = withRoute(
     )) as any[];
     if (schedules.length > 0) {
       return jsonError("ลบลูกค้ารายนี้ไม่ได้ เพราะยังมีนัดโทรที่ผูกกับลูกค้ารายนี้อยู่", 400);
+    }
+
+    // ใบ Job keeps no copy of the customer's or the company's name — it reads
+    // both live (serviceJobStore JOB_SELECT), and service_jobs has no foreign
+    // key to stop this. A customer whose only link is a job sheet (machines
+    // typed into the job itself) used to be deletable, and every one of their
+    // job sheets, closed and signed ones included, lost who it was for.
+    const [jobs] = await query<RowDataPacket[]>(
+      "SELECT id FROM service_jobs WHERE customerId = ? LIMIT 1",
+      [id]
+    );
+    if (jobs.length > 0) {
+      return jsonError("ลบลูกค้ารายนี้ไม่ได้ เพราะยังมีใบ Job ที่ผูกกับลูกค้ารายนี้อยู่", 400);
     }
 
     await query("DELETE FROM customers WHERE id = ?", [id]);

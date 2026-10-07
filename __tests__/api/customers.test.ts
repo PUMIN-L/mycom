@@ -306,13 +306,16 @@ describe('PUT /api/customers/[id]', () => {
     }
   });
 
-  it('skips the snapshot for a customer that does not exist, and still 200s', async () => {
-    // Nothing to lose, so nothing to snapshot: a revision holding `null` would
-    // put an entry in the history that restores a customer with no fields.
+  it('answers 404 for a customer that does not exist — no snapshot, no write, no false "saved"', async () => {
+    // A revision holding `null` would put an entry in the history that
+    // restores a customer with no fields; a 200 told the admin an edit to a
+    // customer deleted in another tab had been kept.
     scriptTx([]);
     const res = await PUT(putReq('ghost', { companyId: 'co-1', name: 'สมชาย' }), ctx('ghost'));
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(404);
+    expect((await res.json()).error).toBe('ไม่พบลูกค้า');
     expect(connSql().some((s) => /INSERT INTO revisions/i.test(s))).toBe(false);
+    expect(customerUpdates()).toHaveLength(0);
   });
 });
 
@@ -437,15 +440,30 @@ describe('DELETE /api/customers/[id]', () => {
     expect(await res.json()).toEqual({ error: 'ลบลูกค้ารายนี้ไม่ได้ เพราะยังมีนัดโทรที่ผูกกับลูกค้ารายนี้อยู่' });
   });
 
+  // ใบ Job reads the customer's name live; deleting the customer would leave
+  // every job sheet of theirs (closed, signed ones too) naming nobody.
+  it('rejects deletion when the customer has job sheets', async () => {
+    vi.mocked(query)
+      .mockResolvedValueOnce([[]] as never) // no equipment
+      .mockResolvedValueOnce([[]] as never) // no sales records
+      .mockResolvedValueOnce([[]] as never) // no schedules
+      .mockResolvedValueOnce([[{ id: 'job-1' }]] as never); // has a ใบ Job
+    const res = await DELETE(deleteReq('cust-1'), ctx('cust-1'));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'ลบลูกค้ารายนี้ไม่ได้ เพราะยังมีใบ Job ที่ผูกกับลูกค้ารายนี้อยู่' });
+    expect(vi.mocked(query).mock.calls.some((c) => String(c[0]).startsWith('DELETE'))).toBe(false);
+  });
+
   it('deletes the customer when nothing references it', async () => {
     vi.mocked(query)
       .mockResolvedValueOnce([[]] as any)
       .mockResolvedValueOnce([[]] as any)
       .mockResolvedValueOnce([[]] as any)
+      .mockResolvedValueOnce([[]] as never)
       .mockResolvedValueOnce([{ affectedRows: 1 }] as any);
     const res = await DELETE(deleteReq('cust-1'), ctx('cust-1'));
     expect(res.status).toBe(200);
-    const lastCall = vi.mocked(query).mock.calls[3];
+    const lastCall = vi.mocked(query).mock.calls[4];
     expect(lastCall[0]).toContain('DELETE FROM customers');
     expect(lastCall[1]).toEqual(['cust-1']);
   });

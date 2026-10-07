@@ -9,7 +9,7 @@ import SearchableDropdown from "../components/SearchableDropdown";
 import { poDocNoPrefix, nextPoDocNo } from "../lib/poNumber";
 import { DOCNO_START, pad2 } from "../lib/quotationNumber";
 import { toLocalDateString } from "../lib/dateFormat";
-import { computeQuoteTotals } from "../lib/quotationTotals";
+import { computeQuoteTotals, CURRENT_TOTALS_VERSION } from "../lib/quotationTotals";
 import type { Supplier } from "../lib/types";
 
 // ── ใบสั่งซื้อ (Purchase Order builder) ──────────────────────────────────────
@@ -61,6 +61,10 @@ interface PoState {
   discount: number;
   discountType: "amount" | "percent";
   vatEnabled: boolean;
+  /** Which arithmetic this document was issued under (lib/quotationTotals.ts).
+   *  A FRESH document gets the current one (2026-10-07 on); a new version keeps
+   *  its source's, so a saved document without it keeps the original for good. */
+  totalsVersion?: number;
   paymentTerms: string;
   deliveryTerms: string;
   note: string;
@@ -233,7 +237,16 @@ export default function PurchaseOrderPage() {
   async function seedFresh() {
     const iso = toLocalDateString(new Date());
     const docNo = await mintDocNo(iso);
-    setPo({ ...emptyState(), id: randomId(), docDate: iso, docNo, items: [newItem()] });
+    // A NEW document: the current arithmetic. Not in emptyState() — a saved PO
+    // is spread over that, and one saved without the key keeps its own.
+    setPo({
+      ...emptyState(),
+      id: randomId(),
+      docDate: iso,
+      docNo,
+      items: [newItem()],
+      totalsVersion: CURRENT_TOTALS_VERSION,
+    });
     setViewMode(false);
     setLoadedMeta(null);
     setSupersedeOf(null);
@@ -441,6 +454,8 @@ export default function PurchaseOrderPage() {
     const oldId = po.id;
     const iso = toLocalDateString(new Date());
     const docNo = await mintDocNo(iso);
+    // `totalsVersion` travels with `prev`: the replacement continues the PO
+    // it replaces, in its arithmetic (quotationTotals.ts).
     setPo((prev) => ({ ...prev, id: randomId(), docNo, docDate: iso }));
     setSupersedeOf(oldId);
     setViewMode(false);
@@ -983,7 +998,7 @@ export default function PurchaseOrderPage() {
                         </td>
                       )}
                       <td className="border border-gray-300 px-2 py-1.5 text-right">
-                        {fmt(hasLineDiscounts ? lines[idx].netAmount : it.qty * it.unitPrice)}
+                        {fmt(hasLineDiscounts ? lines[idx].netAmount : lines[idx]?.amount ?? 0)}
                       </td>
                     </tr>
                   ))}

@@ -6,7 +6,8 @@ import { useAuth } from "../context/AuthContext";
 import Toast from "../components/Toast";
 import SearchableDropdown from "../components/SearchableDropdown";
 import { useLeaveGuard, LeaveGuardModal } from "../components/LeaveGuard";
-import { computeQuoteTotals } from "../lib/quotationTotals";
+import { computeQuoteTotals, CURRENT_TOTALS_VERSION } from "../lib/quotationTotals";
+import { splitDocNoVersion } from "../lib/quotationNumber";
 import {
   BILLING_LABELS,
   BILLING_PREFIX,
@@ -76,6 +77,10 @@ interface BillingState {
   discount: number;
   discountType: "amount" | "percent";
   vatEnabled: boolean;
+  /** Which arithmetic this document was issued under (lib/quotationTotals.ts).
+   *  A FRESH document gets the current one (2026-10-07 on); a new version keeps
+   *  its source's, so a saved document without it keeps the original for good. */
+  totalsVersion?: number;
   note: string;
   // ── ครบกำหนดชำระ ─────────────────────────────────────────────────────────
   // Whatever is in this box at save time is what goes into the `dueDate`
@@ -185,6 +190,16 @@ const emptyState = (): BillingState => {
   };
 };
 
+/**
+ * A NEW document: the current arithmetic (lib/quotationTotals.ts). Kept out of
+ * emptyState() on purpose — a reopened document is spread over that, and one
+ * saved without the key must keep the arithmetic it was issued under.
+ */
+const newDocumentState = (): BillingState => ({
+  ...emptyState(),
+  totalsVersion: CURRENT_TOTALS_VERSION,
+});
+
 const thaiDate = (iso: string) => {
   if (!iso) return "-";
   const [y, m, d] = iso.split("-").map(Number);
@@ -202,7 +217,7 @@ const DOC_TYPE_OPTIONS: { value: BillingDocType; label: string }[] = [
 export default function BillingPage() {
   const router = useRouter();
   const { isLoggedIn, isLoading } = useAuth();
-  const [b, setB] = useState<BillingState>(emptyState);
+  const [b, setB] = useState<BillingState>(newDocumentState);
   const [quotations, setQuotations] = useState<QuotationOption[]>([]);
   const [existingDocs, setExistingDocs] = useState<LedgerEntry[]>([]);
   // Every number the ledger owns under THIS day's prefixes, at any age — the
@@ -227,7 +242,7 @@ export default function BillingPage() {
    *  dropdown. Naming one is what turns issuing a receipt into recording the
    *  payment, in a single transaction on the server. */
   const [openInvoices, setOpenInvoices] = useState<
-    { id: string; docNo: string; customerName: string; outstanding: number }[]
+    { id: string; docNo: string; customerName: string; outstanding: number; totalsVersion?: number | null }[]
   >([]);
   /** The document this save REPLACES, when we arrived through "แก้ไข (New
    *  Ver.)". Without it the original keeps its debt and the invoice is billed
@@ -334,7 +349,7 @@ export default function BillingPage() {
             let newId = doc.id;
             
             if (isClone) {
-              const baseDocNo = newDocNo.replace(/(?:-V|v)\d+$/i, "");
+              const baseDocNo = splitDocNoVersion(newDocNo).base;
 
               // Ask the LEDGER for this base, not the live /api/billing list:
               // the ledger is never purged, so it still owns every version
@@ -348,14 +363,14 @@ export default function BillingPage() {
               if (versions.length === 0) {
                 // Ledger unreachable or genuinely empty — fall back to bumping
                 // this document's own version rather than reusing v1.
-                const vMatch = newDocNo.match(/(?:-V|v)(\d+)$/i);
-                if (vMatch) maxV = parseInt(vMatch[1], 10) || 0;
+                maxV = splitDocNoVersion(newDocNo).version ?? 0;
               }
               for (const v of versions) {
-                const match = v.docNo.match(/(?:-V|v)(\d+)$/i);
-                if (!match) continue;
-                const n = parseInt(match[1], 10);
-                if (!Number.isNaN(n) && n > maxV) maxV = n;
+                // A version OF THIS BASE — not of "…-230", which merely starts
+                // with it.
+                const { base, version } = splitDocNoVersion(v.docNo);
+                if (base !== baseDocNo || version === null) continue;
+                if (!Number.isNaN(version) && version > maxV) maxV = version;
               }
 
               newDocNo = `${baseDocNo}v${maxV + 1}`;
@@ -1001,7 +1016,18 @@ export default function BillingPage() {
                 </label>
                 <SearchableDropdown
                   value={b.settlesDocId}
-                  onChange={(val) => set("settlesDocId", val)}
+                  onChange={(val) => {
+                    // A receipt settles its invoice IN THE INVOICE'S ARITHMETIC
+                    // (quotationTotals.ts): the payment it records is its own
+                    // total, and a receipt a satang off an invoice issued
+                    // before 2026-10-07 would leave "ค้าง ฿0.01" for good.
+                    const invoice = openInvoices.find((inv) => inv.id === val);
+                    setB((prev) => ({
+                      ...prev,
+                      settlesDocId: val,
+                      ...(invoice ? { totalsVersion: invoice.totalsVersion ?? undefined } : {}),
+                    }));
+                  }}
                   options={[
                     { value: "", label: "-- ยังไม่ผูกกับใบแจ้งหนี้ --" },
                     ...openInvoices.map((inv) => ({
@@ -1227,7 +1253,7 @@ export default function BillingPage() {
                           sheet has always printed; with them it prints the net,
                           which is what the totals below add up to. */}
                       <td className="border border-gray-300 px-2 py-1.5 text-right">
-                        {fmt(hasLineDiscounts ? lines[idx].netAmount : item.qty * item.unitPrice)}
+                        {fmt(hasLineDiscounts ? lines[idx].netAmount : lines[idx]?.amount ?? 0)}
                       </td>
                     </tr>
                   ))

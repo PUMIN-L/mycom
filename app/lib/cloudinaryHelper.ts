@@ -93,6 +93,38 @@ export function extractPublicId(imageUrl: string, keepExtension = false): string
 }
 
 /**
+ * Whether an image this site uploaded is GONE from Cloudinary — asked of the
+ * Admin API, which knows, rather than of the CDN, which can keep serving a
+ * deleted image from its cache for a while.
+ *
+ * Only a definite "not found" answers true. A URL that is not ours, missing
+ * credentials, a network error, a rate limit — all answer false: unknown is
+ * not missing, and a revision restore is held back only by an image known to
+ * be gone (app/api/revisions/[id]/restore).
+ */
+export async function isCloudinaryImageMissing(imageUrl: unknown): Promise<boolean> {
+  const cloud = process.env.CLOUDINARY_CLOUD_NAME;
+  if (!cloud || typeof imageUrl !== "string") return false;
+  if (!imageUrl.startsWith(`https://res.cloudinary.com/${cloud}/image/upload/`)) return false;
+  const publicId = extractPublicId(imageUrl);
+  if (!publicId) return false;
+  try {
+    await cloudinary.api.resource(publicId, { resource_type: "image" });
+    return false;
+  } catch (error) {
+    const e = error as { http_code?: number; error?: { http_code?: number } } | null;
+    return (e?.error?.http_code ?? e?.http_code) === 404;
+  }
+}
+
+/** The images among `imageUrls` that are known to be gone (see above). */
+export async function missingCloudinaryImages(imageUrls: string[]): Promise<string[]> {
+  const unique = [...new Set(imageUrls)];
+  const missing = await Promise.all(unique.map((url) => isCloudinaryImageMissing(url)));
+  return unique.filter((_, i) => missing[i]);
+}
+
+/**
  * Delete a single asset from Cloudinary by its URL.
  * Returns true if deleted (or already gone), false otherwise.
  */

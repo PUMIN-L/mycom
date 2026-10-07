@@ -291,6 +291,8 @@ interface QuoteDataLite {
   discount?: number;
   discountType?: "amount" | "percent";
   vatEnabled?: boolean;
+  /** Which arithmetic the document was issued under (quotationTotals.ts). */
+  totalsVersion?: number;
   customerCompany?: string;
   customerContact?: string;
 }

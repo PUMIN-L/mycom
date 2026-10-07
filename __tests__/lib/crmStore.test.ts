@@ -1288,6 +1288,26 @@ describe('updateEquipment', () => {
     expect((params as unknown[])[2]).toBe('ปั๊มมือสอง');
   });
 
+  // deleteProduct copied the title onto the machine when the product went: that
+  // stored name is now the ONLY copy, and blanking it on the next save would
+  // erase the machine's model for good.
+  it("keeps the stored name of a machine whose catalog product has been deleted", async () => {
+    let updated = false;
+    topQuery.mockImplementation((sql: string) => {
+      if (sql.startsWith('SELECT id FROM products')) return Promise.resolve([[]]); // gone
+      if (sql.startsWith('UPDATE customer_equipments')) {
+        updated = true;
+        return Promise.resolve([{ affectedRows: 1 }]);
+      }
+      return Promise.resolve([[{ id: 'eq-9', productId: 'prod-gone', productName: 'เครื่องชั่ง PX224', note: updated ? 'x' : null }]]);
+    });
+
+    await updateEquipment('eq-9', { productId: 'prod-gone', productName: 'เครื่องชั่ง PX224', note: 'x' });
+
+    const updateCall = topQuery.mock.calls.find((c) => String(c[0]).startsWith('UPDATE customer_equipments'))!;
+    expect((updateCall[1] as unknown[])[2]).toBe('เครื่องชั่ง PX224');
+  });
+
   it('persists note and calibrationDate', async () => {
     mockQueryFor(
       { id: 'eq-3', productId: 'p1', productName: '', note: null, calibrationDate: null },

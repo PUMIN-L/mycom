@@ -90,6 +90,21 @@ export class BillingDocNoConflictError extends Error {
   }
 }
 
+/**
+ * Thrown by saveBillingDocumentAtomic when a re-save names a different docType
+ * than the saved row. /billing never does that (a document's type is fixed when
+ * it is first issued), but the API took the upsert's word for it: an invoice
+ * re-saved as a receipt kept its docNo, its id and every payment pointing at it
+ * while turning into something else, and a receipt re-saved as an invoice left
+ * its payment live behind it with nothing on screen to explain the credit.
+ */
+export class BillingDocTypeChangeError extends Error {
+  constructor(public readonly id: string, public readonly from: string, public readonly to: string) {
+    super(`billing document ${id} is a ${from}; it cannot be re-saved as a ${to}`);
+    this.name = "BillingDocTypeChangeError";
+  }
+}
+
 /** Thrown by deleteBillingDocument when the document carries live payments. */
 export class BillingDocumentHasPaymentsError extends Error {
   constructor(public readonly id: string) {
@@ -104,6 +119,8 @@ interface DataLite {
   discount?: number;
   discountType?: "amount" | "percent";
   vatEnabled?: boolean;
+  /** Which arithmetic the document was issued under (quotationTotals.ts). */
+  totalsVersion?: number;
   customerCompany?: string;
   customerContact?: string;
   customerPhone?: string;
@@ -209,6 +226,19 @@ export async function saveBillingDocumentAtomic(
           [rec.createdAt, rec.docNo]
         );
       }
+    }
+    // A document's type is fixed once it is saved (see BillingDocTypeChangeError).
+    // Read under the row lock, after the docNo reservation, so the order stays
+    // used_docnos → billing_documents as the upsert below already takes it.
+    const [typeRows] = await conn.query<RowDataPacket[]>(
+      "SELECT docType FROM billing_documents WHERE id = ? FOR UPDATE",
+      [rec.id]
+    );
+    const savedType = Array.isArray(typeRows) && typeRows.length > 0
+      ? String(typeRows[0].docType ?? "invoice")
+      : null;
+    if (savedType !== null && savedType !== rec.docType) {
+      throw new BillingDocTypeChangeError(rec.id, savedType, rec.docType);
     }
     await conn.query(
       `INSERT INTO billing_documents (id, docType, docNo, linkedQuotationId, data, paymentMethod, paymentDate, paymentRef, createdAt, docDate, dueDate, totalAmount, customerName, customerPhone, settlesDocId)
@@ -534,10 +564,20 @@ export async function listReceivableRows(): Promise<ReceivableRow[]> {
  *  receipt could credit a row the ledger never shows, while the live version
  *  went on reading as fully unpaid. */
 export async function listOpenInvoices(): Promise<
-  { id: string; docNo: string; customerName: string; dueDate: string | null; outstanding: number }[]
+  {
+    id: string;
+    docNo: string;
+    customerName: string;
+    dueDate: string | null;
+    outstanding: number;
+    /** The invoice's arithmetic (quotationTotals.ts) — a receipt that settles
+     *  it computes in the same one, or the two can miss by a satang. */
+    totalsVersion: number | null;
+  }[]
 > {
   const [rows] = await query<RowDataPacket[]>(
-    `SELECT id, docNo, customerName, dueDate, totalAmount, paidAmount
+    `SELECT id, docNo, customerName, dueDate, totalAmount, paidAmount,
+            JSON_EXTRACT(data, '$.totalsVersion') AS totalsVersion
        FROM billing_documents
       WHERE cancelledAt IS NULL
         AND ${sqlNotSupersededByLiveRow("billing_documents")}
@@ -552,6 +592,7 @@ export async function listOpenInvoices(): Promise<
     customerName: r.customerName ?? "",
     dueDate: r.dueDate ?? null,
     outstanding: (Number(r.totalAmount) || 0) - (Number(r.paidAmount) || 0),
+    totalsVersion: Number(r.totalsVersion) || null,
   }));
 }
 

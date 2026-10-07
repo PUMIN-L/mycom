@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 
 // Mock the external `cloudinary` package (NOT the module under test).
 // cloudinaryHelper imports `{ v2 as cloudinary }` and, at IMPORT time, calls
@@ -13,6 +13,7 @@ vi.mock('cloudinary', () => ({
       destroy: vi.fn(),
     },
     url: vi.fn(),
+    api: { resource: vi.fn() },
   },
 }));
 
@@ -24,6 +25,8 @@ import {
   deleteCloudinaryImages,
   collectContentImageUrls,
   getPdfCoverUrl,
+  isCloudinaryImageMissing,
+  missingCloudinaryImages,
 } from '@/app/lib/cloudinaryHelper';
 import type { ContentData } from '@/app/lib/types';
 
@@ -313,5 +316,51 @@ describe('cloudinaryHelper', () => {
       await expect(deleteCloudinaryImages([])).resolves.toBeUndefined();
       expect(destroyMock).not.toHaveBeenCalled();
     });
+  });
+});
+
+// A revision restore must not bring back a picture deleted from Cloudinary
+// since. The Admin API is asked — not the CDN, which can serve a deleted image
+// from its cache for a while — and only a definite "not found" counts.
+describe('isCloudinaryImageMissing / missingCloudinaryImages', () => {
+  const OURS = 'https://res.cloudinary.com/test-cloud/image/upload/v17/mycom/a.jpg';
+  beforeEach(() => {
+    vi.stubEnv('CLOUDINARY_CLOUD_NAME', 'test-cloud');
+    vi.mocked(cloudinary.api.resource).mockReset();
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('true only when the Admin API says not found', async () => {
+    vi.mocked(cloudinary.api.resource).mockRejectedValueOnce({ error: { message: 'Resource not found', http_code: 404 } });
+    expect(await isCloudinaryImageMissing(OURS)).toBe(true);
+    expect(vi.mocked(cloudinary.api.resource).mock.calls[0]).toEqual(['mycom/a', { resource_type: 'image' }]);
+  });
+
+  it('false when it is there, or when the answer is not a definite not-found', async () => {
+    vi.mocked(cloudinary.api.resource).mockResolvedValueOnce({ public_id: 'mycom/a' } as never);
+    expect(await isCloudinaryImageMissing(OURS)).toBe(false);
+    vi.mocked(cloudinary.api.resource).mockRejectedValueOnce({ error: { message: 'Rate limited', http_code: 420 } });
+    expect(await isCloudinaryImageMissing(OURS)).toBe(false);
+    vi.mocked(cloudinary.api.resource).mockRejectedValueOnce(new Error('ECONNRESET'));
+    expect(await isCloudinaryImageMissing(OURS)).toBe(false);
+  });
+
+  it('never asks about a URL that is not ours', async () => {
+    expect(await isCloudinaryImageMissing('https://example.com/a.jpg')).toBe(false);
+    expect(await isCloudinaryImageMissing('https://res.cloudinary.com/someone-else/image/upload/a.jpg')).toBe(false);
+    expect(await isCloudinaryImageMissing(undefined)).toBe(false);
+    expect(cloudinary.api.resource).not.toHaveBeenCalled();
+  });
+
+  it('missingCloudinaryImages: the gone ones, each asked once', async () => {
+    const other = OURS.replace('a.jpg', 'b.jpg');
+    vi.mocked(cloudinary.api.resource).mockImplementation(async (id: string) => {
+      if (id === 'mycom/a') throw { error: { http_code: 404 } };
+      return { public_id: id } as never;
+    });
+    expect(await missingCloudinaryImages([OURS, other, OURS])).toEqual([OURS]);
+    expect(cloudinary.api.resource).toHaveBeenCalledTimes(2);
   });
 });

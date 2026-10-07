@@ -307,6 +307,8 @@ export default function DashboardPage() {
       // as it always has.
       discount: selection.data?.discount,
       discountType: selection.data?.discountType,
+      // …computed with the quotation's own arithmetic (quotationTotals.ts).
+      totalsVersion: selection.data?.totalsVersion,
     });
     setLines(drafts);
     setLinesDirty(false);

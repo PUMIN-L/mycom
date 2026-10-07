@@ -10,6 +10,7 @@ import {
   legacyQuotationDocNoPrefix,
   quotationDocNoPrefixes,
   docNoPrefixes,
+  splitDocNoVersion,
 } from '@/app/lib/quotationNumber';
 
 // The LEGACY shape: QT + YYMMDD + "-NN" (every number issued before task 5).
@@ -235,5 +236,25 @@ describe('quotationNumber', () => {
     it('still starts a genuinely untouched shared prefix at DOCNO_START', () => {
       expect(nextDocNo(quotationDocNoPrefixes(Y2026), [])).toBe(`${SHARED}${DOCNO_START}`);
     });
+  });
+});
+
+// "แก้ไข (New Ver.)" reads the version off a number. The marker counts only
+// right after the running number's last digit: "INV" is a prefix, and reading
+// its "V" as a version turned a hand-typed "INV001" into "IN" version 1, whose
+// next version was minted as "INv2".
+describe("splitDocNoVersion", () => {
+  it.each([
+    ["QT050926-23v2", "QT050926-23", 2],
+    ["INV050926-23v1", "INV050926-23", 1],
+    ["INV260905-23V12", "INV260905-23", 12],
+    ["QT050926-23-V3", "QT050926-23", 3],
+    ["RC050926-22", "RC050926-22", null],
+    ["INV2609250001", "INV2609250001", null],
+    ["INV001", "INV001", null],
+    ["INV2609250001v4", "INV2609250001", 4],
+    ["", "", null],
+  ])("%s → base %s, version %s", (docNo, base, version) => {
+    expect(splitDocNoVersion(docNo)).toEqual({ base, version });
   });
 });

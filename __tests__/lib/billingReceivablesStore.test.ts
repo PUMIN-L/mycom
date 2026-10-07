@@ -280,6 +280,17 @@ describe('listOpenInvoices', () => {
     // Never `paidAmount = totalAmount` on floats.
     expect(text).toContain('totalAmount - paidAmount > 0.005');
   });
+
+  it("hands back each invoice's arithmetic, so a receipt can settle it in the same one", async () => {
+    topQuery.mockResolvedValueOnce([[
+      { id: 'inv-old', docNo: 'A', customerName: 'x', dueDate: null, totalAmount: '104.17', paidAmount: '0', totalsVersion: null },
+      { id: 'inv-new', docNo: 'B', customerName: 'y', dueDate: null, totalAmount: '104.18', paidAmount: '0', totalsVersion: 2 },
+      { id: 'inv-str', docNo: 'C', customerName: 'z', dueDate: null, totalAmount: '1', paidAmount: '0', totalsVersion: '2' },
+    ]]);
+    const rows = await listOpenInvoices();
+    expect(sql(topQuery.mock.calls[0])).toContain("JSON_EXTRACT(data, '$.totalsVersion') AS totalsVersion");
+    expect(rows.map((r) => r.totalsVersion)).toEqual([null, 2, 2]);
+  });
 });
 
 describe('the explicit admin decisions', () => {

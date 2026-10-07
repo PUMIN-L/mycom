@@ -36,8 +36,10 @@
  * ยอดค้าง nobody can explain.
  *
  * ── MONEY IS COMPARED IN DECIMAL SPACE, NEVER BY FLOAT EQUALITY ─────────────
- * `computeQuoteTotals` does not round `grandTotal` (only per-line discounts go
- * through round2), so 7% VAT on an odd base leaves float dust. `totalAmount` is
+ * Under the original arithmetic `computeQuoteTotals` does not round `grandTotal`
+ * (only per-line discounts go through round2), so 7% VAT on an odd base leaves
+ * float dust — and every document saved before 2026-10-07 is still computed that
+ * way (quotationTotals.ts, `totalsVersion`). `totalAmount` is
  * the DECIMAL(12,2) column that dust was rounded into, and every "is it
  * settled?" question is asked with a satang tolerance. `paid === total` would
  * leave invoices that can never be closed and alerts that can never clear.

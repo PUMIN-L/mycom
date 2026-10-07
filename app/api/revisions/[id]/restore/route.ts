@@ -3,7 +3,9 @@ import { revalidateTag } from "next/cache";
 import type { RowDataPacket } from "mysql2";
 import { withRoute, requireAuth, ApiError } from "../../../../lib/apiHelpers";
 import { getRevision, saveRevision, type Revision } from "../../../../lib/revisionStore";
-import { updateProduct, getAllCategories, getProduct } from "../../../../lib/productStore";
+import { updateProduct, getAllCategories, getProduct, BestSellerRankConflictError } from "../../../../lib/productStore";
+import { collectContentImageUrls, isCloudinaryImageMissing, missingCloudinaryImages } from "../../../../lib/cloudinaryHelper";
+import type { ContentData } from "../../../../lib/types";
 import { updateContent, getContentByProductId, ContentProductConflictError } from "../../../../lib/contentStore";
 import { updateDocument, getDocument } from "../../../../lib/documentStore";
 import { withTransaction } from "../../../../lib/db";
@@ -197,11 +199,41 @@ export const POST = withRoute(
         }
         // updateProduct returns undefined if the row was since deleted — the
         // snapshot can't be re-applied, so report 404 rather than a false 200.
-        const updated = await updateProduct(rev.entityId, data);
+        // The snapshot's picture may have been deleted from Cloudinary since
+        // (the edit page offers exactly that when a picture is replaced, and
+        // the orphan cleaner counts no revision as a use). Restoring it would
+        // put a broken image on the public catalog: the product keeps its
+        // CURRENT picture instead, and the answer says so.
+        let restoreData: Record<string, unknown> = data;
+        let keptCurrentImage = false;
+        if (await isCloudinaryImageMissing(data.image)) {
+          const { image: _gone, ...rest } = data;
+          void _gone;
+          restoreData = rest;
+          keptCurrentImage = true;
+        }
+        let updated;
+        try {
+          updated = await updateProduct(rev.entityId, restoreData);
+        } catch (err) {
+          // The snapshot's best-seller rank is held by another product now —
+          // say so (as the edit page does) instead of a bare 500.
+          if (err instanceof BestSellerRankConflictError) {
+            return NextResponse.json({ error: err.message }, { status: 409 });
+          }
+          throw err;
+        }
         if (!updated) {
           return NextResponse.json({ error: "สินค้านี้ถูกลบไปแล้ว" }, { status: 404 });
         }
         revalidateTag("products", { expire: 0 });
+        if (keptCurrentImage) {
+          return NextResponse.json({
+            success: true,
+            entityId: rev.entityId,
+            warning: "รูปสินค้าในเวอร์ชันนั้นถูกลบออกจากระบบไปแล้ว จึงคงรูปปัจจุบันไว้ ข้อมูลอื่นกู้คืนแล้ว",
+          });
+        }
         break;
       }
       case "content": {
@@ -226,6 +258,23 @@ export const POST = withRoute(
               { status: 409 }
             );
           }
+        }
+        // Pictures the snapshot shows that have since been deleted from
+        // Cloudinary would come back as broken images on the public page. The
+        // restore is refused, naming how many, rather than publishing that.
+        const snapshotImages = Array.isArray(data.blocks)
+          ? collectContentImageUrls(data as unknown as ContentData)
+          : [];
+        const gone = await missingCloudinaryImages(snapshotImages);
+        if (gone.length > 0) {
+          return NextResponse.json(
+            {
+              error:
+                `รูปในเวอร์ชันนี้ ${gone.length} รูปถูกลบออกจากระบบไปแล้ว ถ้ากู้คืน รูปเหล่านั้นจะเสียบนหน้าเว็บ ระบบจึงไม่กู้คืนให้ ` +
+                "กรุณาคัดลอกข้อความจากประวัติไปแก้ในหน้าเนื้อหาเอง แล้วใส่รูปใหม่",
+            },
+            { status: 409 }
+          );
         }
         let updated;
         try {

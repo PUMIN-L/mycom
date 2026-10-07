@@ -51,6 +51,7 @@ import {
   type QuotationLine,
   type SaleLineDraft,
 } from '@/app/lib/quotationToSale';
+import { computeQuoteTotals } from '@/app/lib/quotationTotals';
 
 // --- fixtures ---------------------------------------------------------------
 
@@ -1983,5 +1984,28 @@ describe('quotation builder party link (tasks 14.2-14.3, 15.6)', () => {
     const picked = selectPartyFromSystem({ id: 'c1', name: 'สมชาย ใจดี' });
     applyTypedPartyName(picked, 'x');
     expect(picked).toEqual({ id: 'c1', name: 'สมชาย ใจดี' });
+  });
+});
+
+// A quotation issued under totalsVersion 2 (lib/quotationTotals.ts) converts with
+// ITS arithmetic: the bill discount the sale carries is the satang that
+// quotation printed.
+describe('buildLineDrafts — the quotation’s own totalsVersion', () => {
+  const items = [
+    { id: 'a', name: 'A', qty: 7, unitPrice: 19.99 },
+    { id: 'b', name: 'B', qty: 1, unitPrice: 100.37 },
+  ];
+
+  it('splits exactly the bill discount the v2 quotation printed', () => {
+    const drafts = buildLineDrafts({ items, discount: 3, discountType: 'percent', totalsVersion: 2 });
+    const shares = drafts.map((d) => d.quotedDocDiscountShare);
+    const printed = computeQuoteTotals({ items, discount: 3, discountType: 'percent', totalsVersion: 2 }).discountValue;
+    expect(Math.round(shares.reduce((a, b) => a + b, 0) * 100)).toBe(Math.round(printed * 100));
+  });
+
+  it('reads a version it cannot parse as the original arithmetic', () => {
+    const v1 = buildLineDrafts({ items, discount: 3, discountType: 'percent' });
+    const junk = buildLineDrafts({ items, discount: 3, discountType: 'percent', totalsVersion: 'x' });
+    expect(junk.map((d) => d.quotedDocDiscountShare)).toEqual(v1.map((d) => d.quotedDocDiscountShare));
   });
 });

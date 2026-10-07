@@ -40,7 +40,7 @@ export const PUT = withRoute(
     }
     let updated;
     try {
-      updated = await updateCostItem(costId, body);
+      updated = await updateCostItem(id, costId, body);
     } catch (error) {
       const refusal = costRefusal(error);
       if (refusal) return refusal;
@@ -69,7 +69,7 @@ export const DELETE = withRoute(
     }
     let deleted;
     try {
-      deleted = await deleteCostItem(costId);
+      deleted = await deleteCostItem(id, costId);
     } catch (error) {
       const refusal = costRefusal(error);
       if (refusal) return refusal;

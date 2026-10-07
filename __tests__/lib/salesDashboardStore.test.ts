@@ -522,15 +522,43 @@ describe('salesDashboardStore', () => {
         .mockResolvedValueOnce([[{ total: '75.00' }]])
         .mockResolvedValueOnce([{ affectedRows: 1 }]);
 
-      const item = await updateCostItem('ci-1', { amount: 75 });
+      const item = await updateCostItem('sale-1', 'ci-1', { amount: 75 });
       expect(item?.amount).toBe(75);
       expect(withTransaction).toHaveBeenCalledTimes(1);
+      // Read and written only as an item OF THIS SALE.
+      const calls = vi.mocked(query).mock.calls;
+      expect(String(calls[0][0])).toContain('WHERE id = ? AND salesRecordId = ?');
+      expect(calls[0][1]).toEqual(['ci-1', 'sale-1']);
+      expect(String(calls[1][0])).toContain('WHERE id = ? AND salesRecordId = ?');
+      expect(calls[1][1]!.slice(-2)).toEqual(['ci-1', 'sale-1']);
     });
 
     it('updateCostItem returns null for a missing item without recalculating', async () => {
       vi.mocked(query).mockResolvedValueOnce([[]] as any);
-      const result = await updateCostItem('missing', { amount: 1 });
+      const result = await updateCostItem('sale-1', 'missing', { amount: 1 });
       expect(result).toBeNull();
+      expect(withTransaction).not.toHaveBeenCalled();
+    });
+
+    it("an item of ANOTHER sale is not found through this sale's URL — nothing written", async () => {
+      // The lookup is scoped to the sale, so B's item reads as absent from A.
+      vi.mocked(query).mockResolvedValueOnce([[]] as never);
+      expect(await updateCostItem('sale-A', 'ci-of-B', { amount: 1 })).toBeNull();
+      expect(vi.mocked(query).mock.calls[0][1]).toEqual(['ci-of-B', 'sale-A']);
+
+      vi.mocked(query).mockClear();
+      vi.mocked(query)
+        .mockResolvedValueOnce([[]] as never)
+        .mockResolvedValueOnce([{ affectedRows: 0 }] as never);
+      expect(await deleteCostItem('sale-A', 'ci-of-B')).toBe(false);
+      expect(String(vi.mocked(query).mock.calls[1][0])).toContain('DELETE FROM sale_cost_items WHERE id = ? AND salesRecordId = ?');
+      expect(vi.mocked(query).mock.calls[1][1]).toEqual(['ci-of-B', 'sale-A']);
+
+      // B's ต้นทุนสินค้า bucket, addressed through A: refused before any query.
+      vi.mocked(query).mockClear();
+      expect(await updateCostItem('sale-A', 'product-cost:sale-B', { amount: 1 })).toBeNull();
+      expect(await deleteCostItem('sale-A', 'product-cost:sale-B')).toBe(false);
+      expect(query).not.toHaveBeenCalled();
       expect(withTransaction).not.toHaveBeenCalled();
     });
 
@@ -543,7 +571,7 @@ describe('salesDashboardStore', () => {
         .mockResolvedValueOnce([[{ total: '0.00' }]])
         .mockResolvedValueOnce([{ affectedRows: 1 }]);
 
-      const result = await deleteCostItem('ci-1');
+      const result = await deleteCostItem('sale-1', 'ci-1');
       expect(result).toBe(true);
       expect(withTransaction).toHaveBeenCalledTimes(1);
     });
@@ -553,7 +581,7 @@ describe('salesDashboardStore', () => {
         .mockResolvedValueOnce([[]] as any) // existing lookup finds nothing
         .mockResolvedValueOnce([{ affectedRows: 0 }] as any); // DELETE affects nothing
 
-      const result = await deleteCostItem('missing');
+      const result = await deleteCostItem('sale-1', 'missing');
       expect(result).toBe(false);
       expect(withTransaction).not.toHaveBeenCalled();
     });
@@ -1905,12 +1933,12 @@ describe('salesDashboardStore — schema v33 line items', () => {
       installFakeQuery(db);
 
       await syncCostItems('sale-1', FORM_PAYLOAD);
-      const updated = await updateCostItem('product-cost:sale-1', { amount: 9000 });
+      const updated = await updateCostItem('sale-1', 'product-cost:sale-1', { amount: 9000 });
 
       // SET, not add: applying the same request twice leaves 9,000, so a
       // withTransaction retry (or a second tab) cannot stack the amounts.
       expect(updated?.amount).toBe(9000);
-      await updateCostItem('product-cost:sale-1', { amount: 9000 });
+      await updateCostItem('sale-1', 'product-cost:sale-1', { amount: 9000 });
       expect(db.tables.sales_record_items[0].costAmount).toBe(9000);
       expect(db.tables.sales_records[0].costAmount).toBe(12000);
     });
@@ -1921,7 +1949,7 @@ describe('salesDashboardStore — schema v33 line items', () => {
       installFakeQuery(db);
 
       await syncCostItems('sale-1', FORM_PAYLOAD);
-      expect(await deleteCostItem('product-cost:sale-1')).toBe(true);
+      expect(await deleteCostItem('sale-1', 'product-cost:sale-1')).toBe(true);
 
       expect(db.tables.sales_record_items[0].costAmount).toBe(0);
       expect(db.tables.sales_records[0].costAmount).toBe(3000); // ค่ารถ only
@@ -1947,17 +1975,17 @@ describe('salesDashboardStore — schema v33 line items', () => {
         const text = String(sql);
         const p = params as any[];
         if (text.includes('SELECT salesRecordId, costType, amount')) {
-          return [db.tables.sale_cost_items.filter((r) => r.id === p[0])];
+          return [db.tables.sale_cost_items.filter((r) => r.id === p[0] && r.salesRecordId === p[1])];
         }
-        if (text.includes('DELETE FROM sale_cost_items WHERE id = ?')) {
+        if (text.includes('DELETE FROM sale_cost_items WHERE id = ? AND salesRecordId = ?')) {
           const before = db.tables.sale_cost_items.length;
-          db.tables.sale_cost_items = db.tables.sale_cost_items.filter((r) => r.id !== p[0]);
+          db.tables.sale_cost_items = db.tables.sale_cost_items.filter((r) => !(r.id === p[0] && r.salesRecordId === p[1]));
           return [{ affectedRows: before - db.tables.sale_cost_items.length }];
         }
         throw new Error(`unhandled SQL: ${text}`);
       }) as never);
 
-      expect(await deleteCostItem('ci-legacy')).toBe(true);
+      expect(await deleteCostItem('sale-1', 'ci-legacy')).toBe(true);
 
       // A row that summed to 0 must move the total by 0 — the 20,000 belongs to
       // the line, not to the row that was deleted.

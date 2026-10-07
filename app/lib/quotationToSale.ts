@@ -505,6 +505,9 @@ export interface BuildLineDraftsInput {
    */
   discount?: unknown;
   discountType?: unknown;
+  /** `data.totalsVersion` of the quotation blob — which arithmetic it was
+   * issued under (quotationTotals.ts). Omit → the original. */
+  totalsVersion?: unknown;
 }
 
 export function blankMachine(): MachineDraft {
@@ -744,16 +747,21 @@ export interface QuotedLineDiscount {
 function resolveQuotedDiscounts(
   items: readonly QuotationLine[],
   discount: unknown,
-  discountType: unknown
+  discountType: unknown,
+  totalsVersion: unknown
 ): QuotedLineDiscount[] {
+  // The quotation's OWN arithmetic (quotationTotals.ts, `totalsVersion`), so a
+  // line's discount here is the satang the quotation printed for it.
+  const version = toFiniteNumber(totalsVersion, 0) || undefined;
   const totalsInput: QuoteTotalsInput = {
     items: items.map((line) => (line || {}) as QuoteLineInput),
     discount: toFiniteNumber(discount, 0),
     discountType: toDiscountType(discountType),
+    totalsVersion: version,
   };
   const shares = prorateDocumentDiscount(totalsInput);
   return items.map((line, index) => ({
-    lineDiscount: Math.max(computeLineTotal(line || {}).discountValue, 0),
+    lineDiscount: Math.max(computeLineTotal(line || {}, version).discountValue, 0),
     docShare: Math.max(shares[index] || 0, 0),
   }));
 }
@@ -829,7 +837,8 @@ export function buildLineDrafts(input: BuildLineDraftsInput): SaleLineDraft[] {
   const discounts = resolveQuotedDiscounts(
     items,
     input.discount,
-    input.discountType
+    input.discountType,
+    input.totalsVersion
   );
   return items.map((raw, index) => {
     const line = raw || {};

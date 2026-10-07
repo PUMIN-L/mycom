@@ -734,6 +734,12 @@ export async function cleanupEquipmentsForSalesRecord(salesRecordId: string): Pr
   );
 }
 
+/** Whether a catalog product row still exists (a machine's link may outlive it). */
+async function productExists(productId: string): Promise<boolean> {
+  const [rows] = await query<RowDataPacket[]>("SELECT id FROM products WHERE id = ? LIMIT 1", [productId]);
+  return rows.length > 0;
+}
+
 export async function updateEquipment(
   id: string,
   data: Partial<CustomerEquipment>
@@ -747,8 +753,12 @@ export async function updateEquipment(
   // separate "product name" input — only a product picker). Writing it
   // straight through here would freeze that catalog-title snapshot into the
   // raw column, decoupling it from later catalog edits. Only equipment with
-  // no linked catalog product keeps its own stored name.
-  const hasLinkedProduct = !!merged.productId && merged.productId !== "_custom";
+  // no linked catalog product keeps its own stored name — and equipment whose
+  // product has since been deleted for good: that name is the only copy left
+  // (deleteProduct wrote it there), and blanking it would erase the machine's
+  // model for good on the next save.
+  const hasLinkedProduct =
+    !!merged.productId && merged.productId !== "_custom" && (await productExists(merged.productId));
   const v = cleanEquipment({
     ...merged,
     productName: hasLinkedProduct ? "" : merged.productName,

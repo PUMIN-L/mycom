@@ -59,6 +59,9 @@ function makeDb() {
     const p = (i: number) => params[i] as unknown as string;
 
     if (sql.startsWith('INSERT INTO used_docnos')) return [{ affectedRows: 1 }];
+    // The save's docType check. Every document here keeps its type, so the
+    // fake has no type to remember: an empty answer means "nothing to compare".
+    if (sql.startsWith('SELECT docType FROM billing_documents WHERE id = ? FOR UPDATE')) return [[]];
 
     if (sql.startsWith('INSERT INTO billing_documents')) {
       // The upsert deliberately writes neither cancelledAt nor supersededById,

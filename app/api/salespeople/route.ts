@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAllSalespeople, createSalesperson } from "../../lib/salesStore";
+import { getAllSalespeople, createSalesperson, salespersonInputError } from "../../lib/salesStore";
 import { requireAuth, withRoute } from "../../lib/apiHelpers";
 
 // GET — list all salespeople (admin only — internal staff data).
@@ -19,12 +19,9 @@ export const POST = withRoute(
     await requireAuth();
     const body = await request.json();
     
-    if (!body.name || body.name.trim() === "") {
-      return NextResponse.json({ error: "กรุณากรอกชื่อ" }, { status: 400 });
-    }
-    
-    if (body.name.length > 255) {
-      return NextResponse.json({ error: "ชื่อยาวเกิน 255 ตัวอักษร" }, { status: 400 });
+    const invalid = salespersonInputError(body, true);
+    if (invalid) {
+      return NextResponse.json({ error: invalid }, { status: 400 });
     }
 
     const created = await createSalesperson(body);

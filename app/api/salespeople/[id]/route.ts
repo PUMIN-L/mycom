@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getSalesperson, updateSalesperson, deleteSalesperson } from "../../../lib/salesStore";
+import { getSalesperson, updateSalesperson, deleteSalesperson, salespersonInputError } from "../../../lib/salesStore";
 import { requireAuth, withRoute, ApiError, jsonError } from "../../../lib/apiHelpers";
 import { query } from "../../../lib/db";
 
@@ -27,8 +27,9 @@ export const PUT = withRoute(
     const { id } = await params;
     const body = await request.json();
     
-    if (body.name !== undefined && (body.name.trim() === "" || body.name.length > 255)) {
-      return NextResponse.json({ error: "ชื่อไม่ถูกต้อง" }, { status: 400 });
+    const invalid = salespersonInputError(body, false);
+    if (invalid) {
+      return NextResponse.json({ error: invalid }, { status: 400 });
     }
 
     const updated = await updateSalesperson(id, body);

@@ -6,6 +6,7 @@ import type { PoolConnection } from "mysql2/promise";
 import type { ProductCategory, ProductData } from "./types";
 import { cleanRichText, DESCRIPTION_LIMIT, TITLE_LIMIT } from "./richTextLimits";
 import { saveRevision } from "./revisionStore";
+import { htmlToText } from "./stripHtml";
 
 /** Pool or transaction connection — the same narrow shape `billingPayments`
  *  uses, so a helper can be called from inside a transaction or outside one. */
@@ -387,12 +388,45 @@ export async function getProductsByCategory(categoryId: number): Promise<Product
   return rows.map(rowToProduct);
 }
 
+/**
+ * Delete a product row for good — and, in the same transaction, give every
+ * customer machine of this model its name to keep.
+ *
+ * A machine linked to a catalog product stores NO name of its own
+ * (updateEquipment blanks it, so a catalog rename shows everywhere); every
+ * read resolves it as COALESCE(NULLIF(e.productName, ''), p.title_th). Once
+ * the product row is gone that is NULL: a discontinued model's machines lost
+ * their name across the CRM — the customer's machine list, the warranty and
+ * calibration alerts, every ใบ Job, reprints of closed ones included. The
+ * title is copied, as text, onto exactly those machines first.
+ *
+ * Still a claim: the row is locked before it is read, so of two concurrent
+ * hard-deletes exactly one sees it and the other returns false.
+ */
 export async function deleteProduct(id: string): Promise<boolean> {
-  const [result] = await query<ResultSetHeader>(
-    "DELETE FROM products WHERE id = ?",
-    [id]
-  );
-  return result.affectedRows > 0;
+  return withTransaction(async (conn) => {
+    const [rows] = await conn.query<RowDataPacket[]>(
+      "SELECT title_th, title_en, title_zh FROM products WHERE id = ? FOR UPDATE",
+      [id]
+    );
+    if (rows.length === 0) return false;
+    // The first title with TEXT in it — a rich-text field can be non-empty
+    // markup with nothing to read ("<p><br></p>"), and that must not stop the
+    // English name from being kept.
+    const name =
+      [rows[0].title_th, rows[0].title_en, rows[0].title_zh]
+        .map((t) => htmlToText(String(t ?? "")).trim())
+        .find((t) => t !== "")
+        ?.substring(0, 255) ?? "";
+    if (name) {
+      await conn.query(
+        "UPDATE customer_equipments SET productName = ? WHERE productId = ? AND (productName IS NULL OR productName = '')",
+        [name, id]
+      );
+    }
+    const [result] = await conn.query<ResultSetHeader>("DELETE FROM products WHERE id = ?", [id]);
+    return result.affectedRows > 0;
+  });
 }
 
 export async function updateProduct(

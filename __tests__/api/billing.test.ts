@@ -12,8 +12,19 @@ vi.mock('@/app/lib/billingStore', () => ({
       this.name = 'BillingDocNoConflictError';
     }
   },
+  BillingDocTypeChangeError: class BillingDocTypeChangeError extends Error {
+    constructor(public id: string, public from: string, public to: string) {
+      super(`${id} ${from} -> ${to}`);
+      this.name = 'BillingDocTypeChangeError';
+    }
+  },
 }));
-import { saveBillingDocumentAtomic, listBillingDocuments, BillingDocNoConflictError } from '@/app/lib/billingStore';
+import {
+  saveBillingDocumentAtomic,
+  listBillingDocuments,
+  BillingDocNoConflictError,
+  BillingDocTypeChangeError,
+} from '@/app/lib/billingStore';
 
 vi.mock('@/app/lib/session', () => ({ getSession: vi.fn() }));
 import { getSession } from '@/app/lib/session';
@@ -123,5 +134,14 @@ describe('POST /api/billing', () => {
     vi.mocked(saveBillingDocumentAtomic).mockRejectedValue(new BillingDocNoConflictError('INV-1'));
     const res = await POST(postReq({ id: 'b1', docNo: 'INV-1' }));
     expect(res.status).toBe(409);
+  });
+});
+
+describe('POST /api/billing — a saved document keeps its type', () => {
+  it('answers 409 with the reason when the store refuses a type change', async () => {
+    vi.mocked(saveBillingDocumentAtomic).mockRejectedValue(new BillingDocTypeChangeError('b1', 'invoice', 'receipt'));
+    const res = await POST(postReq({ id: 'b1', docType: 'receipt', docNo: 'RC1', data: {} }));
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toContain('ประเภท');
   });
 });

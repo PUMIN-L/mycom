@@ -10,6 +10,27 @@ export interface Salesperson {
   createdAt?: string;
 }
 
+/**
+ * What is wrong with a salesperson body, in Thai, or null when nothing is.
+ * Every field is text: a number or an object used to reach `.trim()` or the
+ * sanitizer and come back as a bare 500. `creating` makes the name required;
+ * an edit may leave it out, but may not blank it.
+ */
+export function salespersonInputError(body: unknown, creating: boolean): string | null {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return "ข้อมูลไม่ถูกต้อง";
+  const b = body as Record<string, unknown>;
+  if (creating || b.name !== undefined) {
+    if (typeof b.name !== "string" || b.name.trim() === "") return "กรุณากรอกชื่อ";
+    if (b.name.length > 255) return "ชื่อยาวเกิน 255 ตัวอักษร";
+  }
+  for (const field of ["phone", "email", "note"] as const) {
+    if (b[field] !== undefined && b[field] !== null && typeof b[field] !== "string") {
+      return "ข้อมูลไม่ถูกต้อง";
+    }
+  }
+  return null;
+}
+
 // Matches the DB columns (name/phone/email VARCHAR(255), note TEXT) —
 // without this, a value longer than the column allows throws an uncaught DB
 // error (500) instead of just being clipped, unlike every sibling store.

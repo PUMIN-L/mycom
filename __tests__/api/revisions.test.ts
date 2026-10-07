@@ -24,12 +24,30 @@ vi.mock('@/app/lib/db', () => ({
   withTransaction: (...args: unknown[]) => runTransaction(...args),
 }));
 import { query } from '@/app/lib/db';
-vi.mock('@/app/lib/productStore', () => ({
-  updateProduct: vi.fn(),
-  getAllCategories: vi.fn(),
-  getProduct: vi.fn(),
-}));
-import { updateProduct, getAllCategories, getProduct } from '@/app/lib/productStore';
+vi.mock('@/app/lib/productStore', () => {
+  class BestSellerRankConflictError extends Error {
+    constructor(public readonly rank: number) {
+      super(`อันดับสินค้าขายดี ${rank} ถูกใช้ไปแล้ว`);
+      this.name = 'BestSellerRankConflictError';
+    }
+  }
+  return {
+    updateProduct: vi.fn(),
+    getAllCategories: vi.fn(),
+    getProduct: vi.fn(),
+    BestSellerRankConflictError,
+  };
+});
+import { updateProduct, getAllCategories, getProduct, BestSellerRankConflictError } from '@/app/lib/productStore';
+vi.mock('@/app/lib/cloudinaryHelper', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/app/lib/cloudinaryHelper')>();
+  return {
+    ...actual,
+    isCloudinaryImageMissing: vi.fn(async () => false),
+    missingCloudinaryImages: vi.fn(async () => []),
+  };
+});
+import { isCloudinaryImageMissing, missingCloudinaryImages } from '@/app/lib/cloudinaryHelper';
 vi.mock('@/app/lib/contentStore', () => {
   class ContentProductConflictError extends Error {
     constructor(public readonly productId: string) {
@@ -558,5 +576,76 @@ describe('POST /api/revisions/[id]/restore — customer notes', () => {
     }
     expect(runTransaction).not.toHaveBeenCalled();
     expect(conn.query).not.toHaveBeenCalled();
+  });
+});
+
+// A snapshot may name things that are not there any more: a best-seller rank
+// another product holds now, a picture deleted from Cloudinary since.
+describe('POST /api/revisions/[id]/restore — what the snapshot names is gone or taken', () => {
+  beforeEach(() => {
+    vi.mocked(getSession).mockResolvedValue(admin);
+  });
+
+  it("a product whose rank another product holds now: 409 with the reason, not a bare 500", async () => {
+    vi.mocked(getRevision).mockResolvedValue({
+      id: 'r1', entityType: 'product', entityId: 'p1', data: { title_en: 'old', bestSellerRank: 3 }, createdAt: 't',
+    } as never);
+    vi.mocked(updateProduct).mockRejectedValue(new BestSellerRankConflictError(3));
+    const res = await restorePOST(postReq() as never, ctx('r1'));
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toContain('3');
+  });
+
+  it("a product whose old picture was deleted: everything else comes back, the CURRENT picture stays", async () => {
+    vi.mocked(getRevision).mockResolvedValue({
+      id: 'r1', entityType: 'product', entityId: 'p1',
+      data: { title_en: 'old', image: 'https://res.cloudinary.com/demo/image/upload/v1/old.jpg' }, createdAt: 't',
+    } as never);
+    vi.mocked(isCloudinaryImageMissing).mockResolvedValueOnce(true);
+    vi.mocked(updateProduct).mockResolvedValue({ id: 'p1' } as never);
+    const res = await restorePOST(postReq() as never, ctx('r1'));
+    expect(res.status).toBe(200);
+    expect(updateProduct).toHaveBeenLastCalledWith('p1', { title_en: 'old' });
+    expect((await res.json()).warning).toContain('คงรูปปัจจุบันไว้');
+  });
+
+  it("a product whose old picture is still there: restored as it was", async () => {
+    const image = 'https://res.cloudinary.com/demo/image/upload/v1/old.jpg';
+    vi.mocked(getRevision).mockResolvedValue({
+      id: 'r1', entityType: 'product', entityId: 'p1', data: { title_en: 'old', image }, createdAt: 't',
+    } as never);
+    vi.mocked(isCloudinaryImageMissing).mockResolvedValueOnce(false);
+    vi.mocked(updateProduct).mockResolvedValue({ id: 'p1' } as never);
+    const res = await restorePOST(postReq() as never, ctx('r1'));
+    expect(res.status).toBe(200);
+    expect(updateProduct).toHaveBeenLastCalledWith('p1', { title_en: 'old', image });
+    expect((await res.json()).warning).toBeUndefined();
+  });
+
+  it("a content whose pictures were deleted: refused, saying how many — nothing written", async () => {
+    vi.mocked(getRevision).mockResolvedValue({
+      id: 'r2', entityType: 'content', entityId: 'c1',
+      data: {
+        title: 'old',
+        blocks: [
+          { id: 'b1', type: 'image', imageUrl: 'https://res.cloudinary.com/demo/image/upload/v1/a.jpg' },
+          { id: 'b2', type: 'image', imageUrl: 'https://res.cloudinary.com/demo/image/upload/v1/b.jpg' },
+        ],
+      },
+      createdAt: 't',
+    } as never);
+    vi.mocked(missingCloudinaryImages).mockResolvedValueOnce([
+      'https://res.cloudinary.com/demo/image/upload/v1/a.jpg',
+      'https://res.cloudinary.com/demo/image/upload/v1/b.jpg',
+    ]);
+    vi.mocked(updateContent).mockClear();
+    const res = await restorePOST(postReq() as never, ctx('r2'));
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toContain('2 รูป');
+    expect(updateContent).not.toHaveBeenCalled();
+    expect(vi.mocked(missingCloudinaryImages).mock.calls.at(-1)![0]).toEqual([
+      'https://res.cloudinary.com/demo/image/upload/v1/a.jpg',
+      'https://res.cloudinary.com/demo/image/upload/v1/b.jpg',
+    ]);
   });
 });
