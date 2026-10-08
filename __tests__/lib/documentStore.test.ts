@@ -26,6 +26,8 @@ import {
   addDocument,
   updateDocument,
   deleteDocument,
+  isDocumentPublic,
+  setDocumentPublished,
 } from '@/app/lib/documentStore';
 import type { DocumentData } from '@/app/lib/documentStore';
 
@@ -64,6 +66,7 @@ describe('documentStore', () => {
           coverUrl: 'https://x/one.png',
           createdAt: '2026-01-01T00:00:00Z',
           sortOrder: 5,
+          isPublished: true,
         } satisfies DocumentData,
       ]);
     });
@@ -267,6 +270,45 @@ describe('documentStore', () => {
       const [sql, params] = callArgs(0);
       expect(sql).toContain('DELETE FROM documents WHERE id = ?');
       expect(params).toEqual(['d-1']);
+    });
+  });
+
+  // A catalog can be hidden from visitors without being deleted (schema v48).
+  describe('isPublished — showing or hiding a catalog', () => {
+    it('reads the column as a boolean; a row from before v48 (no column) is shown', async () => {
+      mockedQuery.mockResolvedValue([[
+        { ...fullRow, id: 'shown', isPublished: 1 },
+        { ...fullRow, id: 'hidden', isPublished: 0 },
+        { ...fullRow, id: 'old' },
+      ]] as never);
+      const docs = await getAllDocuments();
+      expect(docs.map((d) => [d.id, d.isPublished])).toEqual([['shown', true], ['hidden', false], ['old', true]]);
+    });
+
+    it('isDocumentPublic: only an explicit false hides', () => {
+      expect(isDocumentPublic({ isPublished: true })).toBe(true);
+      expect(isDocumentPublic({})).toBe(true);
+      expect(isDocumentPublic({ isPublished: false })).toBe(false);
+    });
+
+    it('setDocumentPublished writes the one column, and says whether the row was there', async () => {
+      mockedQuery.mockResolvedValueOnce([{ affectedRows: 1 }] as never);
+      expect(await setDocumentPublished('d-1', false)).toBe(true);
+      expect(callArgs(0)[0]).toBe('UPDATE documents SET isPublished = ? WHERE id = ?');
+      expect(callArgs(0)[1]).toEqual([false, 'd-1']);
+
+      mockedQuery.mockResolvedValueOnce([{ affectedRows: 0 }] as never);
+      expect(await setDocumentPublished('missing', true)).toBe(false);
+    });
+
+    it('a revision restore (updateDocument) never touches it', async () => {
+      mockedQuery
+        .mockResolvedValueOnce([[fullRow]] as never)
+        .mockResolvedValueOnce([{ affectedRows: 1 }] as never);
+      await updateDocument('d-1', { title: 'ใหม่', isPublished: false } as never);
+      const update = mockedQuery.mock.calls.map((c) => String(c[0])).find((s) => s.startsWith('UPDATE documents'));
+      expect(update).toBeDefined();
+      expect(update).not.toContain('isPublished');
     });
   });
 });

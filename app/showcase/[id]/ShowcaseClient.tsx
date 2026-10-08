@@ -154,6 +154,12 @@ function columnSizes(small: string, px: (column: number) => number): string {
   return `${small}, (max-width: 1279px) ${at(COLUMN_PX.lg)}, (max-width: 1535px) ${at(COLUMN_PX.xl)}, ${at(COLUMN_PX.xxl)}`;
 }
 
+/** The browser asks sites to save data (Save-Data / Lite mode). */
+function browserSavesData(): boolean {
+  if (typeof navigator === "undefined") return false;
+  return (navigator as Navigator & { connection?: { saveData?: boolean } }).connection?.saveData === true;
+}
+
 function GalleryViewer({
   block,
   isEditing,
@@ -178,8 +184,15 @@ function GalleryViewer({
   /** What the page is about — the alt text of its images. */
   imageAlt: string;
 }) {
+  const images = block.imageUrls || [];
   const [localIndex, setLocalIndex] = useState(block.selectedImageIndex || 0);
-  const activeIndex = isEditing ? (block.selectedImageIndex || 0) : localIndex;
+  // A stored index past the end (a picture removed since) shows the last
+  // picture, never none — no picture would be "visible", the box would stay
+  // empty and nothing would ever warm the others up.
+  const activeIndex = Math.min(
+    isEditing ? (block.selectedImageIndex || 0) : localIndex,
+    Math.max(images.length - 1, 0)
+  );
 
   const setIndex = (idx: number) => {
     if (isEditing) {
@@ -189,7 +202,28 @@ function GalleryViewer({
     }
   };
 
-  const images = block.imageUrls || [];
+  // Picking a thumbnail must show its picture at once. The big box used to
+  // hold ONE <img> whose src changed on click, so the large size of a picture
+  // was first requested at that moment (only its 96px thumbnail had been
+  // fetched) — plus, the first time, Cloudinary making that size — and the box
+  // sat on the loading skeleton every time. Now every picture has its own
+  // large <img> in the box, stacked, and only the chosen one is visible: a
+  // click just changes which one shows.
+  //
+  // The others are mounted only once the visible one has loaded (or the
+  // visitor reaches for the gallery), so they never compete with the first
+  // picture — the page's LCP when the gallery opens the page — and the
+  // server-rendered HTML still carries the chosen picture alone. `lazy` keeps
+  // a gallery far down the page from fetching them before it is near.
+  //
+  // A visitor whose browser asks to save data (Save-Data / Lite mode) gets no
+  // background loading: each picture is fetched when picked, as before.
+  const [warm, setWarm] = useState(false);
+  const warmUp = () => {
+    if (!browserSavesData()) setWarm(true);
+  };
+  const [initialIndex] = useState(activeIndex);
+  const mainSizes = columnSizes("(max-width: 1023px) 100vw", (column) => column - 32);
 
   return (
     <div className="flex flex-col items-center gap-4 w-full">
@@ -198,16 +232,33 @@ function GalleryViewer({
         {images.length > 0 ? (
           // Shorter on a phone (400px was most of its screen), taller on a
           // wide one, where the column is too.
-          <div className="relative w-full h-72 sm:h-100 xl:h-128">
-            <SkeletonImage
-              src={images[activeIndex]}
-              alt={images.length > 1 ? `${imageAlt} – รูปที่ ${activeIndex + 1}` : imageAlt}
-              fill
-              sizes={columnSizes("(max-width: 1023px) 100vw", (column) => column - 32)}
-              className="object-contain rounded-lg shadow-sm"
-              priority={isFirstBlock}
-              loading={isFirstBlock ? undefined : "lazy"}
-            />
+          <div
+            className="relative w-full h-72 sm:h-100 xl:h-128"
+            onPointerEnter={warmUp}
+            onTouchStart={warmUp}
+          >
+            {images.map((url, idx) => {
+              const active = idx === activeIndex;
+              if (!active && !warm) return null;
+              return (
+                <SkeletonImage
+                  key={`${idx}-${url}`}
+                  src={url}
+                  // A hidden picture is not part of the page for a screen
+                  // reader: one image, the visible one.
+                  alt={active ? (images.length > 1 ? `${imageAlt} – รูปที่ ${idx + 1}` : imageAlt) : ""}
+                  aria-hidden={active ? undefined : true}
+                  fill
+                  sizes={mainSizes}
+                  className={`object-contain rounded-lg shadow-sm ${active ? "" : "opacity-0 pointer-events-none"}`}
+                  priority={isFirstBlock && idx === initialIndex}
+                  loading={isFirstBlock && idx === initialIndex ? undefined : "lazy"}
+                  fetchPriority={active ? undefined : "low"}
+                  onLoad={active ? warmUp : undefined}
+                  onError={active ? warmUp : undefined}
+                />
+              );
+            })}
           </div>
         ) : (
           <div className="flex flex-col items-center justify-center h-full text-gray-400">
@@ -235,6 +286,8 @@ function GalleryViewer({
                 className={`relative w-16 h-16 sm:w-24 sm:h-24 rounded-md overflow-hidden border-4 cursor-pointer ${activeIndex === idx ? "border-orange-500 shadow-md" : "border-transparent"
                   } hover:border-orange-300 transition-all`}
                 onClick={() => setIndex(idx)}
+                onPointerEnter={warmUp}
+                onTouchStart={warmUp}
               >
                 <SkeletonImage
                   src={url}

@@ -7,7 +7,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, cleanup } from "@testing-library/react";
 
-vi.mock("@/app/lib/documentStore", () => ({ getDocument: vi.fn() }));
+vi.mock("@/app/lib/documentStore", () => ({
+  getDocument: vi.fn(),
+  isDocumentPublic: (d: { isPublished?: boolean }) => d.isPublished !== false,
+}));
+// A visitor — hidden catalogs are covered by catalogHidden.test.tsx.
+vi.mock("@/app/lib/session", () => ({ getSession: vi.fn(async () => null) }));
 vi.mock("@/app/document/[id]/PdfViewerWrapper", () => ({ default: () => null }));
 
 import { getDocument } from "@/app/lib/documentStore";

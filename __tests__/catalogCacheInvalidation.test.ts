@@ -93,7 +93,7 @@ function routeFilesUnder(dir: string): string[] {
 function exportedMutatorNames(file: string): string[] {
   const source = readFileSync(file, 'utf8');
   const matches = source.matchAll(
-    /^export (?:async )?(?:function|const) ((?:add|update|delete|reorder|hardDelete)\w*)/gm
+    /^export (?:async )?(?:function|const) ((?:add|update|delete|reorder|hardDelete|set)\w*)/gm
   );
   return [...matches].map((m) => m[1]);
 }
@@ -131,7 +131,7 @@ describe('every catalog write invalidates the catalog cache', () => {
       ])
     );
     expect(groups.find((g) => g.tag === 'documents')!.names).toEqual(
-      expect.arrayContaining(['addDocument', 'updateDocument', 'deleteDocument'])
+      expect.arrayContaining(['addDocument', 'updateDocument', 'deleteDocument', 'setDocumentPublished'])
     );
 
     const routes = routeFilesUnder(repoFile('app', 'api'));

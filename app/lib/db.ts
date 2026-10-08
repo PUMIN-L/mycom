@@ -13,7 +13,7 @@ import { repairTruncatedRichText } from "./sanitizeHtml";
 // did not lower the 33 already written to `settings`, so the next change to
 // reuse 33 was skipped entirely and its tables were never created in
 // production. Reverting a migration means moving FORWARD to a new number.
-const SCHEMA_VERSION = 47;
+const SCHEMA_VERSION = 48;
 
 type DbPool = ReturnType<typeof mysql.createPool>;
 
@@ -173,9 +173,20 @@ async function bootstrapSchemaOnce(): Promise<void> {
           pdfUrl VARCHAR(1024) NOT NULL,
           coverUrl VARCHAR(1024) NOT NULL,
           createdAt VARCHAR(255) NOT NULL,
-          sortOrder INT DEFAULT 0
+          sortOrder INT DEFAULT 0,
+          isPublished BOOLEAN NOT NULL DEFAULT TRUE
         )
       `);
+
+    // v48 — a catalog can be hidden from visitors without being deleted
+    // (documentStore.isDocumentPublic). Every existing catalog stays shown.
+    try {
+      await connection.query(
+        `ALTER TABLE documents ADD COLUMN IF NOT EXISTS isPublished BOOLEAN NOT NULL DEFAULT TRUE`
+      );
+    } catch (error) {
+      if (!isBenignSchemaError(error)) throw error;
+    }
 
     // ── Settings table (key-value store for CMS-configurable options) ─────
     await connection.query(`

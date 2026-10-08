@@ -114,6 +114,9 @@ export interface DocumentData {
   coverUrl: string;
   createdAt: string;
   sortOrder: number;
+  /** false = hidden from visitors (/catalog, its page, the sitemap); an admin
+   *  still sees it. Missing = shown — documents saved before v48. */
+  isPublished?: boolean;
 }
 
 /**

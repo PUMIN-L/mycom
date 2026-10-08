@@ -1459,6 +1459,29 @@ stays disallowed) so the catalogs' text can be indexed; `/document/[id]` links
 the PDF plainly for crawlers, and the `download=1` copy sends
 `X-Robots-Tag: noindex` (same file, second URL).
 
+**Hiding a catalog** (schema v48, `documents.isPublished`, default TRUE). A
+hidden catalog does not exist for a visitor: not on `/catalog`, not at
+`/document/[id]` (404, title included), not in the sitemap, not in the public
+`GET /api/documents`. The one rule is `isDocumentPublic` in
+`documentStore.ts`. An admin sees every catalog, the hidden ones marked, and
+switches one with `PATCH /api/documents/[id] { isPublished }` — from the card
+on `/catalog` or on `/documents`. `/catalog` is ISR like `/showcase/[id]`
+and follows the same rule: the admin's copy is rendered **only in Draft Mode**,
+the session is read only there, and `CatalogClient` is keyed on the copy and
+refreshes once when it holds the other viewer's. **The PDF proxy follows it
+too**: `/document/[id]` links its PDF through `/api/documents/proxy` for
+crawlers, so a PDF belonging only to hidden catalogs is a 404 there for a
+visitor — matched on the FILE (the URL's last segment, the upload's random
+id), because Cloudinary serves one file with or without its /v123/ version,
+with transformations and with any query string — and is served to an admin with
+`Cache-Control: private, no-store` so no shared cache keeps it. A copy the CDN
+already holds from before the hiding lives out its `s-maxage` (a day at most —
+the same window as a deleted document). It is a visibility rule, not a privacy
+boundary: the file stays public on Cloudinary, and when the catalog list cannot
+be read the proxy serves the PDF rather than failing every catalog. Not a
+revision, and a revision restore never changes it (`updateDocument` does not
+write the column).
+
 **Content images** render through `ResponsiveImage`: Cloudinary resizes and
 re-encodes them from the URL (`lib/cloudinaryUrl.ts`, `f_auto,q_auto,c_limit,w_…`
 + srcset), the stored URL never changes, and if the resized URL fails (an

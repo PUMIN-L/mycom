@@ -38,6 +38,8 @@ export default function DocumentListClient({
   const [editDocTitle, setEditDocTitle] = useState("");
   const [editDocDesc, setEditDocDesc] = useState("");
   const [savingDoc, setSavingDoc] = useState(false);
+  // The catalog whose show / hide is being saved.
+  const [togglingDocId, setTogglingDocId] = useState<string | null>(null);
 
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
   const [errorModal, setErrorModal] = useState<{ isOpen: boolean; title?: string; message: string }>({
@@ -182,6 +184,28 @@ export default function DocumentListClient({
     }
   }
 
+  // Show or hide a catalog on the site (/catalog, its page, the sitemap). The
+  // same switch as the one on /catalog itself.
+  async function handleTogglePublished(item: DocumentData) {
+    if (togglingDocId) return;
+    const next = item.isPublished === false;
+    setTogglingDocId(item.id);
+    try {
+      const res = await fetch(`/api/documents/${encodeURIComponent(item.id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isPublished: next }),
+      });
+      if (!res.ok) throw new Error();
+      setDocuments((prev) => prev.map((d) => (d.id === item.id ? { ...d, isPublished: next } : d)));
+      showToast(next ? "แสดงแคตตาล็อกแล้ว" : "ซ่อนแคตตาล็อกแล้ว ผู้เข้าชมจะไม่เห็นอีก", "success");
+    } catch {
+      showToast("เปลี่ยนการแสดงแคตตาล็อกไม่สำเร็จ", "error");
+    } finally {
+      setTogglingDocId(null);
+    }
+  }
+
   async function handleDeleteDocument(item: DocumentData) {
     setDeletingDocId(item.id);
     try {
@@ -303,7 +327,7 @@ export default function DocumentListClient({
                   >
                     <Link href={`/document/${doc.id}`} target="_blank" rel="noopener noreferrer" className="block relative aspect-[4/3] bg-gray-50 border-b border-gray-100 p-4 overflow-hidden">
                       {/* We use standard img here because Cloudinary returns a jpg and we might not know dimensions */}
-                      <div className="relative w-full h-full shadow-sm rounded overflow-hidden">
+                      <div className={`relative w-full h-full shadow-sm rounded overflow-hidden ${doc.isPublished === false ? "opacity-50 grayscale" : ""}`}>
                         <img
                           src={doc.coverUrl}
                           alt={doc.title}
@@ -311,6 +335,11 @@ export default function DocumentListClient({
                           loading="lazy"
                         />
                       </div>
+                      {doc.isPublished === false && (
+                        <span className="absolute top-3 left-3 px-2.5 py-1 rounded-full bg-gray-800/85 text-white text-xs font-bold shadow">
+                          ซ่อนอยู่
+                        </span>
+                      )}
                       <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors duration-300 flex items-center justify-center">
                         <div className="bg-white/90 backdrop-blur-sm px-4 py-2 rounded-full text-sm font-bold text-gray-900 opacity-0 group-hover:opacity-100 transition-opacity transform translate-y-4 group-hover:translate-y-0">
                           ดูเอกสาร PDF
@@ -335,6 +364,17 @@ export default function DocumentListClient({
                             className="flex-1 py-1.5 text-xs font-bold text-blue-500 hover:text-white hover:bg-blue-500 rounded-lg transition-colors border border-blue-200"
                           >
                             แก้ไข
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.preventDefault();
+                              handleTogglePublished(doc);
+                            }}
+                            disabled={togglingDocId !== null}
+                            title={doc.isPublished === false ? "แสดงแคตตาล็อกนี้ให้ผู้เข้าชมเห็น" : "ซ่อนแคตตาล็อกนี้จากผู้เข้าชม"}
+                            className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-colors border disabled:opacity-60 disabled:cursor-wait ${doc.isPublished === false ? "text-green-600 border-green-200 hover:text-white hover:bg-green-600" : "text-gray-600 border-gray-200 hover:text-white hover:bg-gray-700"}`}
+                          >
+                            {togglingDocId === doc.id ? "..." : doc.isPublished === false ? "แสดง" : "ซ่อน"}
                           </button>
                           <button
                             onClick={(e) => {

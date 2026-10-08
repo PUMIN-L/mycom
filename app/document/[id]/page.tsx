@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { getDocument } from "../../lib/documentStore";
+import { getDocument, isDocumentPublic } from "../../lib/documentStore";
+import { getSession } from "../../lib/session";
 import { SITE_NAME, SITE_URL } from "../../lib/site";
 import { jsonLdHtml } from "../../lib/jsonLd";
 import { pageMetadata } from "../../lib/pageMetadata";
@@ -9,9 +10,17 @@ import PdfViewerWrapper from "./PdfViewerWrapper";
 
 export const dynamic = "force-dynamic";
 
+/** The document, or null when there is none — or it is hidden and the viewer
+ *  is not an admin: to a visitor a hidden catalog does not exist. */
+async function visibleDocument(id: string) {
+  const [doc, session] = await Promise.all([getDocument(id), getSession()]);
+  if (!doc || (!session && !isDocumentPublic(doc))) return null;
+  return doc;
+}
+
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params;
-  const doc = await getDocument(id);
+  const doc = await visibleDocument(id);
   if (!doc) return { title: "ไม่พบเอกสาร" };
   // No brand in the title: the root template appends it (this used to add
   // " - Profin Lab Scale" too, so <title> carried the brand twice).
@@ -25,7 +34,7 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
 
 export default async function DocumentPreviewPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const doc = await getDocument(id);
+  const doc = await visibleDocument(id);
 
   if (!doc) {
     notFound();
@@ -102,6 +111,13 @@ export default async function DocumentPreviewPage({ params }: { params: Promise<
           </a>
         </div>
       </div>
+
+      {/* Only an admin reaches a hidden catalog's page (visibleDocument). */}
+      {!isDocumentPublic(doc) && (
+        <div className="px-3 sm:px-6 py-2 bg-amber-50 border-b border-amber-200 text-amber-800 text-sm font-semibold shrink-0">
+          แคตตาล็อกนี้ถูกซ่อนอยู่ ผู้เข้าชมทั่วไปจะไม่เห็นในหน้าแคตตาล็อก และเปิดหน้านี้ไม่ได้
+        </div>
+      )}
 
       {/* PDF Viewer */}
       <div className="flex-1 w-full bg-gray-200 overflow-hidden relative">

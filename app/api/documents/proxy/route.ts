@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createRateLimiter, clientKey } from "../../../lib/rateLimit";
 import { pdfContentDisposition } from "../../../lib/pdfFilename";
+import { getAllDocuments, isDocumentPublic } from "../../../lib/documentStore";
+import { getSession } from "../../../lib/session";
 
 export const dynamic = "force-dynamic";
 
@@ -68,6 +70,47 @@ function cacheControlFor(url: URL): string {
   return /\/v\d+\//.test(url.pathname) ? PDF_CACHE_VERSIONED : PDF_CACHE_UNVERSIONED;
 }
 
+/**
+ * Whether `url` is the PDF of a HIDDEN catalog — and of no shown one
+ * (documentStore.isDocumentPublic). /document/[id] links its PDF through here
+ * for crawlers, so without this a hidden catalog's PDF stayed indexed and kept
+ * being served from our domain after its page was gone.
+ *
+ * Matched on the FILE — the last path segment, the upload's random public id —
+ * not the whole URL: Cloudinary serves one file under many URLs (with or
+ * without the /v123/ version, with transformations, with a query string), and
+ * matching the exact URL let "…/upload/hidden.pdf" past a hidden
+ * "…/upload/v1/hidden.pdf". This is a visibility rule, not a privacy
+ * boundary: the file stays public on Cloudinary, and a failed read of the
+ * catalog list serves the PDF rather than taking every catalog's PDF down.
+ */
+function fileOf(url: URL): string {
+  const last = url.pathname.split("/").pop() ?? "";
+  try {
+    return decodeURIComponent(last);
+  } catch {
+    return last; // a malformed %-sequence: compare it as it stands
+  }
+}
+
+async function isHiddenCatalogPdf(url: URL): Promise<boolean> {
+  const file = fileOf(url);
+  if (!file) return false;
+  try {
+    const owners = (await getAllDocuments()).filter((d) => {
+      try {
+        return fileOf(new URL(d.pdfUrl)) === file;
+      } catch {
+        return false;
+      }
+    });
+    return owners.length > 0 && owners.every((d) => !isDocumentPublic(d));
+  } catch (error) {
+    console.error("Proxy: could not read the catalog list:", error);
+    return false;
+  }
+}
+
 function parseAllowedUrl(raw: string): URL | null {
   let url: URL;
   try {
@@ -110,6 +153,13 @@ export async function GET(request: NextRequest) {
     return new NextResponse("URL not allowed", { status: 400 });
   }
 
+  // A hidden catalog's PDF exists for an admin only — and is never stored by
+  // a shared cache on the admin's behalf (Cache-Control below).
+  const hidden = await isHiddenCatalogPdf(url);
+  if (hidden && !(await getSession())) {
+    return new NextResponse("Not found", { status: 404 });
+  }
+
   try {
     // redirect: "manual" so a 3xx from the upstream cannot bounce the request
     // to a host outside the allowlist (open-redirect -> SSRF bypass).
@@ -142,7 +192,7 @@ export async function GET(request: NextRequest) {
     // mostly product names and specs — but only the inline copy should be
     // indexed: the download variant is the same file under a second URL.
     if (isDownload) headers.set("X-Robots-Tag", "noindex");
-    headers.set("Cache-Control", cacheControlFor(url));
+    headers.set("Cache-Control", hidden ? "private, no-store" : cacheControlFor(url));
 
     return new NextResponse(response.body, { headers });
   } catch (error) {

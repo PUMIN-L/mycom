@@ -2,7 +2,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import { GET, POST } from '@/app/api/documents/route';
-import { DELETE, PUT } from '@/app/api/documents/[id]/route';
+import { DELETE, PUT, PATCH } from '@/app/api/documents/[id]/route';
 import { GET as PROXY_GET } from '@/app/api/documents/proxy/route';
 
 // Document store — every function the two collection/item handlers touch.
@@ -12,6 +12,9 @@ vi.mock('@/app/lib/documentStore', () => ({
   addDocument: vi.fn(),
   updateDocument: vi.fn(),
   deleteDocument: vi.fn(),
+  setDocumentPublished: vi.fn(),
+  // The real rule (documentStore.ts) — a pure function, nothing to fake.
+  isDocumentPublic: (d: { isPublished?: boolean }) => d.isPublished !== false,
 }));
 import {
   getAllDocuments,
@@ -19,6 +22,7 @@ import {
   addDocument,
   updateDocument,
   deleteDocument,
+  setDocumentPublished,
 } from '@/app/lib/documentStore';
 
 // DELETE purges the PDF + cover from Cloudinary via the helper.
@@ -32,6 +36,7 @@ import { safeDeleteCloudinaryImage } from '@/app/lib/imageUsageHelper';
 
 // Neither documents handler imports next/cache, but honor the shared mock list.
 vi.mock('next/cache', () => ({ revalidateTag: vi.fn() }));
+import { revalidateTag } from 'next/cache';
 
 // Drive the REAL requireAuth by controlling getSession (null = anonymous).
 vi.mock('@/app/lib/session', () => ({ getSession: vi.fn() }));
@@ -518,5 +523,149 @@ describe('Documents API Route', () => {
       for (let i = 0; i < CEILING; i++) await spoof(i);
       expect((await spoof(CEILING)).status).toBe(429);
     });
+  });
+});
+
+// Hiding a catalog (schema v48): a visitor never sees it — not in the list API
+// — and only an admin can switch it.
+describe('Documents API — hidden catalogs', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(getSession).mockResolvedValue(null);
+  });
+
+  const DOCS = [
+    { id: 'shown', isPublished: true },
+    { id: 'hidden', isPublished: false },
+    { id: 'old' },
+  ];
+
+  it('GET leaves hidden catalogs out for a visitor, and gives an admin all of them', async () => {
+    vi.mocked(getAllDocuments).mockResolvedValue(DOCS as never);
+    expect((await (await GET()).json()).map((d: { id: string }) => d.id)).toEqual(['shown', 'old']);
+
+    vi.mocked(getSession).mockResolvedValue(adminSession);
+    expect((await (await GET()).json()).map((d: { id: string }) => d.id)).toEqual(['shown', 'hidden', 'old']);
+  });
+
+  it('PATCH is admin only', async () => {
+    const res = await PATCH(mutatingRequest('PATCH', { isPublished: false }), ctx('d-1'));
+    expect(res.status).toBe(401);
+    expect(setDocumentPublished).not.toHaveBeenCalled();
+  });
+
+  it('PATCH hides and shows, busting the cached catalog', async () => {
+    vi.mocked(getSession).mockResolvedValue(adminSession);
+    vi.mocked(setDocumentPublished).mockResolvedValue(true);
+    const res = await PATCH(mutatingRequest('PATCH', { isPublished: false }), ctx('d-1'));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ success: true, isPublished: false });
+    expect(setDocumentPublished).toHaveBeenCalledWith('d-1', false);
+    expect(revalidateTag).toHaveBeenCalledWith('documents', { expire: 0 });
+  });
+
+  it.each([[{}], [{ isPublished: 'false' }], [{ isPublished: 0 }], [null]])(
+    'PATCH refuses %j with 400 — nothing written',
+    async (body) => {
+      vi.mocked(getSession).mockResolvedValue(adminSession);
+      const res = await PATCH(mutatingRequest('PATCH', body), ctx('d-1'));
+      expect(res.status).toBe(400);
+      expect(setDocumentPublished).not.toHaveBeenCalled();
+    }
+  );
+
+  it('PATCH answers 404 for a catalog that is not there, and busts nothing', async () => {
+    vi.mocked(getSession).mockResolvedValue(adminSession);
+    vi.mocked(setDocumentPublished).mockResolvedValue(false);
+    const res = await PATCH(mutatingRequest('PATCH', { isPublished: true }), ctx('missing'));
+    expect(res.status).toBe(404);
+    expect(revalidateTag).not.toHaveBeenCalled();
+  });
+});
+
+// /document/[id] links its PDF through the proxy for crawlers, so a hidden
+// catalog's PDF would otherwise stay indexed and keep being served from our
+// domain after its page went away.
+describe('GET /api/documents/proxy — a hidden catalog\'s PDF', () => {
+  const HIDDEN_PDF = 'https://res.cloudinary.com/demo/raw/upload/v1/hidden.pdf';
+  const SHOWN_PDF = 'https://res.cloudinary.com/demo/raw/upload/v1/shown.pdf';
+  const upstream = vi.fn();
+  // A fresh address per test: the proxy's rate limiter is per IP.
+  let ip = 0;
+  const get = (raw: string) =>
+    PROXY_GET(
+      new NextRequest(`http://localhost:3000/api/documents/proxy?url=${encodeURIComponent(raw)}`, {
+        headers: { 'x-forwarded-for': `10.9.0.${++ip}` },
+      })
+    );
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.stubEnv('CLOUDINARY_CLOUD_NAME', 'demo');
+    upstream.mockReset();
+    upstream.mockResolvedValue({ status: 200, ok: true, body: null });
+    vi.stubGlobal('fetch', upstream);
+    vi.mocked(getSession).mockResolvedValue(null);
+    vi.mocked(getAllDocuments).mockResolvedValue([
+      { id: 'h', pdfUrl: HIDDEN_PDF, isPublished: false },
+      { id: 's', pdfUrl: SHOWN_PDF, isPublished: true },
+    ] as never);
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  it('is a 404 for a visitor — nothing fetched, nothing cacheable', async () => {
+    const res = await get(HIDDEN_PDF);
+    expect(res.status).toBe(404);
+    expect(res.headers.get('cache-control')).toBeNull();
+    expect(upstream).not.toHaveBeenCalled();
+  });
+
+  it('another URL of the same file does not get past it', async () => {
+    // Cloudinary serves one file under all of these.
+    for (const variant of [
+      `${HIDDEN_PDF}?x=1`,
+      'https://res.cloudinary.com/demo/raw/upload/hidden.pdf',
+      'https://res.cloudinary.com/demo/raw/upload/v999/hidden.pdf',
+      'https://res.cloudinary.com/demo/raw/upload/fl_attachment/v1/hidden.pdf',
+    ]) {
+      expect((await get(variant)).status, variant).toBe(404);
+    }
+    expect(upstream).not.toHaveBeenCalled();
+  });
+
+  it('is served to an admin, but never into a shared cache', async () => {
+    vi.mocked(getSession).mockResolvedValue(adminSession);
+    const res = await get(HIDDEN_PDF);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('cache-control')).toBe('private, no-store');
+  });
+
+  it('a shown catalog\'s PDF is served and cached as before — without reading the session', async () => {
+    const res = await get(SHOWN_PDF);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('cache-control')).toMatch(/^public/);
+    expect(getSession).not.toHaveBeenCalled();
+  });
+
+  it('a PDF a shown catalog also uses stays served', async () => {
+    vi.mocked(getAllDocuments).mockResolvedValue([
+      { id: 'h', pdfUrl: HIDDEN_PDF, isPublished: false },
+      { id: 's2', pdfUrl: HIDDEN_PDF, isPublished: true },
+    ] as never);
+    expect((await get(HIDDEN_PDF)).status).toBe(200);
+  });
+
+  it('a malformed %-sequence in the file name is not a 500', async () => {
+    const res = await get('https://res.cloudinary.com/demo/raw/upload/v1/%zz.pdf');
+    expect(res.status).toBe(200);
+  });
+
+  it('a failed read of the catalog list serves the PDF rather than every PDF failing', async () => {
+    vi.mocked(getAllDocuments).mockRejectedValue(new Error('db down'));
+    const res = await get(HIDDEN_PDF);
+    expect(res.status).toBe(200);
   });
 });

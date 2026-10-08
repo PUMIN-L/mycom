@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { revalidateTag } from "next/cache";
 import { requireAuth, withRoute } from "../../lib/apiHelpers";
-import { addDocument, getAllDocuments } from "../../lib/documentStore";
+import { addDocument, getAllDocuments, isDocumentPublic } from "../../lib/documentStore";
+import { getSession } from "../../lib/session";
 
 export const dynamic = "force-dynamic";
 
@@ -28,8 +29,9 @@ function isOurCloudinaryUrl(value: unknown): value is string {
 export const GET = withRoute(
   "โหลดเอกสารไม่สำเร็จ",
   async () => {
-    const docs = await getAllDocuments();
-    return NextResponse.json(docs);
+    const [docs, session] = await Promise.all([getAllDocuments(), getSession()]);
+    // A hidden catalog exists only for an admin (documentStore.isDocumentPublic).
+    return NextResponse.json(session ? docs : docs.filter(isDocumentPublic));
   }
 );
 

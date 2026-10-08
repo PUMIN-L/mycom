@@ -40,14 +40,14 @@ process.env.DB_USER = 'tester';
 process.env.DB_PASSWORD = 'pw';
 process.env.DB_NAME = 'testdb';
 
-// A version SELECT result that MATCHES SCHEMA_VERSION (47) → bootstrap fast-path,
+// A version SELECT result that MATCHES SCHEMA_VERSION (48) → bootstrap fast-path,
 // skipping DDL. Value is a string because settings stores VARCHAR values.
 //
 // ⚠️ This constant only ever goes UP, in step with db.ts. The bootstrap's fast
 // path is `stored >= SCHEMA_VERSION`, so a number the live database has already
 // recorded can never trigger a migration again — reusing one silently skips the
 // entire migration in production (that is how v33 was burned).
-const SCHEMA_VERSION = '47';
+const SCHEMA_VERSION = '48';
 const SCHEMA_MATCH: [Array<{ value: string }>, unknown[]] = [[{ value: SCHEMA_VERSION }], []];
 // An empty result → no schema_version row / no admin row → full bootstrap.
 const EMPTY: [unknown[], unknown[]] = [[], []];
@@ -1985,6 +1985,22 @@ describe('v47 asset register + stock', () => {
     ]) {
       expect(sql.some((s) => idx.test(s)), String(idx)).toBe(true);
     }
+    expect(mockConnection.query).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO settings'), [SCHEMA_VERSION]);
+  });
+});
+
+// ── v48: a catalog can be hidden without being deleted ───────────────────────
+describe('v48 documents.isPublished', () => {
+  it('adds the column to an existing table, shown by default, and creates new tables with it', async () => {
+    const db = await freshImport();
+    mockConnection.query.mockResolvedValue(EMPTY);
+
+    await db.getDbConnection();
+    const sql = bootstrapSql();
+
+    expect(sql.some((s) => /ALTER TABLE documents ADD COLUMN IF NOT EXISTS isPublished BOOLEAN NOT NULL DEFAULT TRUE/.test(s))).toBe(true);
+    const create = sql.find((s) => s.includes('CREATE TABLE IF NOT EXISTS documents ('))!;
+    expect(create).toMatch(/isPublished BOOLEAN NOT NULL DEFAULT TRUE/);
     expect(mockConnection.query).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO settings'), [SCHEMA_VERSION]);
   });
 });

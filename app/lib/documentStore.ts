@@ -2,7 +2,7 @@ import { cache } from "react";
 import { unstable_cache } from "next/cache";
 import { query } from "./db";
 import type { DocumentData } from "./types";
-import type { RowDataPacket } from "mysql2";
+import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { saveRevision } from "./revisionStore";
 import { sanitizePlainText } from "./sanitizeHtml";
 
@@ -17,7 +17,32 @@ function mapDocumentRow(row: any): DocumentData {
     coverUrl: row.coverUrl,
     createdAt: row.createdAt,
     sortOrder: row.sortOrder || 0,
+    // TINYINT 0/1 from MySQL; a row read before v48 has no column at all.
+    isPublished: row.isPublished === undefined || row.isPublished === null ? true : Boolean(Number(row.isPublished)),
   };
+}
+
+/**
+ * Whether visitors may see a catalog: /catalog, its /document/[id] page, the
+ * sitemap and the public GET /api/documents. An admin sees every one, marked.
+ * The PDF itself stays where it is on Cloudinary — hiding takes the catalog off
+ * the site, it does not make a file someone already has the link to private.
+ */
+export function isDocumentPublic(doc: Pick<DocumentData, "isPublished">): boolean {
+  return doc.isPublished !== false;
+}
+
+/**
+ * Show or hide a catalog. Not a revision: it changes no content, and the
+ * button that did it undoes it. A revision restore never touches it either —
+ * updateDocument does not write this column. False when there is no such row.
+ */
+export async function setDocumentPublished(id: string, isPublished: boolean): Promise<boolean> {
+  const [result] = await query<ResultSetHeader>(
+    "UPDATE documents SET isPublished = ? WHERE id = ?",
+    [isPublished, id]
+  );
+  return result.affectedRows > 0;
 }
 
 // Cached across requests, like the product/category/content catalog reads.

@@ -1,7 +1,7 @@
 import type { MetadataRoute } from "next";
 import { SITE_URL } from "./lib/site";
 import { getAllContentsMeta } from "./lib/contentStore";
-import { getAllDocuments } from "./lib/documentStore";
+import { getAllDocuments, isDocumentPublic } from "./lib/documentStore";
 import { getAllProducts, isProductPublic } from "./lib/productStore";
 import { isMaintenanceMode } from "./lib/settingsStore";
 import { getProductsData } from "./lib/getProductsData";
@@ -116,7 +116,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   // Public document preview pages (downloadable catalogs shown on /catalog).
   let documentRoutes: MetadataRoute.Sitemap = [];
   try {
-    const documents = await getAllDocuments();
+    const documents = (await getAllDocuments()).filter(isDocumentPublic);
     documentRoutes = documents.map((d) => ({
       url: `${SITE_URL}/document/${d.id}`,
       ...lastModified(d.createdAt),
