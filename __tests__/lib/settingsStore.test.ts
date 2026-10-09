@@ -19,7 +19,6 @@ import {
   getContactEmail,
   getCompanyProfile,
   updateCompanyProfile,
-  companyAddressQuery,
   toThaiE164,
   CONTACT_EMAIL_SETTING,
   getCreditTermDays,
@@ -31,7 +30,6 @@ import {
   getSessionEpoch,
   bumpSessionEpoch,
   SESSION_EPOCH_SETTING,
-  type CompanyProfile,
 } from '@/app/lib/settingsStore';
 import { DEFAULT_CREDIT_TERM_DAYS } from '@/app/lib/alertThresholds';
 import { CONTACT_EMAIL } from '@/app/lib/contact';
@@ -146,23 +144,6 @@ describe('settingsStore', () => {
     it('writes nothing when given an empty object', async () => {
       await updateCompanyProfile({});
       expect(query).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('companyAddressQuery', () => {
-    it('composes a single-line address string from every structured field', () => {
-      const profile: CompanyProfile = {
-        phone: '062-012-9895',
-        addressDisplay: 'ignored for the maps query',
-        addressStreet: '93 Soi Ngamwongwan 6 Yaek 19, Ngamwongwan Rd., Bang Khen',
-        addressLocality: 'Mueang Nonthaburi',
-        addressRegion: 'Nonthaburi',
-        addressPostalCode: '11000',
-        addressCountry: 'TH',
-      };
-      expect(companyAddressQuery(profile)).toBe(
-        '93 Soi Ngamwongwan 6 Yaek 19, Ngamwongwan Rd., Bang Khen, Mueang Nonthaburi, Nonthaburi 11000, TH'
-      );
     });
   });
 

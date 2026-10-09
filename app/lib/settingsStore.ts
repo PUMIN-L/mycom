@@ -245,10 +245,5 @@ export async function bumpSessionEpoch(): Promise<number> {
   return Number(await getSetting(SESSION_EPOCH_SETTING)) || 0;
 }
 
-/** Single-line address for a Google Maps text-search query / embed. */
-export function companyAddressQuery(profile: CompanyProfile): string {
-  return `${profile.addressStreet}, ${profile.addressLocality}, ${profile.addressRegion} ${profile.addressPostalCode}, ${profile.addressCountry}`;
-}
-
 /** Thai phone → E.164. Moved to lib/phone.ts (client components need it too); kept here for existing importers. */
 export { toThaiE164 } from "./phone";

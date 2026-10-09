@@ -4,8 +4,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('@/app/lib/settingsStore', () => ({
   getCompanyProfile: vi.fn(),
   getContactEmail: vi.fn(),
-  companyAddressQuery: (p: any) =>
-    `${p.addressStreet}, ${p.addressLocality}, ${p.addressRegion} ${p.addressPostalCode}, ${p.addressCountry}`,
 }));
 import { getCompanyProfile, getContactEmail } from '@/app/lib/settingsStore';
 
@@ -55,9 +53,6 @@ describe('getCompanyInfo', () => {
     expect(info.email).toBe('sales@profinlab.co.th');
     expect(info.phone).toBe('062-012-9895');
     expect(info.address).toBe(sampleProfile.addressDisplay);
-    expect(info.addressMapsQuery).toBe(
-      '93 Soi Ngamwongwan 6 Yaek 19, Mueang Nonthaburi, Nonthaburi 11000, TH'
-    );
     expect(info.profile).toEqual(sampleProfile);
   });
 });
@@ -94,15 +89,6 @@ describe('getCompanyInfo when the database is unreachable', () => {
     });
     expect(info.phone).toBe('');
     expect(info.address).toBe('');
-  });
-
-  it('never emits a half-built Maps query from the blank address', async () => {
-    // companyAddressQuery() over empty fields would produce ", ,   , " and
-    // point a Maps embed at nowhere. Blank is the honest answer.
-    vi.mocked(getCompanyProfile).mockRejectedValue(new Error('db down'));
-    vi.mocked(getContactEmail).mockRejectedValue(new Error('db down'));
-
-    expect((await getCompanyInfo()).addressMapsQuery).toBe('');
   });
 
   it('still answers with the app-wide contact email, not an empty one', async () => {

@@ -30,7 +30,7 @@ const VISITOR = {
 
 function renderForm() {
   const { container } = render(
-    <Contact email="info@example.com" phone="02-000-0000" address="นนทบุรี" addressMapsQuery="นนทบุรี" />
+    <Contact email="info@example.com" phone="02-000-0000" address="นนทบุรี" />
   );
   const form = container.querySelector("form")!;
   const trap = form.querySelector<HTMLInputElement>(`input[name="${CONTACT_HONEYPOT_FIELD}"]`)!;

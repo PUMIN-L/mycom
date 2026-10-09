@@ -65,12 +65,21 @@ describe("Hero (home page)", () => {
 
 // Contact page and footer: on a phone, tapping the number should call.
 describe("Contact page and footer — the phone number calls when tapped", () => {
-  const props = { email: "sales@profinlab.co.th", phone: "02-123-4567, 081-234-5678", address: "บางกอก", addressMapsQuery: "x" };
+  const props = { email: "sales@profinlab.co.th", phone: "02-123-4567, 081-234-5678", address: "บางกอก" };
 
   it("the contact page links each number with tel:", () => {
     render(<Contact {...props} />);
     expect(screen.getByRole("link", { name: "02-123-4567" })).toHaveAttribute("href", "tel:+6621234567");
     expect(screen.getByRole("link", { name: "081-234-5678" })).toHaveAttribute("href", "tel:+66812345678");
+  });
+
+  it("the contact page gives the address as text, with no map to come to", () => {
+    // Customers never come to the premises: the equipment is delivered and
+    // serviced at theirs. A map and "Open in Google Maps" said otherwise.
+    const { container } = render(<Contact {...props} />);
+    expect(screen.getByText(props.address)).toBeInTheDocument();
+    expect(container.querySelector("iframe")).toBeNull();
+    expect(container.querySelector('a[href*="google.com/maps"]')).toBeNull();
   });
 
   it("the footer does too", () => {
@@ -167,7 +176,7 @@ describe("section spacing on a phone", () => {
   // The header's -100px pull-up only from md: on a phone the heading sits
   // under the menu bar by its own padding, not by a negative margin.
   it("Contact: no negative margin on a phone, the same desktop layout from md", () => {
-    const { container } = render(<Contact email="a@b.co" phone="02-123-4567" address="x" addressMapsQuery="x" />);
+    const { container } = render(<Contact email="a@b.co" phone="02-123-4567" address="x" />);
     const section = container.querySelector("section#contact")!;
     expect(classesOf(section)).toEqual(expect.arrayContaining(["pt-10", "pb-20", "md:py-48"]));
     const header = section.querySelector("div > div")!;

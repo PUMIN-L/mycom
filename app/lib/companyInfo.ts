@@ -3,7 +3,6 @@ import { unstable_cache } from "next/cache";
 import {
   getCompanyProfile,
   getContactEmail,
-  companyAddressQuery,
   type CompanyProfile,
 } from "./settingsStore";
 import { CONTACT_EMAIL } from "./contact";
@@ -23,7 +22,6 @@ export interface CompanyInfo {
   email: string;
   phone: string;
   address: string;
-  addressMapsQuery: string;
   /** Structured fields, for building JSON-LD PostalAddress. */
   profile: CompanyProfile;
 }
@@ -37,7 +35,6 @@ const fetchCompanyInfo = async (): Promise<CompanyInfo> => {
     email,
     phone: profile.phone,
     address: profile.addressDisplay,
-    addressMapsQuery: companyAddressQuery(profile),
     profile,
   };
 };
@@ -66,9 +63,6 @@ const COMPANY_INFO_FALLBACK: CompanyInfo = {
   email: CONTACT_EMAIL,
   phone: "",
   address: "",
-  // Deliberately "" rather than companyAddressQuery() over blank fields, which
-  // would build a ", ,   , " string and send a Maps embed to nowhere.
-  addressMapsQuery: "",
   profile: {
     phone: "",
     addressDisplay: "",

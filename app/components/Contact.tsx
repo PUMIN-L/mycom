@@ -18,10 +18,9 @@ interface ContactProps {
   email: string;
   phone: string;
   address: string;
-  addressMapsQuery: string;
 }
 
-export default function Contact({ email, phone, address, addressMapsQuery }: ContactProps) {
+export default function Contact({ email, phone, address }: ContactProps) {
   const t = useT();
   const { isLineModalOpen, closeLineModal, handleLineClick } = useLineContact();
   const [formState, setFormState] = useState({
@@ -187,31 +186,10 @@ export default function Contact({ email, phone, address, addressMapsQuery }: Con
               </div>
             </div>
 
-            {/* Map Element */}
-            <a
-              href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addressMapsQuery)}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="relative block h-72 bg-gray-50 border border-gray-100 overflow-hidden shadow-inner rounded-xl group cursor-pointer"
-            >
-              <iframe
-                src={`https://www.google.com/maps?q=${encodeURIComponent(addressMapsQuery)}&output=embed`}
-                width="100%"
-                height="100%" 
-                style={{ border: 0 }} 
-                loading="lazy" 
-                referrerPolicy="no-referrer-when-downgrade"
-                className="transition-all duration-700 pointer-events-none"
-              ></iframe>
-              <div className="absolute inset-0 bg-black/0 group-hover:bg-black/5 transition-colors flex items-center justify-center">
-                <div className="bg-white/90 backdrop-blur-sm px-4 py-2 rounded-full shadow-lg opacity-0 group-hover:opacity-100 transition-all transform translate-y-4 group-hover:translate-y-0 text-xs font-bold text-[var(--brand-navy)] flex items-center gap-2">
-                  <svg className="w-4 h-4 text-[var(--accent)]" fill="currentColor" viewBox="0 0 24 24">
-                    <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/>
-                  </svg>
-                  Open in Google Maps
-                </div>
-              </div>
-            </a>
+            {/* No map: customers never come to the premises — the equipment is
+                delivered and serviced at theirs, anywhere in Thailand. A map
+                and "Open in Google Maps" told them otherwise. The address
+                above stays, as text. */}
           </div>
 
           {/* Contact Form */}

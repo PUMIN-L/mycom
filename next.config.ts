@@ -25,7 +25,9 @@ const contentSecurityPolicy = [
   "base-uri 'self'",
   "object-src 'none'",
   "frame-ancestors 'none'",
-  "frame-src https://www.google.com https://www.youtube-nocookie.com",
+  // YouTube video blocks only. www.google.com went with the contact page's
+  // map (customers never come to the premises): nothing frames it any more.
+  "frame-src https://www.youtube-nocookie.com",
   "form-action 'self'",
   "img-src 'self' data: blob: https://res.cloudinary.com https://flagcdn.com https://api.qrserver.com",
   "media-src 'self' https://res.cloudinary.com",

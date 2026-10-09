@@ -97,10 +97,12 @@ describe('ProductsJsonLd — ItemList URLs', () => {
   });
 });
 
+// A service-area business: customers never come to the premises — the
+// equipment is delivered and serviced at theirs, anywhere in Thailand. Its
+// Google Business Profile hides the address; this markup must agree.
 describe('ProductsJsonLd — Organization location', () => {
-  const company = (addressMapsQuery: string) => ({
+  const company = () => ({
     email: 'info@example.com',
-    addressMapsQuery,
     profile: {
       phone: '021234567',
       addressStreet: '93 ซอยงามวงศ์วาน 6',
@@ -116,16 +118,31 @@ describe('ProductsJsonLd — Organization location', () => {
     vi.mocked(getProductsData).mockResolvedValue({ products: [], categories: [], contentIdByProduct: {} } as never);
   });
 
-  it('links the Google Maps search for the address in Settings (hasMap)', async () => {
-    vi.mocked(getCompanyInfo).mockResolvedValue(company('93 ซอยงามวงศ์วาน 6, บางเขน, นนทบุรี 11000, TH') as never);
-    const org = (await renderedJsonLd()).map((p) => JSON.parse(p)).find((j) => j['@id']?.endsWith('#organization'));
-    expect(org.hasMap).toBe(
-      `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent('93 ซอยงามวงศ์วาน 6, บางเขน, นนทบุรี 11000, TH')}`
-    );
+  const organization = async () =>
+    (await renderedJsonLd()).map((p) => JSON.parse(p)).find((j) => j['@id']?.endsWith('#organization'));
+
+  it('is a LocalBusiness serving all of Thailand — not a Store, and no map to the door', async () => {
+    vi.mocked(getCompanyInfo).mockResolvedValue(company() as never);
+    const org = await organization();
+    expect(org['@type']).toEqual(['Organization', 'LocalBusiness']);
+    expect(org['@type']).not.toContain('Store');
+    expect(org).not.toHaveProperty('hasMap');
+    expect(org.areaServed).toBe('TH');
+  });
+
+  it('still carries the company address — it is on every quotation and invoice', async () => {
+    vi.mocked(getCompanyInfo).mockResolvedValue(company() as never);
+    expect((await organization()).address).toMatchObject({
+      '@type': 'PostalAddress',
+      addressLocality: 'บางเขน',
+      addressRegion: 'นนทบุรี',
+      postalCode: '11000',
+      addressCountry: 'TH',
+    });
   });
 
   it('states the business hours: Monday to Friday, 08:30 to 17:00', async () => {
-    vi.mocked(getCompanyInfo).mockResolvedValue(company('') as never);
+    vi.mocked(getCompanyInfo).mockResolvedValue(company() as never);
     const org = (await renderedJsonLd()).map((p) => JSON.parse(p)).find((j) => j['@id']?.endsWith('#organization'));
     expect(org.openingHoursSpecification).toEqual([
       {
@@ -137,9 +154,4 @@ describe('ProductsJsonLd — Organization location', () => {
     ]);
   });
 
-  it('leaves hasMap out when there is no address', async () => {
-    vi.mocked(getCompanyInfo).mockResolvedValue(company('') as never);
-    const org = (await renderedJsonLd()).map((p) => JSON.parse(p)).find((j) => j['@id']?.endsWith('#organization'));
-    expect(org).not.toHaveProperty('hasMap');
-  });
 });

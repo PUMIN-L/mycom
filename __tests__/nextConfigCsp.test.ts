@@ -78,4 +78,8 @@ describe("next.config.ts img-src", () => {
       "img-src 'self' data: blob: https://res.cloudinary.com https://flagcdn.com https://api.qrserver.com"
     );
   });
+
+  it("frames YouTube video blocks only — nothing frames Google since the contact map went", async () => {
+    expect(directive(await cspFor("production"), "frame-src")).toBe("frame-src https://www.youtube-nocookie.com");
+  });
 });

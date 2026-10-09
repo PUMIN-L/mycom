@@ -45,15 +45,21 @@ export default async function ProductsJsonLd() {
     return contentId ? `${SITE_URL}/showcase/${contentId}` : undefined;
   };
 
-  // Rich Organization + Store (a LocalBusiness subtype) node: logo, physical
-  // address, contact + LINE, so a real B2B supplier is eligible for the Google
-  // knowledge panel / local results, not just a bare name. Email/phone/address
-  // are admin-editable from /settings (getContactEmail/getCompanyProfile) —
-  // this used to read hardcoded constants that never reflected a Settings-page
-  // change.
+  // Rich Organization + LocalBusiness node: logo, address, contact + LINE, so a
+  // real B2B supplier is eligible for the Google knowledge panel / local
+  // results, not just a bare name. Email/phone/address are admin-editable from
+  // /settings (getContactEmail/getCompanyProfile) — this used to read
+  // hardcoded constants that never reflected a Settings-page change.
+  //
+  // A SERVICE-AREA business: customers never come to the premises — the
+  // equipment is delivered and serviced at theirs, anywhere in Thailand
+  // (areaServed). So LocalBusiness, NOT "Store" (a shop people walk into), and
+  // no hasMap pointing them to the door. Its Google Business Profile hides the
+  // address for the same reason; the two must say the same thing. The address
+  // stays: it is the company's own, printed on every quotation and invoice.
   const organization = {
     "@context": "https://schema.org",
-    "@type": ["Organization", "Store"],
+    "@type": ["Organization", "LocalBusiness"],
     "@id": `${SITE_URL}/#organization`,
     name: SITE_NAME,
     // Tells Google the brand's other names/spellings (Thai transliterations +
@@ -74,12 +80,8 @@ export default async function ProductsJsonLd() {
       postalCode: companyInfo.profile.addressPostalCode,
       addressCountry: companyInfo.profile.addressCountry,
     },
+    // Delivered and serviced anywhere in the country.
     areaServed: "TH",
-    // The same Google Maps search the Contact page links to, from the address
-    // in Settings — a location signal for local results.
-    hasMap: companyInfo.addressMapsQuery
-      ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(companyInfo.addressMapsQuery)}`
-      : undefined,
     openingHoursSpecification: [
       {
         "@type": "OpeningHoursSpecification",

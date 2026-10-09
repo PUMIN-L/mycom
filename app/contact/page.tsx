@@ -39,7 +39,6 @@ export default async function ContactPage() {
           email={info.email}
           phone={info.phone}
           address={info.address}
-          addressMapsQuery={info.addressMapsQuery}
         />
       </main>
       <Footer email={info.email} phone={info.phone} address={info.address} maintenanceOn={maintenanceOn} />

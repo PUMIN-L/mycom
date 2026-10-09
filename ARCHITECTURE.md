@@ -1457,6 +1457,16 @@ language the visitor chose (saved in `localStorage` `idkt-lang`) is applied
 now; never re-add a guess. Indexing English/Chinese separately would need
 per-language URLs and hreflang — not built.
 
+**A service-area business.** Customers never come to the premises: the
+equipment is delivered and serviced at theirs, anywhere in Thailand. Its
+Google Business Profile hides the address, and the site must say the same:
+the Organization JSON-LD (`ProductsJsonLd`) is `["Organization",
+"LocalBusiness"]` — never "Store", a shop people walk into — with
+`areaServed: "TH"` and no `hasMap`; the contact page shows the address as
+text with no map. The address itself stays (it is on every quotation and
+invoice). No `geo` either. With the map gone nothing frames Google, so the
+CSP `frame-src` allows YouTube (video blocks) only.
+
 **Image sitemap.** Each sitemap URL lists the pictures that page shows
 (`images`, through `lib/sitemapImages.ts`), so product photos reach Google
 Images: `/products` every public product photo, a category page its own,
