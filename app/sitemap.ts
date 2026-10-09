@@ -1,12 +1,21 @@
 import type { MetadataRoute } from "next";
 import { SITE_URL } from "./lib/site";
-import { getAllContentsMeta } from "./lib/contentStore";
+import { getAllContentsMeta, getContentImageIndex } from "./lib/contentStore";
 import { getAllDocuments, isDocumentPublic } from "./lib/documentStore";
 import { getAllProducts, isProductPublic } from "./lib/productStore";
 import { isMaintenanceMode } from "./lib/settingsStore";
 import { getProductsData } from "./lib/getProductsData";
 import { PRODUCTS_PATH, categoryPath } from "./lib/catalogPaths";
 import { SERVICE_PAGES, servicePath } from "./lib/servicePages";
+import { sitemapImages } from "./lib/sitemapImages";
+import type { DocumentData } from "./lib/types";
+
+// { images } for the pictures a page shows, or nothing (lib/sitemapImages.ts):
+// the image sitemap is how product photos reach Google Images.
+function withImages(urls: Iterable<unknown>): { images?: string[] } {
+  const images = sitemapImages(urls);
+  return images ? { images } : {};
+}
 
 // Generated at request time so newly-added content/documents appear without a rebuild.
 export const dynamic = "force-dynamic";
@@ -37,12 +46,29 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   // ordinary day, which is the behaviour we want here anyway.
   const maintenanceOn = await isMaintenanceMode();
 
+  // Read before the routes they decorate: /products and the category pages
+  // show the product photos, /catalog the catalog covers. getProductsData
+  // returns public products only and never throws (an empty catalog on a
+  // failed read), so a DB hiccup drops these entries rather than the sitemap.
+  const catalog = await getProductsData();
+  let publicDocuments: DocumentData[] = [];
+  try {
+    publicDocuments = (await getAllDocuments()).filter(isDocumentPublic);
+  } catch (err) {
+    console.error("sitemap: failed to load documents:", err);
+  }
+
   // No lastModified on these. It used to be "now" on every fetch, which tells
   // Google nothing — it learns to ignore a lastmod that always changes — and
   // these pages change when the code does, not on a clock.
   const staticRoutes: MetadataRoute.Sitemap = [
     { url: SITE_URL, changeFrequency: "weekly", priority: 1 },
-    { url: `${SITE_URL}${PRODUCTS_PATH}`, changeFrequency: "weekly", priority: 0.8 },
+    {
+      url: `${SITE_URL}${PRODUCTS_PATH}`,
+      changeFrequency: "weekly",
+      priority: 0.8,
+      ...withImages(catalog.products.map((p) => p.image)),
+    },
     ...SERVICE_PAGES.map((s) => ({
       url: `${SITE_URL}${servicePath(s.slug)}`,
       changeFrequency: "monthly" as const,
@@ -57,22 +83,30 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
             url: `${SITE_URL}/catalog`,
             changeFrequency: "weekly" as const,
             priority: 0.7,
+            ...withImages(publicDocuments.map((d) => d.coverUrl)),
           },
         ]),
   ];
 
   // Category pages /products/{id}-{slug} — only categories with at least one
-  // PUBLIC product: the others 404 (app/products/[slug]). getProductsData
-  // returns public products only and never throws (an empty catalog on a
-  // failed read), so a DB hiccup drops these entries rather than the sitemap.
-  const catalog = await getProductsData();
+  // PUBLIC product: the others 404 (app/products/[slug]).
   const categoryRoutes: MetadataRoute.Sitemap = catalog.categories
     .filter((c) => catalog.products.some((p) => p.categoryId === c.id))
     .map((c) => ({
       url: `${SITE_URL}${categoryPath(c)}`,
       changeFrequency: "weekly",
       priority: 0.8,
+      ...withImages(catalog.products.filter((p) => p.categoryId === c.id).map((p) => p.image)),
     }));
+
+  // The pictures each content page shows. Best-effort on its own: a failed
+  // read costs the content pages their images, not their place in the sitemap.
+  let contentImages: Record<string, string[]> = {};
+  try {
+    contentImages = await getContentImageIndex();
+  } catch (err) {
+    console.error("sitemap: failed to load content images:", err);
+  }
 
   // PUBLIC content pages /showcase/{id} — the ones with Article JSON-LD that
   // actually rank. (The admin hub now lives at /adminpanel — robots-blocked and
@@ -106,6 +140,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
         ...lastModified(c.updatedAt || c.createdAt),
         changeFrequency: "monthly",
         priority: 0.7,
+        ...withImages(contentImages[c.id] ?? []),
       }));
   } catch (err) {
     // Either read failing skips content routes entirely rather than emitting an
@@ -114,18 +149,13 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   }
 
   // Public document preview pages (downloadable catalogs shown on /catalog).
-  let documentRoutes: MetadataRoute.Sitemap = [];
-  try {
-    const documents = (await getAllDocuments()).filter(isDocumentPublic);
-    documentRoutes = documents.map((d) => ({
-      url: `${SITE_URL}/document/${d.id}`,
-      ...lastModified(d.createdAt),
-      changeFrequency: "monthly",
-      priority: 0.5,
-    }));
-  } catch (err) {
-    console.error("sitemap: failed to load documents:", err);
-  }
+  // No images: the page shows the PDF, its cover is on /catalog.
+  const documentRoutes: MetadataRoute.Sitemap = publicDocuments.map((d) => ({
+    url: `${SITE_URL}/document/${d.id}`,
+    ...lastModified(d.createdAt),
+    changeFrequency: "monthly",
+    priority: 0.5,
+  }));
 
   return [...staticRoutes, ...categoryRoutes, ...contentRoutes, ...documentRoutes];
 }

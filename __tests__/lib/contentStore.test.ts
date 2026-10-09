@@ -33,6 +33,7 @@ import {
   getContent,
   getAllContents,
   getAllContentsMeta,
+  getContentImageIndex,
   getContentByProductId,
   getContentsByProductId,
   deleteContent,
@@ -715,5 +716,38 @@ describe('contentStore — the title is refused when too long, never cut', () =>
     mockedQuery.mockResolvedValueOnce([[{ id: 'c-1', title: 'Old', blocks: '[]', createdAt: '2026-01-01', productId: null }]] as never);
     await expect(updateContent('c-1', { title: 'x'.repeat(256) })).rejects.toMatchObject({ status: 400 });
     expect(mockedQuery.mock.calls.some(([sql]) => String(sql).startsWith('UPDATE'))).toBe(false);
+  });
+});
+
+// The image sitemap's source: the URLs each content's blocks show.
+describe('getContentImageIndex', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('pulls only the image URLs out of the blocks — never the bodies', async () => {
+    mockedQuery.mockResolvedValue([[]] as never);
+    await getContentImageIndex();
+    const sql = String(callArgs(0)[0]);
+    expect(sql).toContain("JSON_EXTRACT(blocks, '$[*].imageUrl')");
+    expect(sql).toContain("JSON_EXTRACT(blocks, '$[*].imageUrls')");
+    expect(sql).not.toMatch(/SELECT \*|SELECT id, blocks/);
+  });
+
+  it('merges image blocks and galleries per content, de-duplicated; parsed or string JSON alike', async () => {
+    mockedQuery.mockResolvedValue([[
+      // As mysql2 parses a JSON column…
+      { id: 'c1', imageUrl: ['https://x/a.jpg', 'https://x/b.jpg'], imageUrls: [['https://x/b.jpg', 'https://x/c.jpg']] },
+      // …or as a driver hands it over as text.
+      { id: 'c2', imageUrl: '["https://x/d.jpg"]', imageUrls: null },
+      // Text blocks only: JSON_EXTRACT finds nothing.
+      { id: 'c3', imageUrl: null, imageUrls: null },
+      // Junk never becomes a URL.
+      { id: 'c4', imageUrl: 'not json', imageUrls: [[1, '', null]] },
+    ]] as never);
+    expect(await getContentImageIndex()).toEqual({
+      c1: ['https://x/a.jpg', 'https://x/b.jpg', 'https://x/c.jpg'],
+      c2: ['https://x/d.jpg'],
+    });
   });
 });

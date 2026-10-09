@@ -208,6 +208,49 @@ export const getAllContentsMeta = cache(
   )
 );
 
+/** A JSON column value as mysql2 hands it over: parsed already, or a string. */
+function jsonValue(raw: unknown): unknown {
+  if (typeof raw !== "string") return raw;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The image URLs each content's blocks show — `imageUrl` (image / text-image
+ * blocks) and `imageUrls` (galleries), the same two collectContentImageUrls
+ * reads — by content id. For the image sitemap (app/sitemap.ts).
+ *
+ * JSON_EXTRACT hands back only the URLs, never the rich-text bodies, so this is
+ * not the full blob scan getAllContentsMeta exists to avoid. Cached under the
+ * "products" tag for the same reason as getAllContentsMeta: every content write
+ * — and the product hard-delete that cascades into contents — busts it.
+ */
+export const getContentImageIndex = cache(
+  unstable_cache(
+    async function fetchContentImageIndex(): Promise<Record<string, string[]>> {
+      const [rows] = await query<RowDataPacket[]>(
+        "SELECT id, JSON_EXTRACT(blocks, '$[*].imageUrl') AS imageUrl, JSON_EXTRACT(blocks, '$[*].imageUrls') AS imageUrls FROM contents"
+      );
+      const index: Record<string, string[]> = {};
+      for (const row of rows) {
+        const single = jsonValue(row.imageUrl);
+        const multi = jsonValue(row.imageUrls);
+        const urls = [
+          ...(Array.isArray(single) ? single : []),
+          ...(Array.isArray(multi) ? multi.flat() : []),
+        ].filter((u): u is string => typeof u === "string" && u !== "");
+        if (urls.length > 0) index[String(row.id)] = [...new Set(urls)];
+      }
+      return index;
+    },
+    ["contents_image_index"],
+    { tags: ["products"], revalidate: 300 }
+  )
+);
+
 // Every content linked to a product, bodies included. Unlike
 // getContentByProductId this has no LIMIT: "one content per product" is an
 // invariant the write paths enforce, but a deleter that trusted it would leave

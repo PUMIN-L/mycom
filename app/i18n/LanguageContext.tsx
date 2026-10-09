@@ -13,18 +13,28 @@ const LanguageContext = createContext<LanguageContextType>({
   setLang: () => {},
 });
 
-function detectBrowserLanguage(): Language {
-  if (typeof window === "undefined") return "th";
-  const browserLang = navigator.language || (navigator as unknown as { userLanguage?: string }).userLanguage || "th";
-  const code = browserLang.toLowerCase().slice(0, 2);
-  if (code === "th") return "th";
-  if (code === "zh") return "zh";
-  return "en";
+const STORAGE_KEY = "idkt-lang";
+
+/** The language this visitor picked with the switcher, if any. */
+function savedLanguage(): Language | null {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    return saved === "th" || saved === "en" || saved === "zh" ? saved : null;
+  } catch {
+    return null; // storage blocked (private mode, site data off): no choice saved
+  }
 }
 
 export function LanguageProvider({ children }: { children: ReactNode }) {
   // Start at "th" so the server-rendered HTML matches the first client render
-  // (no hydration mismatch). After mount we sync to the saved/detected language.
+  // (no hydration mismatch). After mount we sync to the language the visitor
+  // PICKED, if any.
+  //
+  // Thai until someone picks otherwise — never guessed from the browser's
+  // language. Googlebot renders pages as an en-US browser, so guessing turned
+  // every page it indexed English after hydration, under a Thai <html lang>,
+  // Thai title and Thai description: the site was indexed for the wrong
+  // language. A visitor reading another language picks it once; it is saved.
   //
   // We intentionally DO NOT gate rendering on a `mounted` flag. The previous
   // `visibility:hidden` wrapper hid the entire page until hydration finished,
@@ -35,17 +45,17 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
   const [lang, setLang] = useState<Language>("th");
 
   useEffect(() => {
-    const saved = localStorage.getItem("idkt-lang") as Language | null;
-    if (saved && ["th", "en", "zh"].includes(saved)) {
-      setLang(saved);
-    } else {
-      setLang(detectBrowserLanguage());
-    }
+    const saved = savedLanguage();
+    if (saved) setLang(saved);
   }, []);
 
   const handleSetLang = (newLang: Language) => {
     setLang(newLang);
-    localStorage.setItem("idkt-lang", newLang);
+    try {
+      localStorage.setItem(STORAGE_KEY, newLang);
+    } catch {
+      // Storage blocked: the choice holds for this page view only.
+    }
   };
 
   return (

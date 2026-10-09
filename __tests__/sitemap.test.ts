@@ -1,8 +1,17 @@
 // @vitest-environment node
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-vi.mock('@/app/lib/contentStore', () => ({ getAllContentsMeta: vi.fn() }));
-vi.mock('@/app/lib/documentStore', () => ({ getAllDocuments: vi.fn() }));
+vi.mock('@/app/lib/contentStore', () => ({
+  getAllContentsMeta: vi.fn(),
+  getContentImageIndex: vi.fn(async () => ({})),
+}));
+vi.mock('@/app/lib/documentStore', () => ({
+  getAllDocuments: vi.fn(),
+  // The real rule — pure, nothing to fake. Without it the sitemap's catch
+  // swallowed the TypeError and dropped every document, and these tests could
+  // not see it.
+  isDocumentPublic: (d: { isPublished?: boolean }) => d.isPublished !== false,
+}));
 vi.mock('@/app/lib/productStore', () => ({
   getAllProducts: vi.fn(),
   // The real predicate, so this test tracks a change to the visibility rule
@@ -19,7 +28,7 @@ vi.mock('@/app/lib/getProductsData', () => ({
 
 import sitemap from '@/app/sitemap';
 import { SITE_URL } from '@/app/lib/site';
-import { getAllContentsMeta } from '@/app/lib/contentStore';
+import { getAllContentsMeta, getContentImageIndex } from '@/app/lib/contentStore';
 import { getAllDocuments } from '@/app/lib/documentStore';
 import { getAllProducts } from '@/app/lib/productStore';
 import { isMaintenanceMode } from '@/app/lib/settingsStore';
@@ -197,5 +206,63 @@ describe('sitemap — lastmod of content pages', () => {
     expect(lastmod('never-edited')).toEqual(new Date('2026-02-01T00:00:00.000Z'));
     expect(lastmod('no-dates')).toBeUndefined();
     expect(lastmod('garbled')).toBeUndefined();
+  });
+});
+
+// The image sitemap: each URL lists the pictures that page shows, so product
+// photos reach Google Images.
+describe('sitemap — images', () => {
+  const img = (name: string) => `https://res.cloudinary.com/demo/image/upload/v1/${name}.jpg`;
+  const entry = async (url: string) => (await sitemap()).find((e) => e.url === url);
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(isMaintenanceMode).mockResolvedValue(false);
+    vi.mocked(getAllProducts).mockResolvedValue([] as never);
+    vi.mocked(getAllContentsMeta).mockResolvedValue([
+      { id: 'c-pics', title: 'A', createdAt: '2026-01-01', productId: null },
+      { id: 'c-none', title: 'B', createdAt: '2026-01-01', productId: null },
+    ] as never);
+    vi.mocked(getContentImageIndex).mockResolvedValue({ 'c-pics': [img('a'), img('b')] });
+    vi.mocked(getAllDocuments).mockResolvedValue([
+      { id: 'd-shown', coverUrl: img('cover-shown'), createdAt: '2026-01-01', isPublished: true },
+      { id: 'd-hidden', coverUrl: img('cover-hidden'), createdAt: '2026-01-01', isPublished: false },
+    ] as never);
+    vi.mocked(getProductsData).mockResolvedValue({
+      categories: [
+        { id: 1, name_th: 'เครื่องชั่ง', name_en: 'Balance', name_zh: '天平' },
+        { id: 2, name_th: 'ทดสอบ', name_en: 'Tester', name_zh: '测试' },
+      ],
+      products: [
+        { id: 'p1', categoryId: 1, image: img('p1') },
+        { id: 'p2', categoryId: 2, image: img('p2') },
+        { id: 'p3', categoryId: 2, image: '' },
+      ],
+      contentIdByProduct: {},
+    } as never);
+  });
+
+  it('a content page lists the pictures its blocks show; one without pictures has no images key', async () => {
+    expect((await entry(`${SITE_URL}/showcase/c-pics`))!.images).toEqual([img('a'), img('b')]);
+    expect(await entry(`${SITE_URL}/showcase/c-none`)).not.toHaveProperty('images');
+  });
+
+  it('/products lists every public product photo; a category page only its own', async () => {
+    expect((await entry(`${SITE_URL}/products`))!.images).toEqual([img('p1'), img('p2')]);
+    const all = await sitemap();
+    const categoryImages = all.filter((e) => /\/products\/\d/.test(e.url)).map((e) => e.images);
+    expect(categoryImages).toEqual([[img('p1')], [img('p2')]]);
+  });
+
+  it('/catalog lists the covers of the SHOWN catalogs only', async () => {
+    expect((await entry(`${SITE_URL}/catalog`))!.images).toEqual([img('cover-shown')]);
+    expect((await sitemap()).map((e) => e.url)).not.toContain(`${SITE_URL}/document/d-hidden`);
+  });
+
+  it('a failed read of the content images keeps the content pages, without pictures', async () => {
+    vi.mocked(getContentImageIndex).mockRejectedValue(new Error('db down'));
+    const pics = await entry(`${SITE_URL}/showcase/c-pics`);
+    expect(pics).toBeDefined();
+    expect(pics).not.toHaveProperty('images');
   });
 });

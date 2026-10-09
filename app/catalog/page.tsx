@@ -4,6 +4,8 @@ import CatalogClient from "./CatalogClient";
 import { getAllDocuments, isDocumentPublic } from "../lib/documentStore";
 import { getSession } from "../lib/session";
 import { pageMetadata } from "../lib/pageMetadata";
+import { SITE_URL } from "../lib/site";
+import { jsonLdHtml } from "../lib/jsonLd";
 
 // Cached (ISR) for visitors: every documents write calls
 // revalidateTag("documents"), which getAllDocuments reads through, so a change
@@ -14,6 +16,16 @@ import { pageMetadata } from "../lib/pageMetadata";
 // admin) and there only. The session is read ONLY in Draft Mode, so the cached
 // copy never depends on who asked; the same rule as /showcase/[id].
 export const revalidate = 60;
+
+// Home › แคตตาล็อกสินค้า — the same trail /document/[id] starts with.
+const breadcrumbLd = {
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  itemListElement: [
+    { "@type": "ListItem", position: 1, name: "Home", item: SITE_URL },
+    { "@type": "ListItem", position: 2, name: "แคตตาล็อกสินค้า", item: `${SITE_URL}/catalog` },
+  ],
+};
 
 /** The admin's session — read only in Draft Mode (see above); null otherwise. */
 async function adminSession() {
@@ -35,12 +47,15 @@ export default async function CatalogPage() {
   const [documents, session] = await Promise.all([getAllDocuments(), adminSession()]);
   // Navbar/main/Footer live in layout.tsx (shared with loading.tsx).
   return (
-    <CatalogClient
-      // A new component when the copy changes between the visitor's and the
-      // admin's: its list is seeded from these props once.
-      key={session ? "admin" : "visitor"}
-      adminView={!!session}
-      initialDocuments={session ? documents : documents.filter(isDocumentPublic)}
-    />
+    <>
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdHtml(breadcrumbLd) }} />
+      <CatalogClient
+        // A new component when the copy changes between the visitor's and the
+        // admin's: its list is seeded from these props once.
+        key={session ? "admin" : "visitor"}
+        adminView={!!session}
+        initialDocuments={session ? documents : documents.filter(isDocumentPublic)}
+      />
+    </>
   );
 }

@@ -11,7 +11,7 @@
  */
 import { render, screen, fireEvent, waitFor, cleanup } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import type { ReactElement } from "react";
+import { Children, type ReactElement, type ReactNode } from "react";
 
 vi.mock("@/app/lib/documentStore", () => ({
   getAllDocuments: vi.fn(),
@@ -82,7 +82,11 @@ afterEach(() => {
 
 describe("/catalog — what the page hands its client", () => {
   type Props = { initialDocuments: DocumentData[]; adminView: boolean };
-  const props = async () => ((await CatalogPage()) as ReactElement<Props>).props;
+  /** The page's children: the breadcrumb <script>, then the catalog client. */
+  const children = async () =>
+    Children.toArray(((await CatalogPage()) as ReactElement<{ children: ReactNode }>).props.children) as ReactElement[];
+  const client = async () => (await children()).find((c) => c.type === CatalogClient) as ReactElement<Props>;
+  const props = async () => (await client()).props;
   const ids = (p: Props) => p.initialDocuments.map((d) => d.id);
 
   it("a visitor (no Draft Mode): hidden catalogs left out — and the session is never even read", async () => {
@@ -97,10 +101,10 @@ describe("/catalog — what the page hands its client", () => {
   it("an admin (Draft Mode + session): every catalog, for the admin view", async () => {
     asked({ draft: true });
     vi.mocked(getSession).mockResolvedValue(admin);
-    const element = (await CatalogPage()) as ReactElement<Props>;
+    const element = await client();
     expect(ids(element.props)).toEqual(["shown", "hidden", "old"]);
     expect(element.props.adminView).toBe(true);
-    expect(element.key).toBe("admin");
+    expect(String(element.key)).toMatch(/admin$/);
   });
 
   it("Draft Mode without a session (expired) is a visitor", async () => {
@@ -109,6 +113,19 @@ describe("/catalog — what the page hands its client", () => {
     const p = await props();
     expect(ids(p)).toEqual(["shown", "old"]);
     expect(p.adminView).toBe(false);
+  });
+
+  it("carries a Home › แคตตาล็อกสินค้า breadcrumb (JSON-LD), escaped like every other", async () => {
+    asked({ draft: false });
+    const script = (await children()).find((c) => c.type === "script") as ReactElement<{
+      type: string;
+      dangerouslySetInnerHTML: { __html: string };
+    }>;
+    expect(script.props.type).toBe("application/ld+json");
+    const ld = JSON.parse(script.props.dangerouslySetInnerHTML.__html);
+    expect(ld["@type"]).toBe("BreadcrumbList");
+    expect(ld.itemListElement.map((i: { name: string }) => i.name)).toEqual(["Home", "แคตตาล็อกสินค้า"]);
+    expect(ld.itemListElement[1].item).toMatch(/\/catalog$/);
   });
 });
 

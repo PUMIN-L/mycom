@@ -1448,6 +1448,25 @@ anywhere but the sitemap:
   session that lacked Draft Mode until `/api/auth/me` restored it. `__tests__/pages/showcasePayload.test.tsx` and
   `__tests__/components/ShowcaseClientViewerCheck.test.tsx` pin this.
 
+**The site is Thai until a visitor picks another language** (`LanguageContext`).
+The language is client-side state on one URL per page — the server always
+renders Thai — and it used to be guessed from `navigator.language` after
+hydration. Googlebot renders as an en-US browser, so every page it indexed
+turned English under a Thai `<html lang>`, title and description. Only a
+language the visitor chose (saved in `localStorage` `idkt-lang`) is applied
+now; never re-add a guess. Indexing English/Chinese separately would need
+per-language URLs and hreflang — not built.
+
+**Image sitemap.** Each sitemap URL lists the pictures that page shows
+(`images`, through `lib/sitemapImages.ts`), so product photos reach Google
+Images: `/products` every public product photo, a category page its own,
+`/showcase/{id}` its blocks' pictures (`getContentImageIndex` — JSON_EXTRACT
+of `imageUrl` / `imageUrls`, never the bodies; cached under `products`),
+`/catalog` the covers of shown catalogs. ⚠️ Next writes `<image:loc>` WITHOUT
+escaping it, so a URL with `& < > " '` is left out — one would make the whole
+sitemap unreadable. A failed image read costs a page its pictures, never its
+place in the sitemap.
+
 **Sitemap.** No `lastModified` on static pages (it was "now" on every fetch,
 which Google learns to ignore). Content pages use **`contents.updatedAt`**
 (schema v43) — stamped by `updateContent` only when a column it writes actually
