@@ -2005,3 +2005,7 @@ in the rotated frame. pdf-lib's `xSkew`/`ySkew` adds to the rotation matrix,
 which is a slant only at 0°. A slant keeps advance widths, so wrapping is the
 same as upright; the preview uses CSS `font-style: italic`. The angle field
 is labelled "มุม", because "เอียง" now means italic (ตัวเอียง).
+A page wider than the view (zoomed in, a landscape spread) scrolls left and
+right: the page column is `w-max min-w-full` inside the `overflow-auto` view.
+A view-wide `items-center` column overflowed both sides, and the left half
+could never be reached, because scrollLeft does not go negative.

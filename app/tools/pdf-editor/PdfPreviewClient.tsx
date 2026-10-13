@@ -443,7 +443,17 @@ export default function PdfPreviewClient({
             ยังไม่มีเอกสาร กรุณาอัปโหลดไฟล์ PDF
           </div>
         ) : (
-          <div className="flex flex-col items-center gap-10 p-6 pt-10">
+          // `w-max min-w-full`: as wide as the widest page, never narrower than
+          // the view. With only `items-center`, a page wider than the view —
+          // zoomed in, or a landscape spread — overflowed BOTH sides of a
+          // view-wide box, and the left half could never be scrolled to
+          // (scrollLeft does not go negative). Now the box grows instead, the
+          // view scrolls left and right over it, and a narrow page still sits
+          // centred in it.
+          <div
+            className="flex w-max min-w-full flex-col items-center gap-10 p-6 pt-10"
+            data-pdf-pages
+          >
             {pages.map((page, index) => (
               <PageFrame
                 key={page.id}
