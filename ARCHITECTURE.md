@@ -1989,3 +1989,19 @@ the sale in the URL existed, so /sales/A/costs/<an item of B> edited B's costs.
 **7. Totals add up on paper for new documents** — `totalsVersion`, §8.
 
 **8. Revision restore checks what it brings back** — §9a.
+
+**9. PDF editor: text is styled in its own dialog** (`app/tools/pdf-editor`).
+Size, bold, italic, colour, alignment and angle are one component,
+`TextStyleControls`, used by BOTH the toolbar (how the next text looks) and
+the text dialog (`TextDraftDialog`, how this text looks). A new text starts
+from the toolbar, at a snapped line's size and angle, and placing it makes the
+toolbar remember its look (`textDraft.ts`). **An edit starts from the text's
+own style** (`styleOfText`): saving used to take colour, bold and alignment
+from the toolbar, restyling text the admin only meant to retype. Italic
+(`TextAnnotation.italic`, optional, missing = upright) is the upright Sarabun
+face slanted `ITALIC_SLANT_DEG` (12°), since only Regular and Bold ship. The
+slant is a `cm` shear along each line's own baseline, about its start, built
+in the rotated frame. pdf-lib's `xSkew`/`ySkew` adds to the rotation matrix,
+which is a slant only at 0°. A slant keeps advance widths, so wrapping is the
+same as upright; the preview uses CSS `font-style: italic`. The angle field
+is labelled "มุม", because "เอียง" now means italic (ตัวเอียง).

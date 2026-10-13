@@ -2,9 +2,7 @@
 
 import { useState } from "react";
 import SearchableDropdown from "../../components/SearchableDropdown";
-import ColorPickerDropdown from "../../components/ColorPickerDropdown";
-import FormattedNumberInput from "../../components/FormattedNumberInput";
-import type { RGB, TextAlign } from "../../lib/pdfTypes";
+import TextStyleControls, { type TextStyle } from "./TextStyleControls";
 import type { PreviewTool } from "./previewTypes";
 
 /**
@@ -16,10 +14,11 @@ import type { PreviewTool } from "./previewTypes";
  * (and therefore `DOMMatrix`) anywhere near the test runner.
  *
  * TWO PROJECT RULES ARE LOAD-BEARING HERE:
- *  • Every dropdown is `SearchableDropdown` with `searchable={false}` — font
- *    size, alignment and rotation are short fixed lists, so the search box
- *    would be dead weight, but a native <select> is painted by the OS and opens
- *    as a dark grey popup on a dark-mode machine (AGENTS.md).
+ *  • Every dropdown is `SearchableDropdown` with `searchable={false}` — page
+ *    rotation here, font size and alignment in TextStyleControls. They are
+ *    short fixed lists, so a search box would be dead weight, but a native
+ *    <select> is painted by the OS and opens as a dark grey popup on a
+ *    dark-mode machine (AGENTS.md).
  *  • The disabled state is a `<fieldset disabled>` wrapper, because
  *    SearchableDropdown has no `disabled` prop.
  */
@@ -28,33 +27,15 @@ import type { PreviewTool } from "./previewTypes";
  *  the toolbar and the preview overlay can never drift into two vocabularies. */
 export type EditorTool = PreviewTool;
 
-/**
- * How the NEXT piece of text will be drawn. `color` is `RGB` from the shared
- * contract — 0..1 per channel, the range pdf-lib's `rgb()` takes, so the write
- * layer passes it straight through with no second conversion to forget.
- */
-export interface TextStyle {
-  sizePt: number;
-  bold: boolean;
-  color: RGB;
-  angleDeg: number;
-  align: TextAlign;
-}
-
-/**
- * The point sizes offered, and the bounds the guide quotes.
- *
- * These live here rather than in `pdfValidate.ts` because they are not an
- * upload guard — nothing is REFUSED for its font size. They are exported so
- * `PdfEditorGuidePanel` can state the range without typing a number of its own:
- * widening the ladder widens the guide with it.
- */
-export const FONT_SIZE_OPTIONS_PT = [
-  8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 40, 48, 64, 72,
-] as const;
-
-export const MIN_FONT_SIZE_PT = FONT_SIZE_OPTIONS_PT[0];
-export const MAX_FONT_SIZE_PT = FONT_SIZE_OPTIONS_PT[FONT_SIZE_OPTIONS_PT.length - 1];
+// The style type and the font-size ladder live with the controls that edit
+// them (TextStyleControls), shared with the text dialog; re-exported here for
+// the importers that always found them on the toolbar.
+export type { TextStyle } from "./TextStyleControls";
+export {
+  FONT_SIZE_OPTIONS_PT,
+  MIN_FONT_SIZE_PT,
+  MAX_FONT_SIZE_PT,
+} from "./TextStyleControls";
 
 export interface PdfEditorToolbarProps {
   /** No document loaded yet, or an export is running: the whole strip is inert. */
@@ -85,49 +66,11 @@ const TOOLS: { id: EditorTool; label: string; icon: string; hint: string }[] = [
   { id: "signature", label: "ลายเซ็น", icon: "✍️", hint: "เซ็นชื่อด้วยเมาส์หรือนิ้ว แล้ววางลงบนเอกสาร" },
 ];
 
-const FONT_SIZE_OPTIONS = FONT_SIZE_OPTIONS_PT.map((size) => ({
-  value: String(size),
-  label: `${size} pt`,
-}));
-
-const ALIGN_OPTIONS = [
-  { value: "left", label: "ชิดซ้าย" },
-  { value: "center", label: "กึ่งกลาง" },
-  { value: "right", label: "ชิดขวา" },
-];
-
 const ROTATE_OPTIONS = [
   { value: "90", label: "หมุน 90° ตามเข็ม" },
   { value: "180", label: "หมุน 180°" },
   { value: "270", label: "หมุน 90° ทวนเข็ม" },
 ];
-
-/** `{r,g,b}` in 0..1 ⇄ the `#rrggbb` that ColorPickerDropdown speaks. */
-function colorToHex({ r, g, b }: RGB): string {
-  const channel = (value: number) =>
-    Math.max(0, Math.min(255, Math.round(value * 255)))
-      .toString(16)
-      .padStart(2, "0");
-  return `#${channel(r)}${channel(g)}${channel(b)}`;
-}
-
-function hexToColor(hex: string): RGB {
-  const cleaned = hex.replace("#", "");
-  const full =
-    cleaned.length === 3
-      ? cleaned
-          .split("")
-          .map((c) => c + c)
-          .join("")
-      : cleaned;
-  const value = Number.parseInt(full, 16);
-  if (!Number.isFinite(value) || full.length !== 6) return { r: 0, g: 0, b: 0 };
-  return {
-    r: ((value >> 16) & 0xff) / 255,
-    g: ((value >> 8) & 0xff) / 255,
-    b: (value & 0xff) / 255,
-  };
-}
 
 function ToolbarButton({
   onClick,
@@ -217,80 +160,8 @@ export default function PdfEditorToolbar({
 
       {/* ── row 2: how new text will look ─────────────────────────────── */}
       {tool === "text" && (
-        <div className="flex flex-wrap items-end gap-3 border-t border-gray-100 pt-3">
-          <div className="w-28">
-            <label className="block text-xs font-bold text-gray-400 uppercase tracking-wide mb-1">
-              ขนาดตัวอักษร
-            </label>
-            <SearchableDropdown
-              options={FONT_SIZE_OPTIONS}
-              value={String(textStyle.sizePt)}
-              onChange={(value) =>
-                onTextStyleChange({ ...textStyle, sizePt: Number(value) || textStyle.sizePt })
-              }
-              searchable={false}
-              placeholder="ขนาด"
-            />
-          </div>
-
-          <div>
-            <span className="block text-xs font-bold text-gray-400 uppercase tracking-wide mb-1">
-              ตัวหนา
-            </span>
-            <button
-              type="button"
-              onClick={() => onTextStyleChange({ ...textStyle, bold: !textStyle.bold })}
-              aria-pressed={textStyle.bold}
-              title="สลับระหว่างฟอนต์ Sarabun ปกติกับตัวหนา"
-              className={`px-4 py-2 rounded-xl border font-bold text-sm transition-all ${
-                textStyle.bold
-                  ? "bg-gray-900 border-gray-900 text-white"
-                  : "bg-white border-gray-200 text-gray-700 hover:bg-gray-50"
-              }`}
-            >
-              B
-            </button>
-          </div>
-
-          <div>
-            <span className="block text-xs font-bold text-gray-400 uppercase tracking-wide mb-1">
-              สีตัวอักษร
-            </span>
-            <ColorPickerDropdown
-              color={colorToHex(textStyle.color)}
-              onChange={(hex) => onTextStyleChange({ ...textStyle, color: hexToColor(hex) })}
-            />
-          </div>
-
-          <div className="w-32">
-            <label className="block text-xs font-bold text-gray-400 uppercase tracking-wide mb-1">
-              จัดวาง
-            </label>
-            <SearchableDropdown
-              options={ALIGN_OPTIONS}
-              value={textStyle.align}
-              onChange={(value) =>
-                onTextStyleChange({ ...textStyle, align: value as TextStyle["align"] })
-              }
-              searchable={false}
-              placeholder="จัดวาง"
-            />
-          </div>
-
-          <div className="w-28">
-            <label
-              className="block text-xs font-bold text-gray-400 uppercase tracking-wide mb-1"
-              htmlFor="pdf-editor-text-angle"
-            >
-              เอียง (องศา)
-            </label>
-            <FormattedNumberInput
-              value={textStyle.angleDeg}
-              onChange={(angleDeg) => onTextStyleChange({ ...textStyle, angleDeg })}
-              placeholder="0"
-              className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-violet-200"
-            />
-          </div>
+        <div className="border-t border-gray-100 pt-3">
+          <TextStyleControls style={textStyle} onChange={onTextStyleChange} />
         </div>
       )}
 

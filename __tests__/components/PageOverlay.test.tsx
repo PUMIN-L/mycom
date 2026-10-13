@@ -169,3 +169,35 @@ describe("PageOverlay — moving an annotation never resizes it", () => {
     expect(commits[0].rect.x).toBeCloseTo(SIG_RECT.x, 3);
   });
 });
+
+// The on-screen preview of a placed text shows its style: the export slants
+// italic text (pdfApplyEdits ITALIC_SLANT_DEG), and the preview italicises it.
+describe("PageOverlay — text style preview", () => {
+  const text = (over: Partial<Extract<Annotation, { kind: "text" }>> = {}): Annotation => ({
+    kind: "text",
+    id: "t1",
+    pageId: "pg_1",
+    rect: { x: 10, y: 10, width: 200, height: 30 },
+    text: "ราคา",
+    sizePt: 16,
+    color: { r: 1, g: 0, b: 0 },
+    bold: true,
+    angleDeg: 0,
+    align: "center",
+    ...over,
+  });
+  const span = () => Array.from(document.querySelectorAll("span")).find((s) => s.textContent === "ราคา")!;
+
+  it("italic text is italic on screen; bold, colour and alignment show too", () => {
+    mount(text({ italic: true }));
+    expect(span().style.fontStyle).toBe("italic");
+    expect(span().style.fontWeight).toBe("700");
+    expect(span().style.textAlign).toBe("center");
+    expect(span().style.color).toBe("rgb(255, 0, 0)");
+  });
+
+  it("text placed before italic existed (no key) is upright", () => {
+    mount(text());
+    expect(span().style.fontStyle).toBe("normal");
+  });
+});

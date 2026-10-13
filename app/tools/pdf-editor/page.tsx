@@ -16,6 +16,14 @@ import PdfFormPanel from "./PdfFormPanel";
 import PdfEditorGuidePanel from "./PdfEditorGuidePanel";
 import PdfPreviewWrapper from "./PdfPreviewWrapper";
 import SignaturePad from "./SignaturePad";
+import TextDraftDialog from "./TextDraftDialog";
+import {
+  styleForNewText,
+  styleOfText,
+  textFieldsOf,
+  toolbarAfterPlacing,
+  type TextDraft,
+} from "./textDraft";
 import { useEditorStore } from "./useEditorStore";
 import type {
   DrawableTool,
@@ -113,6 +121,7 @@ import type {
 const DEFAULT_TEXT_STYLE: TextStyle = {
   sizePt: 16,
   bold: false,
+  italic: false,
   color: { r: 0, g: 0, b: 0 },
   angleDeg: 0,
   align: "left",
@@ -288,16 +297,6 @@ interface PendingConfirm {
   onConfirm: () => void;
 }
 
-/** An in-progress piece of text: either brand new (`editingId === null`) or an
- *  existing annotation being retyped. */
-interface TextDraft {
-  pageId: PageId;
-  rect: Rect;
-  value: string;
-  sizePt: number;
-  angleDeg: number;
-  editingId: string | null;
-}
 
 export default function PdfEditorPage() {
   const router = useRouter();
@@ -704,11 +703,8 @@ export default function PdfEditorPage() {
           pageId,
           rect,
           value: origin === "snap" ? (snap?.text ?? "") : "",
-          sizePt:
-            origin === "snap" && snap && snap.sizePt > 0
-              ? Math.round(snap.sizePt * 10) / 10
-              : textStyle.sizePt,
-          angleDeg: origin === "snap" && snap ? Math.round(snap.angleDeg) : textStyle.angleDeg,
+          // The toolbar's look, at the size and angle of a snapped line.
+          style: styleForNewText(textStyle, origin === "snap" ? snap : null),
           editingId: null,
         });
         return;
@@ -719,7 +715,7 @@ export default function PdfEditorPage() {
       if (drawTool === "image") imageInputRef.current?.click();
       else setIsSignatureOpen(true);
     },
-    [apply, textStyle.angleDeg, textStyle.sizePt]
+    [apply, textStyle]
   );
 
   /** A placed thing finished being dragged or resized. One gesture is one undo
@@ -745,21 +741,17 @@ export default function PdfEditorPage() {
     }
     const text = textDraft.value;
 
+    // The dialog's own style, for a new text and an edit alike — never the
+    // toolbar's: an edit used to take colour, bold and alignment from the
+    // toolbar, restyling the text the admin only meant to retype.
+    const fields = textFieldsOf(textDraft.style);
+
     if (textDraft.editingId) {
       const id = textDraft.editingId;
       // Explicitly a TEXT patch: `updateAnnotation`'s default type parameter is
       // the whole union, and `Omit` over a union keeps only the keys every
       // member shares (`pageId`, `rect`) — so `text` needs the narrower type.
-      apply((current) =>
-        updateAnnotation<TextAnnotation>(current, id, {
-          text,
-          sizePt: textDraft.sizePt,
-          angleDeg: textDraft.angleDeg,
-          color: textStyle.color,
-          bold: textStyle.bold,
-          align: textStyle.align,
-        })
-      );
+      apply((current) => updateAnnotation<TextAnnotation>(current, id, { text, ...fields }));
       setSelectedAnnotationId(id);
     } else {
       const annotation: Annotation = {
@@ -768,19 +760,17 @@ export default function PdfEditorPage() {
         pageId: textDraft.pageId,
         rect: textDraft.rect,
         text,
-        sizePt: textDraft.sizePt,
-        color: textStyle.color,
-        bold: textStyle.bold,
-        angleDeg: textDraft.angleDeg,
-        align: textStyle.align,
+        ...fields,
       };
       apply((current) => addAnnotation(current, annotation));
       setSelectedAnnotationId(annotation.id);
+      // The next text starts with the look just chosen.
+      setTextStyle((current) => toolbarAfterPlacing(current, textDraft.style));
     }
 
     setTextDraft(null);
     setTool("select");
-  }, [apply, textDraft, textStyle.align, textStyle.bold, textStyle.color]);
+  }, [apply, textDraft]);
 
   const handleEditSelectedText = useCallback(() => {
     if (!selectedAnnotation || selectedAnnotation.kind !== "text") return;
@@ -788,8 +778,8 @@ export default function PdfEditorPage() {
       pageId: selectedAnnotation.pageId,
       rect: selectedAnnotation.rect,
       value: selectedAnnotation.text,
-      sizePt: selectedAnnotation.sizePt,
-      angleDeg: selectedAnnotation.angleDeg,
+      // Its OWN style, so saving changes only what the admin changes.
+      style: styleOfText(selectedAnnotation),
       editingId: selectedAnnotation.id,
     });
   }, [selectedAnnotation]);
@@ -1410,50 +1400,19 @@ export default function PdfEditorPage() {
       {/* The text box. A snapped rectangle pre-fills it with what pdfjs read
           off the page, which the admin corrects before anything is placed. */}
       {textDraft && (
-        <div className="fixed inset-0 z-100 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 space-y-4">
-            <h3 className="text-lg font-bold text-gray-900">
-              {textDraft.editingId ? "แก้ไขข้อความ" : "พิมพ์ข้อความที่จะวางลงบนเอกสาร"}
-            </h3>
-            <label htmlFor="pdf-editor-text-draft" className="block text-xs font-bold text-gray-500">
-              ข้อความ (ฟอนต์ Sarabun)
-            </label>
-            <textarea
-              id="pdf-editor-text-draft"
-              autoFocus
-              rows={4}
-              value={textDraft.value}
-              onChange={(event) =>
-                setTextDraft((current) =>
-                  current ? { ...current, value: event.target.value } : current
-                )
-              }
-              className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-violet-200"
-              placeholder="พิมพ์ข้อความที่นี่..."
-            />
-            <p className="text-xs text-gray-400">
-              ขนาด {textDraft.sizePt} pt · เอียง {textDraft.angleDeg}° · ปรับสี ตัวหนา
-              และการจัดวางได้จากแถบเครื่องมือด้านบน
-            </p>
-            <div className="flex gap-3">
-              <button
-                type="button"
-                onClick={() => setTextDraft(null)}
-                className="flex-1 px-4 py-2.5 rounded-xl border border-gray-300 text-gray-700 font-semibold hover:bg-gray-50 transition"
-              >
-                ยกเลิก
-              </button>
-              <button
-                type="button"
-                onClick={commitTextDraft}
-                disabled={textDraft.value.trim().length === 0}
-                className="flex-1 px-4 py-2.5 rounded-xl bg-violet-600 text-white font-semibold hover:bg-violet-700 transition disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                {textDraft.editingId ? "บันทึกข้อความ" : "วางข้อความ"}
-              </button>
-            </div>
-          </div>
-        </div>
+        <TextDraftDialog
+          editing={textDraft.editingId !== null}
+          value={textDraft.value}
+          style={textDraft.style}
+          onValueChange={(value) =>
+            setTextDraft((current) => (current ? { ...current, value } : current))
+          }
+          onStyleChange={(style) =>
+            setTextDraft((current) => (current ? { ...current, style } : current))
+          }
+          onCancel={() => setTextDraft(null)}
+          onCommit={commitTextDraft}
+        />
       )}
 
       {toast && <Toast message={toast.message} type={toast.type} />}

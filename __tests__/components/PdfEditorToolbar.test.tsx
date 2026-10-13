@@ -54,6 +54,7 @@ function mockTriggerRect() {
 const DEFAULT_TEXT_STYLE: TextStyle = {
   sizePt: 16,
   bold: false,
+  italic: false,
   color: { r: 0, g: 0, b: 0 },
   angleDeg: 0,
   align: 'left',
@@ -129,7 +130,8 @@ describe('PdfEditorToolbar — the armed tool', () => {
     setup({ tool: 'text' });
     expect(screen.getByText('ขนาดตัวอักษร')).toBeInTheDocument();
     expect(screen.getByText('จัดวาง')).toBeInTheDocument();
-    expect(screen.getByText('เอียง (องศา)')).toBeInTheDocument();
+    // "มุม", not "เอียง": that word now belongs to the italic (ตัวเอียง) button.
+    expect(screen.getByText('มุม (องศา)')).toBeInTheDocument();
   });
 });
 
@@ -185,6 +187,17 @@ describe('PdfEditorToolbar — text styling', () => {
       ...DEFAULT_TEXT_STYLE,
       align: 'center',
     });
+  });
+
+  it('toggles italic on its own, leaving bold alone', () => {
+    const { props } = setup({ tool: 'text' });
+    const italic = screen.getByRole('button', { name: 'I' });
+    expect(italic).toHaveAttribute('aria-pressed', 'false');
+    fireEvent.click(italic);
+    expect(props.onTextStyleChange).toHaveBeenCalledWith({ ...DEFAULT_TEXT_STYLE, italic: true });
+
+    setup({ tool: 'text', textStyle: { ...DEFAULT_TEXT_STYLE, italic: true } });
+    expect(screen.getAllByRole('button', { name: 'I' }).at(-1)).toHaveAttribute('aria-pressed', 'true');
   });
 });
 

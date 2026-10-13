@@ -29,6 +29,7 @@ import {
   PdfMissingAssetError,
   PdfPageIndexError,
   PdfUnsupportedImageError,
+  ITALIC_SLANT_DEG,
 } from "@/app/lib/pdfApplyEdits";
 import {
   createModel,
@@ -588,6 +589,47 @@ describe("applyEdits — a rotated page must not tip its content over", () => {
       // screen angle: atan2(-b, a).
       const onScreenDeg = (Math.atan2(-t[1], t[0]) * 180) / Math.PI;
       expect(onScreenDeg, `/Rotate ${base}`).toBeCloseTo(20, 3);
+    }
+  });
+
+  it("slants italic text along its own baseline — at every page rotation, and at a free angle", async () => {
+    // Italic is the upright glyph SHEARED: the baseline (start and direction)
+    // stays exactly where upright text puts it, and the glyph's up direction
+    // leans along the baseline by tan(slant). pdf-lib's own xSkew/ySkew would
+    // only manage that at 0°, so this runs every rotation and a 20° line.
+    const t = Math.tan((ITALIC_SLANT_DEG * Math.PI) / 180);
+    for (const { base, added } of cases) {
+      for (const angleDeg of [0, 20]) {
+        const label = `/Rotate ${base} + ${added}° added, text at ${angleDeg}°`;
+        const make = (italic: boolean) => (pageId: string, r: Rect): Annotation[] => [
+          {
+            kind: "text",
+            id: "t",
+            pageId,
+            rect: r,
+            text: "สำเนา",
+            sizePt: SIZE_PT,
+            color: { r: 0, g: 0, b: 0 },
+            bold: false,
+            italic,
+            angleDeg,
+            align: "left",
+          },
+        ];
+        const upright = await run(base, added, make(false));
+        const slanted = await run(base, added, make(true));
+        const u = upright.toScreen(textMatrices(upright.content)[0]);
+        const s = slanted.toScreen(textMatrices(slanted.content)[0]);
+
+        // Same baseline: same start, same direction and length.
+        expect(s[4], label).toBeCloseTo(u[4], 3);
+        expect(s[5], label).toBeCloseTo(u[5], 3);
+        expect(s[0], label).toBeCloseTo(u[0], 4);
+        expect(s[1], label).toBeCloseTo(u[1], 4);
+        // Up leans along the baseline: up' = up + tan(slant) * baseline.
+        expect(s[2], label).toBeCloseTo(u[2] + t * u[0], 4);
+        expect(s[3], label).toBeCloseTo(u[3] + t * u[1], 4);
+      }
     }
   });
 });

@@ -107,6 +107,15 @@ import {
  */
 export const LINE_HEIGHT_RATIO = 1.2;
 
+/**
+ * How far italic text leans, in degrees from upright. Only Sarabun Regular and
+ * Bold ship (public/fonts), so italic is the upright face SLANTED — the same
+ * thing a browser does for a font without an italic face, which is what the
+ * on-screen preview shows. A slant leaves every glyph's advance width alone,
+ * so a line wraps exactly as it does upright.
+ */
+export const ITALIC_SLANT_DEG = 12;
+
 /* ------------------------------------------------------------------ *
  * Errors — Thai, because the editor shows them verbatim
  * ------------------------------------------------------------------ */
@@ -216,7 +225,8 @@ export async function applyEdits({
 }: ApplyEditsInput): Promise<Uint8Array> {
   if (!model.pages.length) throw new PdfNoPagesError();
 
-  const { PDFDocument, degrees, rgb } = await pdfLib();
+  const lib = await pdfLib();
+  const { PDFDocument, degrees, rgb } = lib;
 
   /* --- 1. Open every source ONCE, memoised by id ------------------- */
 
@@ -387,7 +397,8 @@ export async function applyEdits({
             await getFont(ann.bold),
             pageRotation,
             degrees,
-            rgb
+            rgb,
+            lib
           );
           break;
       }
@@ -408,6 +419,11 @@ export async function applyEdits({
 
 type RgbFn = (typeof import("pdf-lib"))["rgb"];
 type DegreesFn = (typeof import("pdf-lib"))["degrees"];
+/** The graphics-state operators an italic line is wrapped in. */
+type SlantOps = Pick<
+  typeof import("pdf-lib"),
+  "pushGraphicsState" | "popGraphicsState" | "concatTransformationMatrix"
+>;
 
 /**
  * The one thing that does NOT need the page rotation: a quarter turn maps an
@@ -474,7 +490,8 @@ async function drawTextAnnotation(
   font: PDFFont,
   pageRotation: number,
   degrees: DegreesFn,
-  rgb: RgbFn
+  rgb: RgbFn,
+  slantOps: SlantOps
 ): Promise<void> {
   if (ann.text === "") return;
 
@@ -522,14 +539,42 @@ async function drawTextAnnotation(
     // ascender below the top edge.
     const dy = frame.height - ascent - i * lineHeight;
 
+    const x = frame.x + dx * cos - dy * sin;
+    const y = frame.y + dx * sin + dy * cos;
+
+    // ITALIC: shear the line along its own baseline, about its own start —
+    // every point moves along the baseline by tan(slant) × its height above
+    // it. pdf-lib's `xSkew`/`ySkew` cannot do this: it ADDS the skew to the
+    // rotation's matrix entries, which is a slant only at 0°, and here the
+    // angle is the admin's plus the page's /Rotate. So the shear goes on the
+    // CTM, around this one drawText, built in the line's rotated frame:
+    // p' = p + t·(v·(p − P))·u, with u the baseline and v the up direction.
+    if (ann.italic) {
+      const t = Math.tan((ITALIC_SLANT_DEG * Math.PI) / 180);
+      const heightOfOrigin = -sin * x + cos * y; // v·P
+      page.pushOperators(
+        slantOps.pushGraphicsState(),
+        slantOps.concatTransformationMatrix(
+          1 - t * cos * sin,
+          -t * sin * sin,
+          t * cos * cos,
+          1 + t * sin * cos,
+          -t * cos * heightOfOrigin,
+          -t * sin * heightOfOrigin
+        )
+      );
+    }
+
     page.drawText(line, {
-      x: frame.x + dx * cos - dy * sin,
-      y: frame.y + dx * sin + dy * cos,
+      x,
+      y,
       size,
       font,
       color,
       rotate: rotation,
     });
+
+    if (ann.italic) page.pushOperators(slantOps.popGraphicsState());
   }
 }
 

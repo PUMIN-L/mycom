@@ -710,7 +710,7 @@ function AnnotationBody({
   }
 
   if (ann.kind === "text") {
-    const { color, sizePt, bold, align, angleDeg, text } = ann;
+    const { color, sizePt, bold, italic, align, angleDeg, text } = ann;
     return (
       <div
         className="flex h-full w-full items-start overflow-hidden"
@@ -744,6 +744,9 @@ function AnnotationBody({
             textAlign: align,
             fontFamily: "Sarabun, sans-serif",
             fontWeight: bold ? 700 : 400,
+            // The export slants the upright face (ITALIC_SLANT_DEG); a browser
+            // does the same for a font without an italic face.
+            fontStyle: italic ? "italic" : "normal",
             // Points and CSS px coincide only at 100% zoom; this is a preview
             // approximation. `sizePt` is authoritative — pdf-lib uses it on
             // download, measured with the embedded Sarabun face.

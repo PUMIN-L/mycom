@@ -76,6 +76,9 @@ export type TextAnnotation = {
   sizePt: number;
   color: RGB;
   bold: boolean;
+  /** Slanted (pdfApplyEdits ITALIC_SLANT_DEG). Optional: text placed before
+   *  italic existed has no such key, and reads as upright. */
+  italic?: boolean;
   angleDeg: number;
   align: TextAlign;
 };
