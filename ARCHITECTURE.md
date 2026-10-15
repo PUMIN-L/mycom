@@ -2009,3 +2009,18 @@ A page wider than the view (zoomed in, a landscape spread) scrolls left and
 right: the page column is `w-max min-w-full` inside the `overflow-auto` view.
 A view-wide `items-center` column overflowed both sides, and the left half
 could never be reached, because scrollLeft does not go negative.
+
+**10. A stored instant is shown on Bangkok's calendar** (`lib/dateFormat.ts`).
+`formatDisplayDate` converts a full ISO instant (`…Z` / `…+07:00` —
+createdAt, completedAt) to the Bangkok day; its first ten characters are the
+UTC day, still yesterday here until 07:00 (a job closed at 03:00 read as the
+day before). A plain date, a zone-less date-time and a DATE column arriving as
+midnight UTC keep their own day. `bangkokDayOf(value)` is the same rule as a
+`YYYY-MM-DD` string, for code that needs the day itself (the task picker,
+a receipt's fallback payment date). Never `createdAt.slice(0, 10)`.
+
+**11. A sale edit checks its numbers like a new sale.** `saleNumbersError`
+(`lib/saleInput.ts`) is shared by POST /api/admin/sales (every line) and PUT
+/api/admin/sales/[id] (whatever the edit sends): a quantity of at least 1, and
+money that is a non-negative number or absent. The store turns anything it
+cannot read into ฿0 (or a quantity of 1) and saves it without a word.

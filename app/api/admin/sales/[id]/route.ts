@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withRoute, requireAuth } from "../../../../lib/apiHelpers";
 import { isValidDateString } from "../../../../lib/dateFormat";
+import { saleNumbersError } from "../../../../lib/saleInput";
 import {
   getSalesRecord,
   updateSalesRecord,
@@ -89,6 +90,14 @@ export const PUT = withRoute(
         );
       }
     }
+    // Quantity and money are CHECKED, as they are when the sale is created —
+    // the store turns anything it cannot read into 0 (or a quantity of 1) and
+    // saves it without a word (lib/saleInput.ts).
+    const numbersError = saleNumbersError(body, false);
+    if (numbersError) {
+      return NextResponse.json({ error: numbersError }, { status: 400 });
+    }
+
     // This payload describes ONE product (qty / unitPrice / totalAmount), so a
     // bill that holds several refuses any edit that would restate its money or
     // its product — the store throws rather than writing a sale total its own

@@ -1,6 +1,14 @@
 // @vitest-environment node
 import { describe, it, expect, vi, afterEach } from 'vitest';
 
+// Each test re-imports session.ts from a reset module registry, which
+// transforms its whole import graph again. Alone that takes well under a
+// second; in the full parallel run with coverage (the pre-push hook) a starved
+// worker took 5.7 s and failed the default 5 s limit — a push blocked by a test
+// that had not failed. More headroom here, for this file only; a real hang
+// still fails.
+vi.setConfig({ testTimeout: 30_000 });
+
 // The existing __tests__/lib/session.test.ts covers encrypt/decrypt/create/
 // delete/getSession. This file targets the ONE remaining uncovered branch: the
 // module-load guard `if (!secretKey) throw new Error("SESSION_SECRET is not set")`

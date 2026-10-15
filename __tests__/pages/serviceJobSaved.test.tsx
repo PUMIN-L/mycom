@@ -77,6 +77,13 @@ describe('ใบ Job ที่ออกแล้ว', () => {
     expect(screen.queryByText('2026-09-05')).not.toBeInTheDocument();
   });
 
+  it('dates ปิดงาน on Bangkok\'s calendar — a job closed at 03:00 is not "yesterday"', async () => {
+    // 20:00 UTC on 7 Sep = 03:00 on 8 Sep in Bangkok.
+    listResponse = [{ ...OPEN_JOB, status: 'completed', completedAt: '2026-09-07T20:00:00.000Z' }];
+    render(<SavedServiceJobsPage />);
+    expect(await screen.findByText(/ปิดงาน 8 Sep 2026/)).toBeInTheDocument();
+  });
+
   it('names an unnamed technician as one to be written on the paper', async () => {
     render(<SavedServiceJobsPage />);
     expect(await screen.findByText('(เขียนเองหน้างาน)')).toBeInTheDocument();

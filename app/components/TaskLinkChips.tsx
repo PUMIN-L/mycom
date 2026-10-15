@@ -70,6 +70,7 @@ import {
   taskLinkHref,
 } from "../lib/taskBoard";
 import { TASK_LINK_TARGETS, type TaskLink, type TaskLinkTarget } from "../lib/types";
+import { bangkokDayOf } from "../lib/dateFormat";
 
 // ── Kind metadata ───────────────────────────────────────────────────────────
 
@@ -291,7 +292,8 @@ const KIND_SOURCES: Record<TaskLinkTarget, KindSource> = {
           id: text(r.id),
           label: buildTaskLinkLabel("quotation", { docNo: text(r.docNo) }),
           subLabel:
-            [text(r.customer), text(r.createdAt).substring(0, 10)].filter(Boolean).join(" · ") ||
+            // The day it was saved on Bangkok's calendar, not the UTC day.
+            [text(r.customer), bangkokDayOf(text(r.createdAt)) ?? ""].filter(Boolean).join(" · ") ||
             undefined,
         }))
         .filter((o) => o.id !== ""),

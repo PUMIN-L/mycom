@@ -401,7 +401,7 @@ export default function SavedServiceJobsPage() {
                       {formatDisplayDate(job.jobDate) || "—"}
                       {job.status === "completed" && job.completedAt && (
                         <div className="text-xs text-gray-400 mt-0.5">
-                          ปิดงาน {formatDisplayDate(job.completedAt.slice(0, 10))}
+                          ปิดงาน {formatDisplayDate(job.completedAt)}
                         </div>
                       )}
                     </td>

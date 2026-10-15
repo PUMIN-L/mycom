@@ -2,7 +2,7 @@ import { query, withTransaction } from "./db";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { computeQuoteTotals, round2 } from "./quotationTotals";
 import type { BillingDocType } from "./billingNumber";
-import { isValidDateString, addDaysToDateString } from "./dateFormat";
+import { isValidDateString, addDaysToDateString, bangkokDayOf } from "./dateFormat";
 import {
   syncReceiptPayment,
   syncCancelledReceiptPayment,
@@ -332,7 +332,7 @@ export async function saveBillingDocumentAtomic(
         paidDate:
           rec.paymentDate && isValidDateString(String(rec.paymentDate))
             ? String(rec.paymentDate)
-            : derived.docDate ?? rec.createdAt.slice(0, 10),
+            : derived.docDate ?? bangkokDayOf(rec.createdAt) ?? "",
         method: rec.paymentMethod ?? "",
         ref: rec.paymentRef ?? "",
         createdAt: rec.createdAt,
@@ -764,7 +764,7 @@ export async function backfillBillingDerivedColumns(
       // A blob with no docDate of its own falls back to the day the row was
       // first written. That is the only date such a document has, and leaving
       // docDate NULL would make the row un-backfillable forever.
-      const docDate = derived.docDate ?? String(row.createdAt ?? "").slice(0, 10);
+      const docDate = derived.docDate ?? bangkokDayOf(row.createdAt) ?? "";
       if (!isValidDateString(docDate)) continue;
       await conn.query(
         `UPDATE billing_documents

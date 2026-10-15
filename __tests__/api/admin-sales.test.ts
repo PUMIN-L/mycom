@@ -584,6 +584,39 @@ describe('Admin Sales API', () => {
   });
 
   describe('PUT /api/admin/sales/[id]', () => {
+    // The store turns anything it cannot read into ฿0 (or a quantity of 1)
+    // and saves it without a word; the create route refused those, and now the
+    // edit route does too (lib/saleInput.ts).
+    it.each([
+      [{ qty: 'abc' }, 'จำนวน (qty)'],
+      [{ qty: 0 }, 'จำนวน (qty)'],
+      [{ unitPrice: 'abc' }, 'ราคาต่อหน่วย'],
+      [{ totalAmount: -5 }, 'ยอดรวมรายการ'],
+      [{ costAmount: 'x' }, 'ต้นทุนสินค้า'],
+    ])('refuses %j with 400, naming the field — nothing written', async (body, field) => {
+      vi.mocked(getSession).mockResolvedValue(admin);
+      const res = await updateSale(
+        new NextRequest('http://localhost:3000/api/admin/sales/1', { method: 'PUT', body: JSON.stringify(body) }),
+        { params: Promise.resolve({ id: '1' }) }
+      );
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toContain(field);
+      expect(updateSalesRecord).not.toHaveBeenCalled();
+    });
+
+    it('lets an edit leave the quantity and money out, or send them blank', async () => {
+      vi.mocked(getSession).mockResolvedValue(admin);
+      vi.mocked(updateSalesRecord).mockResolvedValue({ id: '1' } as never);
+      for (const body of [{ customerName: 'x' }, { costAmount: '' }, { qty: 2, unitPrice: '1500.50', totalAmount: 3001 }]) {
+        const res = await updateSale(
+          new NextRequest('http://localhost:3000/api/admin/sales/1', { method: 'PUT', body: JSON.stringify(body) }),
+          { params: Promise.resolve({ id: '1' }) }
+        );
+        expect(res.status, JSON.stringify(body)).not.toBe(400);
+      }
+      expect(updateSalesRecord).toHaveBeenCalledTimes(3);
+    });
+
     it('validates invalid saleDate format if provided', async () => {
       vi.mocked(getSession).mockResolvedValue(admin);
 

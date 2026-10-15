@@ -11,6 +11,7 @@ import type { EquipmentRowInput } from "../../../lib/crmStore";
 import type { SalesRecord } from "../../../lib/types";
 import { query } from "../../../lib/db";
 import { isValidDateString } from "../../../lib/dateFormat";
+import { saleNumbersError } from "../../../lib/saleInput";
 
 /**
  * Sale payload. Two accepted shapes, both ending in the SAME atomic write:
@@ -51,13 +52,6 @@ function badRequest(message: string) {
 }
 
 /** A field the caller left out entirely (or cleared) — the store's default applies. */
-function isAbsent(value: unknown): boolean {
-  return (
-    value === undefined ||
-    value === null ||
-    (typeof value === "string" && value.trim() === "")
-  );
-}
 
 /**
  * Task 7.2 — line-item validation. Anything that would land as a nonsense
@@ -74,28 +68,13 @@ function validateItems(items: unknown): string | null {
   // one can no longer be quietly turned back into qty × unitPrice. It has to be
   // refused with the line named, or a nonsense figure lands in the revenue
   // reports looking exactly like a real one.
-  const money: Array<[keyof SaleLineItem, string]> = [
-    ["unitPrice", "ราคาต่อหน่วย"],
-    ["totalAmount", "ยอดรวมรายการ"],
-    ["costAmount", "ต้นทุนสินค้า"],
-  ];
+  // The same number rules the edit route applies (lib/saleInput.ts).
   for (let i = 0; i < items.length; i++) {
     const raw = items[i];
     const at = `รายการที่ ${i + 1}`;
     if (!raw || typeof raw !== "object") return `${at}: ข้อมูลรายการสินค้าไม่ถูกต้อง`;
-    const item = raw as Record<string, unknown>;
-
-    const qty = Number(item.qty);
-    if (!Number.isFinite(qty) || qty < 1) {
-      return `${at}: จำนวน (qty) ต้องเป็นตัวเลขตั้งแต่ 1 ขึ้นไป`;
-    }
-    for (const [field, label] of money) {
-      if (isAbsent(item[field])) continue; // omitted → 0
-      const n = Number(item[field]);
-      if (!Number.isFinite(n) || n < 0) {
-        return `${at}: ${label} (${field}) ต้องเป็นตัวเลขที่ไม่ติดลบ`;
-      }
-    }
+    const error = saleNumbersError(raw as Record<string, unknown>, true);
+    if (error) return `${at}: ${error}`;
   }
   return null;
 }

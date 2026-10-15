@@ -30,7 +30,9 @@ const DISPLAY_MONTHS = [
 export function formatDisplayDate(value?: string | null): string {
   if (!value) return "";
   const raw = String(value).trim();
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(raw);
+  // A full timestamp is shown on BANGKOK's calendar: its first ten
+  // characters are the UTC day, which is still yesterday here until 07:00.
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(INSTANT.test(raw) ? (bangkokDayOf(raw) ?? raw) : raw);
   if (!m) return raw;
   const monthIndex = Number(m[2]) - 1;
   if (monthIndex < 0 || monthIndex > 11) return raw;
@@ -124,6 +126,28 @@ export function bangkokParts(date: Date): { year: number; month: number; day: nu
  * getters directly here would pick the wrong Bangkok day for up to 7 hours
  * around UTC midnight.
  */
+/** An ISO-8601 INSTANT: a date-time that says which zone it is in. */
+const INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})$/i;
+
+/**
+ * The Bangkok calendar day ("YYYY-MM-DD") of a stored value. An ISO INSTANT
+ * (createdAt, completedAt — "…Z" or "…+07:00") is converted: its own first
+ * ten characters are the UTC day, which is the day before here until 07:00.
+ * A plain date ("2026-10-15"), or a date-time that names no zone, keeps its
+ * own day. A DATE column that arrives as midnight UTC lands on the same day.
+ * null when there is no date to read.
+ */
+export function bangkokDayOf(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  const raw = String(value).trim();
+  if (INSTANT.test(raw)) {
+    const t = Date.parse(raw);
+    if (!Number.isNaN(t)) return bangkokDateString(new Date(t));
+  }
+  const m = /^\d{4}-\d{2}-\d{2}/.exec(raw);
+  return m ? m[0] : null;
+}
+
 export function bangkokDateString(date: Date): string {
   const { year, month, day } = bangkokParts(date);
   return `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;

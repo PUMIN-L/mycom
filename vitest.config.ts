@@ -8,6 +8,12 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: ['./__tests__/setup.ts'],
     globals: true,
+    // 15 s, not Vitest's 5 s. The pre-push hook runs the whole suite in
+    // parallel WITH coverage, and a starved worker has taken 5–6 s on tests
+    // that finish in under one alone (a fresh module import after
+    // vi.resetModules, a heavy page render) — blocking a push over a test that
+    // had not failed. A real hang still fails, 10 s later.
+    testTimeout: 15_000,
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html'],

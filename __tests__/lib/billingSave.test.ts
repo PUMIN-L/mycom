@@ -369,3 +369,32 @@ describe('saveBillingDocumentAtomic — derived receivables columns', () => {
     expect(upsertParams()).not.toContain('inv-other');
   });
 });
+
+describe('saveBillingDocumentAtomic — the payment date a receipt falls back to', () => {
+  it("is the day it was saved on BANGKOK's calendar, not the UTC day", async () => {
+    // Saved at 20:00 UTC on 14 Oct = 03:00 on 15 Oct in Bangkok, with neither
+    // a payment date nor a document date in the blob.
+    conn.query.mockImplementation(async (sql: string) => {
+      const text = String(sql);
+      if (text.includes('SELECT docType')) return [[]];
+      if (text.includes('SELECT cancelledAt, supersededById')) return [[{ cancelledAt: null, supersededById: null }]];
+      if (text.includes('SELECT') && text.includes('billing_payments')) return [[]];
+      if (text.includes('SELECT id FROM billing_documents WHERE id = ? FOR UPDATE')) return [[{ id: 'inv-1' }]];
+      if (text.includes('SELECT COALESCE(SUM(amount)')) return [[{ paid: '0.00' }]];
+      return [{ affectedRows: 1 }];
+    });
+    await saveBillingDocumentAtomic({
+      ...rec,
+      id: 'rc-1',
+      docType: 'receipt',
+      docNo: '',
+      data: { items: [{ qty: 1, unitPrice: 100 }] },
+      settlesDocId: 'inv-1',
+      createdAt: '2026-10-14T20:00:00.000Z',
+    } as never);
+    const insert = conn.query.mock.calls.find(([sql]) => String(sql).includes('INSERT INTO billing_payments'));
+    expect(insert, 'a payment row is written').toBeDefined();
+    expect(insert![1]).toContain('2026-10-15');
+    expect(insert![1]).not.toContain('2026-10-14');
+  });
+});

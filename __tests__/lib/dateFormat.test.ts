@@ -248,6 +248,21 @@ describe('formatDisplayDate', () => {
     expect(formatDisplayDate('2026-06-12T00:00:00.000Z')).toBe('12 Jun 2026');
   });
 
+  it("shows a stored instant on BANGKOK's calendar, not the UTC day", () => {
+    // 20:00 UTC on the 7th is 03:00 on the 8th in Bangkok: the job was closed
+    // on the 8th, which is the day the owner remembers.
+    expect(formatDisplayDate('2026-09-07T20:00:00.000Z')).toBe('8 Sep 2026');
+    expect(formatDisplayDate('2026-09-07T16:59:59.999Z')).toBe('7 Sep 2026');
+    expect(formatDisplayDate('2026-09-07T17:00:00.000Z')).toBe('8 Sep 2026');
+    // An explicit offset is honoured too.
+    expect(formatDisplayDate('2026-09-08T01:00:00+07:00')).toBe('8 Sep 2026');
+  });
+
+  it('leaves a plain date, and a date-time naming no zone, on its own day', () => {
+    expect(formatDisplayDate('2026-09-07')).toBe('7 Sep 2026');
+    expect(formatDisplayDate('2026-09-07T23:30:00')).toBe('7 Sep 2026');
+  });
+
   it('returns an empty string for a missing value rather than "Invalid Date"', () => {
     expect(formatDisplayDate('')).toBe('');
     expect(formatDisplayDate(null)).toBe('');
@@ -331,5 +346,26 @@ describe('daysUntil', () => {
     expect(daysUntil(null)).toBeNull();
     expect(daysUntil('')).toBeNull();
     expect(daysUntil('soon')).toBeNull();
+  });
+});
+
+describe('bangkokDayOf', () => {
+  it("is the Bangkok calendar day of an instant", async () => {
+    const { bangkokDayOf } = await import('@/app/lib/dateFormat');
+    expect(bangkokDayOf('2026-10-14T20:30:00.000Z')).toBe('2026-10-15');
+    expect(bangkokDayOf('2026-10-14T10:00:00.000Z')).toBe('2026-10-14');
+  });
+
+  it('keeps a plain date, and a DATE column that arrived as midnight UTC, on its own day', async () => {
+    const { bangkokDayOf } = await import('@/app/lib/dateFormat');
+    expect(bangkokDayOf('2026-10-15')).toBe('2026-10-15');
+    expect(bangkokDayOf('2026-10-15T00:00:00.000Z')).toBe('2026-10-15');
+    // A date-time that names no zone is not an instant: it keeps its own day.
+    expect(bangkokDayOf('2026-09-07T23:30:00')).toBe('2026-09-07');
+  });
+
+  it('is null when there is no date to read', async () => {
+    const { bangkokDayOf } = await import('@/app/lib/dateFormat');
+    for (const v of [null, undefined, '', 'ไม่ระบุ']) expect(bangkokDayOf(v)).toBeNull();
   });
 });
