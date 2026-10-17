@@ -244,6 +244,38 @@ function isBlank(segment: string): boolean {
   return segment.trim().length === 0;
 }
 
+const THAI_CHAR = /[\u0E00-\u0E7F]/;
+
+/**
+ * Whether a line may break between two adjacent word segments — where the
+ * editor's preview (CSS line breaking, Unicode UAX #14) would break: at
+ * whitespace, between two Thai words, and after a dash not followed by a
+ * digit. Nowhere else: CSS keeps "www.example.com/a", "16/10/2569",
+ * "ราคา(รวม)" and "PX-3000" whole. Breaking between EVERY word segment split a
+ * URL after "https://" in the PDF while the preview broke it elsewhere.
+ */
+function canBreakBetween(before: string, after: string): boolean {
+  const a = before[before.length - 1];
+  const b = after[0];
+  if (/\s/.test(a) || /\s/.test(b)) return true;
+  if (THAI_CHAR.test(a) && THAI_CHAR.test(b)) return true;
+  // "บาท/เครื่อง" and "ดีมาก!ขอบคุณ" break after the mark; "https://www",
+  // "หรือ?ใช่" and "บาท,ขอบคุณ" do not — measured against Chrome.
+  if ((a === "/" || a === "!") && THAI_CHAR.test(b)) return true;
+  return /[-\u2013\u2014]/.test(a) && !/\d/.test(b);
+}
+
+/** The word segments, rejoined wherever a line may not break between them. */
+function breakableRuns(text: string): string[] {
+  const runs: string[] = [];
+  for (const segment of segmentWords(text)) {
+    const last = runs.length - 1;
+    if (last < 0 || canBreakBetween(runs[last], segment)) runs.push(segment);
+    else runs[last] += segment;
+  }
+  return runs;
+}
+
 /**
  * Break a single over-long segment (a URL, a run of Thai with no word
  * boundary the segmenter recognises) into chunks that each fit `maxWidthPt`.
@@ -283,7 +315,7 @@ function wrapParagraph(
   // offset into a centred or right-aligned block.
   if (isBlank(paragraph)) return [""];
 
-  for (const segment of segmentWords(paragraph)) {
+  for (const segment of breakableRuns(paragraph)) {
     // Whitespace at the start of a WRAPPED line is the break itself, and
     // keeping it would indent every continuation line. Whitespace at the start
     // of the PARAGRAPH is different: it is indentation the admin typed, it is

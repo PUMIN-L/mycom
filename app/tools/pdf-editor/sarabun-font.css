@@ -1,0 +1,27 @@
+/*
+ * Sarabun for the PDF editor's on-screen text (PageOverlay, TextDraftDialog) —
+ * the SAME two files pdfFonts.ts embeds in the download (THAI_FONT_URLS), so a
+ * line is exactly as wide on screen as it will be in the PDF.
+ *
+ * Without these rules "Sarabun" named no font at all: the preview fell back to
+ * whatever sans-serif the machine had, which is narrower. A "11" typed into a
+ * box looked like it fit, and the download — measured in real Sarabun —
+ * wrapped it into a "1" over a "1".
+ *
+ * Same-origin, which is what the CSP's `font-src 'self'` allows.
+ */
+@font-face {
+  font-family: "Sarabun";
+  src: url("/fonts/Sarabun_400Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Sarabun";
+  src: url("/fonts/Sarabun_700Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}

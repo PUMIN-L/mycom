@@ -13,6 +13,7 @@ import {
   styleOfText,
   textFieldsOf,
   toolbarAfterPlacing,
+  widenToFit,
 } from "@/app/tools/pdf-editor/textDraft";
 import type { TextStyle } from "@/app/tools/pdf-editor/TextStyleControls";
 import type { TextAnnotation } from "@/app/lib/pdfTypes";
@@ -156,5 +157,31 @@ describe("TextDraftDialog", () => {
 
     setup(TOOLBAR, false, "   ");
     expect(screen.getByRole("button", { name: "วางข้อความ" })).toBeDisabled();
+  });
+});
+
+describe("widenToFit — a snapped box grows to the text typed into it", () => {
+  const BOX = { x: 300, y: 100, width: 12, height: 14 };
+
+  it("grows to the right for left-aligned text, keeping its left edge", () => {
+    expect(widenToFit(BOX, 30, "left")).toEqual({ x: 300, y: 100, width: 30, height: 14 });
+  });
+
+  it("grows to the left for right-aligned text, keeping its right edge", () => {
+    const r = widenToFit(BOX, 30, "right");
+    expect(r).toEqual({ x: 282, y: 100, width: 30, height: 14 });
+    expect(r.x + r.width).toBe(BOX.x + BOX.width);
+  });
+
+  it("grows both ways for centred text, keeping its middle", () => {
+    const r = widenToFit(BOX, 30, "center");
+    expect(r.width).toBe(30);
+    expect(r.x + r.width / 2).toBe(BOX.x + BOX.width / 2);
+  });
+
+  it("never shrinks a box the text already fits in", () => {
+    expect(widenToFit(BOX, 12, "left")).toBe(BOX);
+    expect(widenToFit(BOX, 5, "right")).toBe(BOX);
+    expect(widenToFit(BOX, Number.NaN, "center")).toBe(BOX);
   });
 });

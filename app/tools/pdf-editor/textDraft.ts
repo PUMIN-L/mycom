@@ -1,7 +1,7 @@
 // What the text dialog starts from, and what it writes back. Pure — the page
 // wires it up, the tests pin it.
 
-import type { PageId, Rect, TextAnnotation } from "../../lib/pdfTypes";
+import type { PageId, Rect, TextAlign, TextAnnotation } from "../../lib/pdfTypes";
 import type { TextStyle } from "./TextStyleControls";
 
 /** The text dialog's state: where the text goes, what it says, how it looks. */
@@ -12,6 +12,26 @@ export interface TextDraft {
   style: TextStyle;
   /** The text being edited; null for a new one. */
   editingId: string | null;
+  /** The box came from a snapped line, so it is that old text's own width —
+   *  widen it to what is typed (`widenToFit`) rather than wrap inside it. */
+  fitToText?: boolean;
+}
+
+/**
+ * `rect` widened, when needed, so a line `lineWidthPt` wide fits in it.
+ *
+ * A snapped box is the old text's tight box. Typing something longer into it —
+ * a date's "1" corrected to "11" — wrapped the new text inside it, and the
+ * download showed a "1" with another "1" under it. The box grows along the line
+ * and keeps the edge the alignment hangs on: the left for left, the right for
+ * right, the middle for centre. Never shrinks. Upright text only — the caller
+ * checks, because only then does the rectangle's width run along the line.
+ */
+export function widenToFit(rect: Rect, lineWidthPt: number, align: TextAlign): Rect {
+  if (!(lineWidthPt > rect.width)) return rect;
+  const grow = lineWidthPt - rect.width;
+  const x = align === "right" ? rect.x - grow : align === "center" ? rect.x - grow / 2 : rect.x;
+  return { ...rect, x, width: lineWidthPt };
 }
 
 /** What a snap read off a line of existing text (PageOverlay). */

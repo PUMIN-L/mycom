@@ -96,16 +96,14 @@ import {
   openPdfDocument,
   pdfLib,
 } from "./pdfFormFill";
+import { LINE_HEIGHT_RATIO } from "./pdfTextLayout";
 
 /* ------------------------------------------------------------------ *
  * Layout constants — the write layer's half of a contract with the UI
  * ------------------------------------------------------------------ */
 
-/**
- * Baseline-to-baseline distance as a multiple of the font size. The on-screen
- * overlay must use the same number or the preview and the download disagree.
- */
-export const LINE_HEIGHT_RATIO = 1.2;
+/** Baseline-to-baseline distance — shared with the preview (pdfTextLayout). */
+export { LINE_HEIGHT_RATIO };
 
 /**
  * How far italic text leans, in degrees from upright. Only Sarabun Regular and

@@ -2,6 +2,8 @@ import { render, act } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import PageOverlay from "@/app/tools/pdf-editor/PageOverlay";
 import type { Annotation, Rect } from "@/app/lib/pdfTypes";
+import { LINE_HEIGHT_RATIO } from "@/app/lib/pdfTextLayout";
+import { LINE_HEIGHT_RATIO as EXPORT_LINE_HEIGHT_RATIO } from "@/app/lib/pdfApplyEdits";
 
 /**
  * PageOverlay imports `pdfCoords` and nothing else — no react-pdf, no pdfjs —
@@ -199,5 +201,64 @@ describe("PageOverlay — text style preview", () => {
   it("text placed before italic existed (no key) is upright", () => {
     mount(text());
     expect(span().style.fontStyle).toBe("normal");
+  });
+});
+
+/**
+ * The preview has to lay text out the way the download will, or a line that
+ * fits on screen wraps in the PDF — a date's "11" came out as a "1" with
+ * another "1" under it. Same face (Sarabun, see PdfEditorFont.test.ts), same
+ * size relative to the box at any zoom, same line height, same rule for a word
+ * wider than the line, and nothing hidden that the PDF draws.
+ */
+describe("PageOverlay — text lays out the way the download will", () => {
+  const text: Annotation = {
+    kind: "text",
+    id: "t1",
+    pageId: "pg_1",
+    rect: { x: 10, y: 10, width: 200, height: 30 },
+    text: "ราคา",
+    sizePt: 16,
+    color: { r: 0, g: 0, b: 0 },
+    bold: false,
+    angleDeg: 0,
+    align: "left",
+  };
+  const span = () => Array.from(document.querySelectorAll("span")).find((s) => s.textContent === "ราคา")!;
+
+  it("sizes the text in points times the zoom — 16pt is 16px at 100%…", () => {
+    mount(text);
+    expect(span().style.fontSize).toBe("16px");
+  });
+
+  it("…and 24px when the page is shown at 150%, staying in proportion to its box", () => {
+    vi.restoreAllMocks();
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockReturnValue({
+      left: 0, top: 0, right: PAGE_PT * 1.5, bottom: PAGE_PT * 1.5,
+      width: PAGE_PT * 1.5, height: PAGE_PT * 1.5, x: 0, y: 0, toJSON: () => {},
+    } as DOMRect);
+    mount(text);
+    expect(span().style.fontSize).toBe("24px");
+  });
+
+  it("uses the export's line height", () => {
+    mount(text);
+    expect(span().style.lineHeight).toBe(String(LINE_HEIGHT_RATIO));
+    expect(LINE_HEIGHT_RATIO).toBe(EXPORT_LINE_HEIGHT_RATIO);
+  });
+
+  it("breaks a word wider than the line, as the export's hardBreak does", () => {
+    mount(text);
+    expect(span().style.overflowWrap).toBe("anywhere");
+  });
+
+  it("does not kern — pdf-lib places glyphs at their plain advance widths", () => {
+    mount(text);
+    expect(span().getAttribute("style")).toContain("font-kerning: none");
+  });
+
+  it("does not clip a line that runs past the box — the PDF draws it", () => {
+    mount(text);
+    expect(span().parentElement!.className).not.toContain("overflow-hidden");
   });
 });

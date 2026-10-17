@@ -44,6 +44,7 @@ import {
   textMatrixToSizeAndAngle,
 } from "@/app/lib/pdfCoords";
 import type { BoxArray, Matrix6, ScreenBox } from "@/app/lib/pdfCoords";
+import { LINE_HEIGHT_RATIO } from "@/app/lib/pdfTextLayout";
 import type {
   CssRect,
   DrawableTool,
@@ -266,6 +267,9 @@ export default function PageOverlay({
   }, [pageProxy, widthPt, heightPt, rotation]);
 
   const ready = box.width > 0 && box.height > 0;
+  /** CSS pixels per PDF point at the current zoom — what a text's point size
+   *  is multiplied by on screen, so it keeps its size relative to its box. */
+  const pxPerPt = ready && viewport.width > 0 ? box.width / viewport.width : 1;
   const screenBox = useMemo(
     () => localBox(box.width, box.height),
     [box.width, box.height],
@@ -601,7 +605,7 @@ export default function PageOverlay({
               });
             }}
           >
-            <AnnotationBody ann={ann} assetUrls={assetUrls} />
+            <AnnotationBody ann={ann} assetUrls={assetUrls} pxPerPt={pxPerPt} />
 
             {isSelected &&
               tool === "select" &&
@@ -701,9 +705,11 @@ function SnapHint({
 function AnnotationBody({
   ann,
   assetUrls,
+  pxPerPt,
 }: {
   ann: Annotation;
   assetUrls: Readonly<Record<string, string>>;
+  pxPerPt: number;
 }) {
   if (ann.kind === "whiteout") {
     return <div className="h-full w-full border border-dashed border-gray-400 bg-white" />;
@@ -712,8 +718,10 @@ function AnnotationBody({
   if (ann.kind === "text") {
     const { color, sizePt, bold, italic, align, angleDeg, text } = ann;
     return (
+      // No overflow clipping: the export draws every line, including one that
+      // runs past the box, so hiding it here showed less than the PDF gets.
       <div
-        className="flex h-full w-full items-start overflow-hidden"
+        className="flex h-full w-full items-start"
         style={{
           // PDF angles run counter-clockwise, CSS clockwise.
           transform: angleDeg ? `rotate(${-angleDeg}deg)` : undefined,
@@ -721,7 +729,7 @@ function AnnotationBody({
         }}
       >
         <span
-          className="w-full leading-tight whitespace-pre-wrap"
+          className="w-full whitespace-pre-wrap"
           style={{
             // ALIGNMENT IS PER LINE, INSIDE THE FULL RECTANGLE — `text-align`
             // on a full-width span, never `justify-content` on the parent.
@@ -742,15 +750,26 @@ function AnnotationBody({
             // alignment, which is what `wrapThai` keeps, and HANGS the space a
             // soft wrap lands on, which is what `wrapThai` strips.
             textAlign: align,
+            // The real Sarabun (sarabun-font.css serves the files the export
+            // embeds), so lines wrap where `wrapThai` will wrap them.
             fontFamily: "Sarabun, sans-serif",
             fontWeight: bold ? 700 : 400,
             // The export slants the upright face (ITALIC_SLANT_DEG); a browser
             // does the same for a font without an italic face.
             fontStyle: italic ? "italic" : "normal",
-            // Points and CSS px coincide only at 100% zoom; this is a preview
-            // approximation. `sizePt` is authoritative — pdf-lib uses it on
-            // download, measured with the embedded Sarabun face.
-            fontSize: `${sizePt}px`,
+            // Scaled with the page: points and CSS px coincide only at zoom 1,
+            // and an unscaled size made text look smaller than its box when
+            // zoomed in — fitting on screen, wrapping in the download.
+            fontSize: `${sizePt * pxPerPt}px`,
+            lineHeight: LINE_HEIGHT_RATIO,
+            // pdf-lib places glyphs at their plain advance widths; a browser
+            // kerns pairs like "VA" closer, which made a line up to ~1% narrower
+            // on screen than in the PDF — enough to fit here and wrap there.
+            fontKerning: "none",
+            // A word wider than the whole line is broken where it runs out, as
+            // `wrapThai`'s hardBreak does — not left to overflow on one line
+            // here while the download splits it.
+            overflowWrap: "anywhere",
             color: `rgb(${Math.round(color.r * 255)}, ${Math.round(color.g * 255)}, ${Math.round(color.b * 255)})`,
           }}
         >

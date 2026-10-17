@@ -17,11 +17,13 @@ import PdfEditorGuidePanel from "./PdfEditorGuidePanel";
 import PdfPreviewWrapper from "./PdfPreviewWrapper";
 import SignaturePad from "./SignaturePad";
 import TextDraftDialog from "./TextDraftDialog";
+import "./sarabun-font.css";
 import {
   styleForNewText,
   styleOfText,
   textFieldsOf,
   toolbarAfterPlacing,
+  widenToFit,
   type TextDraft,
 } from "./textDraft";
 import { useEditorStore } from "./useEditorStore";
@@ -37,6 +39,7 @@ import {
   createModel,
   deleteAnnotation,
   deletePage as deletePageInModel,
+  effectiveRotation,
   mergeSource,
   movePage,
   movePageById,
@@ -136,6 +139,27 @@ const ENCRYPTED_MESSAGE =
   "กรุณาเอารหัสผ่านออกจากไฟล์ก่อน แล้วค่อยอัปโหลดใหม่ — เปิดไฟล์ด้วยโปรแกรมอ่าน PDF " +
   "ใส่รหัสผ่านให้ถูกต้อง แล้วสั่ง “พิมพ์เป็น PDF” (Print to PDF) หรือลบรหัสผ่านใน Adobe Acrobat\n\n" +
   "ที่ระบบไม่ยอมเปิดให้ ไม่ใช่เพราะไฟล์เสีย แต่เพราะถ้าฝืนเปิดจะได้ไฟล์ที่อ่านไม่ออกกลับไป";
+
+/**
+ * The widest line of `text` in Sarabun at `sizePt`, in points, or null where
+ * the browser cannot measure (no FontFaceSet or canvas — jsdom). Measured on a
+ * canvas with the font sarabun-font.css serves, i.e. the face the download
+ * embeds; the small allowance covers the hair by which the browser's and
+ * pdf-lib's measurements can differ, since a hair is enough to wrap.
+ */
+function sarabunLineWidthPt(text: string, sizePt: number, bold: boolean): number | null {
+  if (typeof document === "undefined" || !document.fonts) return null;
+  const ctx = document.createElement("canvas").getContext("2d");
+  if (!ctx) return null;
+  ctx.font = `${bold ? 700 : 400} ${sizePt}px Sarabun`;
+  // Plain advance widths, as pdf-lib draws them (PageOverlay does the same).
+  if ("fontKerning" in ctx) ctx.fontKerning = "none";
+  const widest = Math.max(
+    0,
+    ...text.replace(/\r\n?/g, "\n").split("\n").map((line) => ctx.measureText(line).width)
+  );
+  return widest * 1.02 + 1;
+}
 
 /**
  * What "unsaved" means for a tool with no save button: the annotations, the
@@ -389,6 +413,13 @@ export default function PdfEditorPage() {
     const timer = setTimeout(() => setToast(null), 3000);
     return () => clearTimeout(timer);
   }, [toast]);
+
+  // Fetch Sarabun up front: a browser loads a web font only once text uses it,
+  // and a snapped text is measured in it the moment it is placed.
+  useEffect(() => {
+    if (typeof document === "undefined" || !document.fonts) return;
+    for (const weight of [400, 700]) document.fonts.load(`${weight} 16px Sarabun`).catch(() => {});
+  }, []);
 
   /**
    * A page can vanish out from under the selection — delete, split, the undo of
@@ -706,6 +737,8 @@ export default function PdfEditorPage() {
           // The toolbar's look, at the size and angle of a snapped line.
           style: styleForNewText(textStyle, origin === "snap" ? snap : null),
           editingId: null,
+          // A snapped box is the old text's width; a dragged one is the admin's.
+          fitToText: origin === "snap",
         });
         return;
       }
@@ -754,11 +787,20 @@ export default function PdfEditorPage() {
       apply((current) => updateAnnotation<TextAnnotation>(current, id, { text, ...fields }));
       setSelectedAnnotationId(id);
     } else {
+      // A snapped box grows to what was typed, so a correction longer than the
+      // text it replaces stays on its line. Upright on an unturned page only:
+      // anywhere else the box's width is not the line's direction.
+      let rect = textDraft.rect;
+      const page = model.pages.find((p) => p.id === textDraft.pageId);
+      if (textDraft.fitToText && fields.angleDeg === 0 && page && effectiveRotation(page) === 0) {
+        const widthPt = sarabunLineWidthPt(text, fields.sizePt, fields.bold);
+        if (widthPt !== null) rect = widenToFit(rect, widthPt, fields.align);
+      }
       const annotation: Annotation = {
         kind: "text",
         id: nextId("ann"),
         pageId: textDraft.pageId,
-        rect: textDraft.rect,
+        rect,
         text,
         ...fields,
       };
@@ -770,7 +812,7 @@ export default function PdfEditorPage() {
 
     setTextDraft(null);
     setTool("select");
-  }, [apply, textDraft]);
+  }, [apply, textDraft, model.pages]);
 
   const handleEditSelectedText = useCallback(() => {
     if (!selectedAnnotation || selectedAnnotation.kind !== "text") return;

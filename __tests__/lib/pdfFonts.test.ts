@@ -410,6 +410,43 @@ describe("wrapThai", () => {
   });
 });
 
+/**
+ * Lines break only where the editor's preview (CSS line breaking) breaks them,
+ * so the download wraps like the screen: at spaces, between Thai words, after
+ * a dash not followed by a digit, and after "/" or "!" before Thai — not at
+ * every word-segment boundary. Each case was measured against Chrome laying
+ * the same text out in the same Sarabun. One unit per character, size 1.
+ */
+describe("wrapThai — breaks where the preview breaks", () => {
+  const ruler: TextMeasurer = { widthOfTextAtSize: (t, size) => t.length * size };
+
+  it("keeps a date whole — no break after a slash between numbers", () => {
+    expect(wrapThai("ab 16/10/2569", ruler, 1, 11)).toEqual(["ab", "16/10/2569"]);
+  });
+
+  it("keeps a model number whole — no break after a dash before a digit", () => {
+    expect(wrapThai("ab PX-3000", ruler, 1, 8)).toEqual(["ab", "PX-3000"]);
+  });
+
+  it("breaks after a dash before a letter", () => {
+    expect(wrapThai("well-known", ruler, 1, 6)).toEqual(["well-", "known"]);
+  });
+
+  it("does not break a URL after https:// — too long, it is cut where it runs out, as on screen", () => {
+    expect(wrapThai("https://www.ex.com/ab", ruler, 1, 10)).toEqual(["https://ww", "w.ex.com/a", "b"]);
+  });
+
+  it("breaks after a slash or an exclamation mark before Thai", () => {
+    expect(wrapThai("บาท/เครื่อง", ruler, 1, 8)).toEqual(["บาท/", "เครื่อง"]);
+    expect(wrapThai("ดีมาก!ขอบคุณ", ruler, 1, 7)).toEqual(["ดีมาก!", "ขอบคุณ"]);
+  });
+
+  it("does not break between Thai and a mark glued to it, like a browser", () => {
+    // "ราคา(รวม)" is one unbreakable run, so it moves to the next line whole.
+    expect(wrapThai("ก ราคา(รวม)", ruler, 1, 9)).toEqual(["ก", "ราคา(รวม)"]);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Preview vs export: the same text must land in the same place on screen and
 // in the downloaded PDF, for left, centre and right.
