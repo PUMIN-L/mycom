@@ -2074,16 +2074,20 @@ export default function QuotationPage() {
             {/* Totals */}
             <div id="quote-footer" className="flex justify-between gap-6 mt-3">
               <div className="flex-1 text-[12px]">
-                <div className="space-y-0.5 text-gray-700">
-                  <div className="font-bold text-gray-800">เงื่อนไข</div>
-                  {(q.conditions || []).map((cond) => (
-                    (cond.label || cond.value) ? (
-                      <div key={cond.id} className="whitespace-pre-line">
-                        • {cond.label}{cond.label && cond.value ? ': ' : ''}{cond.value}
-                      </div>
-                    ) : null
-                  ))}
-                </div>
+                {/* Only when a condition has something to print — a bare
+                    heading on the customer's copy reads as if terms went missing. */}
+                {(q.conditions || []).some((cond) => cond.label || cond.value) && (
+                  <div className="space-y-0.5 text-gray-700">
+                    <div className="font-bold text-gray-800">เงื่อนไข</div>
+                    {(q.conditions || []).map((cond) => (
+                      (cond.label || cond.value) ? (
+                        <div key={cond.id} className="whitespace-pre-line">
+                          • {cond.label}{cond.label && cond.value ? ': ' : ''}{cond.value}
+                        </div>
+                      ) : null
+                    ))}
+                  </div>
+                )}
                 {q.note && (
                   <div className="mt-3 space-y-0.5 text-gray-700">
                     <div className="font-bold text-gray-800">หมายเหตุ</div>
