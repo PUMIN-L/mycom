@@ -423,7 +423,7 @@ export default function PdfPreviewClient({
         </aside>
       )}
 
-      <div className="min-w-0 flex-1 overflow-auto">
+      <div className="min-w-0 flex-1 overflow-auto" data-pdf-scroll>
         {errorList.length > 0 && (
           <div className="space-y-2 p-4">
             {errorList.map(([sourceId, message]) => (
@@ -495,6 +495,33 @@ export default function PdfPreviewClient({
            Oversized pages scroll instead. */
         [data-pdf-page-frame] .react-pdf__Page__canvas {
           display: block;
+        }
+        /* Scrollbars you can SEE. The site-wide ones (globals.css) are white on
+           white — invisible until hovered — so a page wider than the view
+           looked as if it could not be scrolled sideways at all: a mouse with
+           no horizontal wheel had nothing to grab. Grey on grey here, both
+           ways. scrollbar-color covers Chrome/Edge 121+ and Firefox (where it
+           wins over the -webkit- rules); the -webkit- rules cover Safari. */
+        [data-pdf-scroll] {
+          scrollbar-color: #9ca3af #d1d5db;
+        }
+        [data-pdf-scroll]::-webkit-scrollbar {
+          width: 12px;
+          height: 12px;
+        }
+        [data-pdf-scroll]::-webkit-scrollbar-track {
+          background: #d1d5db;
+        }
+        [data-pdf-scroll]::-webkit-scrollbar-thumb {
+          background: #9ca3af;
+          border: 2px solid #d1d5db;
+          border-radius: 6px;
+        }
+        [data-pdf-scroll]::-webkit-scrollbar-thumb:hover {
+          background: #6b7280;
+        }
+        [data-pdf-scroll]::-webkit-scrollbar-corner {
+          background: #d1d5db;
         }
       `}</style>
     </div>

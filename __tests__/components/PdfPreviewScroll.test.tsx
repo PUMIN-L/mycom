@@ -70,4 +70,20 @@ describe("PDF editor page view — horizontal scrolling", () => {
     const view = (container.querySelector("[data-pdf-pages]") as HTMLElement).parentElement!;
     expect(view.className.split(/\s+/)).toEqual(expect.arrayContaining(["overflow-auto", "min-w-0"]));
   });
+
+  /**
+   * The site-wide scrollbars (globals.css) are white on white, so the
+   * sideways bar under a wide page was there but invisible — "it can't scroll
+   * left or right". This view paints its own, grey on grey, in both
+   * directions and in both scrollbar dialects.
+   */
+  it("shows its scrollbars — grey, not the site's invisible white", () => {
+    const { container } = renderPreview();
+    const view = (container.querySelector("[data-pdf-pages]") as HTMLElement).parentElement!;
+    expect(view.hasAttribute("data-pdf-scroll")).toBe(true);
+    const css = Array.from(container.querySelectorAll("style")).map((s) => s.textContent ?? "").join("\n");
+    expect(css).toMatch(/\[data-pdf-scroll\]\s*\{\s*scrollbar-color:\s*#9ca3af #d1d5db;/);
+    expect(css).toMatch(/\[data-pdf-scroll\]::-webkit-scrollbar\s*\{\s*width:\s*12px;\s*height:\s*12px;/);
+    expect(css).toMatch(/\[data-pdf-scroll\]::-webkit-scrollbar-thumb\s*\{\s*background:\s*#9ca3af;/);
+  });
 });
