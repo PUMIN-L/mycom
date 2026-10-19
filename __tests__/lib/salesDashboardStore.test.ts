@@ -392,6 +392,42 @@ describe('salesDashboardStore', () => {
       const range = getPeriodDateRange('month', '2026-03');
       expect(range).toMatchObject({ curStart: '2026-03-01', curEnd: '2026-04-01', prevStart: '2026-02-01' });
     });
+
+    it('names the period in พ.ศ., like every other date in the system', () => {
+      expect(getPeriodDateRange('year', '2026').periodLabel).toBe('ปี 2569');
+      expect(getPeriodDateRange('quarter', '2026-Q4').periodLabel).toBe('ไตรมาส 4 ปี 2569');
+      expect(getPeriodDateRange('month', '2026-10').periodLabel).toBe('เดือน ต.ค. 2569');
+    });
+
+    it('spans a year and a quarter, with the period before it, across year boundaries', () => {
+      expect(getPeriodDateRange('year', '2026')).toMatchObject({
+        curStart: '2026-01-01', curEnd: '2027-01-01', prevStart: '2025-01-01', prevEnd: '2026-01-01',
+      });
+      expect(getPeriodDateRange('quarter', '2026-Q1')).toMatchObject({
+        curStart: '2026-01-01', curEnd: '2026-04-01', prevStart: '2025-10-01', prevEnd: '2026-01-01',
+      });
+      expect(getPeriodDateRange('quarter', '2025-Q4')).toMatchObject({
+        curStart: '2025-10-01', curEnd: '2026-01-01', prevStart: '2025-07-01',
+      });
+      expect(getPeriodDateRange('month', '2026-01')).toMatchObject({
+        curStart: '2026-01-01', curEnd: '2026-02-01', prevStart: '2025-12-01',
+      });
+      expect(getPeriodDateRange('month', '2025-12')).toMatchObject({
+        curStart: '2025-12-01', curEnd: '2026-01-01', prevStart: '2025-11-01',
+      });
+    });
+
+    it('never builds a NaN date from a malformed value — the bad part becomes the current one', () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      try {
+        vi.setSystemTime(new Date('2026-10-19T05:00:00Z'));
+        expect(getPeriodDateRange('quarter', '2025-Q9')).toMatchObject({ curStart: '2025-10-01', curEnd: '2026-01-01' });
+        expect(getPeriodDateRange('month', '2025-13')).toMatchObject({ curStart: '2025-10-01', curEnd: '2025-11-01' });
+        expect(getPeriodDateRange('bogus', 'x')).toMatchObject({ curStart: '2026-10-01', periodLabel: 'เดือน ต.ค. 2569' });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 
   describe('getDashboardOverview', () => {

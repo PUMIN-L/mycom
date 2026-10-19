@@ -4,6 +4,7 @@ import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { sanitizePlainText } from "./sanitizeHtml";
 import { bangkokDateString, bangkokParts, isValidDateString } from "./dateFormat";
 import { MAX_MONEY_AMOUNT, toSatang } from "./moneyAmount";
+import { parsePeriod, periodLabel as periodLabelOf, type PeriodType } from "./dashboardPeriod";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 import type { SalesRecord, CostItem, CustomerEquipment } from "./types";
@@ -823,48 +824,28 @@ export async function listSalesRecords(filters?: {
 // ── Aggregate Queries ────────────────────────────────────────────────────────
 
 export function getPeriodDateRange(periodType?: string, periodValue?: string) {
-  let curStart, curEnd, prevStart, prevEnd;
-  let periodLabel = "เดือนนี้";
+  const type: PeriodType = periodType === "year" || periodType === "quarter" ? periodType : "month";
   // Only the DEFAULT (no explicit periodValue) reads "now" — use Bangkok's
   // calendar date/month, not the server's own (UTC on Vercel), or the
   // default view picks the wrong month/quarter/year for up to 7 hours a day.
-  const { year: bkkYear, month: bkkMonth } = bangkokParts(new Date());
-
-  if (periodType === 'year') {
-    const y = parseInt(periodValue || bkkYear.toString(), 10);
-    curStart = `${y}-01-01`;
-    curEnd = `${y + 1}-01-01`;
-    prevStart = `${y - 1}-01-01`;
-    prevEnd = curStart;
-    periodLabel = `ปี ${y}`;
-  } else if (periodType === 'quarter') {
-    const parts = (periodValue || "").split('-Q');
-    const y = parseInt(parts[0], 10) || bkkYear;
-    const q = parseInt(parts[1], 10) || Math.floor(bkkMonth / 3) + 1;
-    const startMonth = (q - 1) * 3;
-    curStart = `${y}-${String(startMonth + 1).padStart(2, "0")}-01`;
-    const curEndDate = new Date(y, startMonth + 3, 1);
-    curEnd = `${curEndDate.getFullYear()}-${String(curEndDate.getMonth() + 1).padStart(2, "0")}-01`;
-    const prevStartDate = new Date(y, startMonth - 3, 1);
-    prevStart = `${prevStartDate.getFullYear()}-${String(prevStartDate.getMonth() + 1).padStart(2, "0")}-01`;
-    prevEnd = curStart;
-    periodLabel = `ไตรมาส ${q} ปี ${y}`;
-  } else {
-    // month (default)
-    const parts = (periodValue || "").split('-');
-    const y = parseInt(parts[0], 10) || bkkYear;
-    const m = parts.length > 1 ? parseInt(parts[1], 10) - 1 : bkkMonth;
-    curStart = `${y}-${String(m + 1).padStart(2, "0")}-01`;
-    const nextMonth = new Date(y, m + 1, 1);
-    curEnd = `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, "0")}-01`;
-    const prevDate = new Date(y, m - 1, 1);
-    prevStart = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, "0")}-01`;
-    prevEnd = curStart;
-    const thaiMonths = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
-    periodLabel = `เดือน ${thaiMonths[m]} ${y}`;
-  }
-
-  return { curStart, curEnd, prevStart, prevEnd, periodLabel };
+  // parsePeriod (shared with the page) also turns a malformed part — "Q9",
+  // month "13" — into the current one rather than a NaN date in the SQL.
+  const now = bangkokParts(new Date());
+  const { year, month } = parsePeriod(type, periodValue, now);
+  const span = type === "year" ? 12 : type === "quarter" ? 3 : 1;
+  // First of the month `m` months into `year`; Date.UTC rolls the year over.
+  const firstOf = (m: number) => {
+    const d = new Date(Date.UTC(year, m, 1));
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-01`;
+  };
+  const curStart = firstOf(month);
+  return {
+    curStart,
+    curEnd: firstOf(month + span),
+    prevStart: firstOf(month - span),
+    prevEnd: curStart,
+    periodLabel: periodLabelOf(type, periodValue, now),
+  };
 }
 
 export async function getDashboardOverview(

@@ -66,14 +66,43 @@ export interface Salesperson { id: string; name: string }
 export const fmt = (n: any) => Number(n || 0).toLocaleString("th-TH", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 export const fmtDec = (n: any) => Number(n || 0).toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 export const MONTHS_TH = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
-export const PIE_COLORS = ["#6366f1", "#f59e0b", "#10b981", "#ef4444", "#8b5cf6", "#ec4899", "#14b8a6", "#f97316", "#06b6d4", "#84cc16"];
 
-export function pctChange(cur: number, prev: number): { value: number; label: string; color: string } {
+export interface Change { value: number; label: string; color: string }
+
+/** Green for a move the business wants, red for one it does not. A COST going
+ *  up is the bad direction — the ต้นทุน card used to show it as a green ↑. */
+function changeOf(value: number, label: string, higherIsBetter: boolean): Change {
+  if (value === 0) return { value: 0, label, color: "text-gray-400" };
+  const good = value > 0 === higherIsBetter;
+  return { value, label, color: good ? "text-emerald-600" : "text-red-500" };
+}
+
+/**
+ * Relative change from `prev` to `cur`, e.g. "↑12%". Measured against the SIZE
+ * of `prev`, so a loss shrinking (−100 → 50) reads as the rise it is; dividing
+ * by the negative `prev` itself turned it into "↓150%". "—" when there is
+ * nothing to compare with.
+ */
+export function pctChange(cur: number, prev: number, { higherIsBetter = true } = {}): Change {
   if (prev === 0) return { value: 0, label: "—", color: "text-gray-400" };
-  const pct = Math.round(((cur - prev) / prev) * 100);
-  if (pct > 0) return { value: pct, label: `↑${pct}%`, color: "text-emerald-600" };
-  if (pct < 0) return { value: pct, label: `↓${Math.abs(pct)}%`, color: "text-red-500" };
-  return { value: 0, label: "→0%", color: "text-gray-400" };
+  const pct = Math.round(((cur - prev) / Math.abs(prev)) * 100);
+  if (pct > 0) return changeOf(pct, `↑${pct}%`, higherIsBetter);
+  if (pct < 0) return changeOf(pct, `↓${Math.abs(pct)}%`, higherIsBetter);
+  return changeOf(0, "→0%", higherIsBetter);
+}
+
+/**
+ * The change between two PERCENTAGES, in points: a margin of 10% → 12% is
+ * "↑2 จุด". As a relative change it read "↑20%", which looks like the margin
+ * itself rose by twenty. A side with no rate at all (no sales, no quotations)
+ * is null, and gives "—" — 0% there is not a rate to compare with.
+ */
+export function pointChange(cur: number | null, prev: number | null): Change {
+  if (cur === null || prev === null) return { value: 0, label: "—", color: "text-gray-400" };
+  const diff = Math.round(cur - prev);
+  if (diff > 0) return changeOf(diff, `↑${diff} จุด`, true);
+  if (diff < 0) return changeOf(diff, `↓${Math.abs(diff)} จุด`, true);
+  return changeOf(0, "→0 จุด", true);
 }
 
 export function stripHtml(html: string | null | undefined): string {

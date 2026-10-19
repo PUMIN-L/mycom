@@ -185,22 +185,35 @@ h1, h2, h3, h4, h5, h6 {
   padding: 0 1.5rem;
 }
 
-/* Scrollbar */
+/* Scrollbar — thin, and VISIBLE. The thumb used to be var(--bg-card) on a
+   var(--bg-primary) track: white on white, so a table or page view that
+   scrolled sideways looked as if it could not, until the bar was hovered.
+   `height` is the horizontal bar's thickness (`width` the vertical's). */
 ::-webkit-scrollbar {
   width: 8px;
+  height: 8px;
 }
 
-::-webkit-scrollbar-track {
-  background: var(--bg-primary);
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: #f3f4f6;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--bg-card);
+  background: #d1d5db;
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
   background: var(--accent-dark);
+}
+
+/* Firefox has no ::-webkit-scrollbar; the standard property instead. Only
+   there: in Chrome it would override the thin bar above. */
+@supports not selector(::-webkit-scrollbar) {
+  html {
+    scrollbar-color: #d1d5db #f3f4f6;
+  }
 }
 
 /* Hide scrollbar utility */

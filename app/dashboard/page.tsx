@@ -7,8 +7,9 @@ import { toLocalDateString } from "../lib/dateFormat";
 import { downloadExcel } from "../lib/xlsxExport";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine,
-  PieChart, Pie, Cell, Legend,
+  Legend,
 } from "recharts";
+import CategoryShareChart from "./CategoryShareChart";
 import SearchableDropdown from "../components/SearchableDropdown";
 import type { SearchableDropdownOption } from "../components/SearchableDropdown";
 import FormattedNumberInput from "../components/FormattedNumberInput";
@@ -38,10 +39,22 @@ import {
   type LoadedEquipment,
   isMixedModelBill,
   COST_TYPE_LABELS, COST_TYPE_OPTIONS,
-  fmt, fmtDec, MONTHS_TH, PIE_COLORS,
-  pctChange, stripHtml, safeImageUrl, emptyForm,
+  fmt, fmtDec, MONTHS_TH,
+  pctChange, pointChange, stripHtml, safeImageUrl, emptyForm,
+  type Change,
 } from "./types";
 import { displayText } from "../lib/stripHtml";
+import { bangkokParts } from "../lib/dateFormat";
+import {
+  buddhistYear,
+  comparePeriods,
+  currentPeriodName,
+  currentPeriodValue,
+  periodLabel,
+  previousPeriodPhrase,
+  shiftPeriod,
+  type PeriodType,
+} from "../lib/dashboardPeriod";
 
 // emptyForm imported from ./types
 
@@ -51,24 +64,63 @@ import { displayText } from "../lib/stripHtml";
 const SERIAL_CHECK_TIMEOUT_MS = 8000;
 
 /** The one green for revenue (ยอดขาย / รายรับ) in BOTH bar charts.
- * emerald-500 — already this file's green: PIE_COLORS[2] uses the same hex and
- * the "กำไร" overview card is emerald. Declared once on purpose: the two charts
- * plot the SAME `revenue` series, so they must never be able to drift into two
+ * emerald-500 — already this file's green: the "กำไร" overview card is
+ * emerald. Declared once on purpose: the two charts plot the SAME `revenue`
+ * series, so they must never be able to drift into two
  * different colours again. The matching tooltip text is `text-emerald-600`
  * (same -500 fill / -600 text pairing the amber and rose series already use).
  * ต้นทุนสินค้า stays amber and รายจ่าย stays rose — they mean different things
  * (see the permanent note under the charts). */
 const REVENUE_GREEN = "#10b981";
 
+/** How many years back the period pickers (and the ◀ step) reach. */
+const PERIOD_YEARS_BACK = 4;
+
+/** Today's calendar year and month — Bangkok's, as the server reads "now". */
+const bangkokNow = () => bangkokParts(new Date());
+
+/** One overview card: what it is, its figure, and how that moved. */
+function OverviewCard({ label, value, change, versus }: { label: string; value: string; change: Change; versus: string }) {
+  return (
+    <div className="rounded-2xl p-5 shadow-sm border border-gray-100 bg-white flex flex-col justify-between">
+      <div>
+        <div className="text-[13px] font-semibold text-gray-500 mb-1">{label}</div>
+        <div className="text-2xl sm:text-3xl font-black tracking-tight text-gray-900 tabular-nums">{value}</div>
+      </div>
+      {change.label !== "—" && (
+        <div className="text-xs mt-2">
+          <span className={`font-bold ${change.color}`}>{change.label}</span>{" "}
+          <span className="text-gray-400">{versus}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** An x-axis label of the sales charts; today's is bold, with a marker under it. */
+function PeriodTick({ x, y, payload, current }: {
+  x?: number; y?: number; payload?: { value: string }; current: { name: string; marker: string } | null;
+}) {
+  const isCurrent = current !== null && payload?.value === current.name;
+  return (
+    <g transform={`translate(${x ?? 0},${y ?? 0})`}>
+      <text dy={12} textAnchor="middle" fontSize={12} fill={isCurrent ? "#111827" : "#6b7280"} fontWeight={isCurrent ? 700 : 400}>
+        {payload?.value}
+      </text>
+      {isCurrent && (
+        <text dy={26} textAnchor="middle" fontSize={10} fill="#87704d">{current.marker}</text>
+      )}
+    </g>
+  );
+}
+
 // ── Main Component ───────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [periodType, setPeriodType] = useState<"month" | "quarter" | "year">("year");
-  const [periodValue, setPeriodValue] = useState<string>(
-    new Date().getFullYear().toString()
-  );
+  const [periodType, setPeriodType] = useState<PeriodType>("year");
+  const [periodValue, setPeriodValue] = useState<string>(() => currentPeriodValue("year", bangkokNow()));
   const [chartMode, setChartMode] = useState<"monthly" | "quarterly">("monthly");
 
   // Sales record form
@@ -187,15 +239,30 @@ export default function DashboardPage() {
     setTimeout(() => setToast(null), 3000);
   }, []);
 
-  // Fetch dashboard data
+  // Fetch dashboard data. Only the LATEST request may land: stepping through
+  // periods with ◀ ▶ fires several, and a slow one for an earlier period must
+  // not overwrite the figures of the period now on screen.
+  const dashboardRequestRef = useRef(0);
   const fetchDashboard = useCallback(async () => {
+    const request = ++dashboardRequestRef.current;
     setLoading(true);
     try {
-      const res = await fetch(`/api/admin/dashboard?periodType=${periodType}&periodValue=${periodValue}`);
-      if (res.ok) setData(await res.json());
-    } catch { /* ignore */ }
-    setLoading(false);
-  }, [periodType, periodValue]);
+      const res = await fetch(
+        `/api/admin/dashboard?periodType=${encodeURIComponent(periodType)}&periodValue=${encodeURIComponent(periodValue)}`
+      );
+      const body = res.ok ? await res.json() : null;
+      if (request !== dashboardRequestRef.current) return;
+      if (!body) throw new Error(`dashboard ${res.status}`);
+      setData(body);
+    } catch {
+      if (request !== dashboardRequestRef.current) return;
+      // No figures rather than the PREVIOUS period's under the new period's
+      // name — the badge already shows the period that was asked for.
+      setData(null);
+      showToast("โหลดข้อมูล Dashboard ไม่สำเร็จ กรุณาลองใหม่", "error");
+    }
+    if (request === dashboardRequestRef.current) setLoading(false);
+  }, [periodType, periodValue, showToast]);
 
   // Fetch lookups
   const fetchLookups = useCallback(async () => {
@@ -250,13 +317,31 @@ export default function DashboardPage() {
     salespeople.map((s) => ({ value: s.id, label: s.name })),
     [salespeople]
   );
+  // Values stay Gregorian (what the API takes); the labels are พ.ศ., like the
+  // rest of the system. Keyed on the current year, not built once: a page left
+  // open over New Year would otherwise jump to the new year with ปีนี้ while
+  // its pickers lacked it.
+  const thisYear = bangkokNow().year;
   const yearOptions: SearchableDropdownOption[] = useMemo(() =>
-    [0, 1, 2, 3, 4].map((i) => {
-      const y = String(new Date().getFullYear() - i);
-      return { value: y, label: `ปี ${y}` };
+    Array.from({ length: PERIOD_YEARS_BACK + 1 }, (_, i) => {
+      const y = thisYear - i;
+      return { value: String(y), label: `ปี ${buddhistYear(y)}` };
     }),
-    []
+    [thisYear]
   );
+
+  // ── Period stepping ────────────────────────────────────────────────────────
+  // ◀ ▶ move one month / quarter / year; the "now" button jumps back. Never
+  // past the current period (nothing is sold in the future) nor before the
+  // oldest year the pickers offer.
+  const nowParts = bangkokNow();
+  const latestPeriod = currentPeriodValue(periodType, nowParts);
+  const earliestPeriod = currentPeriodValue(periodType, { year: nowParts.year - PERIOD_YEARS_BACK, month: 0 });
+  const canStepBack = comparePeriods(periodType, periodValue, earliestPeriod, nowParts) > 0;
+  const canStepForward = comparePeriods(periodType, periodValue, latestPeriod, nowParts) < 0;
+  const isCurrentPeriod = comparePeriods(periodType, periodValue, latestPeriod, nowParts) === 0;
+  const stepPeriod = (delta: number) => setPeriodValue((v) => shiftPeriod(periodType, v, delta, bangkokNow()));
+  const shownPeriodLabel = periodLabel(periodType, periodValue, nowParts);
 
   // Chart data
   const chartData = useMemo(() => {
@@ -273,6 +358,24 @@ export default function DashboardPage() {
     }
     return data.revenueQuarterly.map((r) => ({ ...r, name: r.period.split("-")[1] }));
   }, [data, chartMode]);
+
+  // The bar of today's day / month / quarter, when the period on screen holds
+  // it — its axis label is marked "วันนี้" / "เดือนนี้" / "ไตรมาสนี้". Every bar is
+  // the chosen period's, so none is faded; this only says where "now" is.
+  const currentTick = useMemo(() => {
+    if (!data) return null;
+    const { year, month, day } = bangkokParts(new Date());
+    const mm = String(month + 1).padStart(2, "0");
+    const quarterly = chartMode === "quarterly";
+    const wanted = quarterly
+      ? [`${year}-Q${Math.floor(month / 3) + 1}`]
+      : [`${year}-${mm}-${String(day).padStart(2, "0")}`, `${year}-${mm}`];
+    const source = quarterly ? data.revenueQuarterly : data.revenueMonthly;
+    const i = source.findIndex((r) => wanted.includes(r.period));
+    if (i < 0 || !chartData[i]) return null;
+    const marker = quarterly ? "ไตรมาสนี้" : source[i].period.length === 10 ? "วันนี้" : "เดือนนี้";
+    return { name: chartData[i].name, marker };
+  }, [data, chartMode, chartData]);
 
   // Filtered sales records for table search
 
@@ -940,13 +1043,6 @@ export default function DashboardPage() {
   const curM = ov?.currentPeriod;
   const prevM = ov?.previousPeriod;
 
-  const conversionRate = curM && curM.quotations > 0
-    ? Math.round((curM.deals / curM.quotations) * 100)
-    : 0;
-  const prevConversionRate = prevM && prevM.quotations > 0
-    ? Math.round((prevM.deals / prevM.quotations) * 100)
-    : 0;
-
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
@@ -1009,7 +1105,7 @@ export default function DashboardPage() {
 
       {/* Header */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8">
-        <div className="flex flex-col xl:flex-row justify-between items-start xl:items-end gap-6 mb-10">
+        <div className="flex flex-col xl:flex-row justify-between items-start xl:items-end gap-6 mb-6">
           <div className="shrink-0 flex flex-col justify-center">
             <div className="flex items-center gap-3 mb-2">
               <img 
@@ -1022,8 +1118,10 @@ export default function DashboardPage() {
               </h1>
             </div>
             <div className="flex flex-wrap items-center gap-2 text-sm font-medium whitespace-nowrap pl-[52px] sm:pl-[60px]">
+              {/* The period actually on screen — it used to say ประจำปี even
+                  with a single month picked. */}
               <span className="bg-[#f9f7f4] text-[#87704d] px-3 py-1 rounded-full border border-[#87704d]/20 shadow-sm">
-                ภาพรวมธุรกิจประจำปี
+                ภาพรวม{shownPeriodLabel}
               </span>
             </div>
           </div>
@@ -1033,80 +1131,6 @@ export default function DashboardPage() {
             <Link href="/adminpanel" className="px-4 py-2 rounded-lg border border-gray-300 bg-white text-gray-700 text-sm font-semibold hover:bg-gray-50 transition whitespace-nowrap">
               🏠 กลับไประบบจัดการ
             </Link>
-            {/* Filter Pill (Minimal) */}
-            <div className="flex items-center flex-wrap sm:flex-nowrap justify-center w-full sm:w-auto relative z-30">
-              <SearchableDropdown
-                options={[
-                  { value: "month", label: "รายเดือน" },
-                  { value: "quarter", label: "รายไตรมาส" },
-                  { value: "year", label: "รายปี" }
-                ]}
-                value={periodType}
-                onChange={(v) => {
-                  const type = v as "month" | "quarter" | "year";
-                  setPeriodType(type);
-                  const d = new Date();
-                  if (type === "year") setPeriodValue(d.getFullYear().toString());
-                  else if (type === "quarter") setPeriodValue(`${d.getFullYear()}-Q${Math.floor(d.getMonth() / 3) + 1}`);
-                  else setPeriodValue(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
-                }}
-                className="w-28 shrink-0 bg-transparent"
-                buttonClassName="h-8 border-none bg-transparent hover:bg-white rounded-full shadow-none font-medium text-sm text-gray-700 transition-all"
-                searchable={false}
-              />
-              <div className="h-4 w-px bg-gray-300 mx-1 shrink-0"></div>
-              {periodType === "month" && (
-                <input
-                  type="month"
-                  value={periodValue}
-                  onChange={(e) => setPeriodValue(e.target.value)}
-                  onClick={(e) => {
-                    try {
-                      if (typeof e.currentTarget.showPicker === 'function') {
-                        e.currentTarget.showPicker();
-                      }
-                    } catch { /* ignore */ }
-                  }}
-                  className="px-3 py-1 border-none bg-transparent hover:bg-white transition-all rounded-full text-sm focus:ring-2 focus:ring-gray-300 outline-none h-8 font-medium text-gray-700 shrink-0 cursor-pointer"
-                />
-              )}
-              {periodType === "quarter" && (
-                <div className="flex gap-1 shrink-0">
-                  <SearchableDropdown
-                    options={[
-                      { value: "Q1", label: "Q1 (ม.ค. - มี.ค.)" },
-                      { value: "Q2", label: "Q2 (เม.ย. - มิ.ย.)" },
-                      { value: "Q3", label: "Q3 (ก.ค. - ก.ย.)" },
-                      { value: "Q4", label: "Q4 (ต.ค. - ธ.ค.)" }
-                    ]}
-                    value={periodValue.split('-')[1] || "Q1"}
-                    onChange={(v) => setPeriodValue(`${periodValue.split('-')[0]}-${v}`)}
-                    className="w-32 bg-transparent"
-                    buttonClassName="h-8 border-none bg-transparent hover:bg-white rounded-full shadow-none font-medium text-sm text-gray-700 transition-all"
-                    searchable={false}
-                  />
-                  <SearchableDropdown
-                    options={yearOptions}
-                    value={periodValue.split('-')[0] || String(new Date().getFullYear())}
-                    onChange={(v) => setPeriodValue(`${v}-${periodValue.split('-')[1] || "Q1"}`)}
-                    className="w-24 bg-transparent"
-                    buttonClassName="h-8 border-none bg-transparent hover:bg-white rounded-full shadow-none font-medium text-sm text-gray-700 transition-all"
-                    searchable={false}
-                  />
-                </div>
-              )}
-              {periodType === "year" && (
-                <SearchableDropdown
-                  options={yearOptions}
-                  value={periodValue}
-                  onChange={setPeriodValue}
-                  className="w-28 shrink-0 bg-transparent"
-                  buttonClassName="h-8 border-none bg-transparent hover:bg-white rounded-full shadow-none font-medium text-sm text-gray-700 transition-all"
-                  searchable={false}
-                />
-              )}
-            </div>
-
             {/* Navigation Tabs (Segmented Control style) */}
             <div className="flex items-center bg-gray-50/80 rounded-full p-1 border border-gray-200/60 w-full sm:w-auto overflow-x-auto no-scrollbar">
               <button
@@ -1137,47 +1161,178 @@ export default function DashboardPage() {
           </div>
         </div>
 
+        {/* ── Period ─────────────────────────────────────────────────────────
+            Its own row above the figures it drives. Beside the header's
+            buttons it no longer fitted once ◀ ▶ and the jump-to-now button
+            joined it: at 1280px the row ran off the page, taking บันทึกยอดขาย
+            with it. */}
+        <div className="mb-6" data-period-toolbar>
+          <div className="inline-flex items-center flex-wrap gap-y-1 bg-white rounded-full border border-gray-200 shadow-sm px-2 py-1 relative z-30">
+            <SearchableDropdown
+              options={[
+                { value: "month", label: "รายเดือน" },
+                { value: "quarter", label: "รายไตรมาส" },
+                { value: "year", label: "รายปี" }
+              ]}
+              value={periodType}
+              onChange={(v) => {
+                const type = v as PeriodType;
+                // Picking the type already shown keeps the period on screen.
+                if (type === periodType) return;
+                setPeriodType(type);
+                setPeriodValue(currentPeriodValue(type, bangkokNow()));
+              }}
+              className="w-28 shrink-0 bg-transparent"
+              buttonClassName="h-8 border-none bg-transparent hover:bg-gray-100 rounded-full shadow-none font-medium text-sm text-gray-700 transition-all"
+              searchable={false}
+            />
+            <div className="h-4 w-px bg-gray-300 mx-1 shrink-0"></div>
+            <button
+              type="button"
+              onClick={() => stepPeriod(-1)}
+              disabled={!canStepBack}
+              aria-label="ช่วงก่อนหน้า"
+              title="ช่วงก่อนหน้า"
+              className="h-8 w-8 shrink-0 rounded-full text-gray-500 hover:bg-gray-100 hover:text-gray-900 transition-all disabled:opacity-30 disabled:hover:bg-transparent"
+            >
+              <svg aria-hidden="true" className="mx-auto h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7" /></svg>
+            </button>
+            {/* Month and year as two pickers, like the quarter's: the
+                browser's own month input showed the year in ค.ศ. and let a
+                future month be picked. */}
+            {periodType === "month" && (
+              <div className="flex gap-1 shrink-0">
+                <SearchableDropdown
+                  options={MONTHS_TH.map((m, i) => ({ value: String(i + 1).padStart(2, "0"), label: m }))}
+                  value={periodValue.split("-")[1] || "01"}
+                  onChange={(v) => setPeriodValue(`${periodValue.split("-")[0]}-${v}`)}
+                  className="w-24 bg-transparent"
+                  buttonClassName="h-8 border-none bg-transparent hover:bg-gray-100 rounded-full shadow-none font-medium text-sm text-gray-700 transition-all"
+                  searchable={false}
+                />
+                <SearchableDropdown
+                  options={yearOptions}
+                  value={periodValue.split("-")[0]}
+                  onChange={(v) => setPeriodValue(`${v}-${periodValue.split("-")[1] || "01"}`)}
+                  className="w-28 bg-transparent"
+                  buttonClassName="h-8 border-none bg-transparent hover:bg-gray-100 rounded-full shadow-none font-medium text-sm text-gray-700 transition-all"
+                  searchable={false}
+                />
+              </div>
+            )}
+            {periodType === "quarter" && (
+              <div className="flex gap-1 shrink-0">
+                <SearchableDropdown
+                  options={[
+                    { value: "Q1", label: "Q1 (ม.ค. - มี.ค.)" },
+                    { value: "Q2", label: "Q2 (เม.ย. - มิ.ย.)" },
+                    { value: "Q3", label: "Q3 (ก.ค. - ก.ย.)" },
+                    { value: "Q4", label: "Q4 (ต.ค. - ธ.ค.)" }
+                  ]}
+                  value={periodValue.split('-')[1] || "Q1"}
+                  onChange={(v) => setPeriodValue(`${periodValue.split('-')[0]}-${v}`)}
+                  className="w-32 bg-transparent"
+                  buttonClassName="h-8 border-none bg-transparent hover:bg-gray-100 rounded-full shadow-none font-medium text-sm text-gray-700 transition-all"
+                  searchable={false}
+                />
+                <SearchableDropdown
+                  options={yearOptions}
+                  value={periodValue.split('-')[0]}
+                  onChange={(v) => setPeriodValue(`${v}-${periodValue.split('-')[1] || "Q1"}`)}
+                  className="w-28 bg-transparent"
+                  buttonClassName="h-8 border-none bg-transparent hover:bg-gray-100 rounded-full shadow-none font-medium text-sm text-gray-700 transition-all"
+                  searchable={false}
+                />
+              </div>
+            )}
+            {periodType === "year" && (
+              <SearchableDropdown
+                options={yearOptions}
+                value={periodValue}
+                onChange={setPeriodValue}
+                className="w-28 shrink-0 bg-transparent"
+                buttonClassName="h-8 border-none bg-transparent hover:bg-gray-100 rounded-full shadow-none font-medium text-sm text-gray-700 transition-all"
+                searchable={false}
+              />
+            )}
+            <button
+              type="button"
+              onClick={() => stepPeriod(1)}
+              disabled={!canStepForward}
+              aria-label="ช่วงถัดไป"
+              title="ช่วงถัดไป"
+              className="h-8 w-8 shrink-0 rounded-full text-gray-500 hover:bg-gray-100 hover:text-gray-900 transition-all disabled:opacity-30 disabled:hover:bg-transparent"
+            >
+              <svg aria-hidden="true" className="mx-auto h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7" /></svg>
+            </button>
+            <button
+              type="button"
+              onClick={() => setPeriodValue(currentPeriodValue(periodType, bangkokNow()))}
+              disabled={isCurrentPeriod}
+              className="ml-1 h-8 px-3 shrink-0 rounded-full text-xs font-semibold text-[#87704d] border border-[#87704d]/30 hover:bg-gray-100 transition-all disabled:opacity-40 disabled:hover:bg-transparent whitespace-nowrap"
+            >
+              {currentPeriodName(periodType)}
+            </button>
+          </div>
+        </div>
+
         {/* ── Overview Cards ──────────────────────────────────────────────── */}
         {loading ? (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-            {Array.from({ length: 7 }).map((_, i) => (
-              <div key={i} className="bg-white rounded-2xl p-4 shadow-sm animate-pulse border border-gray-100/50">
-                <div className="h-3 w-20 bg-gray-200 rounded mb-2" />
-                <div className="h-6 w-24 bg-gray-200 rounded mb-2" />
-                <div className="h-2 w-12 bg-gray-200 rounded" />
+          <div className="space-y-4 mb-8">
+            {[4, 3].map((count, row) => (
+              <div key={row} className={`grid gap-4 ${count === 4 ? "grid-cols-2 md:grid-cols-4" : "grid-cols-1 sm:grid-cols-3"}`}>
+                {Array.from({ length: count }).map((_, i) => (
+                  <div key={i} className="bg-white rounded-2xl p-5 shadow-sm animate-pulse border border-gray-100">
+                    <div className="h-3 w-20 bg-gray-200 rounded mb-2" />
+                    <div className="h-6 w-24 bg-gray-200 rounded mb-2" />
+                    <div className="h-2 w-12 bg-gray-200 rounded" />
+                  </div>
+                ))}
               </div>
             ))}
           </div>
-        ) : ov && curM && prevM && (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-            {[
-              { label: `ยอดขาย${ov.periodLabel}`, value: `฿${fmt(curM.revenue)}`, change: pctChange(curM.revenue, prevM.revenue), color: "text-indigo-600", border: "border-indigo-100", bg: "bg-indigo-50/30" },
-              { label: "ต้นทุนและรายจ่ายรวม", value: `฿${fmt(curM.cost)}`, change: pctChange(curM.cost, prevM.cost), color: "text-rose-600", border: "border-rose-100", bg: "bg-rose-50/30" },
-              { label: `กำไร${ov.periodLabel}`, value: `฿${fmt(curM.profit)}`, change: pctChange(curM.profit, prevM.profit), color: "text-emerald-600", border: "border-emerald-100", bg: "bg-emerald-50/30" },
-              { label: "Profit Margin", value: curM.revenue > 0 ? `${Math.round((curM.profit / curM.revenue) * 100)}%` : "—", change: (() => { const curMargin = curM.revenue > 0 ? Math.round((curM.profit / curM.revenue) * 100) : 0; const prevMarginVal = prevM.revenue > 0 ? Math.round((prevM.profit / prevM.revenue) * 100) : 0; return pctChange(curMargin, prevMarginVal); })(), color: "text-purple-600", border: "border-purple-100", bg: "bg-purple-50/30" },
-              { label: "จำนวนดีล", value: String(curM.deals), change: pctChange(curM.deals, prevM.deals), color: "text-blue-600", border: "border-blue-100", bg: "bg-blue-50/30" },
-              { label: "ลูกค้าใหม่", value: String(curM.newCustomers), change: pctChange(curM.newCustomers, prevM.newCustomers), color: "text-cyan-600", border: "border-cyan-100", bg: "bg-cyan-50/30" },
-              { label: "Conversion Rate", value: `${conversionRate}%`, change: pctChange(conversionRate, prevConversionRate), color: "text-amber-600", border: "border-amber-100", bg: "bg-amber-50/30" },
-            ].map((card, i) => (
-              <div key={i} className={`rounded-2xl p-5 shadow-sm border ${card.border} ${card.bg} hover:shadow-md transition-all hover:-translate-y-1 flex flex-col justify-between`}>
-                <div>
-                  <div className="text-[13px] font-semibold text-gray-600 mb-1">{card.label}</div>
-                  <div className={`text-2xl sm:text-3xl font-black tracking-tight ${card.color}`}>{card.value}</div>
-                </div>
-                {card.change.label !== "—" && (
-                  <div className={`text-xs font-bold mt-2 ${card.change.color}`}>{card.change.label}</div>
-                )}
+        ) : ov && curM && prevM && (() => {
+          // Two full rows — the money, then the selling — where seven cards in
+          // a four-column grid used to leave a hole. Figures in one ink; colour
+          // is kept for the direction of the change, and the change says what
+          // it is measured against. The cards do not lift on hover: they are
+          // not clickable.
+          const versus = previousPeriodPhrase(periodType);
+          const marginOf = (p: typeof curM) => (p.revenue > 0 ? Math.round((p.profit / p.revenue) * 100) : null);
+          const conversionOf = (p: typeof curM) => (p.quotations > 0 ? Math.round((p.deals / p.quotations) * 100) : null);
+          const curMargin = marginOf(curM);
+          const curConversion = conversionOf(curM);
+          const money = [
+            { label: `ยอดขาย ${ov.periodLabel}`, value: `฿${fmt(curM.revenue)}`, change: pctChange(curM.revenue, prevM.revenue) },
+            { label: "ต้นทุนและรายจ่ายรวม", value: `฿${fmt(curM.cost)}`, change: pctChange(curM.cost, prevM.cost, { higherIsBetter: false }) },
+            { label: `กำไร ${ov.periodLabel}`, value: `฿${fmt(curM.profit)}`, change: pctChange(curM.profit, prevM.profit) },
+            { label: "Profit Margin", value: curMargin === null ? "—" : `${curMargin}%`, change: pointChange(curMargin, marginOf(prevM)) },
+          ];
+          const selling = [
+            { label: "จำนวนดีล", value: String(curM.deals), change: pctChange(curM.deals, prevM.deals) },
+            { label: "ลูกค้าใหม่", value: String(curM.newCustomers), change: pctChange(curM.newCustomers, prevM.newCustomers) },
+            { label: "Conversion Rate", value: curConversion === null ? "—" : `${curConversion}%`, change: pointChange(curConversion, conversionOf(prevM)) },
+          ];
+          return (
+            <div className="space-y-4 mb-8" data-overview-cards>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                {money.map((card) => <OverviewCard key={card.label} {...card} versus={versus} />)}
               </div>
-            ))}
-          </div>
-        )}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                {selling.map((card) => <OverviewCard key={card.label} {...card} versus={versus} />)}
+              </div>
+            </div>
+          );
+        })()}
 
         {/* ── Charts Row ─────────────────────────────────────────────────── */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
           {/* Revenue Bar Chart */}
           <div className="lg:col-span-2 bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
             <div className="flex justify-between items-center mb-4">
-              <h2 className="text-lg font-bold text-gray-800">ยอดขาย {ov?.periodLabel || periodValue.split('-')[0]}</h2>
+              {/* The period picked, not the one last loaded: this heading stays
+                  up while the next period loads. */}
+              <h2 className="text-lg font-bold text-gray-800">ยอดขาย {shownPeriodLabel}</h2>
               <div className="flex bg-gray-100 rounded-lg p-1">
                 <button onClick={() => setChartMode("monthly")} className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${chartMode === "monthly" ? "bg-white shadow-sm text-indigo-600" : "text-gray-500"}`}>
                   รายเดือน
@@ -1202,7 +1357,7 @@ export default function DashboardPage() {
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={chartData} margin={{ bottom: 20 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
-                      <XAxis dataKey="name" tick={{ fontSize: 12, fill: "#6b7280" }} axisLine={false} tickLine={false} />
+                      <XAxis dataKey="name" tick={<PeriodTick current={currentTick} />} height={currentTick ? 40 : 30} axisLine={false} tickLine={false} />
                       <YAxis tickFormatter={(v: number) => fmt(v)} tick={{ fontSize: 11, fill: "#6b7280" }} axisLine={false} tickLine={false} />
                       <Tooltip
                         content={({ active, payload, label }: any) => {
@@ -1232,7 +1387,7 @@ export default function DashboardPage() {
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={chartData} margin={{ bottom: 20 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
-                      <XAxis dataKey="name" tick={{ fontSize: 12, fill: "#6b7280" }} axisLine={false} tickLine={false} />
+                      <XAxis dataKey="name" tick={<PeriodTick current={currentTick} />} height={currentTick ? 40 : 30} axisLine={false} tickLine={false} />
                       <YAxis tickFormatter={(v: number) => fmt(v)} tick={{ fontSize: 11, fill: "#6b7280" }} axisLine={false} tickLine={false} />
                       <Tooltip
                         content={({ active, payload, label }: any) => {
@@ -1271,25 +1426,8 @@ export default function DashboardPage() {
             <h2 className="text-lg font-bold text-gray-800 mb-4">สัดส่วนตามหมวดหมู่</h2>
             {loading ? (
               <div className="h-64 bg-gray-100 rounded-xl animate-pulse" />
-            ) : data && data.revenueByCategory.length > 0 ? (
-              <ResponsiveContainer width="100%" height={280}>
-                <PieChart>
-                  {/* Category / product names are RICH TEXT (the editor wraps them in
-                      <p>…</p>), so every place that prints one — slice label AND
-                      tooltip — must go through stripHtml, or the chart renders the
-                      literal tags: "<p>ชื่อสินค้า</p> : 250,000.00". */}
-                  <Pie data={data.revenueByCategory} dataKey="revenue" nameKey="name" cx="50%" cy="50%" outerRadius={90} label={((entry: any) => `${stripHtml(String(entry?.name ?? ""))} ${entry?.percentage}%`) as any} labelLine={false} fontSize={10}>
-                    {data.revenueByCategory.map((_, i) => (
-                      <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
-                    ))}
-                  </Pie>
-                  {/* Returning [value, name] replaces BOTH halves of the default
-                      "name : value" tooltip row — the name half is where the tags showed. */}
-                  <Tooltip formatter={((value: number, name: unknown) => [fmtDec(value) + " ฿", stripHtml(String(name ?? ""))]) as any} />
-                </PieChart>
-              </ResponsiveContainer>
             ) : (
-              <div className="h-64 flex items-center justify-center text-gray-400 text-sm">ยังไม่มีข้อมูล</div>
+              <CategoryShareChart items={data?.revenueByCategory ?? []} />
             )}
           </div>
         </div>
@@ -1298,7 +1436,7 @@ export default function DashboardPage() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
           {/* Top Products */}
           <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
-            <h2 className="text-lg font-bold text-gray-800 mb-4">🏆 Top 10 สินค้าขายดี <span className="text-xs font-normal text-indigo-600 ml-2 cursor-pointer">(คลิกเพื่อดู/แก้ไข)</span></h2>
+            <h2 className="text-lg font-bold text-gray-800 mb-4">🏆 Top 10 สินค้าขายดี</h2>
             {loading ? (
               <div className="space-y-3">{Array.from({ length: 5 }).map((_, i) => (
                 <div key={i} className="flex gap-3 animate-pulse">
@@ -1309,18 +1447,22 @@ export default function DashboardPage() {
               ))}</div>
             ) : data && data.topProducts.length > 0 ? (
               <div className="space-y-2">
+                {/* A row is a button — hover shows it can be opened, and the
+                    keyboard can reach it — in place of a "(คลิกเพื่อดู/แก้ไข)"
+                    note in the heading. */}
                 {data.topProducts.map((p, i) => (
-                  <div key={p.id} onClick={() => handleProductClick(p)} className="flex items-center gap-3 p-2 rounded-xl hover:bg-indigo-50/50 cursor-pointer transition-colors">
-                    <div className="w-7 h-7 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center text-xs font-bold shrink-0">{i + 1}</div>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium text-gray-800 truncate">{displayText(p.name)}</div>
-                      <div className="text-xs text-gray-400">{p.qty} เครื่อง · {p.deals} ดีล</div>
-                    </div>
-                    <div className="text-right shrink-0">
-                      <div className="text-sm font-semibold text-gray-800">฿{fmt(p.revenue)}</div>
-                      <div className="text-xs text-gray-400">{p.percentage}%</div>
-                    </div>
-                  </div>
+                  <button key={p.id} type="button" onClick={() => handleProductClick(p)} className="group w-full text-left flex items-center gap-3 p-2 rounded-xl hover:bg-indigo-50/60 focus-visible:bg-indigo-50/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-200 cursor-pointer transition-colors">
+                    <span className="w-7 h-7 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center text-xs font-bold shrink-0">{i + 1}</span>
+                    <span className="block flex-1 min-w-0">
+                      <span className="block text-sm font-medium text-gray-800 truncate">{displayText(p.name)}</span>
+                      <span className="block text-xs text-gray-400">{p.qty} เครื่อง · {p.deals} ดีล</span>
+                    </span>
+                    <span className="block text-right shrink-0">
+                      <span className="block text-sm font-semibold text-gray-800">฿{fmt(p.revenue)}</span>
+                      <span className="block text-xs text-gray-400">{p.percentage}%</span>
+                    </span>
+                    <span aria-hidden="true" className="shrink-0 text-gray-300 opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 transition-opacity">›</span>
+                  </button>
                 ))}
               </div>
             ) : (
@@ -1330,7 +1472,7 @@ export default function DashboardPage() {
 
           {/* Top Customers */}
           <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
-            <h2 className="text-lg font-bold text-gray-800 mb-4">🏢 Top 10 ลูกค้า <span className="text-xs font-normal text-amber-600 ml-2 cursor-pointer">(คลิกเพื่อดู/แก้ไข)</span></h2>
+            <h2 className="text-lg font-bold text-gray-800 mb-4">🏢 Top 10 ลูกค้า</h2>
             {loading ? (
               <div className="space-y-3">{Array.from({ length: 5 }).map((_, i) => (
                 <div key={i} className="flex gap-3 animate-pulse">
@@ -1342,17 +1484,18 @@ export default function DashboardPage() {
             ) : data && data.topCustomers.length > 0 ? (
               <div className="space-y-2">
                 {data.topCustomers.map((c, i) => (
-                  <div key={c.id} onClick={() => handleCustomerClick(c)} className="flex items-center gap-3 p-2 rounded-xl hover:bg-amber-50/50 cursor-pointer transition-colors">
-                    <div className="w-7 h-7 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center text-xs font-bold shrink-0">{i + 1}</div>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium text-gray-800 truncate">{c.name}</div>
-                      <div className="text-xs text-gray-400">{c.deals} ดีล</div>
-                    </div>
-                    <div className="text-right shrink-0">
-                      <div className="text-sm font-semibold text-gray-800">฿{fmt(c.revenue)}</div>
-                      <div className="text-xs text-gray-400">{c.percentage}%</div>
-                    </div>
-                  </div>
+                  <button key={c.id} type="button" onClick={() => handleCustomerClick(c)} className="group w-full text-left flex items-center gap-3 p-2 rounded-xl hover:bg-amber-50/60 focus-visible:bg-amber-50/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200 cursor-pointer transition-colors">
+                    <span className="w-7 h-7 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center text-xs font-bold shrink-0">{i + 1}</span>
+                    <span className="block flex-1 min-w-0">
+                      <span className="block text-sm font-medium text-gray-800 truncate">{c.name}</span>
+                      <span className="block text-xs text-gray-400">{c.deals} ดีล</span>
+                    </span>
+                    <span className="block text-right shrink-0">
+                      <span className="block text-sm font-semibold text-gray-800">฿{fmt(c.revenue)}</span>
+                      <span className="block text-xs text-gray-400">{c.percentage}%</span>
+                    </span>
+                    <span aria-hidden="true" className="shrink-0 text-gray-300 opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 transition-opacity">›</span>
+                  </button>
                 ))}
               </div>
             ) : (
@@ -1364,7 +1507,7 @@ export default function DashboardPage() {
         {/* ── Salesperson Leaderboard ──────────────────────────────────────── */}
         <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 mb-8">
           <div className="flex justify-between items-center mb-4">
-            <h2 className="text-lg font-bold text-gray-800">ผลงานทีมขาย <span className="text-xs font-normal text-indigo-600 ml-2">(คลิกแถวเพื่อดูประวัติการขาย)</span></h2>
+            <h2 className="text-lg font-bold text-gray-800">ผลงานทีมขาย</h2>
           </div>
           {loading ? (
             <div className="space-y-4">{Array.from({ length: 3 }).map((_, i) => (
@@ -1389,7 +1532,19 @@ export default function DashboardPage() {
                 </thead>
                 <tbody>
                   {data.salespersonLeaderboard.map((s, i) => (
-                    <tr key={s.id} onClick={() => handleSalespersonClick(s)} className="border-t border-gray-50 hover:bg-indigo-50/40 cursor-pointer transition-colors">
+                    <tr
+                      key={s.id}
+                      onClick={() => handleSalespersonClick(s)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          handleSalespersonClick(s);
+                        }
+                      }}
+                      tabIndex={0}
+                      aria-label={`ดูประวัติการขายของ ${s.name}`}
+                      className="group border-t border-gray-50 hover:bg-indigo-50/40 focus-visible:bg-indigo-50/40 focus-visible:outline-none cursor-pointer transition-colors"
+                    >
                       <td className="py-3 pr-4">
                         <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold ${i === 0 ? "bg-yellow-100 text-yellow-600" : i === 1 ? "bg-gray-200 text-gray-600" : i === 2 ? "bg-orange-100 text-orange-600" : "bg-gray-100 text-gray-500"}`}>{i + 1}</div>
                       </td>
@@ -1407,7 +1562,10 @@ export default function DashboardPage() {
                           <span className="text-sm text-gray-600">{s.percentage}%</span>
                         </div>
                       </td>
-                      <td className="py-3 text-right text-sm text-gray-500">฿{fmt(s.avgDealSize)}</td>
+                      <td className="py-3 text-right text-sm text-gray-500 whitespace-nowrap">
+                        ฿{fmt(s.avgDealSize)}
+                        <span aria-hidden="true" className="ml-2 text-gray-300 opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 transition-opacity">›</span>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
