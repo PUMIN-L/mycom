@@ -62,6 +62,10 @@ function shownNames(): string[] {
 }
 
 const pager = () => screen.getByTestId("customer-pagination");
+/** "page N / M" as the pager shows it: the page box's value, then "/ M". */
+const pageShown = () =>
+  `${(within(pager()).getByRole("textbox", { name: "ไปที่หน้า" }) as HTMLInputElement).value} ${pager().querySelector("label span")?.textContent}`;
+const SEARCH = "ค้นหาชื่อลูกค้า บริษัท เบอร์โทร หรืออีเมล...";
 
 beforeEach(() => {
   window.history.replaceState({}, "", "/customers");
@@ -82,7 +86,7 @@ describe("/customers — pagination", () => {
     expect(names).toHaveLength(50);
     expect(names[0]).toBe("ลูกค้า 001");
     expect(names[49]).toBe("ลูกค้า 050");
-    expect(within(pager()).getByText("หน้า 1 / 3")).toBeInTheDocument();
+    expect(pageShown()).toBe("1 / 3");
     expect(pager().textContent).toContain("แสดง 1 ถึง 50 จาก 120 รายการ");
     // The heading still counts everyone, not the page.
     expect(screen.getByText("(120)")).toBeInTheDocument();
@@ -116,13 +120,13 @@ describe("/customers — pagination", () => {
     fireEvent.click(within(pager()).getByRole("button", { name: "ถัดไป" }));
     fireEvent.click(within(pager()).getByRole("button", { name: "ถัดไป" }));
 
-    fireEvent.change(screen.getByPlaceholderText("ค้นหาชื่อลูกค้า หรือ ชื่อบริษัท..."), {
+    fireEvent.change(screen.getByPlaceholderText(SEARCH), {
       target: { value: "บริษัท ก" },
     });
 
     // 60 of the 120 are บริษัท ก — two pages, and we are on the first.
     expect(shownNames()[0]).toBe("ลูกค้า 001");
-    expect(within(pager()).getByText("หน้า 1 / 2")).toBeInTheDocument();
+    expect(pageShown()).toBe("1 / 2");
   });
 
   it("never strands the view on a page that no longer exists", async () => {
@@ -134,7 +138,7 @@ describe("/customers — pagination", () => {
 
     // A search that leaves one page: the stored page (3) is clamped, not shown
     // as an empty table.
-    fireEvent.change(screen.getByPlaceholderText("ค้นหาชื่อลูกค้า หรือ ชื่อบริษัท..."), {
+    fireEvent.change(screen.getByPlaceholderText(SEARCH), {
       target: { value: "ลูกค้า 00" },
     });
     expect(shownNames()).toHaveLength(9);

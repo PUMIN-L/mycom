@@ -180,7 +180,8 @@ describe("ปุ่ม สร้างสิ่งที่ต้องทำ �
     mockFetch();
     visit("");
     render(<Customers />);
-    const viewButtons = await screen.findAllByRole("button", { name: "ดูข้อมูล" });
+    // Each row opens its customer (the separate "ดูข้อมูล" button is gone).
+    const viewButtons = await screen.findAllByRole("row", { name: /^ดูข้อมูล / });
     expect(viewButtons).toHaveLength(2);
 
     // Open customer A, use the button, see A's chip, close WITHOUT saving.
@@ -197,7 +198,7 @@ describe("ปุ่ม สร้างสิ่งที่ต้องทำ �
     );
 
     // The Viewing Customer modal for A is still open underneath — switch it to
-    // B by clicking B's own "ดูข้อมูล", exactly as the admin would.
+    // B by clicking B's own row, exactly as the admin would.
     fireEvent.click(viewButtons[1]);
     await waitFor(() =>
       expect(screen.getByRole("heading", { name: "สมหญิง ดีใจ" })).toBeInTheDocument()

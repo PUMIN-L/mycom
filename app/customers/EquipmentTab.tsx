@@ -5,6 +5,7 @@ import { downloadExcel } from "../lib/xlsxExport";
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import Link from "next/link";
 import SearchableDropdown from "../components/SearchableDropdown";
+import Pagination from "../components/Pagination";
 import EquipmentEditModal from "../components/modals/EquipmentEditModal";
 import EquipmentDetailsModal from "../components/modals/EquipmentDetailsModal";
 import type { SearchableDropdownOption } from "../components/SearchableDropdown";
@@ -155,9 +156,12 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 10;
 
+  // A new search or filter starts from page 1. A reloaded list does not:
+  // saving a machine on page 4 refetches it, and that used to throw the view
+  // back to page 1 — the page is clamped below instead.
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchText, filterType, filterSource, equipments]);
+  }, [searchText, filterType, filterSource]);
 
   // Double-submit guard
   const [isSaving, setIsSaving] = useState(false);
@@ -388,11 +392,14 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
 
   const isFiltered = !!searchText || filterType !== "all" || filterSource !== "all";
 
-  const paginatedEquipments = filtered.slice(
-    (currentPage - 1) * itemsPerPage,
-    currentPage * itemsPerPage
-  );
   const totalPages = Math.max(1, Math.ceil(filtered.length / itemsPerPage));
+  // Derived, not stored, so a list that shrank (a delete) lands on its new
+  // last page rather than an empty one.
+  const safePage = Math.min(currentPage, totalPages);
+  const paginatedEquipments = filtered.slice(
+    (safePage - 1) * itemsPerPage,
+    safePage * itemsPerPage
+  );
 
   // ── Equipment CRUD handlers ────────────────────────────────────────────────
 
@@ -534,32 +541,33 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
-    <div className="p-8">
-      {/* Header */}
-      <div className="flex justify-between items-center mb-6">
+    <div className="p-6">
+      {/* Header — the same look as the other tabs on /customers: one primary
+          orange button, the rest plain white. */}
+      <div className="flex flex-wrap justify-between items-center gap-3 mb-5">
         <div className="flex items-center gap-3">
-          <div className="bg-orange-100 text-orange-600 p-3 rounded-xl">
+          <div className="bg-orange-100 text-orange-600 p-2.5 rounded-xl">
             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"></path></svg>
           </div>
-          <h2 className="text-2xl font-bold text-gray-800">อุปกรณ์ที่ขาย <span className="text-gray-400 text-lg font-normal">({filtered.length})</span></h2>
+          <h2 className="text-xl font-bold text-gray-800">อุปกรณ์ที่ขาย <span className="text-gray-400 text-base font-normal">({filtered.length})</span></h2>
         </div>
         <div className="flex gap-3">
           <button
             onClick={exportToExcel}
             disabled={isExporting || isLoading}
-            className="px-4 py-2.5 bg-emerald-50 border border-emerald-200 text-emerald-700 font-semibold rounded-xl hover:bg-emerald-100 transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="px-5 py-2.5 bg-white border border-gray-200 text-gray-700 font-medium rounded-xl hover:bg-gray-50 transition-all shadow-sm flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             📥 {isExporting ? "กำลัง Export..." : "Export Excel"}
           </button>
           <Link
             href="/crm/alerts"
-            className="px-4 py-2.5 bg-amber-50 border border-amber-200 text-amber-700 font-semibold rounded-xl hover:bg-amber-100 transition-all flex items-center gap-2"
+            className="px-5 py-2.5 bg-white border border-gray-200 text-gray-700 font-medium rounded-xl hover:bg-gray-50 transition-all shadow-sm flex items-center gap-2"
           >
             🔔 แจ้งเตือน
           </Link>
           <button
             onClick={() => { setEditing({}); setSubmitAttempted(false); setIsModalOpen(true); }}
-            className="px-5 py-2.5 bg-gradient-to-r from-orange-500 to-orange-600 text-white font-semibold rounded-xl hover:from-orange-600 hover:to-orange-700 transition-all shadow-sm hover:shadow-md flex items-center gap-2"
+            className="px-5 py-2.5 bg-orange-500 hover:bg-orange-600 text-white font-medium rounded-xl transition-all shadow-sm hover:shadow-md flex items-center gap-2"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"></path></svg>
             เพิ่มอุปกรณ์
@@ -568,13 +576,13 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
       </div>
 
       {/* Search and Filters */}
-      <div className="mb-6 flex flex-col sm:flex-row gap-4">
+      <div className="mb-5 flex flex-col sm:flex-row gap-3">
         <input
           type="text"
           value={searchText}
           onChange={(e) => setSearchText(e.target.value)}
           placeholder="ค้นหาลูกค้า, บริษัท, สินค้า, Serial Number..."
-          className="w-full sm:w-96 px-4 py-2.5 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-400 transition-all shrink-0"
+          className="w-full sm:w-96 bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 focus:bg-white focus:ring-2 focus:ring-orange-500 outline-none transition-all shrink-0"
         />
         <div className="w-full sm:w-72 shrink-0 relative z-[5]">
           <SearchableDropdown
@@ -617,29 +625,29 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
       <div className="overflow-x-auto">
         <table className="w-full text-left">
           <thead>
-            <tr className="border-b border-gray-100">
-              <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">ลูกค้า / บริษัท</th>
-              <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">สินค้า</th>
-              <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">S/N</th>
-              <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">ที่มาของเครื่อง</th>
-              <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">ประกัน</th>
-              <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">หมดประกัน</th>
-              <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">สถานะ</th>
-              <th className="pb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider"></th>
+            <tr className="bg-gray-50 text-gray-500 uppercase tracking-wider">
+              <th className="px-4 py-3 text-xs font-semibold rounded-l-xl">ลูกค้า / บริษัท</th>
+              <th className="px-4 py-3 text-xs font-semibold">สินค้า</th>
+              <th className="px-4 py-3 text-xs font-semibold">S/N</th>
+              <th className="px-4 py-3 text-xs font-semibold">ที่มาของเครื่อง</th>
+              <th className="px-4 py-3 text-xs font-semibold">ประกัน</th>
+              <th className="px-4 py-3 text-xs font-semibold">หมดประกัน</th>
+              <th className="px-4 py-3 text-xs font-semibold">สถานะ</th>
+              <th className="px-4 py-3 text-xs font-semibold rounded-r-xl"><span className="sr-only">จัดการ</span></th>
             </tr>
           </thead>
           <tbody>
             {isLoading ? (
               Array.from({ length: 5 }).map((_, i) => (
                 <tr key={i} className="border-b border-gray-50 animate-pulse">
-                  <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-36"></div><div className="h-3 bg-gray-100 rounded w-24 mt-1"></div></td>
-                  <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-40"></div></td>
-                  <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-20"></div></td>
-                  <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-24"></div></td>
-                  <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-16"></div></td>
-                  <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-24"></div></td>
-                  <td className="py-4 pr-4"><div className="h-4 bg-gray-200 rounded w-16"></div></td>
-                  <td className="py-4"><div className="h-4 bg-gray-200 rounded w-8"></div></td>
+                  <td className="px-4 py-3"><div className="h-4 bg-gray-200 rounded w-36"></div><div className="h-3 bg-gray-100 rounded w-24 mt-1"></div></td>
+                  <td className="px-4 py-3"><div className="h-4 bg-gray-200 rounded w-40"></div></td>
+                  <td className="px-4 py-3"><div className="h-4 bg-gray-200 rounded w-20"></div></td>
+                  <td className="px-4 py-3"><div className="h-4 bg-gray-200 rounded w-24"></div></td>
+                  <td className="px-4 py-3"><div className="h-4 bg-gray-200 rounded w-16"></div></td>
+                  <td className="px-4 py-3"><div className="h-4 bg-gray-200 rounded w-24"></div></td>
+                  <td className="px-4 py-3"><div className="h-4 bg-gray-200 rounded w-16"></div></td>
+                  <td className="px-4 py-3"><div className="h-4 bg-gray-200 rounded w-8"></div></td>
                 </tr>
               ))
             ) : filtered.length === 0 ? (
@@ -677,14 +685,25 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
                 return (
                   <tr
                     key={eq.id}
-                    className="border-b border-gray-50 cursor-pointer hover:bg-gray-50/50 transition-colors"
+                    tabIndex={0}
+                    aria-label={`ดูข้อมูล ${displayText(eq.productName) || eq.productId} ${eq.serialNumber || ""}`.trim()}
+                    className="group border-b border-gray-50 cursor-pointer hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-orange-300 transition-colors"
                     onClick={() => setViewingEquipment(eq)}
+                    onKeyDown={(e) => {
+                      // Enter / Space on the focused row opens it; a key on a
+                      // button inside the row is that button's.
+                      if (e.target !== e.currentTarget) return;
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        setViewingEquipment(eq);
+                      }
+                    }}
                   >
-                    <td className="py-4 pr-4">
+                    <td className="px-4 py-3">
                       <div className="font-semibold text-gray-800">{eq.customerName || "—"}</div>
                       <div className="text-xs text-gray-400">{eq.companyName || ""}</div>
                     </td>
-                    <td className="py-4 pr-4">
+                    <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
                         {safeImageUrl(eq.productImage) && (
                           <img src={safeImageUrl(eq.productImage)!} alt="" className="w-8 h-8 rounded object-cover border border-gray-100 bg-gray-50 shrink-0" />
@@ -692,10 +711,10 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
                         <span className="text-sm text-gray-700">{displayText(eq.productName) || eq.productId}</span>
                       </div>
                     </td>
-                    <td className="py-4 pr-4 text-sm text-gray-600 font-mono">{eq.serialNumber || "—"}</td>
-                    <td className="py-4 pr-4">{ownershipBadge(eq)}</td>
-                    <td className="py-4 pr-4 text-sm text-gray-600">{eq.warrantyType || "—"}</td>
-                    <td className="py-4 pr-4">
+                    <td className="px-4 py-3 text-sm text-gray-600 font-mono">{eq.serialNumber || "—"}</td>
+                    <td className="px-4 py-3">{ownershipBadge(eq)}</td>
+                    <td className="px-4 py-3 text-sm text-gray-600">{eq.warrantyType || "—"}</td>
+                    <td className="px-4 py-3">
                       {eq.warrantyEndDate ? (
                         <div>
                           <div className="text-sm text-gray-700">{eq.warrantyEndDate}</div>
@@ -717,8 +736,8 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
                         </div>
                       )}
                     </td>
-                    <td className="py-4 pr-4">{statusBadge(eq)}</td>
-                    <td className="py-4">
+                    <td className="px-4 py-3">{statusBadge(eq)}</td>
+                    <td className="px-4 py-3">
                       <div className="flex items-center gap-1">
                         {/* ใบ Job (v38). Opens the sheet builder already
                             pointed at THIS machine, so its serial number is
@@ -738,15 +757,17 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
                         </Link>
                         <button
                           onClick={(e) => { e.stopPropagation(); setEditing({ ...eq, productId: eq.productId || "_custom" }); setSubmitAttempted(false); setIsModalOpen(true); }}
-                          className="p-1.5 text-gray-400 hover:text-indigo-600 transition-colors rounded-lg hover:bg-indigo-50"
+                          className="p-1.5 text-gray-400 hover:text-orange-600 transition-colors rounded-lg hover:bg-orange-50"
                           title="แก้ไขอุปกรณ์"
+                          aria-label="แก้ไขอุปกรณ์"
                         >
                           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
                         </button>
                         <button
                           onClick={(e) => { e.stopPropagation(); setDeleteConfirm(eq); }}
-                          className="p-1.5 text-gray-400 hover:text-red-500 transition-colors rounded-lg hover:bg-red-50"
+                          className="p-1.5 text-gray-400 hover:text-red-500 transition-all rounded-lg hover:bg-red-50 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
                           title="ลบอุปกรณ์"
+                          aria-label="ลบอุปกรณ์"
                         >
                           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
                         </button>
@@ -759,31 +780,15 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
           </tbody>
         </table>
       </div>
-      {totalPages > 1 && (
-        <div className="flex justify-between items-center mt-6">
-          <div className="text-sm text-gray-500">
-            แสดง {((currentPage - 1) * itemsPerPage) + 1} ถึง {Math.min(currentPage * itemsPerPage, filtered.length)} จาก {filtered.length} รายการ
-          </div>
-          <div className="flex items-center gap-1">
-            <button
-              disabled={currentPage === 1}
-              onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-              className="px-3 py-1.5 text-sm bg-white border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              ก่อนหน้า
-            </button>
-            <div className="px-4 text-sm font-medium text-gray-700">
-              หน้า {currentPage} / {totalPages}
-            </div>
-            <button
-              disabled={currentPage === totalPages}
-              onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-              className="px-3 py-1.5 text-sm bg-white border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              ถัดไป
-            </button>
-          </div>
-        </div>
+      {!isLoading && (
+        <Pagination
+          page={safePage}
+          totalPages={totalPages}
+          totalItems={filtered.length}
+          perPage={itemsPerPage}
+          onPageChange={setCurrentPage}
+          testId="equipment-pagination"
+        />
       )}
 
       {/* ── Extracted Modals ──────────────────────────────────────────── */}

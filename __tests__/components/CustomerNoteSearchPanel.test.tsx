@@ -641,7 +641,7 @@ describe("หน้ารายชื่อลูกค้า", () => {
     render(<Customers />);
     await waitFor(() => expect(screen.getByText("สมชาย ใจดี")).toBeInTheDocument());
 
-    const box = screen.getByPlaceholderText("ค้นหาชื่อลูกค้า หรือ ชื่อบริษัท...");
+    const box = screen.getByPlaceholderText("ค้นหาชื่อลูกค้า บริษัท เบอร์โทร หรืออีเมล...");
 
     // By customer name.
     fireEvent.change(box, { target: { value: "สมหญิง" } });

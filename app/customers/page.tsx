@@ -11,16 +11,132 @@ import SearchableDropdown from "../components/SearchableDropdown";
 // ชื่อลูกค้า/ชื่อบริษัท box below it, which still filters `filteredCustomers`
 // exactly as it always has.
 import CustomerNoteSearchPanel from "../components/CustomerNoteSearchPanel";
+import Pagination from "../components/Pagination";
+import SortableTh from "../components/SortableTh";
+import CopyText from "../components/CopyText";
 import { downloadExcel } from "../lib/xlsxExport";
 import type { Customer } from "../lib/types";
 import {
-  sortCustomersByNoteActivity,
   customerNoteActivityAt,
   isNoteRecentlyUpdated,
 } from "../lib/customerOrder";
 import { displayDateTimeParts } from "../lib/dateFormat";
+import {
+  DEFAULT_CUSTOMER_SORT,
+  anyRecentlyNoted,
+  companyLocation,
+  matchesCompanySearch,
+  matchesCustomerSearch,
+  nextSort,
+  searchWithTab,
+  sortByName,
+  sortCompanies,
+  sortCustomers,
+  thCompare,
+  type CompanySortKey,
+  type CustomerSortKey,
+  type CustomersTab,
+  type SortState,
+} from "./listHelpers";
 
 const CUSTOMERS_PER_PAGE = 50;
+const TAB_ORDER: readonly CustomersTab[] = ["customers", "companies", "salespeople", "equipments"];
+const COMPANIES_PER_PAGE = 50;
+
+/** One look for every list on this page (and the equipment tab): a light
+ *  header band, compact rows — a few thousand customers is a list to scan,
+ *  not a gallery. */
+const TH = "px-4 py-3 text-xs font-semibold";
+const TD = "px-4 py-3";
+/** A row reached with Tab shows it — the same ring on every list. */
+const ROW_FOCUS = "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-orange-300";
+const SEARCH_INPUT =
+  "bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 focus:bg-white focus:ring-2 focus:ring-orange-500 outline-none transition-all";
+const PRIMARY_BUTTON =
+  "bg-orange-500 hover:bg-orange-600 text-white px-5 py-2.5 rounded-xl font-medium transition-all shadow-sm hover:shadow-md flex items-center gap-2";
+const SECONDARY_BUTTON =
+  "bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 px-5 py-2.5 rounded-xl font-medium transition-all shadow-sm flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed";
+
+/** Edit and delete for a row. Delete waits for the row to be hovered or
+ *  focused — a red "ลบ" on every one of thousands of rows was one slip away. */
+function RowActions({ name, onEdit, onDelete }: { name: string; onEdit: () => void; onDelete: () => void }) {
+  const stop = (e: React.SyntheticEvent) => e.stopPropagation();
+  // Enter / Space are the button's own; any other key (Esc) still bubbles.
+  const stopActivation = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" || e.key === " ") e.stopPropagation();
+  };
+  return (
+    <div className="flex items-center justify-end gap-1">
+      <button
+        type="button"
+        onClick={(e) => { stop(e); onEdit(); }}
+        onKeyDown={stopActivation}
+        aria-label={`แก้ไข ${name}`}
+        title="แก้ไข"
+        className="p-1.5 text-gray-400 hover:text-orange-600 hover:bg-orange-50 rounded-lg transition-colors"
+      >
+        <svg aria-hidden="true" className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+      </button>
+      <button
+        type="button"
+        onClick={(e) => { stop(e); onDelete(); }}
+        onKeyDown={stopActivation}
+        aria-label={`ลบ ${name}`}
+        title="ลบ"
+        className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
+      >
+        <svg aria-hidden="true" className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+      </button>
+    </div>
+  );
+}
+
+/** Enter / Space on a FOCUSED row opens it — rows were mouse-only. A key
+ *  pressed on a button inside the row is that button's. */
+function openOnKey(open: () => void) {
+  return (e: React.KeyboardEvent<HTMLElement>) => {
+    if (e.target !== e.currentTarget) return;
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      open();
+    }
+  };
+}
+
+/** The empty-table message: "nothing matches" when a search is narrowing the
+ *  list (with a way to clear it) — not "there is no data", which is what the
+ *  three lists used to say about a search that found nothing. */
+function EmptyRows({
+  colSpan,
+  searching,
+  emptyText,
+  noMatchText,
+  onClear,
+  icon,
+}: {
+  colSpan: number;
+  searching: boolean;
+  emptyText: string;
+  noMatchText: string;
+  onClear: () => void;
+  icon: React.ReactNode;
+}) {
+  return (
+    <tr>
+      <td colSpan={colSpan} className="px-4 py-12 text-center text-gray-500">
+        <div className="flex flex-col items-center justify-center gap-3">
+          {icon}
+          <p>{searching ? noMatchText : emptyText}</p>
+          {searching && (
+            <button type="button" onClick={onClear} className="px-4 py-2 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 transition-all text-sm font-semibold">
+              ล้างคำค้น
+            </button>
+          )}
+        </div>
+      </td>
+    </tr>
+  );
+}
 
 /**
  * "อัปเดตล่าสุด" cell. Laid out in parts so every row's date lines up: the day
@@ -70,8 +186,6 @@ interface Salesperson {
   note: string;
 }
 
-type CustomersTab = "customers" | "companies" | "salespeople" | "equipments";
-
 // Deep-link `?tab=` values. Task-board link chips (and the dashboard's existing
 // `/customers?tab=equipment` link) are hand-written URLs, so every spelling a
 // caller might reasonably use maps to a real tab; anything else is ignored and
@@ -103,6 +217,15 @@ function CustomersInner() {
   const { isLoggedIn, isLoading } = useAuth();
   const searchParams = useSearchParams();
   const [activeTab, setActiveTab] = useState<CustomersTab>("customers");
+  // A tab picked here is written to the URL (`?tab=`), so a refresh opens the
+  // same tab — the page used to fall back to ลูกค้า every time. Replaced, not
+  // pushed: Back still leaves the page rather than walking through tabs.
+  const selectTab = (tab: CustomersTab) => {
+    setActiveTab(tab);
+    if (typeof window !== "undefined") {
+      window.history.replaceState({}, "", window.location.pathname + searchWithTab(window.location.search, tab));
+    }
+  };
 
   // ── Deep linking ───────────────────────────────────────────────────────────
   // A task-board link chip points here to open one customer, or one machine's
@@ -182,6 +305,10 @@ function CustomersInner() {
   // matching customer means two very different things depending on this, and an
   // empty list is not by itself proof of a failure (a fresh DB has none).
   const [customersLoaded, setCustomersLoaded] = useState(false);
+  // Whether the lists have arrived at least once. The tab counts wait for it
+  // (a "0" before then is a lie), but not for a REFETCH — every save reloads
+  // the lists, and the counts blinking out each time was noise.
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   
   const [isCompanyModalOpen, setIsCompanyModalOpen] = useState(false);
   const [isCustomerModalOpen, setIsCustomerModalOpen] = useState(false);
@@ -261,6 +388,7 @@ function CustomersInner() {
       showToast("Error fetching data", "error");
     } finally {
       setIsLoadingData(false);
+      setHasLoadedOnce(true);
     }
   };
 
@@ -268,10 +396,17 @@ function CustomersInner() {
     if (isLoggedIn) fetchData();
   }, [isLoggedIn]);
 
+  // One timer at a time: a second toast (two copies in a row) used to be cut
+  // short by the FIRST one's timer.
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const showToast = (message: string, type: "success" | "error") => {
     setToast({ message, type });
-    setTimeout(() => setToast(null), 3000);
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = setTimeout(() => setToast(null), 3000);
   };
+  useEffect(() => () => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+  }, []);
 
   const handleSaveCompany = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -422,11 +557,28 @@ function CustomersInner() {
     }
   };
 
-  const filteredCompanies = companies.filter(c => 
-    c.name.toLowerCase().includes(searchCompanyName.toLowerCase()) &&
-    (c.province || "").toLowerCase().includes(searchProvince.toLowerCase()) &&
-    (c.district || "").toLowerCase().includes(searchDistrict.toLowerCase())
+  // Companies: filtered, sorted when a header is clicked (newest first, as the
+  // API sends them, until then), and paged like customers — the whole list in
+  // one table was thousands of rows.
+  const [companySort, setCompanySort] = useState<SortState<CompanySortKey> | null>(null);
+  const [companyPage, setCompanyPage] = useState(1);
+  const filteredCompanies = useMemo(
+    () =>
+      sortCompanies(
+        companies.filter((c) =>
+          matchesCompanySearch(c, { name: searchCompanyName, province: searchProvince, district: searchDistrict })
+        ),
+        companySort
+      ),
+    [companies, searchCompanyName, searchProvince, searchDistrict, companySort]
   );
+  const companyTotalPages = Math.max(1, Math.ceil(filteredCompanies.length / COMPANIES_PER_PAGE));
+  const safeCompanyPage = Math.min(companyPage, companyTotalPages);
+  const pagedCompanies = filteredCompanies.slice(
+    (safeCompanyPage - 1) * COMPANIES_PER_PAGE,
+    safeCompanyPage * COMPANIES_PER_PAGE
+  );
+  const companySearching = !!(searchCompanyName.trim() || searchProvince.trim() || searchDistrict.trim());
 
   // Sorted HERE rather than by GET /api/customers: that route feeds several
   // dropdowns elsewhere that keep its createdAt order. Deriving the order from
@@ -438,16 +590,20 @@ function CustomersInner() {
   // (the edit-customer form, the company search on another tab) re-renders it,
   // and re-sorting ~6,000 customers on each of those is tens of milliseconds
   // of typing lag for a list that did not change.
+  //
+  // The search box also finds a phone number (digits only) and an e-mail; a
+  // clicked header sorts by name or company instead of the note order.
+  const [customerSort, setCustomerSort] = useState<SortState<CustomerSortKey>>(DEFAULT_CUSTOMER_SORT);
   const filteredCustomers = useMemo(
-    () =>
-      sortCustomersByNoteActivity(
-        customers.filter(c =>
-          c.name.toLowerCase().includes(searchCustomerName.toLowerCase()) ||
-          (c.companyName?.toLowerCase() || "").includes(searchCustomerName.toLowerCase())
-        )
-      ),
-    [customers, searchCustomerName]
+    () => sortCustomers(customers.filter((c) => matchesCustomerSearch(c, searchCustomerName)), customerSort),
+    [customers, searchCustomerName, customerSort]
   );
+  const customerSearching = searchCustomerName.trim() !== "";
+  const sortCustomersBy = (key: CustomerSortKey) => {
+    // Dates start newest-first (the default order); names start ก→ฮ.
+    setCustomerSort((s) => nextSort(s, key, key === "activity" ? "desc" : "asc"));
+    setCustomerPage(1);
+  };
 
   // Paged: ~2,000 customers as one table was tens of thousands of DOM nodes,
   // all re-rendered on every keystroke in the edit form (its state lives on
@@ -472,9 +628,15 @@ function CustomersInner() {
     return () => clearInterval(id);
   }, []);
 
-  const filteredSalespeople = salespeople.filter(s =>
-    s.name.toLowerCase().includes(searchSalespersonName.toLowerCase())
+  const [salespersonSort, setSalespersonSort] = useState<SortState<"name"> | null>(null);
+  const filteredSalespeople = sortByName(
+    salespeople.filter((s) => s.name.toLowerCase().includes(searchSalespersonName.trim().toLowerCase())),
+    salespersonSort
   );
+  const salespersonSearching = searchSalespersonName.trim() !== "";
+
+  const copied = () => showToast("คัดลอกแล้ว", "success");
+  const copyFailed = () => showToast("คัดลอกไม่สำเร็จ", "error");
 
   const [isExportingCustomers, setIsExportingCustomers] = useState(false);
 
@@ -522,7 +684,7 @@ function CustomersInner() {
             <p className="text-gray-500 mt-2 text-lg">จัดการรายชื่อลูกค้าและข้อมูลบริษัทคู่ค้าของคุณ</p>
           </div>
           <div className="flex gap-3 items-center flex-wrap">
-            <Link href="/dashboard" className="px-5 py-2.5 bg-indigo-50 border border-indigo-200 text-indigo-700 font-semibold rounded-xl hover:bg-indigo-100 hover:shadow-sm transition-all flex items-center gap-2">
+            <Link href="/dashboard" className="px-5 py-2.5 bg-white border border-gray-200 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 hover:shadow-sm transition-all flex items-center gap-2">
               📊 Dashboard ยอดขาย
             </Link>
             <Link href="/adminpanel" className="px-5 py-2.5 bg-white border border-gray-200 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 hover:shadow-sm transition-all flex items-center gap-2">
@@ -549,56 +711,81 @@ function CustomersInner() {
           </div>
         )}
 
-        {/* Custom Tabs */}
-        <div className="flex space-x-1 bg-gray-200/50 p-1.5 rounded-2xl w-fit mb-8 shadow-inner">
-          <button
-            onClick={() => setActiveTab("customers")}
-            className={`py-2.5 px-6 rounded-xl font-semibold text-sm transition-all duration-200 ${
-              activeTab === "customers" ? "bg-white text-orange-600 shadow-sm" : "text-gray-600 hover:text-gray-900 hover:bg-gray-200/50"
-            }`}
-          >
-            รายชื่อลูกค้า (Customers)
-          </button>
-          <button
-            onClick={() => setActiveTab("companies")}
-            className={`py-2.5 px-6 rounded-xl font-semibold text-sm transition-all duration-200 ${
-              activeTab === "companies" ? "bg-white text-orange-600 shadow-sm" : "text-gray-600 hover:text-gray-900 hover:bg-gray-200/50"
-            }`}
-          >
-            รายชื่อบริษัท (Companies)
-          </button>
-          <button
-            onClick={() => setActiveTab("salespeople")}
-            className={`py-2.5 px-6 rounded-xl font-semibold text-sm transition-all duration-200 ${
-              activeTab === "salespeople" ? "bg-white text-orange-600 shadow-sm" : "text-gray-600 hover:text-gray-900 hover:bg-gray-200/50"
-            }`}
-          >
-            พนักงานขาย (Sales)
-          </button>
-          <button
-            onClick={() => setActiveTab("equipments")}
-            className={`py-2.5 px-6 rounded-xl font-semibold text-sm transition-all duration-200 ${
-              activeTab === "equipments" ? "bg-white text-orange-600 shadow-sm" : "text-gray-600 hover:text-gray-900 hover:bg-gray-200/50"
-            }`}
-          >
-            อุปกรณ์ที่ขาย
-          </button>
+        {/* Tabs — short Thai names, each with how many it holds. */}
+        {/* A real tab strip (WAI-ARIA tabs): one Tab stop — the open tab —
+            and ←/→, Home/End to move between them. */}
+        <div
+          className="flex flex-wrap gap-1 bg-gray-200/50 p-1.5 rounded-2xl w-fit mb-6 shadow-inner"
+          role="tablist"
+          aria-label="ประเภทข้อมูล"
+          onKeyDown={(e) => {
+            const i = TAB_ORDER.indexOf(activeTab);
+            const next =
+              e.key === "ArrowRight" ? TAB_ORDER[(i + 1) % TAB_ORDER.length]
+              : e.key === "ArrowLeft" ? TAB_ORDER[(i - 1 + TAB_ORDER.length) % TAB_ORDER.length]
+              : e.key === "Home" ? TAB_ORDER[0]
+              : e.key === "End" ? TAB_ORDER[TAB_ORDER.length - 1]
+              : null;
+            if (!next) return;
+            e.preventDefault();
+            selectTab(next);
+            document.getElementById(`customers-tab-${next}`)?.focus();
+          }}
+        >
+          {([
+            { tab: "customers", label: "ลูกค้า", count: customers.length },
+            { tab: "companies", label: "บริษัท", count: companies.length },
+            { tab: "salespeople", label: "พนักงานขาย", count: salespeople.length },
+            { tab: "equipments", label: "อุปกรณ์ที่ขาย", count: null },
+          ] as const).map(({ tab, label, count }) => (
+            <button
+              key={tab}
+              type="button"
+              role="tab"
+              id={`customers-tab-${tab}`}
+              aria-selected={activeTab === tab}
+              aria-controls="customers-tabpanel"
+              tabIndex={activeTab === tab ? 0 : -1}
+              onClick={() => selectTab(tab)}
+              className={`py-2.5 px-5 rounded-xl font-semibold text-sm transition-all duration-200 flex items-center gap-2 ${
+                activeTab === tab ? "bg-white text-orange-600 shadow-sm" : "text-gray-600 hover:text-gray-900 hover:bg-gray-200/50"
+              }`}
+            >
+              {label}
+              {/* The space is for screen readers ("ลูกค้า 3", not "ลูกค้า3");
+                  in a flex row it takes no room — the gap spaces the badge. */}
+              {count !== null && hasLoadedOnce && (
+                <>
+                  {" "}
+                  <span className={`text-xs font-bold px-2 py-0.5 rounded-full tabular-nums ${activeTab === tab ? "bg-orange-100 text-orange-700" : "bg-gray-200 text-gray-600"}`}>
+                    {count.toLocaleString("th-TH")}
+                  </span>
+                </>
+              )}
+            </button>
+          ))}
         </div>
 
         {/* Content Area */}
-        <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
+        <div
+          id="customers-tabpanel"
+          role="tabpanel"
+          aria-labelledby={`customers-tab-${activeTab}`}
+          className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden"
+        >
           {activeTab === "companies" && (
-            <div className="p-8">
-              <div className="flex justify-between items-center mb-6">
+            <div className="p-6">
+              <div className="flex flex-wrap justify-between items-center gap-3 mb-5">
                 <div className="flex items-center gap-3">
-                  <div className="bg-blue-100 text-blue-600 p-3 rounded-xl">
+                  <div className="bg-orange-100 text-orange-600 p-2.5 rounded-xl">
                     <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path></svg>
                   </div>
-                  <h2 className="text-2xl font-bold text-gray-800">บริษัททั้งหมด <span className="text-gray-400 text-lg font-normal">({filteredCompanies.length})</span></h2>
+                  <h2 className="text-xl font-bold text-gray-800">บริษัททั้งหมด <span className="text-gray-400 text-base font-normal">({filteredCompanies.length})</span></h2>
                 </div>
                 <button
+                  type="button"
                   onClick={() => { setEditingCompany({}); setCompanySubmitAttempted(false); setIsCompanyModalOpen(true); }}
-                  className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl font-medium transition-all shadow-sm hover:shadow-md flex items-center gap-2"
+                  className={PRIMARY_BUTTON}
                 >
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"></path></svg>
                   เพิ่มบริษัท
@@ -606,107 +793,123 @@ function CustomersInner() {
               </div>
 
               {/* Search Filters for Companies */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-5">
                 <input
                   type="text"
                   placeholder="ค้นหาชื่อบริษัท..."
-                  className="bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                  className={SEARCH_INPUT}
                   value={searchCompanyName}
-                  onChange={(e) => setSearchCompanyName(e.target.value)}
+                  onChange={(e) => { setSearchCompanyName(e.target.value); setCompanyPage(1); }}
                 />
                 <input
                   type="text"
                   placeholder="ค้นหาจังหวัด..."
-                  className="bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                  className={SEARCH_INPUT}
                   value={searchProvince}
-                  onChange={(e) => setSearchProvince(e.target.value)}
+                  onChange={(e) => { setSearchProvince(e.target.value); setCompanyPage(1); }}
                 />
                 <input
                   type="text"
                   placeholder="ค้นหาอำเภอ/เขต..."
-                  className="bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                  className={SEARCH_INPUT}
                   value={searchDistrict}
-                  onChange={(e) => setSearchDistrict(e.target.value)}
+                  onChange={(e) => { setSearchDistrict(e.target.value); setCompanyPage(1); }}
                 />
               </div>
-              
+
               <div className="overflow-x-auto">
                 <table className="w-full text-left whitespace-nowrap">
                   <thead>
-                    <tr className="bg-gray-50/50 text-gray-500 text-sm uppercase tracking-wider">
-                      <th className="px-6 py-4 font-semibold rounded-l-xl">ชื่อบริษัท</th>
-                      <th className="px-6 py-4 font-semibold">เบอร์โทร</th>
-                      <th className="px-6 py-4 font-semibold">หมายเหตุ</th>
-                      <th className="px-6 py-4 font-semibold text-right rounded-r-xl">จัดการ</th>
+                    <tr className="bg-gray-50 text-gray-500 uppercase tracking-wider">
+                      <SortableTh className={`${TH} rounded-l-xl`} dir={companySort?.key === "name" ? companySort.dir : null} onSort={() => { setCompanySort((s) => nextSort(s, "name")); setCompanyPage(1); }}>ชื่อบริษัท</SortableTh>
+                      {/* The province / district the search boxes above filter on —
+                          it used to be searchable but nowhere to be seen. */}
+                      <SortableTh className={TH} dir={companySort?.key === "location" ? companySort.dir : null} onSort={() => { setCompanySort((s) => nextSort(s, "location")); setCompanyPage(1); }}>อำเภอ / จังหวัด</SortableTh>
+                      <th className={TH}>เบอร์โทร</th>
+                      <th className={TH}>หมายเหตุ</th>
+                      <th className={`${TH} text-right rounded-r-xl`}>จัดการ</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-50">
                     {isLoadingData ? (
                       Array.from({ length: 5 }).map((_, i) => (
                         <tr key={i} className="animate-pulse">
-                          <td className="px-6 py-5">
-                            <div className="flex items-center gap-4">
-                              <div className="w-10 h-10 bg-gray-200 rounded-xl"></div>
-                              <div className="h-5 bg-gray-200 rounded w-32"></div>
-                            </div>
-                          </td>
-                          <td className="px-6 py-5">
-                            <div className="h-5 bg-gray-200 rounded w-24"></div>
-                          </td>
-                          <td className="px-6 py-5">
-                            <div className="h-5 bg-gray-200 rounded w-48"></div>
-                          </td>
-                          <td className="px-6 py-5 text-right">
-                            <div className="h-5 bg-gray-200 rounded w-16 ml-auto"></div>
-                          </td>
+                          <td className={TD}><div className="h-5 bg-gray-200 rounded w-40"></div></td>
+                          <td className={TD}><div className="h-5 bg-gray-200 rounded w-32"></div></td>
+                          <td className={TD}><div className="h-5 bg-gray-200 rounded w-24"></div></td>
+                          <td className={TD}><div className="h-5 bg-gray-200 rounded w-48"></div></td>
+                          <td className={`${TD} text-right`}><div className="h-5 bg-gray-200 rounded w-12 ml-auto"></div></td>
                         </tr>
                       ))
-                    ) : filteredCompanies.map(c => (
-                      <tr key={c.id} onClick={() => setViewingCompany(c)} className="hover:bg-gray-50/50 transition-colors group cursor-pointer">
-                        <td className="px-6 py-5">
+                    ) : pagedCompanies.map(c => (
+                      <tr
+                        key={c.id}
+                        tabIndex={0}
+                        aria-label={`ดูข้อมูล ${c.name}`}
+                        onClick={() => setViewingCompany(c)}
+                        onKeyDown={openOnKey(() => setViewingCompany(c))}
+                        className={`hover:bg-gray-50 ${ROW_FOCUS} transition-colors group cursor-pointer`}
+                      >
+                        <td className={TD}>
                           <p className="font-semibold text-gray-900">{c.name}</p>
                         </td>
-                        <td className="px-6 py-5 text-gray-600">{c.phone || "-"}</td>
-                        <td className="px-6 py-5">
+                        <td className={`${TD} text-gray-600 text-sm`}>{companyLocation(c) || "-"}</td>
+                        <td className={`${TD} text-gray-600`}>
+                          <CopyText value={c.phone} onCopied={copied} onFailed={copyFailed} />
+                        </td>
+                        <td className={TD}>
                           <p className="text-gray-500 text-sm truncate max-w-xs">{c.note || "-"}</p>
                         </td>
-                        <td className="px-6 py-5 text-right space-x-3">
-                          <button onClick={(e) => { e.stopPropagation(); setViewingCompany(c); }} className="text-gray-400 hover:text-gray-800 font-medium text-sm transition-colors">ดูข้อมูล</button>
-                          <button onClick={(e) => { e.stopPropagation(); setEditingCompany(c); setCompanySubmitAttempted(false); setIsCompanyModalOpen(true); }} className="text-blue-500 hover:text-blue-700 font-medium text-sm transition-colors">แก้ไข</button>
-                          <button onClick={(e) => { e.stopPropagation(); setDeleteConfirmCompany(c); }} className="text-red-500 hover:text-red-700 font-medium text-sm transition-colors">ลบ</button>
+                        <td className={TD}>
+                          <RowActions
+                            name={c.name}
+                            onEdit={() => { setEditingCompany(c); setCompanySubmitAttempted(false); setIsCompanyModalOpen(true); }}
+                            onDelete={() => setDeleteConfirmCompany(c)}
+                          />
                         </td>
                       </tr>
                     ))}
                     {!isLoadingData && filteredCompanies.length === 0 && (
-                      <tr>
-                        <td colSpan={4} className="px-6 py-12 text-center text-gray-500">
-                          <div className="flex flex-col items-center justify-center">
-                            <svg className="w-12 h-12 text-gray-300 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path></svg>
-                            <p>ยังไม่มีข้อมูลบริษัท</p>
-                          </div>
-                        </td>
-                      </tr>
+                      <EmptyRows
+                        colSpan={5}
+                        searching={companySearching}
+                        emptyText="ยังไม่มีข้อมูลบริษัท"
+                        noMatchText="ไม่พบบริษัทที่ตรงกับคำค้น"
+                        onClear={() => { setSearchCompanyName(""); setSearchProvince(""); setSearchDistrict(""); setCompanyPage(1); }}
+                        icon={<svg className="w-12 h-12 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path></svg>}
+                      />
                     )}
                   </tbody>
                 </table>
               </div>
+              {!isLoadingData && (
+                <Pagination
+                  page={safeCompanyPage}
+                  totalPages={companyTotalPages}
+                  totalItems={filteredCompanies.length}
+                  perPage={COMPANIES_PER_PAGE}
+                  onPageChange={setCompanyPage}
+                  testId="company-pagination"
+                />
+              )}
             </div>
           )}
 
           {activeTab === "customers" && (
-            <div className="p-8">
-              <div className="flex justify-between items-center mb-6">
+            <div className="p-6">
+              <div className="flex flex-wrap justify-between items-center gap-3 mb-5">
                 <div className="flex items-center gap-3">
-                  <div className="bg-orange-100 text-orange-600 p-3 rounded-xl">
+                  <div className="bg-orange-100 text-orange-600 p-2.5 rounded-xl">
                     <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path></svg>
                   </div>
-                  <h2 className="text-2xl font-bold text-gray-800">ลูกค้าทั้งหมด <span className="text-gray-400 text-lg font-normal">({filteredCustomers.length})</span></h2>
+                  <h2 className="text-xl font-bold text-gray-800">ลูกค้าทั้งหมด <span className="text-gray-400 text-base font-normal">({filteredCustomers.length})</span></h2>
                 </div>
                 <div className="flex items-center gap-3">
                   <button
+                    type="button"
                     onClick={handleExportCustomers}
                     disabled={isExportingCustomers}
-                    className="bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 px-5 py-2.5 rounded-xl font-medium transition-all shadow-sm hover:shadow-md hover:-translate-y-0.5 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                    className={SECONDARY_BUTTON}
                   >
                     {isExportingCustomers ? (
                       <div className="w-5 h-5 border-2 border-gray-500 border-t-transparent rounded-full animate-spin"></div>
@@ -716,8 +919,9 @@ function CustomersInner() {
                     Export
                   </button>
                   <button
+                    type="button"
                     onClick={() => { setEditingCustomer({}); setCustomerSubmitAttempted(false); setIsCustomerModalOpen(true); }}
-                    className="bg-orange-500 hover:bg-orange-600 text-white px-5 py-2.5 rounded-xl font-medium transition-all shadow-sm hover:shadow-md hover:-translate-y-0.5 flex items-center gap-2"
+                    className={PRIMARY_BUTTON}
                   >
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"></path></svg>
                     เพิ่มลูกค้า
@@ -743,140 +947,126 @@ function CustomersInner() {
                   onUnauthorized={() => router.replace("/login")}
                 />
 
-              {/* Search Filters for Customers */}
-              <div className="mb-6">
+              {/* Search Filters for Customers — name, company, phone or e-mail. */}
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                 <input
                   type="text"
-                  placeholder="ค้นหาชื่อลูกค้า หรือ ชื่อบริษัท..."
-                  className="w-full md:w-1/3 bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 focus:bg-white focus:ring-2 focus:ring-orange-500 outline-none transition-all"
+                  placeholder="ค้นหาชื่อลูกค้า บริษัท เบอร์โทร หรืออีเมล..."
+                  className={`w-full md:w-1/2 lg:w-2/5 ${SEARCH_INPUT}`}
                   value={searchCustomerName}
                   onChange={(e) => {
                     setSearchCustomerName(e.target.value);
                     setCustomerPage(1);
                   }}
                 />
+                {/* What a green row means — it was never said anywhere. */}
+                {!isLoadingData && anyRecentlyNoted(filteredCustomers, (c) => isNoteRecentlyUpdated(c, now)) && (
+                  <p className="flex items-center gap-2 text-xs text-gray-500" data-testid="recent-note-legend">
+                    <span aria-hidden="true" className="inline-block w-3 h-3 rounded-sm bg-green-100 border border-green-200" />
+                    แถวสีเขียว = บันทึกลูกค้าถูกแก้ภายใน 12 ชั่วโมงที่ผ่านมา
+                  </p>
+                )}
               </div>
-              
+
               <div className="overflow-x-auto">
                 <table className="w-full text-left whitespace-nowrap">
                   <thead>
-                    <tr className="bg-gray-50/50 text-gray-500 text-sm uppercase tracking-wider">
-                      <th className="px-6 py-4 font-semibold rounded-l-xl">ชื่อลูกค้า</th>
-                      <th className="px-6 py-4 font-semibold">บริษัท</th>
-                      <th className="px-6 py-4 font-semibold">แผนก</th>
-                      <th className="px-6 py-4 font-semibold">เบอร์โทร</th>
-                      <th className="px-6 py-4 font-semibold">อัปเดตล่าสุด</th>
-                      <th className="px-6 py-4 font-semibold text-right rounded-r-xl">จัดการ</th>
+                    <tr className="bg-gray-50 text-gray-500 uppercase tracking-wider">
+                      <SortableTh className={`${TH} rounded-l-xl`} dir={customerSort.key === "name" ? customerSort.dir : null} onSort={() => sortCustomersBy("name")}>ชื่อลูกค้า</SortableTh>
+                      <SortableTh className={TH} dir={customerSort.key === "company" ? customerSort.dir : null} onSort={() => sortCustomersBy("company")}>บริษัท</SortableTh>
+                      <th className={TH}>แผนก</th>
+                      <th className={TH}>เบอร์โทร</th>
+                      <SortableTh className={TH} dir={customerSort.key === "activity" ? customerSort.dir : null} onSort={() => sortCustomersBy("activity")}>อัปเดตล่าสุด</SortableTh>
+                      <th className={`${TH} text-right rounded-r-xl`}>จัดการ</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-50">
                     {isLoadingData ? (
                       Array.from({ length: 5 }).map((_, i) => (
                         <tr key={i} className="animate-pulse">
-                          <td className="px-6 py-5">
-                            <div className="flex items-center gap-4">
-                              <div className="w-10 h-10 bg-gray-200 rounded-full"></div>
-                              <div>
-                                <div className="h-5 bg-gray-200 rounded w-28 mb-2"></div>
-                                <div className="h-4 bg-gray-200 rounded w-36"></div>
-                              </div>
-                            </div>
-                          </td>
-                          <td className="px-6 py-5"><div className="h-5 bg-gray-200 rounded w-32"></div></td>
-                          <td className="px-6 py-5"><div className="h-5 bg-gray-200 rounded w-24"></div></td>
-                          <td className="px-6 py-5"><div className="h-5 bg-gray-200 rounded w-24"></div></td>
-                          <td className="px-6 py-5"><div className="h-5 bg-gray-200 rounded w-32"></div></td>
-                          <td className="px-6 py-5 text-right"><div className="h-5 bg-gray-200 rounded w-24 ml-auto"></div></td>
+                          <td className={TD}><div className="h-5 bg-gray-200 rounded w-28 mb-1.5"></div><div className="h-3.5 bg-gray-200 rounded w-36"></div></td>
+                          <td className={TD}><div className="h-5 bg-gray-200 rounded w-32"></div></td>
+                          <td className={TD}><div className="h-5 bg-gray-200 rounded w-24"></div></td>
+                          <td className={TD}><div className="h-5 bg-gray-200 rounded w-24"></div></td>
+                          <td className={TD}><div className="h-5 bg-gray-200 rounded w-32"></div></td>
+                          <td className={`${TD} text-right`}><div className="h-5 bg-gray-200 rounded w-12 ml-auto"></div></td>
                         </tr>
                       ))
                     ) : pagedCustomers.map(c => (
                       <tr
                         key={c.id}
+                        tabIndex={0}
+                        aria-label={`ดูข้อมูล ${c.name}`}
                         onClick={() => setViewingCustomer(c)}
+                        onKeyDown={openOnKey(() => setViewingCustomer(c))}
                         // Note changed in the last 12 hours → pastel green
                         // (green-100; green-50 was near-invisible on a white table).
-                        className={`${isNoteRecentlyUpdated(c, now) ? "bg-green-100 hover:bg-green-200/60" : "hover:bg-gray-50/50"} transition-colors group cursor-pointer`}
+                        className={`${isNoteRecentlyUpdated(c, now) ? "bg-green-100 hover:bg-green-200/60" : "hover:bg-gray-50"} ${ROW_FOCUS} transition-colors group cursor-pointer`}
                       >
-                        <td className="px-6 py-5">
-                          <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-orange-200 to-orange-100 flex items-center justify-center text-orange-700 font-bold">
-                              {c.name.charAt(0)}
-                            </div>
-                            <div>
-                              <p className="font-semibold text-gray-900">{c.name}</p>
-                              <p className="text-sm text-gray-500">{c.email}</p>
-                            </div>
-                          </div>
+                        {/* No initial-letter avatar: most names start with
+                            "คุณ", so nearly every circle read "ค". */}
+                        <td className={TD}>
+                          <p className="font-semibold text-gray-900">{c.name}</p>
+                          {c.email && (
+                            <CopyText value={c.email} onCopied={copied} onFailed={copyFailed} className="text-sm text-gray-500" />
+                          )}
                         </td>
-                        <td className="px-6 py-5 text-gray-700 font-medium">{c.companyName}</td>
-                        <td className="px-6 py-5 text-gray-600">{c.department || "-"}</td>
-                        <td className="px-6 py-5 text-gray-600">{c.phone || "-"}</td>
-                        <td className="px-6 py-5 text-gray-600 tabular-nums" data-testid="customer-note-updated-at">
+                        <td className={`${TD} text-gray-700 font-medium`}>{c.companyName || "-"}</td>
+                        <td className={`${TD} text-gray-600`}>{c.department || "-"}</td>
+                        <td className={`${TD} text-gray-600`}>
+                          <CopyText value={c.phone} onCopied={copied} onFailed={copyFailed} />
+                        </td>
+                        <td className={`${TD} text-gray-600 tabular-nums`} data-testid="customer-note-updated-at">
                           <NoteUpdatedAt value={customerNoteActivityAt(c)} />
                         </td>
-                        <td className="px-6 py-5 text-right space-x-3">
-                          <button onClick={(e) => { e.stopPropagation(); setViewingCustomer(c); }} className="text-gray-400 hover:text-gray-800 font-medium text-sm transition-colors">ดูข้อมูล</button>
-                          <button onClick={(e) => { e.stopPropagation(); setEditingCustomer(c); setCustomerSubmitAttempted(false); setIsCustomerModalOpen(true); }} className="text-blue-500 hover:text-blue-700 font-medium text-sm transition-colors">แก้ไข</button>
-                          <button onClick={(e) => { e.stopPropagation(); setDeleteConfirmCustomer(c); }} className="text-red-500 hover:text-red-700 font-medium text-sm transition-colors">ลบ</button>
+                        <td className={TD}>
+                          <RowActions
+                            name={c.name}
+                            onEdit={() => { setEditingCustomer(c); setCustomerSubmitAttempted(false); setIsCustomerModalOpen(true); }}
+                            onDelete={() => setDeleteConfirmCustomer(c)}
+                          />
                         </td>
                       </tr>
                     ))}
                     {!isLoadingData && filteredCustomers.length === 0 && (
-                      <tr>
-                        <td colSpan={6} className="px-6 py-12 text-center text-gray-500">
-                          <div className="flex flex-col items-center justify-center">
-                            <svg className="w-12 h-12 text-gray-300 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path></svg>
-                            <p>ยังไม่มีข้อมูลลูกค้า</p>
-                          </div>
-                        </td>
-                      </tr>
+                      <EmptyRows
+                        colSpan={6}
+                        searching={customerSearching}
+                        emptyText="ยังไม่มีข้อมูลลูกค้า"
+                        noMatchText="ไม่พบลูกค้าที่ตรงกับคำค้น"
+                        onClear={() => { setSearchCustomerName(""); setCustomerPage(1); }}
+                        icon={<svg className="w-12 h-12 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path></svg>}
+                      />
                     )}
                   </tbody>
                 </table>
               </div>
-              {!isLoadingData && customerTotalPages > 1 && (
-                <div className="flex justify-between items-center mt-6" data-testid="customer-pagination">
-                  <div className="text-sm text-gray-500">
-                    แสดง {(safeCustomerPage - 1) * CUSTOMERS_PER_PAGE + 1} ถึง {Math.min(safeCustomerPage * CUSTOMERS_PER_PAGE, filteredCustomers.length)} จาก {filteredCustomers.length} รายการ
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <button
-                      type="button"
-                      disabled={safeCustomerPage === 1}
-                      onClick={() => setCustomerPage(Math.max(1, safeCustomerPage - 1))}
-                      className="px-3 py-1.5 text-sm bg-white border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      ก่อนหน้า
-                    </button>
-                    <div className="px-4 text-sm font-medium text-gray-700">
-                      หน้า {safeCustomerPage} / {customerTotalPages}
-                    </div>
-                    <button
-                      type="button"
-                      disabled={safeCustomerPage === customerTotalPages}
-                      onClick={() => setCustomerPage(Math.min(customerTotalPages, safeCustomerPage + 1))}
-                      className="px-3 py-1.5 text-sm bg-white border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      ถัดไป
-                    </button>
-                  </div>
-                </div>
+              {!isLoadingData && (
+                <Pagination
+                  page={safeCustomerPage}
+                  totalPages={customerTotalPages}
+                  totalItems={filteredCustomers.length}
+                  perPage={CUSTOMERS_PER_PAGE}
+                  onPageChange={setCustomerPage}
+                  testId="customer-pagination"
+                />
               )}
             </div>
           )}
 
           {activeTab === "salespeople" && (
-            <div className="p-8">
-              <div className="flex justify-between items-center mb-6">
+            <div className="p-6">
+              <div className="flex flex-wrap justify-between items-center gap-3 mb-5">
                 <div className="flex items-center gap-3">
-                  <div className="bg-green-100 text-green-600 p-3 rounded-xl">
+                  <div className="bg-orange-100 text-orange-600 p-2.5 rounded-xl">
                     <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"></path></svg>
                   </div>
-                  <h2 className="text-2xl font-bold text-gray-800">พนักงานขายทั้งหมด <span className="text-gray-400 text-lg font-normal">({filteredSalespeople.length})</span></h2>
+                  <h2 className="text-xl font-bold text-gray-800">พนักงานขายทั้งหมด <span className="text-gray-400 text-base font-normal">({filteredSalespeople.length})</span></h2>
                 </div>
                 <button
+                  type="button"
                   onClick={() => { setEditingSalesperson({}); setSalespersonSubmitAttempted(false); setIsSalespersonModalOpen(true); }}
-                  className="bg-green-600 hover:bg-green-700 text-white px-5 py-2.5 rounded-xl font-medium transition-all shadow-sm hover:shadow-md flex items-center gap-2"
+                  className={PRIMARY_BUTTON}
                 >
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"></path></svg>
                   เพิ่มพนักงานขาย
@@ -884,69 +1074,72 @@ function CustomersInner() {
               </div>
 
               {/* Search Filters for Salespeople */}
-              <div className="mb-6">
+              <div className="mb-4">
                 <input
                   type="text"
                   placeholder="ค้นหาชื่อพนักงานขาย..."
-                  className="w-full md:w-1/3 bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 focus:bg-white focus:ring-2 focus:ring-green-500 outline-none transition-all"
+                  className={`w-full md:w-1/3 ${SEARCH_INPUT}`}
                   value={searchSalespersonName}
                   onChange={(e) => setSearchSalespersonName(e.target.value)}
                 />
               </div>
-              
+
               <div className="overflow-x-auto">
                 <table className="w-full text-left whitespace-nowrap">
                   <thead>
-                    <tr className="bg-gray-50/50 text-gray-500 text-sm uppercase tracking-wider">
-                      <th className="px-6 py-4 font-semibold rounded-l-xl">ชื่อพนักงานขาย</th>
-                      <th className="px-6 py-4 font-semibold">เบอร์โทร</th>
-                      <th className="px-6 py-4 font-semibold">อีเมล</th>
-                      <th className="px-6 py-4 font-semibold text-right rounded-r-xl">จัดการ</th>
+                    <tr className="bg-gray-50 text-gray-500 uppercase tracking-wider">
+                      <SortableTh className={`${TH} rounded-l-xl`} dir={salespersonSort?.dir ?? null} onSort={() => setSalespersonSort((s) => nextSort(s, "name"))}>ชื่อพนักงานขาย</SortableTh>
+                      <th className={TH}>เบอร์โทร</th>
+                      <th className={TH}>อีเมล</th>
+                      <th className={`${TH} text-right rounded-r-xl`}>จัดการ</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-50">
                     {isLoadingData ? (
                       Array.from({ length: 5 }).map((_, i) => (
                         <tr key={i} className="animate-pulse">
-                          <td className="px-6 py-5">
-                            <div className="flex items-center gap-4">
-                              <div className="w-10 h-10 bg-gray-200 rounded-full"></div>
-                              <div className="h-5 bg-gray-200 rounded w-28"></div>
-                            </div>
-                          </td>
-                          <td className="px-6 py-5"><div className="h-5 bg-gray-200 rounded w-24"></div></td>
-                          <td className="px-6 py-5"><div className="h-5 bg-gray-200 rounded w-32"></div></td>
-                          <td className="px-6 py-5 text-right"><div className="h-5 bg-gray-200 rounded w-24 ml-auto"></div></td>
+                          <td className={TD}><div className="h-5 bg-gray-200 rounded w-28"></div></td>
+                          <td className={TD}><div className="h-5 bg-gray-200 rounded w-24"></div></td>
+                          <td className={TD}><div className="h-5 bg-gray-200 rounded w-32"></div></td>
+                          <td className={`${TD} text-right`}><div className="h-5 bg-gray-200 rounded w-12 ml-auto"></div></td>
                         </tr>
                       ))
                     ) : filteredSalespeople.map(s => (
-                      <tr key={s.id} onClick={() => setViewingSalesperson(s)} className="hover:bg-gray-50/50 transition-colors group cursor-pointer">
-                        <td className="px-6 py-5">
-                          <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-green-200 to-green-100 flex items-center justify-center text-green-700 font-bold">
-                              {s.name.charAt(0)}
-                            </div>
-                            <p className="font-semibold text-gray-900">{s.name}</p>
-                          </div>
+                      <tr
+                        key={s.id}
+                        tabIndex={0}
+                        aria-label={`ดูข้อมูล ${s.name}`}
+                        onClick={() => setViewingSalesperson(s)}
+                        onKeyDown={openOnKey(() => setViewingSalesperson(s))}
+                        className={`hover:bg-gray-50 ${ROW_FOCUS} transition-colors group cursor-pointer`}
+                      >
+                        <td className={TD}>
+                          <p className="font-semibold text-gray-900">{s.name}</p>
                         </td>
-                        <td className="px-6 py-5 text-gray-600">{s.phone || "-"}</td>
-                        <td className="px-6 py-5 text-gray-600">{s.email || "-"}</td>
-                        <td className="px-6 py-5 text-right space-x-3">
-                          <button onClick={(e) => { e.stopPropagation(); setViewingSalesperson(s); }} className="text-gray-400 hover:text-gray-800 font-medium text-sm transition-colors">ดูข้อมูล</button>
-                          <button onClick={(e) => { e.stopPropagation(); setEditingSalesperson(s); setSalespersonSubmitAttempted(false); setIsSalespersonModalOpen(true); }} className="text-blue-500 hover:text-blue-700 font-medium text-sm transition-colors">แก้ไข</button>
-                          <button onClick={(e) => { e.stopPropagation(); setDeleteConfirmSalesperson(s); }} className="text-red-500 hover:text-red-700 font-medium text-sm transition-colors">ลบ</button>
+                        <td className={`${TD} text-gray-600`}>
+                          <CopyText value={s.phone} onCopied={copied} onFailed={copyFailed} />
+                        </td>
+                        <td className={`${TD} text-gray-600`}>
+                          <CopyText value={s.email} onCopied={copied} onFailed={copyFailed} />
+                        </td>
+                        <td className={TD}>
+                          <RowActions
+                            name={s.name}
+                            onEdit={() => { setEditingSalesperson(s); setSalespersonSubmitAttempted(false); setIsSalespersonModalOpen(true); }}
+                            onDelete={() => setDeleteConfirmSalesperson(s)}
+                          />
                         </td>
                       </tr>
                     ))}
                     {!isLoadingData && filteredSalespeople.length === 0 && (
-                      <tr>
-                        <td colSpan={4} className="px-6 py-12 text-center text-gray-500">
-                          <div className="flex flex-col items-center justify-center">
-                            <svg className="w-12 h-12 text-gray-300 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"></path></svg>
-                            <p>ยังไม่มีข้อมูลพนักงานขาย</p>
-                          </div>
-                        </td>
-                      </tr>
+                      <EmptyRows
+                        colSpan={4}
+                        searching={salespersonSearching}
+                        emptyText="ยังไม่มีข้อมูลพนักงานขาย"
+                        noMatchText="ไม่พบพนักงานขายที่ตรงกับคำค้น"
+                        onClear={() => setSearchSalespersonName("")}
+                        icon={<svg className="w-12 h-12 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"></path></svg>}
+                      />
                     )}
                   </tbody>
                 </table>
@@ -964,14 +1157,14 @@ function CustomersInner() {
       {viewingCompany && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-gray-900/40 backdrop-blur-sm" onClick={() => setViewingCompany(null)}></div>
-          <div className="relative bg-white rounded-3xl shadow-2xl max-w-xl w-full p-8 overflow-hidden transform transition-all">
+          <div className="relative bg-white rounded-3xl shadow-2xl max-w-xl w-full max-h-[90vh] overflow-y-auto p-8 transform transition-all">
             <div className="absolute top-0 right-0 p-4">
-              <button onClick={() => setViewingCompany(null)} className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full transition-colors">
+              <button type="button" aria-label="ปิด" onClick={() => setViewingCompany(null)} className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full transition-colors">
                 <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
               </button>
             </div>
-            <div className="flex items-center gap-4 mb-8">
-              <div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-2xl flex items-center justify-center">
+            <div className="flex items-center gap-4 mb-6">
+              <div className="w-16 h-16 bg-orange-100 text-orange-600 rounded-2xl flex items-center justify-center shrink-0">
                 <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path></svg>
               </div>
               <div>
@@ -998,15 +1191,11 @@ function CustomersInner() {
                 </p>
               </div>
               
-              <div className="grid grid-cols-2 gap-4">
-                <div className="bg-gray-50 rounded-2xl p-5 border border-gray-100">
-                  <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-1">เบอร์โทรศัพท์</h3>
-                  <p className="text-gray-800 font-medium">{viewingCompany.phone || "-"}</p>
-                </div>
-                <div className="bg-gray-50 rounded-2xl p-5 border border-gray-100">
-                  <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-1">สถานะ</h3>
-                  <p className="text-green-600 font-medium">Active</p>
-                </div>
+              <div className="bg-gray-50 rounded-2xl p-5 border border-gray-100">
+                <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-1">เบอร์โทรศัพท์</h3>
+                <p className="text-gray-800 font-medium">
+                  <CopyText value={viewingCompany.phone} onCopied={copied} onFailed={copyFailed} />
+                </p>
               </div>
 
               {viewingCompany.note && (
@@ -1015,6 +1204,59 @@ function CustomersInner() {
                   <p className="text-orange-900">{viewingCompany.note}</p>
                 </div>
               )}
+
+              {/* The company's contacts — from the customer list this page
+                  already holds, so no extra request. Each opens that
+                  customer's own window. (A hard-coded "สถานะ: Active" box sat
+                  here before; nothing ever set it.) */}
+              {(() => {
+                const contacts = customers
+                  .filter((c) => c.companyId === viewingCompany.id)
+                  .sort((a, b) => thCompare(a.name, b.name));
+                return (
+                  <div className="rounded-2xl border border-gray-100 p-5" data-testid="company-contacts">
+                    <div className="flex items-center justify-between gap-3 mb-3">
+                      <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wider">
+                        ลูกค้าในบริษัทนี้ <span className="text-gray-500 normal-case">({contacts.length})</span>
+                      </h3>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const companyId = viewingCompany.id;
+                          setViewingCompany(null);
+                          setEditingCustomer({ companyId });
+                          setCustomerSubmitAttempted(false);
+                          setIsCustomerModalOpen(true);
+                        }}
+                        className="text-sm font-semibold text-orange-600 hover:text-orange-700"
+                      >
+                        + เพิ่มลูกค้าในบริษัทนี้
+                      </button>
+                    </div>
+                    {contacts.length === 0 ? (
+                      <p className="text-sm text-gray-400">ยังไม่มีลูกค้าในบริษัทนี้</p>
+                    ) : (
+                      <ul className="max-h-56 overflow-y-auto divide-y divide-gray-50 -mx-2">
+                        {contacts.map((c) => (
+                          <li key={c.id}>
+                            <button
+                              type="button"
+                              onClick={() => { setViewingCompany(null); setViewingCustomer(c); }}
+                              className="w-full text-left flex items-center justify-between gap-3 px-2 py-2 rounded-lg hover:bg-gray-50"
+                            >
+                              <span className="min-w-0">
+                                <span className="block font-medium text-gray-900 truncate">{c.name}</span>
+                                {c.department && <span className="block text-xs text-gray-500 truncate">{c.department}</span>}
+                              </span>
+                              <span className="shrink-0 text-sm text-gray-500 tabular-nums">{c.phone || ""}</span>
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
           </div>
         </div>
@@ -1041,17 +1283,18 @@ function CustomersInner() {
           <div className="absolute inset-0 bg-gray-900/40 backdrop-blur-sm" onClick={() => setViewingSalesperson(null)}></div>
           <div className="relative bg-white rounded-3xl shadow-2xl max-w-xl w-full p-8 overflow-hidden transform transition-all">
             <div className="absolute top-0 right-0 p-4">
-              <button onClick={() => setViewingSalesperson(null)} className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full transition-colors">
+              <button type="button" aria-label="ปิด" onClick={() => setViewingSalesperson(null)} className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full transition-colors">
                 <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
               </button>
             </div>
             <div className="flex items-center gap-5 mb-8">
-              <div className="w-20 h-20 rounded-full bg-gradient-to-tr from-green-200 to-green-100 border-4 border-white shadow-sm flex items-center justify-center text-green-700 font-bold text-3xl">
-                {viewingSalesperson.name.charAt(0)}
+              {/* An icon, not the name's first letter ("ค" for every "คุณ…"). */}
+              <div className="w-16 h-16 bg-orange-100 text-orange-600 rounded-2xl flex items-center justify-center shrink-0">
+                <svg aria-hidden="true" className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
               </div>
               <div>
                 <h2 className="text-2xl font-bold text-gray-900">{viewingSalesperson.name}</h2>
-                <p className="text-green-600 font-medium">พนักงานขาย</p>
+                <p className="text-orange-600 font-medium">พนักงานขาย</p>
               </div>
             </div>
             
@@ -1062,7 +1305,7 @@ function CustomersInner() {
                 </div>
                 <div>
                   <p className="text-xs font-semibold text-gray-400 uppercase">อีเมล</p>
-                  <p className="text-gray-900 font-medium">{viewingSalesperson.email || "-"}</p>
+                  <p className="text-gray-900 font-medium"><CopyText value={viewingSalesperson.email} onCopied={copied} onFailed={copyFailed} /></p>
                 </div>
               </div>
               
@@ -1072,14 +1315,14 @@ function CustomersInner() {
                 </div>
                 <div>
                   <p className="text-xs font-semibold text-gray-400 uppercase">เบอร์โทรศัพท์</p>
-                  <p className="text-gray-900 font-medium">{viewingSalesperson.phone || "-"}</p>
+                  <p className="text-gray-900 font-medium"><CopyText value={viewingSalesperson.phone} onCopied={copied} onFailed={copyFailed} /></p>
                 </div>
               </div>
 
               {viewingSalesperson.note && (
-                <div className="bg-green-50 rounded-2xl p-5 border border-green-100 mt-4">
-                  <h3 className="text-sm font-semibold text-green-400 uppercase tracking-wider mb-2">หมายเหตุ</h3>
-                  <p className="text-green-900">{viewingSalesperson.note}</p>
+                <div className="bg-orange-50 rounded-2xl p-5 border border-orange-100 mt-4">
+                  <h3 className="text-sm font-semibold text-orange-400 uppercase tracking-wider mb-2">หมายเหตุ</h3>
+                  <p className="text-orange-900">{viewingSalesperson.note}</p>
                 </div>
               )}
             </div>
@@ -1103,7 +1346,7 @@ function CustomersInner() {
               <form id="company-form" onSubmit={handleSaveCompany} onInvalid={() => setCompanySubmitAttempted(true)} className="space-y-6">
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-2">ชื่อบริษัท <span className="text-red-500">*</span></label>
-                  <input required type="text" className={`w-full bg-gray-50 border rounded-xl px-4 py-3 outline-none transition-all focus:bg-white focus:ring-2 ${companySubmitAttempted ? 'invalid:border-red-500 invalid:ring-red-500 invalid:bg-red-50 border-gray-200 focus:border-transparent focus:ring-blue-500 focus:invalid:border-red-500 focus:invalid:ring-red-500' : 'border-gray-200 focus:border-transparent focus:ring-blue-500'}`} placeholder="บริษัท เอบีซี จำกัด" value={editingCompany?.name || ""} onChange={e => setEditingCompany({...editingCompany, name: e.target.value})} />
+                  <input required type="text" className={`w-full bg-gray-50 border rounded-xl px-4 py-3 outline-none transition-all focus:bg-white focus:ring-2 ${companySubmitAttempted ? 'invalid:border-red-500 invalid:ring-red-500 invalid:bg-red-50 border-gray-200 focus:border-transparent focus:ring-orange-500 focus:invalid:border-red-500 focus:invalid:ring-red-500' : 'border-gray-200 focus:border-transparent focus:ring-orange-500'}`} placeholder="บริษัท เอบีซี จำกัด" value={editingCompany?.name || ""} onChange={e => setEditingCompany({...editingCompany, name: e.target.value})} />
                 </div>
                 
                 <div className="bg-gray-50/50 p-6 rounded-2xl border border-gray-100 space-y-4">
@@ -1111,54 +1354,54 @@ function CustomersInner() {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                       <label className="block text-xs font-semibold text-gray-600 mb-2">เลขที่/อาคาร</label>
-                      <input type="text" className="w-full bg-white border border-gray-200 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-blue-500 outline-none transition-all" value={editingCompany?.addressNo || ""} onChange={e => setEditingCompany({...editingCompany, addressNo: e.target.value})} />
+                      <input type="text" className="w-full bg-white border border-gray-200 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-orange-500 outline-none transition-all" value={editingCompany?.addressNo || ""} onChange={e => setEditingCompany({...editingCompany, addressNo: e.target.value})} />
                     </div>
                     <div>
                       <label className="block text-xs font-semibold text-gray-600 mb-2">หมู่</label>
-                      <input type="text" className="w-full bg-white border border-gray-200 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-blue-500 outline-none transition-all" value={editingCompany?.moo || ""} onChange={e => setEditingCompany({...editingCompany, moo: e.target.value})} />
+                      <input type="text" className="w-full bg-white border border-gray-200 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-orange-500 outline-none transition-all" value={editingCompany?.moo || ""} onChange={e => setEditingCompany({...editingCompany, moo: e.target.value})} />
                     </div>
                     <div>
                       <label className="block text-xs font-semibold text-gray-600 mb-2">ซอย</label>
-                      <input type="text" className="w-full bg-white border border-gray-200 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-blue-500 outline-none transition-all" value={editingCompany?.soi || ""} onChange={e => setEditingCompany({...editingCompany, soi: e.target.value})} />
+                      <input type="text" className="w-full bg-white border border-gray-200 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-orange-500 outline-none transition-all" value={editingCompany?.soi || ""} onChange={e => setEditingCompany({...editingCompany, soi: e.target.value})} />
                     </div>
                     <div>
                       <label className="block text-xs font-semibold text-gray-600 mb-2">ถนน</label>
-                      <input type="text" className="w-full bg-white border border-gray-200 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-blue-500 outline-none transition-all" value={editingCompany?.road || ""} onChange={e => setEditingCompany({...editingCompany, road: e.target.value})} />
+                      <input type="text" className="w-full bg-white border border-gray-200 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-orange-500 outline-none transition-all" value={editingCompany?.road || ""} onChange={e => setEditingCompany({...editingCompany, road: e.target.value})} />
                     </div>
                     <div>
                       <label className="block text-xs font-semibold text-gray-600 mb-2">ตำบล/แขวง</label>
-                      <input type="text" className="w-full bg-white border border-gray-200 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-blue-500 outline-none transition-all" value={editingCompany?.subDistrict || ""} onChange={e => setEditingCompany({...editingCompany, subDistrict: e.target.value})} />
+                      <input type="text" className="w-full bg-white border border-gray-200 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-orange-500 outline-none transition-all" value={editingCompany?.subDistrict || ""} onChange={e => setEditingCompany({...editingCompany, subDistrict: e.target.value})} />
                     </div>
                     <div>
                       <label className="block text-xs font-semibold text-gray-600 mb-2">อำเภอ/เขต</label>
-                      <input type="text" className="w-full bg-white border border-gray-200 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-blue-500 outline-none transition-all" value={editingCompany?.district || ""} onChange={e => setEditingCompany({...editingCompany, district: e.target.value})} />
+                      <input type="text" className="w-full bg-white border border-gray-200 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-orange-500 outline-none transition-all" value={editingCompany?.district || ""} onChange={e => setEditingCompany({...editingCompany, district: e.target.value})} />
                     </div>
                     <div>
                       <label className="block text-xs font-semibold text-gray-600 mb-2">จังหวัด</label>
-                      <input type="text" className="w-full bg-white border border-gray-200 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-blue-500 outline-none transition-all" value={editingCompany?.province || ""} onChange={e => setEditingCompany({...editingCompany, province: e.target.value})} />
+                      <input type="text" className="w-full bg-white border border-gray-200 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-orange-500 outline-none transition-all" value={editingCompany?.province || ""} onChange={e => setEditingCompany({...editingCompany, province: e.target.value})} />
                     </div>
                     <div>
                       <label className="block text-xs font-semibold text-gray-600 mb-2">รหัสไปรษณีย์</label>
-                      <input type="text" className="w-full bg-white border border-gray-200 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-blue-500 outline-none transition-all" value={editingCompany?.postalCode || ""} onChange={e => setEditingCompany({...editingCompany, postalCode: e.target.value})} />
+                      <input type="text" className="w-full bg-white border border-gray-200 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-orange-500 outline-none transition-all" value={editingCompany?.postalCode || ""} onChange={e => setEditingCompany({...editingCompany, postalCode: e.target.value})} />
                     </div>
                   </div>
                 </div>
 
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-2">เบอร์โทรศัพท์</label>
-                  <input type="tel" pattern="[0-9]*" className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none transition-all" value={editingCompany?.phone || ""} onChange={e => setEditingCompany({...editingCompany, phone: e.target.value.replace(/\D/g, "")})} />
+                  <input type="tel" pattern="[0-9]*" className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 focus:bg-white focus:ring-2 focus:ring-orange-500 outline-none transition-all" value={editingCompany?.phone || ""} onChange={e => setEditingCompany({...editingCompany, phone: e.target.value.replace(/\D/g, "")})} />
                 </div>
                 
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-2">หมายเหตุ</label>
-                  <textarea rows={2} className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none transition-all resize-none" placeholder="ข้อมูลเพิ่มเติม..." value={editingCompany?.note || ""} onChange={e => setEditingCompany({...editingCompany, note: e.target.value})}></textarea>
+                  <textarea rows={2} className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 focus:bg-white focus:ring-2 focus:ring-orange-500 outline-none transition-all resize-none" placeholder="ข้อมูลเพิ่มเติม..." value={editingCompany?.note || ""} onChange={e => setEditingCompany({...editingCompany, note: e.target.value})}></textarea>
                 </div>
               </form>
             </div>
             
             <div className="px-8 py-5 border-t border-gray-100 bg-gray-50/50 flex justify-end gap-3 z-10">
               <button type="button" onClick={() => setIsCompanyModalOpen(false)} className="px-6 py-2.5 font-semibold text-gray-600 bg-white border border-gray-200 rounded-xl hover:bg-gray-50 transition-all shadow-sm">ยกเลิก</button>
-              <button type="submit" form="company-form" className="px-6 py-2.5 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 transition-all shadow-sm hover:shadow-md">บันทึกข้อมูล</button>
+              <button type="submit" form="company-form" className="px-6 py-2.5 bg-orange-500 text-white font-semibold rounded-xl hover:bg-orange-600 transition-all shadow-sm hover:shadow-md">บันทึกข้อมูล</button>
             </div>
           </div>
         </div>
@@ -1309,26 +1552,26 @@ function CustomersInner() {
               <form id="salesperson-form" onSubmit={handleSaveSalesperson} onInvalid={() => setSalespersonSubmitAttempted(true)} className="grid grid-cols-1 md:grid-cols-2 gap-5">
                 <div className="md:col-span-2">
                   <label className="block text-sm font-semibold text-gray-700 mb-1.5">ชื่อ-นามสกุล <span className="text-red-500">*</span></label>
-                  <input required type="text" className={`w-full bg-gray-50 border rounded-xl px-4 py-2.5 outline-none transition-all focus:bg-white focus:ring-2 ${salespersonSubmitAttempted ? 'invalid:border-red-500 invalid:ring-red-500 invalid:bg-red-50 border-gray-200 focus:border-transparent focus:ring-green-500 focus:invalid:border-red-500 focus:invalid:ring-red-500' : 'border-gray-200 focus:border-transparent focus:ring-green-500'}`} placeholder="สมชาย ยอดขาย" value={editingSalesperson?.name || ""} onChange={e => setEditingSalesperson({...editingSalesperson, name: e.target.value})} />
+                  <input required type="text" className={`w-full bg-gray-50 border rounded-xl px-4 py-2.5 outline-none transition-all focus:bg-white focus:ring-2 ${salespersonSubmitAttempted ? 'invalid:border-red-500 invalid:ring-red-500 invalid:bg-red-50 border-gray-200 focus:border-transparent focus:ring-orange-500 focus:invalid:border-red-500 focus:invalid:ring-red-500' : 'border-gray-200 focus:border-transparent focus:ring-orange-500'}`} placeholder="สมชาย ยอดขาย" value={editingSalesperson?.name || ""} onChange={e => setEditingSalesperson({...editingSalesperson, name: e.target.value})} />
                 </div>
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1.5">เบอร์โทรศัพท์</label>
-                  <input type="tel" pattern="[0-9]*" className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 focus:bg-white focus:ring-2 focus:ring-green-500 outline-none transition-all" placeholder="08XXXXXXXX" value={editingSalesperson?.phone || ""} onChange={e => setEditingSalesperson({...editingSalesperson, phone: e.target.value.replace(/\D/g, "")})} />
+                  <input type="tel" pattern="[0-9]*" className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 focus:bg-white focus:ring-2 focus:ring-orange-500 outline-none transition-all" placeholder="08XXXXXXXX" value={editingSalesperson?.phone || ""} onChange={e => setEditingSalesperson({...editingSalesperson, phone: e.target.value.replace(/\D/g, "")})} />
                 </div>
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1.5">อีเมล</label>
-                  <input type="email" className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 focus:bg-white focus:ring-2 focus:ring-green-500 outline-none transition-all" placeholder="example@email.com" value={editingSalesperson?.email || ""} onChange={e => setEditingSalesperson({...editingSalesperson, email: e.target.value})} />
+                  <input type="email" className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 focus:bg-white focus:ring-2 focus:ring-orange-500 outline-none transition-all" placeholder="example@email.com" value={editingSalesperson?.email || ""} onChange={e => setEditingSalesperson({...editingSalesperson, email: e.target.value})} />
                 </div>
                 <div className="md:col-span-2">
                   <label className="block text-sm font-semibold text-gray-700 mb-1.5">หมายเหตุ</label>
-                  <textarea rows={2} className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 focus:bg-white focus:ring-2 focus:ring-green-500 outline-none transition-all resize-none" placeholder="ข้อมูลเพิ่มเติม..." value={editingSalesperson?.note || ""} onChange={e => setEditingSalesperson({...editingSalesperson, note: e.target.value})}></textarea>
+                  <textarea rows={2} className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 focus:bg-white focus:ring-2 focus:ring-orange-500 outline-none transition-all resize-none" placeholder="ข้อมูลเพิ่มเติม..." value={editingSalesperson?.note || ""} onChange={e => setEditingSalesperson({...editingSalesperson, note: e.target.value})}></textarea>
                 </div>
               </form>
             </div>
             
             <div className="px-8 py-5 border-t border-gray-100 bg-gray-50/50 flex justify-end gap-3 z-10">
               <button type="button" onClick={() => setIsSalespersonModalOpen(false)} className="px-6 py-2.5 font-semibold text-gray-600 bg-white border border-gray-200 rounded-xl hover:bg-gray-50 transition-all shadow-sm">ยกเลิก</button>
-              <button type="submit" form="salesperson-form" className="px-6 py-2.5 bg-green-600 text-white font-semibold rounded-xl hover:bg-green-700 transition-all shadow-sm hover:shadow-md">บันทึกข้อมูล</button>
+              <button type="submit" form="salesperson-form" className="px-6 py-2.5 bg-orange-500 text-white font-semibold rounded-xl hover:bg-orange-600 transition-all shadow-sm hover:shadow-md">บันทึกข้อมูล</button>
             </div>
           </div>
         </div>

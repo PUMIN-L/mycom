@@ -430,7 +430,22 @@ highlight expires without a reload.
 - **The `/customers` table is paged, 50 rows** (`CUSTOMERS_PER_PAGE`). Only
   the rendered rows are sliced — sort order, the count, Excel export and deep
   links use the full `filteredCustomers`; searching resets to page 1, and the
-  page is clamped by derivation (no setState-in-effect).
+  page is clamped by derivation (no setState-in-effect). The companies tab is
+  paged the same way (`COMPANIES_PER_PAGE`), and so is the equipment tab (10),
+  whose page is clamped too — a refetch after a save no longer sends it to
+  page 1.
+- **Searching and sorting the lists is [`app/customers/listHelpers.ts`](./app/customers/listHelpers.ts)**
+  (pure, tested). The customer box matches name, company, e-mail, and a phone
+  by digits — only for a query that looks like a phone number ("ร้าน 2024"
+  is a name) and from three digits; "+66" reads as "0". A clicked header sorts
+  by name / company (blank values last either way, ties keep the note order);
+  "อัปเดตล่าสุด" is the default note order and flips to oldest-first.
+  `thCompare` uses one shared `Intl.Collator` — `localeCompare` with a locale
+  builds a new one per call, ~80,000 calls for one sort of 6,000 customers.
+- **The open tab is in the URL** (`?tab=companies|salespeople|equipment`,
+  none for ลูกค้า), written with `history.replaceState` by `searchWithTab`, so
+  a refresh keeps it. A tab change also drops a deep link's one-shot
+  parameters (`customerId`, `edit_eq`, …), or a refresh would reopen them.
 - **Sorted on the client, on `/customers` only.** `GET /api/customers` keeps
   `ORDER BY createdAt DESC` because the same list feeds dropdowns in
   `EquipmentEditModal`, `SalesRecordEditModal`, `EquipmentTab`,
@@ -1281,8 +1296,11 @@ rules in [`lib/passwordRules.ts`](./app/lib/passwordRules.ts)):
 [`app/components/`](./app/components/): `ConfirmDialog`, `Toast`, `Spinner`,
 `ColorPickerDropdown`, `BlockRangeControl` (image-size / block-spacing slider with
 −/+ steps + live readout), `RichTextEditor`, `PasswordInput` (a password field
-with an eye button that shows what was typed). Import the shared version instead of
-defining a local one.
+with an eye button that shows what was typed), `Pagination` (a table pager:
+"แสดง a ถึง b จาก n", first / previous / next / last and a page-number box),
+`SortableTh` (a header that sorts its column, with `aria-sort`), `CopyText` (a
+phone or e-mail that copies itself on click, without opening the row around
+it). Import the shared version instead of defining a local one.
 
 **Dropdowns are always [`SearchableDropdown`](./app/components/SearchableDropdown.tsx),
 never a native `<select>`.** The OS paints a native one, so on a dark-mode machine
