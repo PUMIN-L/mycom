@@ -136,7 +136,7 @@ describe("quotation — the arithmetic a document is saved under", () => {
     window.history.replaceState(null, "", "/quotation");
     const fetchMock = mockFetch({ status: 200 });
     render(<QuotationPage />);
-    fireEvent.click(await screen.findByRole("button", { name: /💾 เซฟ/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "บันทึก" }));
     await waitFor(() => expect(savedData(fetchMock).totalsVersion).toBe(2));
   });
 
@@ -160,7 +160,7 @@ describe("quotation — the arithmetic a document is saved under", () => {
         render(<QuotationPage />);
         await waitFor(() => expect(document.body.textContent).toContain(DOC_NO));
         fireEvent.click(screen.getByRole("button", { name: /แก้ไข \(New Ver\.\)/ }));
-        fireEvent.click(await screen.findByRole("button", { name: /💾 เซฟ/ }));
+        fireEvent.click(await screen.findByRole("button", { name: "บันทึก" }));
         await waitFor(() => expect(savedData(fetchMock).docNo).toBe(`${DOC_NO}v1`));
         expect(savedData(fetchMock).totalsVersion).toBe(version);
       });
@@ -175,7 +175,7 @@ describe("quotation — the arithmetic a document is saved under", () => {
         const fetchMock = mockFetch({ status: 200 });
         render(<QuotationPage />);
         await screen.findByText(/เวอร์ชันใหม่ QT250926-7v1/);
-        fireEvent.click(await screen.findByRole("button", { name: /💾 เซฟ/ }));
+        fireEvent.click(await screen.findByRole("button", { name: "บันทึก" }));
         await waitFor(() => expect(savedData(fetchMock).docNo).toBe(`${DOC_NO}v1`));
         expect(savedData(fetchMock).totalsVersion).toBe(version);
       });

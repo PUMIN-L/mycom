@@ -2,6 +2,7 @@
 import { createContext, useCallback, useContext, useEffect, useEffectEvent, useState, ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { hasSessionHint } from "../lib/sessionHint";
+import { browserStorage, clearAllDrafts } from "../quotation/quoteDraft";
 
 interface AuthUser {
   username: string;
@@ -142,6 +143,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function logout() {
     await fetch("/api/auth/logout", { method: "POST" });
+    // Unsaved quotation drafts hold customers' details: they go with the session.
+    clearAllDrafts(browserStorage());
     setUser(null);
     router.push("/");
   }

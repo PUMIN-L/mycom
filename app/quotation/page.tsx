@@ -24,14 +24,27 @@ import SearchableDropdown from "../components/SearchableDropdown";
 import FormattedNumberInput from "../components/FormattedNumberInput";
 import ConfirmDialog from "../components/ConfirmDialog";
 import ImageDeleteConfirmDialog, { type OrphanedImage } from "../components/ImageDeleteConfirmDialog";
+import DatePicker from "../components/DatePicker";
 import { uploadFormData } from "../lib/uploadClient";
+import { bahtText } from "../lib/bahtText";
+import { retentionLabel } from "../lib/quotationRetention";
+import {
+  LEGACY_DRAFT_KEY,
+  browserStorage,
+  draftKey,
+  loadDraft,
+  removeDraft,
+  saveDraft,
+  type DraftContext,
+  type QuoteDraft,
+} from "./quoteDraft";
 
 // ── ใบเสนอราคา (Quotation builder) ──────────────────────────────────────────
 // Admin-only tool: fill the form on the left, see a live A4 sheet on the right,
-// then "ดาวน์โหลด PDF" prints ONLY the sheet via the browser's Save-as-PDF —
-// vector output with perfect Thai text and zero server-side PDF dependencies
-// (deliberate: heavy PDF/DOM libs have already broken this app on Vercel once).
-// A draft autosaves to localStorage so a refresh doesn't lose work.
+// then "ดาวน์โหลด PDF" renders ONLY the sheet to a PDF in the browser (no
+// server-side PDF dependencies — heavy PDF/DOM libs have already broken this
+// app on Vercel once). An unsaved document is kept as a draft in the browser
+// (quoteDraft.ts) and offered back when the page is opened again.
 
 // Seller identity (fixed per the business):
 const COMPANY = {
@@ -111,7 +124,120 @@ interface ProductItem {
   image: string;
 }
 
-const DRAFT_KEY = "quotation-draft-v1";
+/** The salesperson last saved on a quotation from this browser — each sales
+ *  person usually works from their own computer, so a new quotation starts
+ *  with them instead of a blank "พนักงานขาย". Kept per signed-in user, so on
+ *  a shared computer each admin gets their own. */
+const LAST_SELLER_KEY = "quotation-last-seller-v1";
+const lastSellerKey = (owner: string) => (owner ? `${LAST_SELLER_KEY}:${owner}` : LAST_SELLER_KEY);
+type SellerFields = Pick<QuoteState, "sellerId" | "sellerName" | "sellerPhone" | "sellerEmail">;
+
+function readLastSeller(owner: string): Partial<SellerFields> {
+  try {
+    const raw = JSON.parse(window.localStorage.getItem(lastSellerKey(owner)) || "null");
+    if (!raw || typeof raw.sellerName !== "string" || !raw.sellerName.trim()) return {};
+    const str = (v: unknown) => (typeof v === "string" ? v : "");
+    return { sellerId: str(raw.sellerId), sellerName: raw.sellerName, sellerPhone: str(raw.sellerPhone), sellerEmail: str(raw.sellerEmail) };
+  } catch {
+    return {};
+  }
+}
+
+function rememberSeller(q: SellerFields, owner: string) {
+  if (!q.sellerName?.trim()) return;
+  try {
+    window.localStorage.setItem(
+      lastSellerKey(owner),
+      JSON.stringify({ sellerId: q.sellerId || "", sellerName: q.sellerName, sellerPhone: q.sellerPhone, sellerEmail: q.sellerEmail })
+    );
+  } catch {
+    // A browser that will not store it just starts the next one blank.
+  }
+}
+
+type CompanyFields = Pick<QuoteState, "companyPhone" | "companyEmail" | "companyTaxId">;
+const COMPANY_FIELDS: (keyof CompanyFields)[] = ["companyPhone", "companyEmail", "companyTaxId"];
+
+/** Our company's lines filled in from `defaults` — only where still blank,
+ *  so nothing the admin has typed is ever overwritten. */
+function fillCompanyDefaults<S extends CompanyFields>(state: S, defaults: Partial<CompanyFields> | null): S {
+  if (!defaults) return state;
+  let next = state;
+  for (const key of COMPANY_FIELDS) {
+    const value = (defaults[key] || "").trim();
+    if (value && !state[key]?.trim()) next = { ...next, [key]: value };
+  }
+  return next;
+}
+
+/** ฿ or % for a discount — two buttons instead of a dropdown, which in the
+ *  narrow item card was cut to "เปอร์เซ็…". */
+function DiscountTypeToggle({
+  value,
+  onChange,
+  label,
+}: {
+  value: "amount" | "percent";
+  onChange: (v: "amount" | "percent") => void;
+  label: string;
+}) {
+  return (
+    <div role="group" aria-label={label} className="inline-flex shrink-0 rounded-lg border border-gray-200 bg-gray-50 p-0.5">
+      {(
+        [
+          ["amount", "฿", "บาท"],
+          ["percent", "%", "เปอร์เซ็นต์"],
+        ] as const
+      ).map(([v, sign, title]) => (
+        <button
+          key={v}
+          type="button"
+          aria-pressed={value === v}
+          aria-label={title}
+          title={title}
+          onClick={() => onChange(v)}
+          className={`min-w-9 px-2.5 py-1 rounded-md text-sm font-semibold transition-colors ${
+            value === v ? "bg-white text-orange-600 shadow-sm" : "text-gray-500 hover:text-gray-800"
+          }`}
+        >
+          {sign}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** A small square icon button for the item card's header. */
+function IconButton({
+  label,
+  onClick,
+  disabled,
+  danger,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  danger?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={label}
+      title={label}
+      className={`w-7 h-7 inline-flex items-center justify-center rounded-lg text-gray-400 transition-colors disabled:opacity-30 disabled:cursor-not-allowed ${
+        danger ? "hover:text-red-500 hover:bg-red-50" : "hover:text-orange-600 hover:bg-orange-50"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+const ICON = "w-4 h-4";
 
 function newItem(): QuoteItem {
   return {
@@ -230,6 +356,85 @@ function NumberInput({
   );
 }
 
+/**
+ * The document as "unsaved changes" compares it: everything but its `id` (a
+ * key for the stored record, not something the admin edits). One function for
+ * every snapshot and every comparison, so two can never be built differently.
+ * `id: undefined` drops the key from the JSON and keeps the others in order.
+ */
+function fingerprintOf(s: QuoteState): string {
+  return JSON.stringify({ ...s, id: undefined });
+}
+
+/**
+ * What the document SAYS, for comparing a draft with a document: like
+ * `fingerprintOf`, but the conditions by their text alone. A quotation saved
+ * before conditions existed gets them with fresh random ids on every load
+ * (migrateQuoteState), so by ids it differed from its own draft every time.
+ */
+function contentFingerprint(s: QuoteState): string {
+  return JSON.stringify(
+    sortedKeys({
+      ...s,
+      id: undefined,
+      conditions: (s.conditions || []).map((c) => [c.label, c.value]),
+    })
+  );
+}
+
+/** `v` with every object's keys in one order (and undefined values dropped,
+ *  as JSON drops them) — a document and its draft may have been assembled in
+ *  different orders without saying anything different. */
+function sortedKeys(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(sortedKeys);
+  if (v && typeof v === "object") {
+    const out: Record<string, unknown> = {};
+    for (const k of Object.keys(v).sort()) {
+      const x = (v as Record<string, unknown>)[k];
+      if (x !== undefined) out[k] = sortedKeys(x);
+    }
+    return out;
+  }
+  return v;
+}
+
+/** A stored draft this page can open: a quotation-shaped object with its
+ *  lines. Anything else (hand-edited, from another version of the page) would
+ *  crash the form on กู้คืน, so it is never offered. */
+function isUsableDraftState(s: unknown): s is QuoteState {
+  if (!s || typeof s !== "object") return false;
+  const st = s as Partial<QuoteState>;
+  return (
+    Array.isArray(st.items) &&
+    st.items.every((it) => !!it && typeof it === "object" && typeof it.id === "string") &&
+    (st.conditions === undefined || Array.isArray(st.conditions)) &&
+    (st.docNo === undefined || typeof st.docNo === "string")
+  );
+}
+
+/** "2026-11-03" → a local Date for the date picker; null for anything else. */
+function parseIsoDate(iso: string): Date | null {
+  const [y, m, d] = (iso || "").split("-").map(Number);
+  return y && m && d ? new Date(y, m - 1, d) : null;
+}
+
+/** Are these still exactly the three default conditions (ids aside)? */
+function isDefaultConditions(conds: QuoteState["conditions"] | undefined): boolean {
+  const defaults = emptyState().conditions;
+  const list = conds || [];
+  return (
+    list.length === defaults.length &&
+    list.every((c, i) => c.label === defaults[i].label && c.value === defaults[i].value)
+  );
+}
+
+/** When a draft was last kept, as the offer says it ("3 พ.ย. 2569 10:32"). */
+function draftTimeLabel(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "-";
+  return d.toLocaleString("th-TH", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
 const thaiDate = (iso: string) => {
   if (!iso) return "-";
   const [y, m, d] = iso.split("-").map(Number);
@@ -265,7 +470,9 @@ function formatPhone(phone: string) {
 
 export default function QuotationPage() {
   const router = useRouter();
-  const { isLoggedIn, isLoading } = useAuth();
+  const { isLoggedIn, isLoading, user } = useAuth();
+  // Whose drafts and remembered salesperson these are (quoteDraft.ts).
+  const owner = user?.userId || "";
   const [q, setQ] = useState<QuoteState>(emptyState);
   const [products, setProducts] = useState<ProductItem[]>([]);
   const [dbCompanies, setDbCompanies] = useState<any[]>([]);
@@ -323,6 +530,30 @@ export default function QuotationPage() {
   // its running number once the reserved-numbers ledger loads.
   const isFreshRef = useRef(false);
 
+  // ── Drafts (quoteDraft.ts) ────────────────────────────────────────────────
+  // WHICH document the open one is, for its draft: a new quotation, an edit of
+  // a saved one, or a new version of a saved one.
+  const [draftCtx, setDraftCtx] = useState<DraftContext>({ kind: "new" });
+  // A draft found when the document opened, waiting for กู้คืน / ทิ้ง. Nothing
+  // is autosaved meanwhile — that would overwrite the very draft on offer.
+  // `stale`: an edit's draft whose saved quotation has changed since (someone
+  // saved it after) — restoring and saving would overwrite that newer work.
+  const [draftOffer, setDraftOffer] = useState<(QuoteDraft<QuoteState> & { stale?: boolean }) | null>(null);
+  // The document is in place (new one seeded, or saved one loaded) and its
+  // draft looked for. Before this, an autosave pass would act on the wrong
+  // document — e.g. forget the "new" draft while a saved one is still loading.
+  const [draftReady, setDraftReady] = useState(false);
+  // Our company's lines for a new quotation (GET company-defaults), kept for
+  // the reset too.
+  const companyDefaultsRef = useRef<Partial<CompanyFields> | null>(null);
+  const savingRef = useRef(false);
+
+  const [confirmResetConditions, setConfirmResetConditions] = useState(false);
+  // Item cards folded to one line (not saved — a view of the form only).
+  const [collapsedItems, setCollapsedItems] = useState<ReadonlySet<string>>(new Set());
+  // "ผู้เสนอราคา" (salesperson + our company lines): folded or open, per document.
+  const [sellerUi, setSellerUi] = useState<{ docId: string; open: boolean }>({ docId: "", open: true });
+
   // Redirect if not logged in (same client gate as the other admin pages)
   useEffect(() => {
     if (!isLoading && !isLoggedIn) router.replace("/login");
@@ -332,9 +563,46 @@ export default function QuotationPage() {
   // the clean snapshot, so isDirty only fires on edits made from here on.
   function adoptState(next: QuoteState) {
     setQ(next);
-    const { id: _id, ...rest } = next;
-    savedSnapshotRef.current = JSON.stringify(rest);
+    savedSnapshotRef.current = fingerprintOf(next);
   }
+
+  /**
+   * A change the PAGE makes, not the admin — the running number moving past a
+   * taken one, our company's lines arriving. On a document with no edits it
+   * moves the clean snapshot along, so the change alone never makes it
+   * "unsaved": an untouched new quotation used to warn on leaving (and would
+   * now be kept as a draft) only because its number had advanced.
+   */
+  const setQAuto = useCallback((update: (prev: QuoteState) => QuoteState) => {
+    setQ((prev) => {
+      const next = update(prev);
+      if (next !== prev && savedSnapshotRef.current !== "" && fingerprintOf(prev) === savedSnapshotRef.current) {
+        savedSnapshotRef.current = fingerprintOf(next);
+      }
+      return next;
+    });
+  }, []);
+
+  /** A brand-new document dated `iso` and numbered `docNo`: the current
+   *  arithmetic, one empty line, and what can be filled in for the admin —
+   *  the last salesperson used here, our company's lines when known. */
+  const freshState = useCallback((iso: string, docNo: string): QuoteState => {
+    // A NEW document: the current arithmetic. Not in emptyState() — every
+    // reopened quotation is spread over that, and one saved without the key
+    // must keep the arithmetic it was issued under.
+    return fillCompanyDefaults(
+      {
+        ...emptyState(),
+        ...readLastSeller(owner),
+        id: randomId(),
+        docDate: iso,
+        docNo,
+        items: [newItem()],
+        totalsVersion: CURRENT_TOTALS_VERSION,
+      },
+      companyDefaultsRef.current
+    );
+  }, [owner]);
 
   const seedFresh = useCallback(() => {
     const iso = toLocalDateString(new Date());
@@ -345,18 +613,34 @@ export default function QuotationPage() {
     // in BOTH shapes — see quotationDocNoPrefixes().
     const newDocNo = `${quotationDocNoPrefix(iso)}${pad2(DOCNO_START)}`;
     lastAutoDocNoRef.current = newDocNo;
-    // A NEW document: the current arithmetic. Not in emptyState() — every
-    // reopened quotation is spread over that, and one saved without the key
-    // must keep the arithmetic it was issued under.
-    setQ({
-      ...emptyState(),
-      id: randomId(),
-      docDate: iso,
-      docNo: newDocNo,
-      items: [newItem()],
-      totalsVersion: CURRENT_TOTALS_VERSION,
-    });
-  }, []);
+    const fresh = freshState(iso, newDocNo);
+    setQ(fresh);
+    return fresh;
+  }, [freshState]);
+
+  const stateFingerprint = useCallback((s: QuoteState) => fingerprintOf(s), []);
+
+  /** Open `ctx`'s draft for กู้คืน / ทิ้ง — unless it holds nothing the
+   *  document on screen does not, or is not a draft this page can open (then
+   *  it is simply dropped). An edit's draft whose saved quotation has changed
+   *  since it was started is offered with a warning. */
+  const offerDraftFor = useCallback(
+    (ctx: DraftContext, current: QuoteState) => {
+      const storage = browserStorage();
+      const key = draftKey(ctx, owner);
+      const d = loadDraft<QuoteState>(storage, key, Date.now());
+      setDraftCtx(ctx);
+      const now = contentFingerprint(current);
+      if (d && isUsableDraftState(d.state) && contentFingerprint(d.state) !== now) {
+        setDraftOffer({ ...d, stale: ctx.kind === "edit" && !!d.base && d.base !== now });
+      } else {
+        if (d) removeDraft(storage, key, Date.now());
+        setDraftOffer(null);
+      }
+      setDraftReady(true);
+    },
+    [owner]
+  );
 
   /**
    * The docNo the NEXT version of `docNo` should carry — "QT050926-23" →
@@ -405,7 +689,10 @@ export default function QuotationPage() {
   // is exactly why the "แก้ไข (New Ver.)" button used to do nothing (task 6).
   // Mode changes made from inside the page therefore happen IN PLACE
   // (startNewVersion / loadOriginalForEdit) and only sync the URL afterwards.
+  const openedRef = useRef(false);
   useEffect(() => {
+    if (!isLoggedIn || openedRef.current) return;
+    openedRef.current = true;
     const params = new URLSearchParams(window.location.search);
     const reopenId = params.get("id");
     const isView = params.get("view") === "1";
@@ -435,28 +722,62 @@ export default function QuotationPage() {
             }
 
             adoptState(migrated);
+            const sourceId = rec.id || reopenId;
+            if (isView) setDraftReady(true);
+            else offerDraftFor(isClone ? { kind: "clone", sourceId } : { kind: "edit", id: sourceId }, migrated);
           } else {
             showToast("ไม่พบใบเสนอราคานี้ — เริ่มใบใหม่แทน", "error");
-            seedFresh();
+            setIsEditing(false);
+            offerDraftFor({ kind: "new" }, seedFresh());
           }
         })
-        .catch(() => seedFresh())
+        .catch(() => {
+          setIsEditing(false);
+          offerDraftFor({ kind: "new" }, seedFresh());
+        })
         .finally(() => {
           hydratedRef.current = true;
         });
       return;
     }
 
-    seedFresh();
+    // The single draft an old version of this page kept is never offered: it
+    // carries no word of WHICH document it belonged to.
+    try {
+      browserStorage()?.removeItem(LEGACY_DRAFT_KEY);
+    } catch {
+      // Storage unavailable — nothing to clean up either.
+    }
+    offerDraftFor({ kind: "new" }, seedFresh());
     hydratedRef.current = true;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [isLoggedIn]);
+
+  // Our company's lines for a NEW quotation — the latest ones used on a saved
+  // quotation (and the company profile's phone). Filled in only where still
+  // blank, and as the page's own change, so they never make it "unsaved".
+  useEffect(() => {
+    if (!isLoggedIn) return;
+    let cancelled = false;
+    fetch("/api/quotations/company-defaults")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (cancelled || !d || typeof d !== "object") return;
+        const defaults: Partial<CompanyFields> = {};
+        for (const key of COMPANY_FIELDS) if (typeof d[key] === "string") defaults[key] = d[key];
+        companyDefaultsRef.current = defaults;
+        if (isFreshRef.current) setQAuto((prev) => fillCompanyDefaults(prev, defaults));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [isLoggedIn, setQAuto]);
 
   // Set the snapshot once the fresh state is seeded.
   useEffect(() => {
     if (hydratedRef.current && savedSnapshotRef.current === "" && q.id) {
-      const { id: _id, ...rest } = q;
-      savedSnapshotRef.current = JSON.stringify(rest);
+      savedSnapshotRef.current = fingerprintOf(q);
     }
   }, [q]);
 
@@ -620,7 +941,8 @@ export default function QuotationPage() {
     const prefixes = quotationDocNoPrefixes(q.docDate);
     const prefix = prefixes[0];
     const opening = `${prefix}${pad2(DOCNO_START)}`;
-    setQ((prev) => {
+    // setQAuto: the page moving its own number is not an edit (see there).
+    setQAuto((prev) => {
       // Only ever touch a number this effect put there (or the untouched
       // opening one); anything else the admin typed himself.
       if (prev.docNo !== opening && prev.docNo !== lastAutoDocNoRef.current) {
@@ -636,16 +958,88 @@ export default function QuotationPage() {
       lastAutoDocNoRef.current = next;
       return next === prev.docNo ? prev : { ...prev, docNo: next };
     });
-  }, [q.docDate, knownDocNos, docNoLedgerReady, docNoLedgerFailed]);
+  }, [q.docDate, knownDocNos, docNoLedgerReady, docNoLedgerFailed, setQAuto]);
 
   // ── Unsaved-changes guard ──
-  // Serialize only the user-editable fields (skip volatile ids/timestamps).
-  const stateFingerprint = useCallback((s: QuoteState) => {
-    const { id, ...rest } = s;
-    return JSON.stringify(rest);
+  // `stateFingerprint` (above) serializes only the user-editable fields.
+  const isDirty = savedSnapshotRef.current !== "" && stateFingerprint(q) !== savedSnapshotRef.current;
+
+  // ── Draft autosave ────────────────────────────────────────────────────────
+  // While the document has unsaved edits it is kept, half a second after the
+  // last keystroke, as this document's draft; once it is saved (or nothing
+  // differs any more) the draft is dropped. Never while a draft is on offer.
+  const draftPayloadRef = useRef<{ key: string; draft: QuoteDraft<QuoteState> } | null>(null);
+  useEffect(() => {
+    draftPayloadRef.current = null;
+    if (!draftReady || isViewOnly || draftOffer || !q.id) return;
+    const storage = browserStorage();
+    const key = draftKey(draftCtx, owner);
+    if (!isDirty) {
+      removeDraft(storage, key, Date.now());
+      return;
+    }
+    const payload = {
+      key,
+      draft: {
+        savedAt: new Date().toISOString(),
+        state: q,
+        autoDocNo: isFreshRef.current && q.docNo === lastAutoDocNoRef.current,
+        ...(cloneSource ? { cloneSource } : {}),
+        // The saved quotation this edit started from: the clean snapshot is
+        // exactly that document (an edit is never changed by setQAuto).
+        ...(draftCtx.kind === "edit" && savedSnapshotRef.current
+          ? { base: contentFingerprint(JSON.parse(savedSnapshotRef.current) as QuoteState) }
+          : {}),
+      },
+    };
+    draftPayloadRef.current = payload;
+    const t = setTimeout(() => {
+      saveDraft(storage, payload.key, payload.draft, Date.now());
+      draftPayloadRef.current = null;
+    }, 500);
+    return () => clearTimeout(t);
+  }, [q, isDirty, isViewOnly, draftOffer, draftReady, draftCtx, cloneSource, owner]);
+
+  // The last half-second of typing, when the tab is hidden or closed before
+  // the timer above fires.
+  useEffect(() => {
+    const flush = () => {
+      const p = draftPayloadRef.current;
+      if (p) saveDraft(browserStorage(), p.key, p.draft, Date.now());
+      draftPayloadRef.current = null;
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") flush();
+    };
+    window.addEventListener("pagehide", flush);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("pagehide", flush);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
   }, []);
 
-  const isDirty = savedSnapshotRef.current !== "" && stateFingerprint(q) !== savedSnapshotRef.current;
+  /** กู้คืน: the draft becomes the document on screen — still UNSAVED (the
+   *  clean snapshot stays the saved document's), so leaving still asks. */
+  function restoreDraft() {
+    const d = draftOffer;
+    if (!d) return;
+    setQ(migrateQuoteState({ ...emptyState(), ...d.state }));
+    if (draftCtx.kind === "new") {
+      // A number the page issued keeps being moved past taken ones.
+      isFreshRef.current = !!d.autoDocNo;
+      lastAutoDocNoRef.current = d.autoDocNo ? d.state.docNo : null;
+    }
+    if (d.cloneSource) setCloneSource(d.cloneSource);
+    setDraftOffer(null);
+    showToast("กู้คืนใบที่ยังไม่ได้บันทึกแล้ว", "success");
+  }
+
+  /** ทิ้ง: forget the draft, keep the document as it opened. */
+  function discardDraft() {
+    removeDraft(browserStorage(), draftKey(draftCtx, owner), Date.now());
+    setDraftOffer(null);
+  }
 
   // Warn on browser close / refresh when there are unsaved changes
   useEffect(() => {
@@ -674,10 +1068,17 @@ export default function QuotationPage() {
     }
   }
 
+  // One timer at a time: a second message (บันทึกแล้ว, then a number moved on)
+  // used to be cut short by the FIRST one's timer.
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   function showToast(message: string, type: "success" | "error") {
     setToast({ message, type });
-    setTimeout(() => setToast(null), 3000);
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = setTimeout(() => setToast(null), 3000);
   }
+  useEffect(() => () => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+  }, []);
 
   const set = <K extends keyof QuoteState>(key: K, value: QuoteState[K]) =>
     setQ((prev) => ({ ...prev, [key]: value }));
@@ -729,6 +1130,24 @@ export default function QuotationPage() {
   const addItem = () => setQ((prev) => ({ ...prev, items: [...prev.items, newItem()] }));
   const removeItem = (id: string) =>
     setQ((prev) => ({ ...prev, items: prev.items.filter((it) => it.id !== id) }));
+  /** The same line again, right below it — the same machine in another
+   *  configuration or quantity. It shares an uploaded image (persist() lists
+   *  each image once). */
+  const copyItem = (id: string) =>
+    setQ((prev) => {
+      const idx = prev.items.findIndex((it) => it.id === id);
+      if (idx < 0) return prev;
+      const items = [...prev.items];
+      items.splice(idx + 1, 0, { ...prev.items[idx], id: randomId() });
+      return { ...prev, items };
+    });
+  const toggleItemCollapsed = (id: string) =>
+    setCollapsedItems((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   const moveItem = (id: string, dir: -1 | 1) =>
     setQ((prev) => {
       const idx = prev.items.findIndex((it) => it.id === id);
@@ -960,49 +1379,91 @@ export default function QuotationPage() {
   // ── Excel — a single styled sheet laid out like the printed document
 
 
+  // ── Saving — one path for บันทึก, บันทึก + ดาวน์โหลด PDF and the leave dialog ─
+  /**
+   * POST the document. "conflict": another quotation owns the number, and the
+   * document has been moved onto a free one (handleDocNoConflict) — the admin
+   * sees it before pressing again. "failed": a refusal or no connection.
+   * Throws nothing.
+   */
+  async function persist(): Promise<"saved" | "conflict" | "failed"> {
+    const doc = q;
+    // Only images uploaded for THIS quote are deletable — each once, though a
+    // copied line shares its source's image.
+    const uploadedImages = Array.from(
+      new Set(doc.items.filter((it) => it.imageUploaded && it.imageUrl).map((it) => it.imageUrl))
+    );
+    try {
+      const res = await fetch("/api/quotations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: doc.id, docNo: doc.docNo, data: doc, uploadedImages }),
+      });
+      if (res.status === 409) {
+        const data = await res.json().catch(() => null);
+        await handleDocNoConflict(data?.error);
+        return "conflict";
+      }
+      if (!res.ok) return "failed";
+    } catch {
+      return "failed";
+    }
+    afterSaved(doc);
+    return "saved";
+  }
+
+  /**
+   * The document is on the server now. It stays on screen — saving used to
+   * send the admin to the saved list, to open it again to download it — and
+   * from here on it IS that saved quotation: clean, its number reserved, its
+   * draft gone, the URL its own (so a refresh reopens it rather than starting
+   * a new one), and its salesperson remembered for the next new quotation.
+   */
+  function afterSaved(doc: QuoteState) {
+    savedSnapshotRef.current = stateFingerprint(doc);
+    settleDocNo();
+    const storage = browserStorage();
+    removeDraft(storage, draftKey(draftCtx, owner), Date.now());
+    if (draftCtx.kind !== "edit" || draftCtx.id !== doc.id) {
+      removeDraft(storage, draftKey({ kind: "edit", id: doc.id }, owner), Date.now());
+    }
+    setDraftCtx({ kind: "edit", id: doc.id });
+    setDraftOffer(null);
+    setCloneSource(null);
+    setIsEditing(true);
+    // From the admin's own work only — downloading someone else's quotation
+    // while viewing it is not choosing a salesperson.
+    if (!isViewOnly) rememberSeller(doc, owner);
+    if (!isViewOnly) router.replace(`/quotation?id=${encodeURIComponent(doc.id)}`);
+  }
+
   // ── Download → save record → generate PDF → ask keep/delete ───────────────
   async function handleDownload() {
-    if (generating) return;
+    if (generating || savingRef.current) return;
+    if (draftOffer) {
+      showToast("เลือก กู้คืน หรือ ทิ้ง ใบที่ค้างอยู่ก่อน", "error");
+      return;
+    }
     if (docNoDup) {
       showToast("เลขที่ใบเสนอราคานี้ซ้ำกับใบที่บันทึกไว้ กรุณาเปลี่ยนเลขที่ก่อน", "error");
       return;
     }
     setGenerating(true);
-    // Persist first so the record exists for the keep/delete prompt and the
-    // 30-day auto-purge. Only images uploaded for THIS quote are deletable.
-    const uploadedImages = q.items
-      .filter((it) => it.imageUploaded && it.imageUrl)
-      .map((it) => it.imageUrl);
-    try {
-      const res = await fetch("/api/quotations", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: q.id, docNo: q.docNo, data: q, uploadedImages }),
-      });
-      if (res.status === 409) {
-        // Another quotation grabbed this number since the page loaded — advance
-        // onto a free one rather than leave the admin pressing the same
-        // rejected number. Nothing is downloaded: the sheet still shows the old
-        // number, and a PDF is the copy the customer keeps.
-        const data = await res.json().catch(() => null);
-        await handleDocNoConflict(data?.error);
-        setGenerating(false);
-        return;
+    savingRef.current = true;
+    // Persist first: no PDF for a quotation that was not recorded, as for
+    // billing, PO and service-job documents — the customer would hold a
+    // number the system does not know, free to be issued again to someone
+    // else. On a number conflict nothing is downloaded either: the sheet
+    // still shows the refused number. (Saving used to be best-effort.)
+    const result = await persist();
+    savingRef.current = false;
+    if (result !== "saved") {
+      if (result === "failed") {
+        showToast("บันทึกใบเสนอราคาไม่สำเร็จ จึงยังไม่ได้สร้าง PDF กรุณาลองใหม่", "error");
       }
-      if (!res.ok) throw new Error(`save failed: ${res.status}`);
-    } catch {
-      // No PDF for a quotation that was not recorded, as for billing, PO and
-      // service-job documents: the customer would hold a number the system
-      // does not know, free to be issued again to someone else. (The save
-      // used to be best-effort, and the PDF was made regardless.)
-      showToast("บันทึกใบเสนอราคาไม่สำเร็จ จึงยังไม่ได้สร้าง PDF กรุณาลองใหม่", "error");
       setGenerating(false);
       return;
     }
-    // Recorded: reserve the number locally (mirrors handleSave) and settle it,
-    // so a later reset/new quote advances past it and the dup-check stays
-    // accurate — even if making the PDF below fails.
-    settleDocNo();
     try {
       await generatePdf();
     } catch {
@@ -1109,7 +1570,10 @@ export default function QuotationPage() {
       const docNo = await nextVersionDocNo(source.docNo);
       // `totalsVersion` travels with `q`: a new version continues its source,
       // in its arithmetic (quotationTotals.ts).
-      adoptState({ ...q, id: randomId(), docNo });
+      const version = { ...q, id: randomId(), docNo };
+      adoptState(version);
+      // An unsaved new version of this same quotation, left from before?
+      offerDraftFor({ kind: "clone", sourceId: source.id }, version);
       setCloneSource(source);
       setIsViewOnly(false);
       setIsEditing(true);
@@ -1136,9 +1600,11 @@ export default function QuotationPage() {
         showToast("ไม่พบใบเสนอราคาต้นฉบับ (อาจถูกลบไปแล้ว)", "error");
         return;
       }
-      adoptState(
-        migrateQuoteState({ ...emptyState(), ...rec.data, id: rec.id || source.id })
-      );
+      const original = migrateQuoteState({ ...emptyState(), ...rec.data, id: rec.id || source.id });
+      adoptState(original);
+      // The new version being left is thrown away — and so is its draft.
+      removeDraft(browserStorage(), draftKey({ kind: "clone", sourceId: source.id }, owner), Date.now());
+      offerDraftFor({ kind: "edit", id: source.id }, original);
       setCloneSource(null);
       setIsViewOnly(false);
       setIsEditing(true);
@@ -1152,41 +1618,53 @@ export default function QuotationPage() {
   }
 
   // ── Save only (no PDF) — blocked while the docNo is a duplicate ────────────
-  async function handleSave() {
-    if (savingQuote) return;
+  /** Returns whether the document is now saved (the leave dialog goes on
+   *  only then). Guarded by a ref too: Ctrl+S held down repeats. */
+  async function handleSave(): Promise<boolean> {
+    if (savingRef.current || generating) return false;
+    // A save now would drop the draft on offer (it is this document's) before
+    // the admin said which one to keep.
+    if (draftOffer) {
+      showToast("เลือก กู้คืน หรือ ทิ้ง ใบที่ค้างอยู่ก่อน", "error");
+      return false;
+    }
     if (docNoDup) {
       showToast("เลขที่ใบเสนอราคานี้ซ้ำกับใบที่บันทึกไว้ กรุณาเปลี่ยนเลขที่ก่อน", "error");
-      return;
+      return false;
     }
+    savingRef.current = true;
     setSavingQuote(true);
-    const uploadedImages = q.items
-      .filter((it) => it.imageUploaded && it.imageUrl)
-      .map((it) => it.imageUrl);
     try {
-      const res = await fetch("/api/quotations", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: q.id, docNo: q.docNo, data: q, uploadedImages }),
-      });
-      if (res.status === 409) {
-        const data = await res.json().catch(() => null);
-        await handleDocNoConflict(data?.error);
-        return;
+      const result = await persist();
+      if (result === "saved") {
+        showToast(`บันทึกใบเสนอราคาแล้ว — เก็บไว้ในระบบ ${retentionLabel()}`, "success");
+        return true;
       }
-      if (res.ok) {
-        // Update snapshot so the form is no longer dirty after save.
-        savedSnapshotRef.current = stateFingerprint(q);
-        showToast("บันทึกใบเสนอราคาแล้ว (เก็บไว้ 30 วัน)", "success");
-        router.push("/billing/saved?tab=quotation");
-      } else {
-        showToast("บันทึกไม่สำเร็จ", "error");
-      }
-    } catch {
-      showToast("เกิดข้อผิดพลาดในการบันทึก", "error");
+      if (result === "failed") showToast("บันทึกไม่สำเร็จ กรุณาลองใหม่", "error");
+      return false;
     } finally {
+      savingRef.current = false;
       setSavingQuote(false);
     }
   }
+
+  // Ctrl+S / ⌘S saves the document on screen. By the KEY'S POSITION too: with
+  // the Thai keyboard layout the same key reports "ห", not "s".
+  const handleSaveRef = useRef(handleSave);
+  useEffect(() => {
+    handleSaveRef.current = handleSave;
+  });
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
+      if (e.code !== "KeyS" && e.key.toLowerCase() !== "s") return;
+      if (isViewOnly) return;
+      e.preventDefault();
+      handleSaveRef.current();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isViewOnly]);
 
   async function handleDeleteQuotation() {
     setDeletingQuote(true);
@@ -1194,14 +1672,22 @@ export default function QuotationPage() {
       const res = await fetch(`/api/quotations/${q.id}`, { method: "DELETE" });
       if (res.ok) {
         const data = await res.json();
-        // Strip dead image refs from local state.
-        setQ((prev) => ({
-          ...prev,
-          id: crypto.randomUUID(),
-          items: prev.items.map((it) =>
+        // Strip dead image refs from local state. What stays on screen is no
+        // longer a saved document: a fresh id, and — being what the admin
+        // chose to throw away — nothing that warns about leaving it.
+        adoptState({
+          ...q,
+          id: randomId(),
+          items: q.items.map((it) =>
             it.imageUploaded ? { ...it, imageUrl: "", imageUploaded: false } : it
           ),
-        }));
+        });
+        if (!isViewOnly) {
+          // The URL named the deleted quotation; a refresh must not look for it.
+          setDraftCtx({ kind: "new" });
+          setIsEditing(false);
+          router.replace("/quotation?new=1");
+        }
         showToast("ลบใบเสนอราคาแล้ว", "success");
         // Show image deletion confirmation dialog
         if (data.orphanedImages?.length > 0) {
@@ -1229,13 +1715,41 @@ export default function QuotationPage() {
     );
   }
 
+  // The same look as /customers and /product-specs: white cards, one orange
+  // primary action, everything else plain.
   const inputCls =
-    "w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 text-sm";
+    "w-full px-3 py-2 bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 text-sm";
   const labelCls = "block text-xs font-semibold text-gray-600 mb-1";
+  const SECTION = "bg-white rounded-2xl border border-gray-100 shadow-sm p-5 space-y-3";
+  const H2 = "text-sm font-bold text-gray-800";
+  const PICKER = "!px-3 !py-2 !rounded-lg !bg-white !border-gray-200 !shadow-none !text-sm h-[38px]";
+  const PRIMARY_BUTTON =
+    "px-4 py-2 rounded-xl bg-orange-500 hover:bg-orange-600 text-white text-sm font-semibold transition shadow-sm flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed";
+  const SECONDARY_BUTTON =
+    "px-4 py-2 rounded-xl bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 text-sm font-semibold transition shadow-sm flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed";
+  const NAV_BUTTON =
+    "px-3 py-2 rounded-xl text-sm font-semibold text-gray-600 hover:text-gray-900 hover:bg-gray-100 transition flex items-center gap-1.5";
+
+  // Where the document on screen stands, beside the title.
+  const status = isViewOnly
+    ? { label: "ดูอย่างเดียว", cls: "bg-gray-100 text-gray-600" }
+    : cloneSource
+      ? { label: "เวอร์ชันใหม่ · ยังไม่ได้บันทึก", cls: "bg-amber-50 text-amber-700" }
+      : isDirty
+      ? { label: "ยังไม่ได้บันทึก", cls: "bg-amber-50 text-amber-700" }
+      : isEditing
+        ? { label: "บันทึกแล้ว", cls: "bg-emerald-50 text-emerald-700" }
+        : { label: "ใบใหม่", cls: "bg-orange-50 text-orange-700" };
+
+  // "ผู้เสนอราคา" starts open only when the document OPENS with no salesperson
+  // on it — decided once per document, not live from the name: read live, it
+  // folded the section shut on the first letter typed into an empty one.
+  if (sellerUi.docId !== q.id) setSellerUi({ docId: q.id, open: !q.sellerName.trim() });
+  const sellerExpanded = sellerUi.docId === q.id ? sellerUi.open : !q.sellerName.trim();
 
   return (
     <>
-    <div className="min-h-screen bg-gray-100">
+    <div className="min-h-screen bg-[#F8FAFC]">
       {toast && <Toast message={toast.message} type={toast.type} />}
 
       {showResetConfirm && (
@@ -1246,7 +1760,8 @@ export default function QuotationPage() {
           cancelText="ยกเลิก"
           onConfirm={() => {
             setShowResetConfirm(false);
-            localStorage.removeItem(DRAFT_KEY);
+            removeDraft(browserStorage(), draftKey({ kind: "new" }, owner), Date.now());
+            setDraftCtx({ kind: "new" });
             const iso = toLocalDateString(new Date());
             isFreshRef.current = true;
             setCloneSource(null);
@@ -1260,14 +1775,7 @@ export default function QuotationPage() {
             // changing วันที่ afterwards would leave yesterday's date baked into
             // the quotation number while the sheet prints today's.
             lastAutoDocNoRef.current = resetDocNo;
-            setQ({
-              ...emptyState(),
-              id: randomId(),
-              docDate: iso,
-              docNo: resetDocNo,
-              items: [newItem()],
-              totalsVersion: CURRENT_TOTALS_VERSION,
-            });
+            adoptState(freshState(iso, resetDocNo));
           }}
           onCancel={() => setShowResetConfirm(false)}
         />
@@ -1294,7 +1802,7 @@ export default function QuotationPage() {
             <h3 className="text-lg font-bold text-gray-900 mb-2">ดาวน์โหลดเรียบร้อย ✅</h3>
             <p className="text-sm text-gray-600 mb-5">
               ต้องการเก็บใบเสนอราคานี้ไว้ในระบบไหม? ถ้าเก็บไว้ ระบบจะ
-              <span className="font-semibold"> ลบให้อัตโนมัติเมื่อครบ 30 วัน</span>
+              <span className="font-semibold"> ลบให้อัตโนมัติเมื่อครบ {retentionLabel()}</span>
               {" "}หรือจะลบทันทีเลยก็ได้ (รูปที่อัปโหลดสำหรับใบนี้จะถูกลบออกจากคลาวด์ด้วย — รูปสินค้าจาก catalog ไม่ถูกลบ)
             </p>
             <div className="flex gap-3 justify-end">
@@ -1303,7 +1811,7 @@ export default function QuotationPage() {
                 disabled={deletingQuote}
                 className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 font-semibold hover:bg-gray-50 transition text-sm disabled:opacity-60"
               >
-                เก็บไว้ 30 วัน
+                เก็บไว้ {retentionLabel()}
               </button>
               <button
                 onClick={handleDeleteQuotation}
@@ -1323,6 +1831,22 @@ export default function QuotationPage() {
         </div>
       )}
 
+      {/* Back to the three default conditions — asked first: one click used
+          to throw away every condition written for this customer. */}
+      {confirmResetConditions && (
+        <ConfirmDialog
+          title="คืนค่าเงื่อนไขเริ่มต้น?"
+          message="เงื่อนไขที่แก้ไว้ในใบนี้จะถูกแทนด้วยค่าเริ่มต้น (เงื่อนไขชำระเงิน · กำหนดส่งมอบ · การรับประกัน)"
+          confirmText="คืนค่าเริ่มต้น"
+          cancelText="ยกเลิก"
+          onConfirm={() => {
+            setQ((prev) => ({ ...prev, conditions: emptyState().conditions }));
+            setConfirmResetConditions(false);
+          }}
+          onCancel={() => setConfirmResetConditions(false)}
+        />
+      )}
+
       {/* Number inputs: typeable, no up/down spinner buttons */}
       <style>{`
         .quote-form input[type="number"]::-webkit-inner-spin-button,
@@ -1336,90 +1860,138 @@ export default function QuotationPage() {
         }
       `}</style>
 
-      {/* ── Toolbar ── */}
-      <div className="no-print sticky top-0 z-20 bg-white border-b border-gray-200 shadow-sm">
+      {/* ── Toolbar ── one way back, the page's state, and its actions. */}
+      <div className="no-print sticky top-0 z-20 bg-white/95 backdrop-blur border-b border-gray-200 shadow-sm">
         <div className="max-w-[1400px] mx-auto px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
-          <h1 className="text-xl font-bold text-gray-900">🧾 สร้างใบเสนอราคา</h1>
+          <div className="flex items-center gap-3 min-w-0 flex-wrap">
+            <button type="button" onClick={() => guardedNavigate("/billing/saved?tab=quotation")} className={NAV_BUTTON}>
+              <svg aria-hidden="true" className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" /></svg>
+              ใบเสนอราคาที่บันทึกไว้
+            </button>
+            <h1 className="text-xl font-bold text-gray-900">ใบเสนอราคา</h1>
+            <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${status.cls}`} data-testid="quote-status">
+              {status.label}
+            </span>
+          </div>
           <div className="flex items-center gap-2 flex-wrap">
-
-            {!isEditing && (
-              <button onClick={() => { if (isDirty) { guardedNavigate("/billing/saved?tab=quotation"); } else { router.back(); } }} className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition">
-                ← กลับ
-              </button>
-            )}
-            <button onClick={() => guardedNavigate("/adminpanel")} className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition">
-              🏠 กลับไปหน้าระบบจัดการ
+            <button type="button" onClick={() => guardedNavigate("/adminpanel")} className="px-3 py-2 text-sm font-semibold text-gray-500 hover:text-gray-800 transition-colors">
+              ระบบจัดการ
             </button>
-            <button onClick={() => guardedNavigate("/billing/saved?tab=quotation")} className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition">
-              📄 ใบเสนอราคาที่บันทึกไว้
-            </button>
-
             {!isViewOnly && (
-              <button
-                onClick={handleSave}
-                disabled={savingQuote || docNoDup}
-                className="px-5 py-2 rounded-lg border border-green-500 text-green-600 text-sm font-bold hover:bg-green-50 transition disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {savingQuote ? "กำลังเซฟ..." : "💾 เซฟ"}
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={handleSave}
+                  disabled={savingQuote || generating || docNoDup || !!draftOffer}
+                  title="บันทึก (Ctrl+S)"
+                  className={SECONDARY_BUTTON}
+                >
+                  {savingQuote ? "กำลังบันทึก..." : "บันทึก"}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDownload}
+                  disabled={generating || savingQuote || docNoDup || !!draftOffer}
+                  className={PRIMARY_BUTTON}
+                >
+                  <svg aria-hidden="true" className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                  {generating ? "กำลังสร้าง PDF..." : "บันทึก + ดาวน์โหลด PDF"}
+                </button>
+              </>
             )}
             {/* ── "แก้ไข (New Ver.)" (task 6) ──────────────────────────────
                 Shown ONLY while viewing a saved quotation, where it has one
                 unambiguous meaning: turn this document into an editable new
                 version. In clone mode the page already IS that new version, so
-                the button is deliberately NOT shown — pressing "make a new
-                version" on an unsaved new version has no sensible meaning, and
-                silently re-pointing it at the original would edit a different
-                document than its label says. Clone mode gets the banner below
-                instead, which names both documents and offers the original
-                explicitly. */}
+                the button is deliberately NOT shown — clone mode gets the bar
+                below instead, which names both documents and offers the
+                original explicitly. */}
             {isViewOnly && (
-              <button
-                onClick={startNewVersion}
-                disabled={startingNewVersion}
-                className="px-5 py-2 rounded-lg border border-blue-500 text-blue-600 text-sm font-bold hover:bg-blue-50 transition disabled:opacity-60 disabled:cursor-not-allowed"
-              >
-                {startingNewVersion ? "กำลังสร้างเวอร์ชันใหม่..." : "✏️ แก้ไข (New Ver.)"}
-              </button>
-            )}
-            {!isViewOnly && cloneSource && (
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="px-3 py-2 rounded-lg bg-blue-50 border border-blue-200 text-blue-700 text-xs font-bold">
-                  🆕 เวอร์ชันใหม่ {q.docNo || "-"} (ยังไม่ได้บันทึก) — จากใบเดิม {cloneSource.docNo || "-"}
-                </span>
+              <>
                 <button
-                  onClick={() =>
-                    isDirty ? setShowEditOriginalConfirm(true) : loadOriginalForEdit()
-                  }
-                  title={`เปิดใบเดิม ${cloneSource.docNo} ขึ้นมาแก้ไขแทน (ทิ้งเวอร์ชันใหม่นี้)`}
-                  className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition"
+                  type="button"
+                  onClick={startNewVersion}
+                  disabled={startingNewVersion}
+                  className={SECONDARY_BUTTON}
                 >
-                  ↩️ แก้ไขใบเดิม ({cloneSource.docNo || "-"}) แทน
+                  <svg aria-hidden="true" className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                  {startingNewVersion ? "กำลังสร้างเวอร์ชันใหม่..." : "แก้ไข (New Ver.)"}
                 </button>
-              </div>
-            )}
-
-            {isViewOnly && (
-              <button
-                onClick={handleDownload}
-                disabled={docNoDup}
-                className="px-5 py-2 rounded-lg bg-orange-500 text-white text-sm font-bold hover:bg-orange-600 transition shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                ⬇️ ดาวน์โหลด PDF
-              </button>
+                <button
+                  type="button"
+                  onClick={handleDownload}
+                  disabled={docNoDup || generating}
+                  className={PRIMARY_BUTTON}
+                >
+                  <svg aria-hidden="true" className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                  {generating ? "กำลังสร้าง PDF..." : "ดาวน์โหลด PDF"}
+                </button>
+              </>
             )}
           </div>
         </div>
+        {!isViewOnly && cloneSource && (
+          <div className="border-t border-orange-100 bg-orange-50">
+            <div className="max-w-[1400px] mx-auto px-4 py-2 flex items-center justify-between gap-3 flex-wrap text-sm">
+              <span className="font-semibold text-orange-800">
+                เวอร์ชันใหม่ {q.docNo || "-"} (ยังไม่ได้บันทึก) — จากใบเดิม {cloneSource.docNo || "-"}
+              </span>
+              <button
+                type="button"
+                onClick={() =>
+                  isDirty ? setShowEditOriginalConfirm(true) : loadOriginalForEdit()
+                }
+                title={`เปิดใบเดิม ${cloneSource.docNo} ขึ้นมาแก้ไขแทน (ทิ้งเวอร์ชันใหม่นี้)`}
+                className="px-3 py-1.5 rounded-lg border border-orange-200 bg-white text-orange-700 text-sm font-semibold hover:bg-orange-100 transition"
+              >
+                แก้ไขใบเดิม ({cloneSource.docNo || "-"}) แทน
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className={`max-w-[1400px] mx-auto px-4 py-6 ${isViewOnly ? "flex justify-center" : "grid grid-cols-1 xl:grid-cols-[420px_1fr]"} gap-6 items-start`}>
-        {/* ══ LEFT: form ══ */}
+        {/* ══ LEFT: form ══ — in the order a quotation is written: who it is
+            for, what is on it, its terms; the document's number and date on
+            top; who is offering it (rarely changed) folded away at the end. */}
         {!isViewOnly && (
         <div className="quote-form space-y-4">
+          {/* A draft left from before (quoteDraft.ts): back, or away. */}
+          {draftOffer && (
+            <div role="status" className="rounded-2xl border border-orange-200 bg-orange-50 p-4" data-testid="draft-offer">
+              <p className="text-sm font-semibold text-orange-900">มีใบที่ยังไม่ได้บันทึกค้างอยู่จากครั้งก่อน</p>
+              <p className="mt-0.5 text-xs text-orange-800">
+                เลขที่ {draftOffer.state.docNo || "-"}
+                {draftOffer.state.customerCompany || draftOffer.state.customerContact
+                  ? ` · ${draftOffer.state.customerCompany || draftOffer.state.customerContact}`
+                  : ""}
+                {" "}· แก้ไขล่าสุด {draftTimeLabel(draftOffer.savedAt)}
+              </p>
+              {draftOffer.stale && (
+                <p className="mt-2 text-xs font-semibold text-red-700" data-testid="draft-stale">
+                  ⚠ ใบนี้ถูกบันทึกใหม่หลังจากร่างนี้ — ถ้ากู้คืนแล้วบันทึก จะทับฉบับที่บันทึกล่าสุด
+                </p>
+              )}
+              <div className="mt-3 flex gap-2">
+                <button type="button" onClick={restoreDraft} className={`${PRIMARY_BUTTON} !py-1.5 !px-4 text-sm`}>
+                  กู้คืน
+                </button>
+                <button type="button" onClick={discardDraft} className={`${SECONDARY_BUTTON} !py-1.5 !px-4 text-sm`}>
+                  ทิ้ง
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Locked until the draft on offer is answered: typing into the
+              document now would be work the autosave cannot keep (it would
+              overwrite that very draft), and a save would drop it unasked. */}
+          <fieldset disabled={!!draftOffer} className="space-y-4 min-w-0 disabled:opacity-60">
           {/* เอกสาร */}
-          <section className="bg-white rounded-xl shadow-sm border border-gray-200 p-5 space-y-3">
-            <h2 className="font-bold text-gray-800">ข้อมูลเอกสาร</h2>
-            <div className="grid grid-cols-2 gap-3">
+          <section className={SECTION}>
+            <h2 className={H2}>เอกสาร</h2>
+            <div className="grid grid-cols-[1fr_1fr_76px] gap-3">
               <div>
                 <label className={labelCls}>เลขที่ (No.)</label>
                 <input
@@ -1427,194 +1999,147 @@ export default function QuotationPage() {
                   value={q.docNo}
                   onChange={(e) => set("docNo", e.target.value)}
                 />
-                {docNoDup && (
-                  <p className="mt-1 text-xs text-red-500 font-semibold">
-                    ⚠ เลขที่นี้ซ้ำกับใบที่บันทึกไว้ — กรุณาเปลี่ยน
-                  </p>
-                )}
-                {/* The ledger could not be read, so the page issued NO number
-                    (see the mint effect): what is in the box is this day's
-                    opening number, and "ไม่ซ้ำ" would be a claim we cannot make.
-                    Said out loud, with a retry, rather than blocking บันทึก:
-                    the used_docnos PRIMARY KEY still refuses a real duplicate,
-                    and the 409 path then moves the document onto a free one.
-                    Shown ALONGSIDE the duplicate warning when both apply: they
-                    answer different questions ("this number is taken" vs "the
-                    check did not run"), and hiding this one behind !docNoDup
-                    would hide the retry exactly when the admin needs it. */}
-                {docNoLedgerFailed && (
-                  <div className="mt-1 text-xs text-amber-600 font-semibold">
-                    <p>
-                      ⚠ ตรวจสอบเลขที่ที่ใช้ไปแล้วไม่สำเร็จ — ระบบจึงยังไม่ออกเลขที่ให้
-                      และยังยืนยันไม่ได้ว่าเลขที่นี้ว่าง
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => setDocNoLedgerAttempt((n) => n + 1)}
-                      className="mt-1 px-2 py-1 rounded border border-amber-400 text-amber-700 hover:bg-amber-50 transition"
-                    >
-                      🔄 ลองตรวจสอบเลขที่อีกครั้ง
-                    </button>
-                  </div>
-                )}
               </div>
               <div>
-                <label className={labelCls}>วันที่ (Date)</label>
-                <input type="date" className={inputCls} value={q.docDate} onChange={(e) => set("docDate", e.target.value)} />
+                <label htmlFor="quote-date" className={labelCls}>วันที่ (Date)</label>
+                {/* The shared date picker (yyyy-mm-dd, Thai months) — the
+                    browser's own date box showed "11/03/2026" (month first,
+                    from the browser's language) beside a sheet reading
+                    "3 พ.ย. 2569". The sheet's reading is repeated under it. */}
+                <DatePicker
+                  id="quote-date"
+                  selected={parseIsoDate(q.docDate)}
+                  onChange={(d) => {
+                    if (d) set("docDate", toLocalDateString(d));
+                  }}
+                  className="!px-3 !py-2 !rounded-lg !bg-white focus:!ring-orange-500/30 focus:!border-orange-500"
+                />
+                <p className="mt-1 text-[11px] text-gray-500" data-testid="quote-date-thai">{thaiDate(q.docDate)}</p>
               </div>
               <div>
                 <label className={labelCls}>ยืนราคา (วัน)</label>
                 <input type="number" min={0} className={inputCls} value={q.validDays}
                   onChange={(e) => set("validDays", Math.max(0, Number(e.target.value)))} />
               </div>
-              <div>
-                <label className={labelCls}>เลขผู้เสียภาษี (บริษัทเรา)</label>
-                <input className={inputCls} placeholder="0-0000-00000-00-0" value={q.companyTaxId}
-                  onChange={(e) => set("companyTaxId", e.target.value)} />
-              </div>
-              <div>
-                <label className={labelCls}>โทรบริษัท</label>
-                <input className={inputCls} value={q.companyPhone} onChange={(e) => set("companyPhone", e.target.value)} />
-              </div>
-              <div>
-                <label className={labelCls}>อีเมลบริษัท</label>
-                <input className={inputCls} value={q.companyEmail} onChange={(e) => set("companyEmail", e.target.value)} />
-              </div>
             </div>
-          </section>
-
-          {/* เซลล์ */}
-          <section className="bg-white rounded-xl shadow-sm border border-gray-200 p-5 space-y-3 relative z-30">
-            <div className="flex items-center justify-between flex-wrap gap-3">
-              <h2 className="font-bold text-gray-800">พนักงานขาย (Sales)</h2>
-              <SearchableDropdown
-                className="w-[240px]"
-                placeholder="+ เลือกพนักงานขาย"
-                value={q.sellerId || ""}
-                options={dbSalespeople.map(s => ({
-                  value: s.id,
-                  label: s.name,
-                  subLabel: s.phone || s.email || ""
-                }))}
-                onChange={(val) => {
-                  const s = dbSalespeople.find(x => x.id === val);
-                  if (s) {
-                    set("sellerId", val);
-                    setQ(prev => ({
-                      ...prev,
-                      sellerName: s.name,
-                      sellerPhone: s.phone || prev.sellerPhone,
-                      sellerEmail: s.email || prev.sellerEmail
-                    }));
-                  }
-                }}
-                buttonClassName="!bg-blue-50 !border-blue-300 !text-blue-700 hover:!bg-blue-100 font-medium transition-colors"
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="col-span-2">
-                <label className={labelCls}>ชื่อเซลล์</label>
-                <input className={inputCls} value={q.sellerName} onChange={(e) => set("sellerName", e.target.value)} />
+            {docNoDup && (
+              <p className="text-xs text-red-500 font-semibold">
+                ⚠ เลขที่นี้ซ้ำกับใบที่บันทึกไว้ — กรุณาเปลี่ยน
+              </p>
+            )}
+            {/* The ledger could not be read, so the page issued NO number
+                (see the mint effect): what is in the box is this day's
+                opening number, and "ไม่ซ้ำ" would be a claim we cannot make.
+                Said out loud, with a retry, rather than blocking บันทึก:
+                the used_docnos PRIMARY KEY still refuses a real duplicate,
+                and the 409 path then moves the document onto a free one.
+                Shown ALONGSIDE the duplicate warning when both apply: they
+                answer different questions ("this number is taken" vs "the
+                check did not run"), and hiding this one behind !docNoDup
+                would hide the retry exactly when the admin needs it. */}
+            {docNoLedgerFailed && (
+              <div className="text-xs text-amber-600 font-semibold">
+                <p>
+                  ⚠ ตรวจสอบเลขที่ที่ใช้ไปแล้วไม่สำเร็จ — ระบบจึงยังไม่ออกเลขที่ให้
+                  และยังยืนยันไม่ได้ว่าเลขที่นี้ว่าง
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setDocNoLedgerAttempt((n) => n + 1)}
+                  className="mt-1 px-2 py-1 rounded border border-amber-400 text-amber-700 hover:bg-amber-50 transition"
+                >
+                  🔄 ลองตรวจสอบเลขที่อีกครั้ง
+                </button>
               </div>
-              <div>
-                <label className={labelCls}>โทร</label>
-                <input className={inputCls} value={q.sellerPhone} onChange={(e) => set("sellerPhone", e.target.value)} />
-              </div>
-              <div>
-                <label className={labelCls}>อีเมล</label>
-                <input className={inputCls} value={q.sellerEmail} onChange={(e) => set("sellerEmail", e.target.value)} />
-              </div>
-            </div>
+            )}
           </section>
 
           {/* ลูกค้า */}
-          <section className="bg-white rounded-xl shadow-sm border border-gray-200 p-5 space-y-3">
-            <div className="flex items-center justify-between flex-wrap gap-3">
-              <h2 className="font-bold text-gray-800">ข้อมูลลูกค้า</h2>
-              <div className="flex flex-wrap gap-2 relative z-20">
-                <SearchableDropdown
-                  className="w-[240px]"
-                  placeholder="+ เลือกลูกค้าจากระบบ"
-                  value={q.customerId || ""}
-                  options={dbCustomers.map(c => ({
-                    value: c.id,
-                    label: c.name,
-                    subLabel: c.companyName || ""
-                  }))}
-                  onChange={(val) => {
-                    const c = dbCustomers.find(x => x.id === val);
-                    if (c) {
-                      const comp = dbCompanies.find(x => x.id === c.companyId);
-                      // Task 14.2 — keep the id of the row that was picked, not
-                      // just its name.
-                      const customer = selectPartyFromSystem(c);
-                      // The company name shown may come from the customer's own
-                      // free-text `companyName` rather than from `comp`, so run
-                      // it back through the same "typed over" rule: the company
-                      // id survives only while the two names still agree.
-                      const company = applyTypedPartyName(
-                        selectPartyFromSystem(comp),
-                        c.companyName || comp?.name || ""
-                      );
+          <section className={SECTION}>
+            <h2 className={H2}>ลูกค้า</h2>
+            <div className="grid grid-cols-2 gap-2">
+              <SearchableDropdown
+                className="w-full"
+                placeholder="เลือกลูกค้าจากระบบ"
+                value={q.customerId || ""}
+                options={dbCustomers.map(c => ({
+                  value: c.id,
+                  label: c.name,
+                  subLabel: c.companyName || ""
+                }))}
+                onChange={(val) => {
+                  const c = dbCustomers.find(x => x.id === val);
+                  if (c) {
+                    const comp = dbCompanies.find(x => x.id === c.companyId);
+                    // Task 14.2 — keep the id of the row that was picked, not
+                    // just its name.
+                    const customer = selectPartyFromSystem(c);
+                    // The company name shown may come from the customer's own
+                    // free-text `companyName` rather than from `comp`, so run
+                    // it back through the same "typed over" rule: the company
+                    // id survives only while the two names still agree.
+                    const company = applyTypedPartyName(
+                      selectPartyFromSystem(comp),
+                      c.companyName || comp?.name || ""
+                    );
+                    setQ(prev => ({
+                      ...prev,
+                      customerContact: customer.name,
+                      customerId: customer.id,
+                      customerCompany: company.name,
+                      companyId: company.id,
+                      customerAddress: comp ? formatAddress(comp) : prev.customerAddress,
+                      customerPhone: c.phone || comp?.phone || prev.customerPhone,
+                      customerEmail: c.email || prev.customerEmail
+                    }));
+                  }
+                }}
+                buttonClassName={PICKER}
+              />
+              <SearchableDropdown
+                className="w-full"
+                placeholder="เลือกบริษัทจากระบบ"
+                value={q.companyId || ""}
+                options={dbCompanies.map(c => ({
+                  value: c.id,
+                  label: c.name
+                }))}
+                onChange={(val) => {
+                  const comp = dbCompanies.find(x => x.id === val);
+                  if (comp) {
+                    // Task 14.2 — the picked company keeps its id.
+                    const company = selectPartyFromSystem(comp);
+                    // Validate if current customer is a known DB customer
+                    const currentCust = dbCustomers.find(c => c.name === q.customerContact);
+                    if (currentCust && currentCust.companyId && currentCust.companyId !== comp.id) {
+                      showToast(`ลูกค้า ${currentCust.name} ไม่ได้อยู่บริษัทนี้`, "error");
+                      // Clear customer name since user explicitly chose a different company
                       setQ(prev => ({
                         ...prev,
-                        customerContact: customer.name,
-                        customerId: customer.id,
-                        customerCompany: company.name,
-                        companyId: company.id,
-                        customerAddress: comp ? formatAddress(comp) : prev.customerAddress,
-                        customerPhone: c.phone || comp?.phone || prev.customerPhone,
-                        customerEmail: c.email || prev.customerEmail
-                      }));
-                    }
-                  }}
-                  buttonClassName="!bg-emerald-50 !border-emerald-300 !text-emerald-700 hover:!bg-emerald-100 font-medium transition-colors"
-                />
-                <SearchableDropdown
-                  className="w-[240px]"
-                  placeholder="+ เลือกบริษัทจากระบบ"
-                  value={q.companyId || ""}
-                  options={dbCompanies.map(c => ({
-                    value: c.id,
-                    label: c.name
-                  }))}
-                  onChange={(val) => {
-                    const comp = dbCompanies.find(x => x.id === val);
-                    if (comp) {
-                      // Task 14.2 — the picked company keeps its id.
-                      const company = selectPartyFromSystem(comp);
-                      // Validate if current customer is a known DB customer
-                      const currentCust = dbCustomers.find(c => c.name === q.customerContact);
-                      if (currentCust && currentCust.companyId && currentCust.companyId !== comp.id) {
-                        showToast(`ลูกค้า ${currentCust.name} ไม่ได้อยู่บริษัทนี้`, "error");
-                        // Clear customer name since user explicitly chose a different company
-                        setQ(prev => ({
-                          ...prev,
-                          // The name goes, so its id must go with it (task 14.3)
-                          // — otherwise the blob would carry a customerId that
-                          // no longer matches anything printed on the document.
-                          customerContact: "",
-                          customerId: "",
-                          customerCompany: company.name,
-                          companyId: company.id,
-                          customerAddress: formatAddress(comp),
-                          customerPhone: comp.phone || prev.customerPhone
-                        }));
-                        return;
-                      }
-
-                      setQ(prev => ({
-                        ...prev,
+                        // The name goes, so its id must go with it (task 14.3)
+                        // — otherwise the blob would carry a customerId that
+                        // no longer matches anything printed on the document.
+                        customerContact: "",
+                        customerId: "",
                         customerCompany: company.name,
                         companyId: company.id,
                         customerAddress: formatAddress(comp),
                         customerPhone: comp.phone || prev.customerPhone
                       }));
+                      return;
                     }
-                  }}
-                  buttonClassName="!bg-purple-50 !border-purple-300 !text-purple-700 hover:!bg-purple-100 font-medium transition-colors"
-                />
-              </div>
+
+                    setQ(prev => ({
+                      ...prev,
+                      customerCompany: company.name,
+                      companyId: company.id,
+                      customerAddress: formatAddress(comp),
+                      customerPhone: comp.phone || prev.customerPhone
+                    }));
+                  }
+                }}
+                buttonClassName={PICKER}
+              />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
@@ -1627,7 +2152,7 @@ export default function QuotationPage() {
               </div>
               <div className="col-span-2">
                 <label className={labelCls}>ที่อยู่บริษัทลูกค้า</label>
-                <textarea rows={2} className={inputCls} value={q.customerAddress} onChange={(e) => set("customerAddress", e.target.value)} />
+                <textarea rows={2} className={`${inputCls} resize-y`} value={q.customerAddress} onChange={(e) => set("customerAddress", e.target.value)} />
               </div>
               <div>
                 <label className={labelCls}>โทร</label>
@@ -1641,207 +2166,204 @@ export default function QuotationPage() {
           </section>
 
           {/* รายการสินค้า */}
-          <section className="bg-white rounded-xl shadow-sm border border-gray-200 p-5 space-y-4">
-            <div className="flex items-center justify-between">
-              <h2 className="font-bold text-gray-800">รายการสินค้า ({q.items.length})</h2>
-              <button onClick={addItem} className="px-3 py-1.5 rounded-lg bg-orange-500 text-white text-sm font-bold hover:bg-orange-600 transition">
-                + เพิ่มรายการ
-              </button>
-            </div>
-            {q.items.map((it, idx) => (
-              <div key={it.id} className={`border border-dashed border-gray-300 rounded-lg p-3 space-y-2 relative ${idx % 2 === 0 ? 'bg-pink-50' : 'bg-green-50'}`}>
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-gray-400">#{idx + 1}</span>
-                  <div className="flex gap-1">
-                    <button onClick={() => moveItem(it.id, -1)} disabled={idx === 0} title="เลื่อนขึ้น"
-                      className="w-7 h-7 rounded bg-gray-100 text-gray-600 hover:bg-gray-200 disabled:opacity-30 text-xs">↑</button>
-                    <button onClick={() => moveItem(it.id, 1)} disabled={idx === q.items.length - 1} title="เลื่อนลง"
-                      className="w-7 h-7 rounded bg-gray-100 text-gray-600 hover:bg-gray-200 disabled:opacity-30 text-xs">↓</button>
-                    <button onClick={() => removeItem(it.id)} title="ลบรายการ"
-                      className="w-7 h-7 rounded bg-red-100 text-red-500 hover:bg-red-500 hover:text-white text-xs font-bold">✕</button>
-                  </div>
-                </div>
-                <SearchableDropdown
-                  className="w-full"
-                  buttonClassName={inputCls}
-                  placeholder="📦 เลือกจากสินค้าในระบบ (autofill ชื่อ+รูป)…"
-                  value=""
-                  onChange={(val) => applyProduct(it.id, val)}
-                  options={products.map((p) => ({
-                    value: p.id,
-                    label: stripHtml(p.title_th || p.title_en).replace(/🐧/g, "").trim()
-                  }))}
-                />
-                {it.productId && dbProductSpecs.filter(s => s.productId === it.productId).length > 0 && (
-                  <SearchableDropdown
-                    className="w-full"
-                    buttonClassName={`${inputCls} !bg-blue-50 !border-blue-200 !text-blue-800 font-medium`}
-                    placeholder="📋 เลือกสเปคเพื่อเติมข้อความอัตโนมัติ (Optional)"
-                    value=""
-                    onChange={(val) => {
-                      const spec = dbProductSpecs.find(s => s.id === val);
-                      if (spec) setItem(it.id, { description: spec.detail });
-                    }}
-                    options={dbProductSpecs.filter(s => s.productId === it.productId).map(s => ({
-                      value: s.id,
-                      label: s.name
-                    }))}
-                  />
-                )}
-                <input className={inputCls} placeholder="ชื่อเครื่อง / รุ่น" value={it.name}
-                  onChange={(e) => setItem(it.id, { name: e.target.value })} />
-                <textarea rows={2} className={inputCls} placeholder="รายละเอียด / สเปค (ถ้ามี)" value={it.description}
-                  onChange={(e) => setItem(it.id, { description: e.target.value })} />
-                <div className="flex items-center gap-2">
-                  {it.imageUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={it.imageUrl} alt="" className="w-12 h-12 object-contain border border-gray-200 rounded bg-white" />
-                  ) : (
-                    <div className="w-12 h-12 border border-dashed border-gray-300 rounded flex items-center justify-center text-gray-300 text-xs">รูป</div>
-                  )}
+          <section className={SECTION}>
+            <div className="flex items-center justify-between gap-2">
+              <h2 className={H2}>รายการสินค้า ({q.items.length})</h2>
+              <div className="flex items-center gap-2">
+                {q.items.length > 1 && (
                   <button
-                    onClick={() => { uploadTargetRef.current = it.id; imageInputRef.current?.click(); }}
-                    disabled={uploadingItemId === it.id}
-                    className="px-3 py-1.5 text-xs rounded-lg bg-orange-100 text-orange-600 hover:bg-orange-200 transition font-semibold border border-orange-300 disabled:opacity-50"
+                    type="button"
+                    onClick={() =>
+                      setCollapsedItems(
+                        q.items.every((it) => collapsedItems.has(it.id))
+                          ? new Set()
+                          : new Set(q.items.map((it) => it.id))
+                      )
+                    }
+                    className="text-xs font-semibold text-gray-500 hover:text-gray-800 transition-colors"
                   >
-                    {uploadingItemId === it.id ? "กำลังอัปโหลด..." : "📷 อัปโหลดรูป"}
+                    {q.items.every((it) => collapsedItems.has(it.id)) ? "ขยายทั้งหมด" : "ย่อทั้งหมด"}
                   </button>
-                  {it.imageUrl && (
-                    <button onClick={() => setItem(it.id, { imageUrl: "", imageUploaded: false })}
-                      className="px-3 py-1.5 text-xs rounded-lg text-gray-500 hover:text-red-500 transition font-semibold">
-                      เอารูปออก
-                    </button>
-                  )}
-                </div>
-                <div className="grid grid-cols-3 gap-2">
-                  <div>
-                    <label className={labelCls}>จำนวน</label>
-                    <input type="number" min={0} className={inputCls} value={it.qty}
-                      onChange={(e) => setItem(it.id, { qty: Math.max(0, Number(e.target.value)) })} />
-                  </div>
-                  <div>
-                    <label className={labelCls}>หน่วย</label>
-                    <input className={inputCls} value={it.unit} onChange={(e) => setItem(it.id, { unit: e.target.value })} />
-                  </div>
-                  <div>
-                    <label className={labelCls}>ราคา/หน่วย (฿)</label>
-                    <NumberInput className={inputCls} placeholder="0.00"
-                      value={it.unitPrice}
-                      onChange={(v) => setItem(it.id, { unitPrice: v })} />
-                  </div>
-                </div>
-                {/* ── ส่วนลดรายรายการ (task 7) ────────────────────────────
-                    Mirrors the document-level control below: FormattedNumberInput
-                    for the money, SearchableDropdown for ฿/% (never a native
-                    <select> — AGENTS.md). The right-hand cell prints the money
-                    this line actually comes to, so the figure on the sheet is
-                    never a mystery. */}
-                <div className="grid grid-cols-3 gap-2">
-                  <div>
-                    <label className={labelCls}>ส่วนลดรายการนี้</label>
-                    <FormattedNumberInput
-                      className={inputCls}
-                      placeholder="0"
-                      value={it.discount ?? 0}
-                      onChange={(v) => setLineDiscount(it.id, v)}
-                    />
-                  </div>
-                  <div>
-                    <label className={labelCls}>ประเภทส่วนลด</label>
-                    <SearchableDropdown
-                      searchable={false}
-                      className="w-full"
-                      buttonClassName={`${inputCls} h-[38px]`}
-                      value={it.discountType ?? "amount"}
-                      options={[
-                        { value: "amount", label: "บาท (฿)" },
-                        { value: "percent", label: "เปอร์เซ็นต์ (%)" },
-                      ]}
-                      onChange={(val) => setLineType(it.id, val)}
-                    />
-                  </div>
-                  <div>
-                    <label className={labelCls}>เป็นเงิน (หลังหักส่วนลด)</label>
-                    <div className="px-3 py-2 rounded-lg border border-gray-200 bg-white/70 text-sm text-right">
-                      {(lines[idx]?.discountValue ?? 0) > 0 ? (
-                        <>
-                          <span className="text-gray-400 line-through text-xs mr-1">
-                            {fmt(lines[idx].amount)}
-                          </span>
-                          <span className="font-bold text-gray-800">
-                            {fmt(lines[idx].netAmount)}
-                          </span>
-                        </>
-                      ) : (
-                        <span className="font-bold text-gray-800">
-                          {fmt(lines[idx]?.netAmount ?? 0)}
+                )}
+                <button type="button" onClick={addItem} className={`${PRIMARY_BUTTON} !py-1.5 !px-3 text-sm`}>
+                  + เพิ่มรายการ
+                </button>
+              </div>
+            </div>
+            {q.items.map((it, idx) => {
+              const line = lines[idx];
+              const collapsed = collapsedItems.has(it.id);
+              const itemSpecs = it.productId ? dbProductSpecs.filter((s) => s.productId === it.productId) : [];
+              const descriptionRows = Math.min(12, Math.max(2, (it.description || "").split("\n").length + 1));
+              return (
+                <div key={it.id} className="rounded-xl border border-gray-200 bg-white" data-testid="quote-item">
+                  {/* Header: the line as the sheet will show it — and a click
+                      folds the card to just this, for long quotations. */}
+                  <div className={`flex items-center gap-2 px-3 py-2 ${collapsed ? "" : "border-b border-gray-100"}`}>
+                    <span className="text-xs font-bold text-gray-400 tabular-nums shrink-0">#{idx + 1}</span>
+                    <button
+                      type="button"
+                      onClick={() => toggleItemCollapsed(it.id)}
+                      aria-expanded={!collapsed}
+                      title={collapsed ? "ขยายรายการ" : "ย่อรายการ"}
+                      className="flex-1 min-w-0 text-left"
+                    >
+                      <span className="block truncate text-sm font-semibold text-gray-800">{it.name || "รายการใหม่"}</span>
+                      {collapsed && (
+                        <span className="block truncate text-xs text-gray-500 tabular-nums">
+                          {it.qty} {it.unit} × {fmt(it.unitPrice)}
                         </span>
                       )}
+                    </button>
+                    <span className="shrink-0 text-sm font-bold text-gray-900 tabular-nums" data-testid="quote-item-total">
+                      {fmt(line?.netAmount ?? 0)}
+                    </span>
+                    <div className="flex items-center shrink-0">
+                      <IconButton label="เลื่อนขึ้น" onClick={() => moveItem(it.id, -1)} disabled={idx === 0}>
+                        <svg aria-hidden="true" className={ICON} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 15l7-7 7 7" /></svg>
+                      </IconButton>
+                      <IconButton label="เลื่อนลง" onClick={() => moveItem(it.id, 1)} disabled={idx === q.items.length - 1}>
+                        <svg aria-hidden="true" className={ICON} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" /></svg>
+                      </IconButton>
+                      <IconButton label="ทำสำเนารายการ" onClick={() => copyItem(it.id)}>
+                        <svg aria-hidden="true" className={ICON} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+                      </IconButton>
+                      <IconButton label="ลบรายการ" onClick={() => removeItem(it.id)} danger>
+                        <svg aria-hidden="true" className={ICON} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                      </IconButton>
                     </div>
                   </div>
+                  {!collapsed && (
+                    <div className="p-3 space-y-2">
+                      <SearchableDropdown
+                        className="w-full"
+                        buttonClassName={PICKER}
+                        placeholder="เลือกจากสินค้าในระบบ (เติมชื่อ + รูปให้)…"
+                        value=""
+                        onChange={(val) => applyProduct(it.id, val)}
+                        options={products.map((p) => ({
+                          value: p.id,
+                          label: stripHtml(p.title_th || p.title_en).replace(/🐧/g, "").trim()
+                        }))}
+                      />
+                      {itemSpecs.length > 0 && (
+                        <SearchableDropdown
+                          className="w-full"
+                          buttonClassName={`${PICKER} !bg-orange-50 !border-orange-200 !text-orange-800`}
+                          placeholder="เลือกสเปคเพื่อเติมรายละเอียด (ไม่บังคับ)"
+                          value=""
+                          onChange={(val) => {
+                            const spec = dbProductSpecs.find(s => s.id === val);
+                            if (spec) setItem(it.id, { description: spec.detail });
+                          }}
+                          options={itemSpecs.map(s => ({
+                            value: s.id,
+                            label: s.name
+                          }))}
+                        />
+                      )}
+                      <input className={inputCls} placeholder="ชื่อเครื่อง / รุ่น" value={it.name}
+                        onChange={(e) => setItem(it.id, { name: e.target.value })} />
+                      {/* Grows with the text (2–12 rows): a spec pasted in
+                          used to sit in a two-line box with its own scroll. */}
+                      <textarea rows={descriptionRows} className={`${inputCls} resize-y`} placeholder="รายละเอียด / สเปค (ถ้ามี)" value={it.description}
+                        onChange={(e) => setItem(it.id, { description: e.target.value })} />
+                      <div className="flex items-center gap-2">
+                        {it.imageUrl ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={it.imageUrl} alt="" className="w-12 h-12 object-contain border border-gray-200 rounded bg-white" />
+                        ) : (
+                          <div className="w-12 h-12 border border-dashed border-gray-300 rounded flex items-center justify-center text-gray-300 text-xs">รูป</div>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => { uploadTargetRef.current = it.id; imageInputRef.current?.click(); }}
+                          disabled={uploadingItemId === it.id}
+                          className="px-3 py-1.5 text-xs rounded-lg border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 transition font-semibold disabled:opacity-50"
+                        >
+                          {uploadingItemId === it.id ? "กำลังอัปโหลด..." : "อัปโหลดรูป"}
+                        </button>
+                        {it.imageUrl && (
+                          <button type="button" onClick={() => setItem(it.id, { imageUrl: "", imageUploaded: false })}
+                            className="px-3 py-1.5 text-xs rounded-lg text-gray-500 hover:text-red-500 transition font-semibold">
+                            เอารูปออก
+                          </button>
+                        )}
+                      </div>
+                      <div className="grid grid-cols-3 gap-2">
+                        <div>
+                          <label className={labelCls}>จำนวน</label>
+                          <input type="number" min={0} className={inputCls} value={it.qty}
+                            onChange={(e) => setItem(it.id, { qty: Math.max(0, Number(e.target.value)) })} />
+                        </div>
+                        <div>
+                          <label className={labelCls}>หน่วย</label>
+                          <input className={inputCls} value={it.unit} onChange={(e) => setItem(it.id, { unit: e.target.value })} />
+                        </div>
+                        <div>
+                          <label className={labelCls}>ราคา/หน่วย (฿)</label>
+                          <NumberInput className={inputCls} placeholder="0.00"
+                            value={it.unitPrice}
+                            onChange={(v) => setItem(it.id, { unitPrice: v })} />
+                        </div>
+                      </div>
+                      {/* ── ส่วนลดรายรายการ (task 7) ────────────────────────
+                          FormattedNumberInput for the money, ฿ / % as two
+                          buttons (the dropdown here was cut to "เปอร์เซ็…"),
+                          and the money this line comes to on its own row —
+                          it used to overflow the card. */}
+                      <div>
+                        <label className={labelCls}>ส่วนลดรายการนี้</label>
+                        <div className="flex items-center gap-2">
+                          <FormattedNumberInput
+                            className={inputCls}
+                            placeholder="0"
+                            value={it.discount ?? 0}
+                            onChange={(v) => setLineDiscount(it.id, v)}
+                          />
+                          <DiscountTypeToggle
+                            label={`ประเภทส่วนลดรายการที่ ${idx + 1}`}
+                            value={it.discountType ?? "amount"}
+                            onChange={(v) => setLineType(it.id, v)}
+                          />
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between gap-2 rounded-lg bg-gray-50 px-3 py-2 text-sm">
+                        <span className="text-gray-500">เป็นเงิน</span>
+                        <span className="tabular-nums text-right">
+                          {(line?.discountValue ?? 0) > 0 && (
+                            <span className="text-gray-400 line-through text-xs mr-1.5">{fmt(line.amount)}</span>
+                          )}
+                          <span className="font-bold text-gray-800">{fmt(line?.netAmount ?? 0)}</span>
+                        </span>
+                      </div>
+                    </div>
+                  )}
                 </div>
-              </div>
-            ))}
-            <p className="text-xs text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
-              ℹ️ ส่วนลดรายรายการจะถูกหักก่อน จากนั้นจึงนำ
-              <span className="font-semibold"> ส่วนลดท้ายใบ </span>
-              (ในหัวข้อ “ส่วนลด / VAT / เงื่อนไข” ด้านล่าง) มาหักจากยอดที่เหลืออีกครั้ง แล้วจึงคิด VAT
-            </p>
+              );
+            })}
           </section>
 
-          {/* สรุปยอด + เงื่อนไข */}
-          <section className="bg-white rounded-xl shadow-sm border border-gray-200 p-5 space-y-3">
-            <h2 className="font-bold text-gray-800">ส่วนลด / VAT / เงื่อนไข</h2>
-            {/* Says out loud what quotationTotals.ts does: this discount is
-                taken off the sum of the ALREADY line-discounted amounts. */}
-            <p className="text-xs text-gray-500 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-              ⬇️ ส่วนลดด้านล่างนี้เป็น<span className="font-semibold">ส่วนลดท้ายใบ</span> —
-              หักจากยอดรวม<span className="font-semibold">หลัง</span>หักส่วนลดรายรายการแล้ว
-              {hasLineDiscounts && (
-                <> (ตอนนี้คือ <span className="font-semibold">{fmt(afterLineDiscounts)}</span> บาท)</>
-              )}
-            </p>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className={labelCls}>ส่วนลดท้ายใบ</label>
+          {/* ส่วนลด / VAT / เงื่อนไข */}
+          <section className={SECTION}>
+            <h2 className={H2}>ส่วนลด / VAT / เงื่อนไข</h2>
+            <div>
+              <label className={labelCls}>ส่วนลดท้ายใบ</label>
+              <div className="flex items-center gap-2">
                 <NumberInput className={inputCls} placeholder="0"
                   value={q.discount}
                   onChange={(v) => set("discount", v)} />
-              </div>
-              <div>
-                <label className={labelCls}>ประเภทส่วนลด</label>
-                {/* ── ประเภทส่วนลด ────────────────────────────────────────
-                    PROJECT RULE — every dropdown is `SearchableDropdown`,
-                    never a native <select>. A native one is painted by the
-                    OPERATING SYSTEM, so on a dark-mode machine it opens as a
-                    dark grey popup in the middle of this white form.
-                    `searchable={false}` hides the search box that would be
-                    dead weight over two fixed options.
-
-                    The two values are the ones `computeQuoteTotals` branches
-                    on ("percent" vs everything else) and the ones persisted in
-                    `QuoteState.discountType` — unchanged, in the same order,
-                    with "amount" still the default from `emptyState()`. The
-                    old <select> carried no `required` and no `invalid:`
-                    variant (it can never be empty), so there is no browser
-                    validation to replace here.
-
-                    `inputCls` keeps the button on the same 1-of-2 grid cell as
-                    the ส่วนลด input beside it; the explicit height pins it to
-                    the 38px that `px-3 py-2` + border gives that input,
-                    instead of inheriting the component's shorter `py-1.5`. */}
-                <SearchableDropdown
-                  searchable={false}
-                  className="w-full"
-                  buttonClassName={`${inputCls} h-[38px]`}
+                <DiscountTypeToggle
+                  label="ประเภทส่วนลดท้ายใบ"
                   value={q.discountType}
-                  options={[
-                    { value: "amount", label: "บาท (฿)" },
-                    { value: "percent", label: "เปอร์เซ็นต์ (%)" },
-                  ]}
-                  onChange={(val) => set("discountType", val as "amount" | "percent")}
+                  onChange={(v) => set("discountType", v)}
                 />
               </div>
+              {/* Says what quotationTotals.ts does: this discount comes off
+                  the sum of the ALREADY line-discounted amounts, then VAT. */}
+              <p className="mt-1 text-xs text-gray-500">
+                หักจากยอดรวม{hasLineDiscounts ? `หลังหักส่วนลดรายรายการ (${fmt(afterLineDiscounts)} บาท)` : ""} แล้วจึงคิด VAT
+              </p>
             </div>
             <label className="flex items-center gap-2 text-sm text-gray-700 font-medium">
               <input type="checkbox" checked={q.vatEnabled} onChange={(e) => set("vatEnabled", e.target.checked)}
@@ -1850,63 +2372,71 @@ export default function QuotationPage() {
             </label>
             <div className="space-y-3">
               <div className="flex items-center justify-between">
-                <label className="font-bold text-gray-800">เงื่อนไขอื่นๆ</label>
+                <span className="text-sm font-bold text-gray-800">เงื่อนไขอื่นๆ</span>
                 <div className="flex items-center gap-3">
                   <button
                     type="button"
-                    onClick={() => setQ(prev => ({ ...prev, conditions: emptyState().conditions }))}
-                    className="text-gray-500 hover:text-gray-700 text-sm font-medium flex items-center gap-1"
+                    onClick={() => {
+                      if (!isDefaultConditions(q.conditions)) setConfirmResetConditions(true);
+                    }}
+                    disabled={isDefaultConditions(q.conditions)}
+                    className="text-gray-500 hover:text-gray-700 text-sm font-medium flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed"
                   >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                    <svg aria-hidden="true" className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
                     คืนค่าเริ่มต้น
                   </button>
                   <button
                     type="button"
                     onClick={() => setQ(prev => ({
                       ...prev,
-                      conditions: [...(prev.conditions || []), { id: crypto.randomUUID(), label: "", value: "" }]
+                      conditions: [...(prev.conditions || []), { id: randomId(), label: "", value: "" }]
                     }))}
                     className="text-orange-600 hover:text-orange-700 text-sm font-medium flex items-center gap-1"
                   >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"/></svg>
+                    <svg aria-hidden="true" className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"/></svg>
                     เพิ่มเงื่อนไข
                   </button>
                 </div>
               </div>
-              
+
               {(q.conditions || []).map((cond, idx) => (
                 <div key={cond.id} className="p-3 bg-gray-50 border border-gray-200 rounded-lg space-y-2 relative">
                   <button
                     type="button"
+                    aria-label={`ลบเงื่อนไข ${cond.label || idx + 1}`}
                     onClick={() => setQ(prev => ({
                       ...prev,
                       conditions: (prev.conditions || []).filter(c => c.id !== cond.id)
                     }))}
                     className="absolute top-2 right-2 text-gray-400 hover:text-red-500"
                   >
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                    <svg aria-hidden="true" className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"/></svg>
                   </button>
                   <div className="pr-8 space-y-2">
-                    <input 
-                      placeholder="หัวข้อ (เช่น เงื่อนไขชำระเงิน)" 
+                    <input
+                      placeholder="หัวข้อ (เช่น เงื่อนไขชำระเงิน)"
                       className={`${inputCls} font-bold text-gray-800`}
-                      value={cond.label} 
+                      value={cond.label}
                       onChange={(e) => {
-                        const newConds = [...(q.conditions || [])];
-                        newConds[idx].label = e.target.value;
-                        set("conditions", newConds);
-                      }} 
+                        const value = e.target.value;
+                        setQ(prev => ({
+                          ...prev,
+                          conditions: (prev.conditions || []).map(c => (c.id === cond.id ? { ...c, label: value } : c)),
+                        }));
+                      }}
                     />
-                    <textarea 
-                      rows={2} 
+                    <textarea
+                      rows={2}
                       placeholder="รายละเอียด"
-                      className={inputCls} 
-                      value={cond.value} 
+                      className={`${inputCls} resize-y`}
+                      value={cond.value}
                       onChange={(e) => {
-                        const newConds = [...(q.conditions || [])];
-                        newConds[idx].value = e.target.value;
-                        set("conditions", newConds);
-                      }} 
+                        const value = e.target.value;
+                        setQ(prev => ({
+                          ...prev,
+                          conditions: (prev.conditions || []).map(c => (c.id === cond.id ? { ...c, value } : c)),
+                        }));
+                      }}
                     />
                   </div>
                 </div>
@@ -1914,9 +2444,88 @@ export default function QuotationPage() {
             </div>
             <div>
               <label className={labelCls}>หมายเหตุเพิ่มเติม</label>
-              <textarea rows={2} className={inputCls} value={q.note} onChange={(e) => set("note", e.target.value)} />
+              <textarea rows={2} className={`${inputCls} resize-y`} value={q.note} onChange={(e) => set("note", e.target.value)} />
             </div>
           </section>
+
+          {/* ผู้เสนอราคา — our salesperson and company lines. Set once and
+              rarely changed (the salesperson is remembered, our lines come
+              from the last quotation), so folded to one line once filled. */}
+          <section className={SECTION}>
+            <button
+              type="button"
+              onClick={() => setSellerUi({ docId: q.id, open: !sellerExpanded })}
+              aria-expanded={sellerExpanded}
+              className="w-full flex items-center justify-between gap-3 text-left"
+            >
+              <span className="min-w-0">
+                <span className={`block ${H2}`}>ผู้เสนอราคา (พนักงานขาย / บริษัทเรา)</span>
+                {!sellerExpanded && (
+                  <span className="block truncate text-xs text-gray-500 mt-0.5" data-testid="seller-summary">
+                    {[q.sellerName, q.companyPhone && `โทร ${q.companyPhone}`, q.companyTaxId && `เลขภาษี ${q.companyTaxId}`]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </span>
+                )}
+              </span>
+              <svg aria-hidden="true" className={`w-4 h-4 shrink-0 text-gray-400 transition-transform ${sellerExpanded ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" /></svg>
+            </button>
+            {sellerExpanded && (
+              <div className="space-y-3 pt-1">
+                <SearchableDropdown
+                  className="w-full"
+                  placeholder="เลือกพนักงานขาย"
+                  value={q.sellerId || ""}
+                  options={dbSalespeople.map(s => ({
+                    value: s.id,
+                    label: s.name,
+                    subLabel: s.phone || s.email || ""
+                  }))}
+                  onChange={(val) => {
+                    const s = dbSalespeople.find(x => x.id === val);
+                    if (s) {
+                      setQ(prev => ({
+                        ...prev,
+                        sellerId: val,
+                        sellerName: s.name,
+                        sellerPhone: s.phone || prev.sellerPhone,
+                        sellerEmail: s.email || prev.sellerEmail
+                      }));
+                    }
+                  }}
+                  buttonClassName={PICKER}
+                />
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="col-span-2">
+                    <label className={labelCls}>ชื่อเซลล์</label>
+                    <input className={inputCls} value={q.sellerName} onChange={(e) => set("sellerName", e.target.value)} />
+                  </div>
+                  <div>
+                    <label className={labelCls}>โทร (เซลล์)</label>
+                    <input className={inputCls} value={q.sellerPhone} onChange={(e) => set("sellerPhone", e.target.value)} />
+                  </div>
+                  <div>
+                    <label className={labelCls}>อีเมล (เซลล์)</label>
+                    <input className={inputCls} value={q.sellerEmail} onChange={(e) => set("sellerEmail", e.target.value)} />
+                  </div>
+                  <div>
+                    <label className={labelCls}>โทรบริษัท</label>
+                    <input className={inputCls} value={q.companyPhone} onChange={(e) => set("companyPhone", e.target.value)} />
+                  </div>
+                  <div>
+                    <label className={labelCls}>อีเมลบริษัท</label>
+                    <input className={inputCls} value={q.companyEmail} onChange={(e) => set("companyEmail", e.target.value)} />
+                  </div>
+                  <div className="col-span-2">
+                    <label className={labelCls}>เลขผู้เสียภาษี (บริษัทเรา)</label>
+                    <input className={inputCls} placeholder="0-0000-00000-00-0" value={q.companyTaxId}
+                      onChange={(e) => set("companyTaxId", e.target.value)} />
+                  </div>
+                </div>
+              </div>
+            )}
+          </section>
+          </fieldset>
         </div>
         )}
 
@@ -2150,6 +2759,13 @@ export default function QuotationPage() {
                     <td className="py-1.5 pr-2">จำนวนเงินรวมทั้งสิ้น</td>
                     <td className="py-1.5 text-right">{fmt(grandTotal)}</td>
                   </tr>
+                  {/* The total in Thai words, as a Thai quotation prints it —
+                      rounded exactly as the figure above (bahtText.ts). */}
+                  <tr>
+                    <td colSpan={2} className="pt-0.5 text-right text-[11.5px] text-gray-600" data-testid="quote-total-words">
+                      ({bahtText(grandTotal)})
+                    </td>
+                  </tr>
                 </tbody>
               </table>
             </div>
@@ -2211,17 +2827,25 @@ export default function QuotationPage() {
             <button
               onClick={async () => {
                 setShowLeaveConfirm(false);
-                await handleSave();
+                // On to where the admin was going — only once it is saved. (It
+                // used to go to the saved list whatever was clicked, and to go
+                // there even when the save had failed.)
+                const target = pendingNav;
+                setPendingNav(null);
+                if ((await handleSave()) && target) router.push(target);
               }}
               disabled={savingQuote || docNoDup}
-              className="w-full px-4 py-3 rounded-xl bg-green-500 text-white font-bold text-sm hover:bg-green-600 transition disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full px-4 py-3 rounded-xl bg-orange-500 text-white font-bold text-sm hover:bg-orange-600 transition disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              💾 บันทึกแล้วออก
+              บันทึกแล้วออก
             </button>
             <button
               onClick={() => {
                 setShowLeaveConfirm(false);
                 savedSnapshotRef.current = stateFingerprint(q); // prevent re-triggering
+                // Left without saving, on purpose: its draft goes too.
+                draftPayloadRef.current = null;
+                removeDraft(browserStorage(), draftKey(draftCtx, owner), Date.now());
                 if (pendingNav) router.push(pendingNav);
                 setPendingNav(null);
               }}

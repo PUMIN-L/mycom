@@ -4,6 +4,7 @@ import { purgeExpiredQuotations } from "../../../lib/quotationStore";
 import { purgeExpiredAlertSnoozes } from "../../../lib/crmStore";
 import { purgeExpiredPurchaseOrders } from "../../../lib/poStore";
 import { purgeExpiredLoginFailures } from "../../../lib/loginThrottle";
+import { QUOTATION_RETENTION_DAYS } from "../../../lib/quotationRetention";
 
 // GET /api/quotations/cleanup — invoked daily by Vercel Cron (see vercel.json)
 // to delete quotations past their retention window (RETENTION_DAYS below) plus
@@ -21,7 +22,8 @@ export const dynamic = "force-dynamic";
 // 2 years. This business's sales cycle runs for months to years, so the old
 // 30-day window purged the quotation right about when the customer decided to
 // buy — leaving the sale form's quotation picker empty exactly when it matters.
-const RETENTION_DAYS = 730;
+// Shared with the quotation page, which TELLS the admin how long a save keeps.
+const RETENTION_DAYS = QUOTATION_RETENTION_DAYS;
 // NOTE: the docNo ledger (used_docnos) is deliberately NOT purged here — it is
 // kept for conversion-rate analytics (see app/lib/quotationStore.ts, the
 // used_docnos section). There is no docNo retention constant and no

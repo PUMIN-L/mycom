@@ -368,6 +368,44 @@ export async function listQuotations(
   });
 }
 
+/** Our company's own contact lines, as the last quotations carried them. */
+export interface QuotationCompanyDefaults {
+  companyPhone: string;
+  companyEmail: string;
+  companyTaxId: string;
+}
+
+const COMPANY_DEFAULT_KEYS = ["companyPhone", "companyEmail", "companyTaxId"] as const;
+
+/**
+ * For each of our company's contact lines, the value on the most recent
+ * quotation that has one — so a new quotation starts with them instead of
+ * blank boxes the admin had to fill (and, forgotten, sent the customer a
+ * sheet with no phone number). Per field: a quotation that left the tax id
+ * blank must not blank it for the next one. JSON `null` reads as the string
+ * "null" through JSON_UNQUOTE, so it is excluded with the empty string. The
+ * keys come from the fixed list above, never from input.
+ */
+export async function latestCompanyDefaults(): Promise<QuotationCompanyDefaults> {
+  const values = await Promise.all(
+    COMPANY_DEFAULT_KEYS.map(async (key) => {
+      const path = `JSON_UNQUOTE(JSON_EXTRACT(data, '$.${key}'))`;
+      const [rows] = await query<RowDataPacket[]>(
+        `SELECT ${path} AS value FROM quotations` +
+          ` WHERE COALESCE(TRIM(${path}), '') NOT IN ('', 'null')` +
+          ` ORDER BY createdAt DESC LIMIT 1`
+      );
+      const value = rows[0]?.value;
+      return typeof value === "string" ? value.trim().slice(0, 255) : "";
+    })
+  );
+  return {
+    companyPhone: values[0],
+    companyEmail: values[1],
+    companyTaxId: values[2],
+  };
+}
+
 /**
  * Delete a quotation. Returns the list of uploaded image URLs that are now
  * orphaned (the caller/UI should show a confirmation dialog before deleting

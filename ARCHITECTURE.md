@@ -581,6 +581,50 @@ single-page PDF **client-side** (`jspdf` + `html2canvas-pro`, dynamically import
 builder UI and the saved-list summary can never drift. Number inputs use a
 raw-text `NumberInput` so sub-1 values (e.g. `0.5%` discount) are enterable.
 
+**Working in the builder:**
+- **Saving stays on the page** (`persist` → `afterSaved`): the document turns
+  clean, its number is settled, and the URL becomes `?id=<id>` so a refresh
+  reopens it. While editing, "บันทึก + ดาวน์โหลด PDF" saves and downloads in
+  one step; Ctrl+S / ⌘S saves (matched on `e.code === "KeyS"` too — with the
+  Thai layout the key reports "ห"). The leave dialog's บันทึกแล้วออก goes on
+  to where the admin was going, and only once the save landed.
+- **Drafts** ([`app/quotation/quoteDraft.ts`](./app/quotation/quoteDraft.ts)):
+  unsaved edits are kept in `localStorage`, one draft per document
+  (`new`, `edit:<id>`, `clone:<sourceId>`), half a second after the last
+  keystroke and at once on `pagehide`. Opening that document again offers
+  กู้คืน / ทิ้ง, and the form is locked (`<fieldset disabled>`) until the admin
+  answers — typing meanwhile could not be kept without overwriting that very
+  draft. A draft goes when its document is saved or left without saving;
+  drafts expire after 14 days, at most 10 are kept. They hold customers'
+  details, so they are **per signed-in user** (`<userId>/…` keys — never
+  offered to, or overwritten by, another admin on a shared computer; the
+  page opens its document only once the user is known) and **cleared on
+  logout** (`clearAllDrafts` in AuthContext). An edit's draft remembers the
+  saved quotation it started from (`base`); if that has been saved again
+  since, the offer warns that restoring and saving would overwrite it. A
+  stored draft that is not quotation-shaped is never offered, and drafts are
+  compared with documents by content (`contentFingerprint`: sorted keys,
+  conditions by text — an old quotation's conditions get new ids each load).
+- **"Unsaved" means the admin's edits only.** The page's own changes — the
+  running number moving past a taken one, our company's lines arriving — go
+  through `setQAuto`, which carries the clean snapshot along on a document
+  with no edits. (An untouched new quotation used to warn on leaving only
+  because its number had advanced.) Every snapshot and comparison uses
+  `fingerprintOf`.
+- **A new quotation starts filled in:** our company's phone / e-mail / tax id
+  from `GET /api/quotations/company-defaults` (`latestCompanyDefaults` — per
+  field, the latest saved quotation that has it; the phone falls back to the
+  company profile), and the salesperson last saved from this browser
+  (`localStorage`, never from merely viewing someone else's quotation).
+- **The total in Thai words** under จำนวนเงินรวมทั้งสิ้น comes from
+  [`lib/bahtText.ts`](./app/lib/bahtText.ts), which rounds through the same
+  `Intl.NumberFormat` as the printed figures — `toFixed(2)` rounds the binary
+  value and disagreed with the figure on about one amount in six.
+- How long a save keeps is said from
+  [`lib/quotationRetention.ts`](./app/lib/quotationRetention.ts), the constant
+  the cleanup cron purges by (the page said "30 วัน" long after it became two
+  years).
+
 **The saved list (`/billing/saved`)** shows quotations and all three billing
 types in one table, with a tab, a search box and a **date range**. Filtering is
 [`app/lib/savedDocFilter.ts`](./app/lib/savedDocFilter.ts), not inline in the

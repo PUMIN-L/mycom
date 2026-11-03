@@ -89,7 +89,7 @@ const fieldInput = (label: string) => {
 };
 const docNoInput = () => fieldInput('เลขที่ (No.)');
 const dateInput = () => fieldInput('วันที่ (Date)');
-const saveButton = () => screen.getByRole('button', { name: '💾 เซฟ' });
+const saveButton = () => screen.getByRole('button', { name: 'บันทึก' });
 
 /** Render, then move the document onto 25 Oct 2026 the way an admin would. */
 async function openOn25Oct2026() {
