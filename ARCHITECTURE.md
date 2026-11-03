@@ -96,6 +96,9 @@ app/
 ├── create-product/ edit-product/ create-content/   Admin product/content pages.
 ├── document/            PDF document viewer/manager page.
 ├── quotation/           Admin quotation builder (client-side PDF export).
+├── product-specs/       Spec texts per product, picked in the quotation builder
+│                        to fill a line's detail. Grouped by product; pure
+│                        logic (group/search/copy name/checks) in specHelpers.ts.
 ├── settings/            Admin settings (change contact-email recipient).
 ├── assets/ stock/       Asset register + stock (admin, phone-friendly) — §8d.
 ├── login/               Admin login page.
@@ -440,7 +443,8 @@ highlight expires without a reload.
   is a name) and from three digits; "+66" reads as "0". A clicked header sorts
   by name / company (blank values last either way, ties keep the note order);
   "อัปเดตล่าสุด" is the default note order and flips to oldest-first.
-  `thCompare` uses one shared `Intl.Collator` — `localeCompare` with a locale
+  `thCompare` ([`lib/thCompare.ts`](./app/lib/thCompare.ts), shared with
+  /product-specs) uses one `Intl.Collator` — `localeCompare` with a locale
   builds a new one per call, ~80,000 calls for one sort of 6,000 customers.
 - **The open tab is in the URL** (`?tab=companies|salespeople|equipment`,
   none for ลูกค้า), written with `history.replaceState` by `searchWithTab`, so
@@ -1300,7 +1304,9 @@ with an eye button that shows what was typed), `Pagination` (a table pager:
 "แสดง a ถึง b จาก n", first / previous / next / last and a page-number box),
 `SortableTh` (a header that sorts its column, with `aria-sort`), `CopyText` (a
 phone or e-mail that copies itself on click, without opening the row around
-it). Import the shared version instead of defining a local one.
+it), `RowActions` (a clickable row's copy / edit / delete icons, delete only on
+hover or focus; its `openOnKey` opens the row on Enter / Space). Import the
+shared version instead of defining a local one.
 
 **Dropdowns are always [`SearchableDropdown`](./app/components/SearchableDropdown.tsx),
 never a native `<select>`.** The OS paints a native one, so on a dark-mode machine
