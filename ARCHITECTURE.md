@@ -1350,10 +1350,13 @@ with an eye button that shows what was typed), `Pagination` (a table pager:
 phone or e-mail that copies itself on click, without opening the row around
 it), `RowActions` (a clickable row's copy / edit / delete icons, delete only on
 hover or focus; its `openOnKey` opens the row on Enter / Space),
-`AdminHomeButton` (the way back to /adminpanel on every admin page — a
-bordered button with a home icon, "กลับหน้าระบบจัดการ"; pass `onNavigate` for a
-page's leave guard. `AdminHomeButton.test.tsx` fails if a page links to
-/adminpanel by hand). Import the shared version instead of defining a local one.
+`NavButton` (any "go back to …" link drawn as a bordered button with an orange
+home / dashboard / back icon, e.g. "กลับไป Dashboard"; pass `onNavigate` for a
+page's leave guard. `NavButton.test.tsx` fails if the old faint grey "← กลับไป …"
+text-link style comes back), `AdminHomeButton` (the way back to /adminpanel on
+every admin page — `NavButton` with the home icon, "กลับหน้าระบบจัดการ".
+`AdminHomeButton.test.tsx` fails if a page links to /adminpanel by hand). Import
+the shared version instead of defining a local one.
 
 **Dropdowns are always [`SearchableDropdown`](./app/components/SearchableDropdown.tsx),
 never a native `<select>`.** The OS paints a native one, so on a dark-mode machine

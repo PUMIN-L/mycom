@@ -1,6 +1,6 @@
 "use client";
 import React, { useState, useEffect, useMemo } from "react";
-import Link from "next/link";
+import NavButton from "../components/NavButton";
 import type { Expense, RecurringExpense } from "../lib/types";
 import ConfirmDialog from "../components/ConfirmDialog";
 import FormattedNumberInput from "../components/FormattedNumberInput";
@@ -387,12 +387,7 @@ export default function ExpensesPage() {
             >
               + เพิ่มรายจ่าย
             </button>
-            <Link
-              href="/dashboard"
-              className="px-4 py-2.5 bg-white border border-gray-200 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 transition-all text-sm flex items-center gap-2 shadow-sm"
-            >
-              📊 กลับไป Dashboard
-            </Link>
+            <NavButton href="/dashboard" label="กลับไป Dashboard" icon="dashboard" />
           </div>
         </div>
 
