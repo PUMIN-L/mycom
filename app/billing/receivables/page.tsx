@@ -1,5 +1,6 @@
 "use client";
 import { useState, useEffect, useMemo, useCallback } from "react";
+import AdminHomeButton from "../../components/AdminHomeButton";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "../../context/AuthContext";
@@ -277,12 +278,7 @@ export default function ReceivablesPage() {
             >
               📋 เอกสารที่บันทึกไว้
             </Link>
-            <Link
-              href="/adminpanel"
-              className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition"
-            >
-              🏠 หน้าระบบจัดการ
-            </Link>
+            <AdminHomeButton />
           </div>
         </div>
       </div>

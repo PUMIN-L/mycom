@@ -66,7 +66,7 @@ function setAuth(next: { isLoggedIn: boolean; isLoading: boolean }) {
 
 /** The chrome that only ever exists once the gate has been passed. */
 function editorChrome() {
-  return screen.queryByRole('link', { name: /กลับไป Admin Panel/ });
+  return screen.queryByRole('link', { name: /กลับหน้าระบบจัดการ/ });
 }
 
 /**

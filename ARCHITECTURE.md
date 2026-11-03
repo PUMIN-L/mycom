@@ -1349,8 +1349,11 @@ with an eye button that shows what was typed), `Pagination` (a table pager:
 `SortableTh` (a header that sorts its column, with `aria-sort`), `CopyText` (a
 phone or e-mail that copies itself on click, without opening the row around
 it), `RowActions` (a clickable row's copy / edit / delete icons, delete only on
-hover or focus; its `openOnKey` opens the row on Enter / Space). Import the
-shared version instead of defining a local one.
+hover or focus; its `openOnKey` opens the row on Enter / Space),
+`AdminHomeButton` (the way back to /adminpanel on every admin page — a
+bordered button with a home icon, "กลับหน้าระบบจัดการ"; pass `onNavigate` for a
+page's leave guard. `AdminHomeButton.test.tsx` fails if a page links to
+/adminpanel by hand). Import the shared version instead of defining a local one.
 
 **Dropdowns are always [`SearchableDropdown`](./app/components/SearchableDropdown.tsx),
 never a native `<select>`.** The OS paints a native one, so on a dark-mode machine

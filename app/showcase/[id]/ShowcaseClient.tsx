@@ -1,5 +1,6 @@
 "use client";
 import { useState, useRef, useEffect, useMemo } from "react";
+import AdminHomeButton from "../../components/AdminHomeButton";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import SkeletonImage from "../../components/SkeletonImage";
@@ -1522,9 +1523,7 @@ export default function ShowcaseClient({
               )}
               {isLoggedIn && (
                 <p>
-                  <Link href="/adminpanel" className="text-orange-500 hover:text-orange-600 font-medium">
-                    ← Back to All Contents
-                  </Link>
+                  <AdminHomeButton />
                 </p>
               )}
             </div>

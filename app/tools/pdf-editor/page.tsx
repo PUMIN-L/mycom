@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import AdminHomeButton from "../../components/AdminHomeButton";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 import { useAuth } from "../../context/AuthContext";
 import Toast from "../../components/Toast";
 import ConfirmDialog from "../../components/ConfirmDialog";
@@ -1074,24 +1074,7 @@ export default function PdfEditorPage() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-5">
           <div className="flex flex-wrap justify-between items-center gap-3">
             <div>
-              <Link
-                href="/adminpanel"
-                onClick={(event) => {
-                  event.preventDefault();
-                  guardedNavigate("/adminpanel");
-                }}
-                className="inline-flex items-center gap-1.5 text-sm font-semibold text-gray-500 hover:text-gray-800 transition-colors mb-2"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth="2"
-                    d="M10 19l-7-7m0 0l7-7m-7 7h18"
-                  />
-                </svg>
-                กลับไป Admin Panel
-              </Link>
+              <AdminHomeButton onNavigate={() => guardedNavigate("/adminpanel")} className="mb-3" />
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 bg-violet-100 text-violet-600 rounded-xl flex items-center justify-center text-xl shadow-sm">
                   📄

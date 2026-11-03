@@ -1,5 +1,6 @@
 "use client";
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import AdminHomeButton from "../components/AdminHomeButton";
 import { useRouter } from "next/navigation";
 import { useAuth } from "../context/AuthContext";
 import Toast from "../components/Toast";
@@ -1874,9 +1875,7 @@ export default function QuotationPage() {
             </span>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
-            <button type="button" onClick={() => guardedNavigate("/adminpanel")} className="px-3 py-2 text-sm font-semibold text-gray-500 hover:text-gray-800 transition-colors">
-              ระบบจัดการ
-            </button>
+            <AdminHomeButton onNavigate={() => guardedNavigate("/adminpanel")} />
             {!isViewOnly && (
               <>
                 <button

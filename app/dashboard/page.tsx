@@ -1,5 +1,6 @@
 "use client";
 import React, { useState, useEffect, useCallback, useMemo, useRef, Suspense } from "react";
+import AdminHomeButton from "../components/AdminHomeButton";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import DatePicker from "../components/DatePicker";
@@ -1128,9 +1129,7 @@ export default function DashboardPage() {
 
           <div className="flex flex-wrap lg:flex-nowrap items-center gap-3 w-full lg:w-auto">
             {/* ปุ่มกลับไประบบจัดการ — มุมขวาบน สไตล์เดียวกับหน้า admin อื่นๆ */}
-            <Link href="/adminpanel" className="px-4 py-2 rounded-lg border border-gray-300 bg-white text-gray-700 text-sm font-semibold hover:bg-gray-50 transition whitespace-nowrap">
-              🏠 กลับไประบบจัดการ
-            </Link>
+            <AdminHomeButton />
             {/* Navigation Tabs (Segmented Control style) */}
             <div className="flex items-center bg-gray-50/80 rounded-full p-1 border border-gray-200/60 w-full sm:w-auto overflow-x-auto no-scrollbar">
               <button

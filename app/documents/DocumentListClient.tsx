@@ -1,5 +1,6 @@
 "use client";
 import { useState, useEffect } from "react";
+import AdminHomeButton from "../components/AdminHomeButton";
 import Link from "next/link";
 import { useAuth } from "../context/AuthContext";
 import ConfirmDialog from "../components/ConfirmDialog";
@@ -245,12 +246,7 @@ export default function DocumentListClient({
             {/* <p className="text-gray-600 mt-2">Explore all dynamically created pages stored in TiDB Cloud</p> */}
           </div>
           <div className="flex gap-3 flex-wrap">
-            <Link
-              href="/adminpanel"
-              className="px-5 py-2.5 bg-white border border-gray-300 text-gray-700 font-semibold rounded-lg hover:bg-gray-50 transition shadow-sm"
-            >
-              ← กลับไปหน้าระบบจัดการ
-            </Link>
+            <AdminHomeButton />
           </div>
         </div>
 

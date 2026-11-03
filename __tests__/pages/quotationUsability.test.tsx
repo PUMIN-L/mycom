@@ -577,13 +577,13 @@ describe("15 · one way back", () => {
     expect(screen.queryByRole("button", { name: "← กลับ" })).toBeNull();
     expect(screen.queryByRole("button", { name: /🏠/ })).toBeNull();
     expect(screen.getByRole("button", { name: "ใบเสนอราคาที่บันทึกไว้" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "ระบบจัดการ" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "กลับหน้าระบบจัดการ" })).toBeInTheDocument();
   });
 
   it("with unsaved edits it asks; บันทึกแล้วออก saves, then goes where the admin was going", async () => {
     await openNew();
     fireEvent.change(field("ชื่อผู้ติดต่อ"), { target: { value: "x" } });
-    fireEvent.click(screen.getByRole("button", { name: "ระบบจัดการ" }));
+    fireEvent.click(screen.getByRole("link", { name: "กลับหน้าระบบจัดการ" }));
     expect(screen.getByText("มีการเปลี่ยนแปลงที่ยังไม่ได้บันทึก")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "บันทึกแล้วออก" }));
     await waitFor(() => expect(nav.push).toHaveBeenCalledWith("/adminpanel"));
@@ -594,7 +594,7 @@ describe("15 · one way back", () => {
     postStatus = 500;
     await openNew();
     fireEvent.change(field("ชื่อผู้ติดต่อ"), { target: { value: "x" } });
-    fireEvent.click(screen.getByRole("button", { name: "ระบบจัดการ" }));
+    fireEvent.click(screen.getByRole("link", { name: "กลับหน้าระบบจัดการ" }));
     fireEvent.click(screen.getByRole("button", { name: "บันทึกแล้วออก" }));
     await screen.findByText(/บันทึกไม่สำเร็จ/);
     expect(nav.push).not.toHaveBeenCalled();

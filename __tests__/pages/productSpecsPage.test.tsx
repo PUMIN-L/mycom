@@ -685,7 +685,7 @@ describe("/product-specs — looks", () => {
     const { container } = render(<ProductSpecsPage />);
     await loaded();
     expect(screen.getByRole("heading", { level: 1, name: "สเปคสินค้า" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /ไปที่หน้าระบบจัดการ/ })).toHaveAttribute("href", "/adminpanel");
+    expect(screen.getByRole("link", { name: /กลับหน้าระบบจัดการ/ })).toHaveAttribute("href", "/adminpanel");
     expect(screen.getByRole("button", { name: "เพิ่มสเปค" }).className).toContain("bg-orange-500");
     expect(container.innerHTML).not.toMatch(/\b(?:bg|text|ring|border)-blue-/);
     expect(container.textContent).not.toContain("Product Specs");

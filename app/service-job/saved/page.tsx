@@ -1,5 +1,6 @@
 "use client";
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import AdminHomeButton from "../../components/AdminHomeButton";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "../../context/AuthContext";
@@ -220,12 +221,7 @@ export default function SavedServiceJobsPage() {
         <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
           <h1 className="text-xl font-bold text-gray-900">🔧 ใบ Job ที่ออกแล้ว</h1>
           <div className="flex items-center gap-2 flex-wrap">
-            <Link
-              href="/adminpanel"
-              className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition"
-            >
-              🏠 หน้าระบบจัดการ
-            </Link>
+            <AdminHomeButton />
             <Link
               href="/service-job"
               className="px-4 py-2 rounded-lg bg-orange-500 text-white text-sm font-bold hover:bg-orange-600 transition shadow-sm"

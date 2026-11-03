@@ -1,5 +1,6 @@
 "use client";
 import { useState, useEffect, Suspense, useMemo } from "react";
+import AdminHomeButton from "../../components/AdminHomeButton";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "../../context/AuthContext";
@@ -372,9 +373,7 @@ function SavedBillingContent() {
             <Link href="/billing/receivables" className="px-4 py-2 rounded-lg border border-amber-400 text-amber-700 text-sm font-semibold hover:bg-amber-50 transition">
               💰 ลูกหนี้ค้างชำระ
             </Link>
-            <Link href="/adminpanel" className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition">
-              🏠 หน้าระบบจัดการ
-            </Link>
+            <AdminHomeButton />
             <div className="relative create-dropdown-container">
               <button
                 onClick={() => setCreateDropdownOpen(!createDropdownOpen)}

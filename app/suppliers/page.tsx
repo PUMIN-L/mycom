@@ -1,9 +1,9 @@
 "use client";
 import { useState, useEffect, Suspense } from "react";
+import AdminHomeButton from "../components/AdminHomeButton";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "../context/AuthContext";
 import Toast from "../components/Toast";
-import Link from "next/link";
 import { Supplier } from "../lib/types";
 import { richTextInline } from "../lib/richTextDisplay";
 
@@ -144,12 +144,7 @@ function SuppliersInner() {
             <h1 className="text-2xl font-bold text-gray-900 leading-tight">จัดการผู้ผลิตสินค้า (Suppliers)</h1>
           </div>
           <div className="flex items-center gap-3">
-            <Link
-              href="/adminpanel"
-              className="px-4 py-2.5 bg-white border border-gray-200 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 hover:shadow-sm transition-all text-sm flex items-center gap-1.5 shadow-sm"
-            >
-              🏠 กลับไปหน้าระบบจัดการ
-            </Link>
+            <AdminHomeButton />
             <button
               onClick={openAddModal}
               className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-xl shadow-sm hover:shadow transition-all active:scale-95 flex items-center gap-2"

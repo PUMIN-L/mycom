@@ -1,5 +1,6 @@
 "use client";
 import { useState, useRef, useEffect, useMemo, Suspense } from "react";
+import AdminHomeButton from "../components/AdminHomeButton";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "../context/AuthContext";
 import ColorPickerDropdown from "../components/ColorPickerDropdown";
@@ -431,13 +432,7 @@ function CreateContentInner() {
               Build your content by adding text and images
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => guardedNavigate("/adminpanel")}
-            className="px-5 py-2.5 bg-white border border-gray-300 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 transition shadow-sm self-start sm:self-auto flex items-center gap-1.5 text-sm"
-          >
-            🏠 กลับไปหน้าระบบจัดการ
-          </button>
+          <AdminHomeButton onNavigate={() => guardedNavigate("/adminpanel")} className="self-start sm:self-auto" />
         </div>
 
         {/* Title Input */}

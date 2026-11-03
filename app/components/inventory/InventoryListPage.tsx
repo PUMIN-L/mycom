@@ -5,6 +5,7 @@
 // Spec: openspec/changes/add-inventory-tracking.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import AdminHomeButton from "../AdminHomeButton";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "../../context/AuthContext";
@@ -271,9 +272,7 @@ export default function InventoryListPage({ kind }: { kind: InventoryKind }) {
       <header className="sticky top-0 z-30 border-b border-gray-200 bg-white/95 backdrop-blur">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6">
           <div className="min-w-0">
-            <Link href="/adminpanel" className="text-xs font-semibold text-gray-400 hover:text-gray-600">
-              ← ระบบจัดการ
-            </Link>
+            <AdminHomeButton className="mb-2" />
             <h1 className="truncate text-xl font-bold text-gray-900 sm:text-2xl">{INVENTORY_TITLE[kind]}</h1>
           </div>
           <div className="flex gap-2">

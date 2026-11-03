@@ -1,5 +1,6 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
+import AdminHomeButton from "../../components/AdminHomeButton";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "../../context/AuthContext";
@@ -649,12 +650,7 @@ export default function AlertsPage() {
                 )}
               </Link>
               {/* ปุ่มกลับไประบบจัดการ — มุมขวาบน สไตล์เดียวกับหน้า admin อื่นๆ */}
-              <Link
-                href="/adminpanel"
-                className="px-4 py-2 bg-white border border-gray-200 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 hover:border-gray-300 transition-all text-sm shadow-sm whitespace-nowrap"
-              >
-                🏠 กลับไประบบจัดการ
-              </Link>
+              <AdminHomeButton />
               {/* คู่มือการใช้งาน — เปิดอ่านได้ตลอดโดยไม่ต้องออกจากหน้านี้ */}
               <button
                 onClick={() => setIsGuideOpen(true)}

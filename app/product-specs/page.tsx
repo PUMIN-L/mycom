@@ -1,9 +1,9 @@
 "use client";
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import AdminHomeButton from "../components/AdminHomeButton";
 import { useRouter } from "next/navigation";
 import { useAuth } from "../context/AuthContext";
 import Toast from "../components/Toast";
-import Link from "next/link";
 import SearchableDropdown from "../components/SearchableDropdown";
 import ConfirmDialog from "../components/ConfirmDialog";
 import RowActions, { openOnKey } from "../components/RowActions";
@@ -357,10 +357,7 @@ export default function ProductSpecsPage() {
             <h1 className="text-4xl font-extrabold text-gray-900 tracking-tight">สเปคสินค้า</h1>
             <p className="text-gray-500 mt-2 text-lg">ข้อความสเปคของแต่ละสินค้า สำหรับเลือกเติมลงใบเสนอราคา</p>
           </div>
-          <Link href="/adminpanel" className="px-5 py-2.5 bg-white border border-gray-200 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 hover:shadow-sm transition-all flex items-center gap-2">
-            <svg aria-hidden="true" className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
-            ไปที่หน้าระบบจัดการ
-          </Link>
+          <AdminHomeButton />
         </div>
 
         <div className="bg-white rounded-3xl shadow-sm border border-gray-100 p-6">

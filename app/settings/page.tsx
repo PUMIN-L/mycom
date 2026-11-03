@@ -1,5 +1,6 @@
 "use client";
 import { useState, useEffect } from "react";
+import AdminHomeButton from "../components/AdminHomeButton";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "../context/AuthContext";
@@ -723,9 +724,7 @@ export default function SettingsPage() {
       <div className="max-w-2xl mx-auto px-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-2">
           <h1 className="text-4xl font-bold text-gray-900">ตั้งค่าระบบ (CMS)</h1>
-          <Link href="/adminpanel" className="px-4 py-2 bg-white border border-gray-200 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 hover:shadow-sm transition-all text-sm flex items-center gap-1.5 shadow-sm w-fit">
-            🏠 กลับไประบบจัดการ
-          </Link>
+          <AdminHomeButton className="w-fit" />
         </div>
         <p className="text-gray-600 mb-8">การตั้งค่านี้เห็นได้เฉพาะผู้ดูแลระบบที่ login แล้วเท่านั้น</p>
 

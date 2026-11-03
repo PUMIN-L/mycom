@@ -1,5 +1,6 @@
 "use client";
 import { useState, useEffect, useRef, useMemo, Suspense } from "react";
+import AdminHomeButton from "../components/AdminHomeButton";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "../context/AuthContext";
 import Toast from "../components/Toast";
@@ -642,10 +643,7 @@ function CustomersInner() {
             <Link href="/dashboard" className="px-5 py-2.5 bg-white border border-gray-200 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 hover:shadow-sm transition-all flex items-center gap-2">
               📊 Dashboard ยอดขาย
             </Link>
-            <Link href="/adminpanel" className="px-5 py-2.5 bg-white border border-gray-200 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 hover:shadow-sm transition-all flex items-center gap-2">
-              <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
-              ไปที่หน้าระบบจัดการ
-            </Link>
+            <AdminHomeButton />
           </div>
         </div>
 

@@ -79,7 +79,7 @@ async function openAndDirty(container: HTMLElement) {
 
 /** Click through to the leave guard's save option. */
 async function chooseSaveAndLeave() {
-  fireEvent.click(screen.getByText("กลับไป Admin Panel"));
+  fireEvent.click(screen.getByRole("link", { name: "กลับหน้าระบบจัดการ" }));
   const save = await screen.findByRole("button", { name: /บันทึกแล้วออก/ });
   await act(async () => {
     fireEvent.click(save);

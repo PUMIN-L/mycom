@@ -1,5 +1,6 @@
 "use client";
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import AdminHomeButton from "../components/AdminHomeButton";
 import { useRouter } from "next/navigation";
 import { useAuth } from "../context/AuthContext";
 import Toast from "../components/Toast";
@@ -904,12 +905,7 @@ export default function ServiceJobPage() {
               )}
             </div>
             <div className="flex items-center gap-2 flex-wrap">
-              <button
-                onClick={() => guardedNavigate("/adminpanel")}
-                className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition"
-              >
-                🏠 กลับไปหน้าระบบจัดการ
-              </button>
+              <AdminHomeButton onNavigate={() => guardedNavigate("/adminpanel")} />
               <button
                 onClick={() => guardedNavigate("/service-job/saved")}
                 className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition"
