@@ -38,23 +38,28 @@ export const LOGIN_2FA_COOKIE_CLEAR = { ...LOGIN_2FA_COOKIE_OPTIONS, maxAge: 0 }
 export interface TwoFactorPending {
   userId: string;
   username: string;
+  /** The login attempt the token belongs to (its jti). The login history
+   *  joins the password step and the code step by it (lib/loginHistory.ts). */
+  attemptId: string;
 }
 
 /**
  * A pending token for a user whose password was just accepted. Carries the
  * session epoch, so "ออกจากระบบอุปกรณ์อื่นทั้งหมด" voids a half-finished
- * login too. `epoch` is for a caller that has just bumped it.
+ * login too, and `attemptId` (a fresh UUID per login attempt, as its jti).
+ * `epoch` is for a caller that has just bumped it.
  */
 export async function issueTwoFactorPendingToken(
   userId: string,
   username: string,
+  attemptId: string,
   epoch?: number
 ): Promise<string> {
   return new SignJWT({ un: username, ep: epoch ?? (await getSessionEpoch()) })
     .setProtectedHeader({ alg: "HS256" })
     .setSubject(userId)
     .setAudience(AUDIENCE)
-    .setJti(crypto.randomUUID())
+    .setJti(attemptId)
     .setIssuedAt()
     .setExpirationTime(`${TTL_SECONDS}s`)
     .sign(pendingKey());
@@ -71,8 +76,10 @@ export async function readTwoFactorPendingToken(token: string | undefined): Prom
       audience: AUDIENCE,
     });
     if (typeof payload.sub !== "string" || !payload.sub || typeof payload.un !== "string") return null;
+    // Every pending token has carried a jti since it was introduced.
+    if (typeof payload.jti !== "string" || !payload.jti) return null;
     if ((Number(payload.ep) || 0) < (await getSessionEpoch())) return null;
-    return { userId: payload.sub, username: payload.un };
+    return { userId: payload.sub, username: payload.un, attemptId: payload.jti };
   } catch {
     return null;
   }

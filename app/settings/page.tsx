@@ -8,6 +8,7 @@ import Toast from "../components/Toast";
 import ConfirmDialog from "../components/ConfirmDialog";
 import TwoFactorSettings from "../components/TwoFactorSettings";
 import PasswordSettings from "../components/PasswordSettings";
+import LoginHistorySettings from "../components/LoginHistorySettings";
 
 interface OrphanAsset {
   publicId: string;
@@ -992,6 +993,9 @@ export default function SettingsPage() {
 
         {/* ── โหมดปรับปรุงเว็บไซต์ (Maintenance Mode) ─────────────────── */}
         <MaintenanceModeSection showToast={showToast} />
+
+        {/* ── ประวัติการเข้าสู่ระบบ ─────────────────────────────────────── */}
+        <LoginHistorySettings />
 
         {/* ── ออกจากระบบอุปกรณ์อื่น ─────────────────────────────────────── */}
         <SessionsSection showToast={showToast} />

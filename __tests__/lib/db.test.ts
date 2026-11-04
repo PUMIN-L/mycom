@@ -40,14 +40,14 @@ process.env.DB_USER = 'tester';
 process.env.DB_PASSWORD = 'pw';
 process.env.DB_NAME = 'testdb';
 
-// A version SELECT result that MATCHES SCHEMA_VERSION (48) → bootstrap fast-path,
+// A version SELECT result that MATCHES SCHEMA_VERSION (49) → bootstrap fast-path,
 // skipping DDL. Value is a string because settings stores VARCHAR values.
 //
 // ⚠️ This constant only ever goes UP, in step with db.ts. The bootstrap's fast
 // path is `stored >= SCHEMA_VERSION`, so a number the live database has already
 // recorded can never trigger a migration again — reusing one silently skips the
 // entire migration in production (that is how v33 was burned).
-const SCHEMA_VERSION = '48';
+const SCHEMA_VERSION = '49';
 const SCHEMA_MATCH: [Array<{ value: string }>, unknown[]] = [[{ value: SCHEMA_VERSION }], []];
 // An empty result → no schema_version row / no admin row → full bootstrap.
 const EMPTY: [unknown[], unknown[]] = [[], []];
@@ -623,6 +623,26 @@ describe('db.ts', () => {
       // _initPromise was cleared on failure → the next call re-inits successfully.
       const pool = await db.getDbConnection();
       expect(pool).toBe(mockPool);
+    });
+  });
+
+  // ── v49: login history ───────────────────────────────────────────────────────
+  describe('v49 login history', () => {
+    it('creates login_events with every column the store writes, and its createdAt index', async () => {
+      const db = await freshImport();
+      mockConnection.query.mockResolvedValue(EMPTY);
+
+      await db.getDbConnection();
+      const create = bootstrapSql().find((s) => /CREATE TABLE IF NOT EXISTS login_events/.test(s));
+      expect(create).toBeDefined();
+      // The columns app/lib/loginEvents.ts inserts and reads.
+      for (const column of [
+        'id', 'userId', 'username', 'outcome', 'method', 'newDevice',
+        'alert', 'attemptId', 'ip', 'location', 'userAgent', 'createdAt',
+      ]) {
+        expect(create).toMatch(new RegExp(`\\n\\s*${column} `));
+      }
+      expect(create).toMatch(/KEY idx_login_events_createdAt \(createdAt\)/);
     });
   });
 

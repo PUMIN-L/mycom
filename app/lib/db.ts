@@ -13,7 +13,7 @@ import { repairTruncatedRichText } from "./sanitizeHtml";
 // did not lower the 33 already written to `settings`, so the next change to
 // reuse 33 was skipped entirely and its tables were never created in
 // production. Reverting a migration means moving FORWARD to a new number.
-const SCHEMA_VERSION = 48;
+const SCHEMA_VERSION = 49;
 
 type DbPool = ReturnType<typeof mysql.createPool>;
 
@@ -161,6 +161,30 @@ async function bootstrapSchemaOnce(): Promise<void> {
           usedAt VARCHAR(255) DEFAULT NULL,
           createdAt VARCHAR(255) NOT NULL,
           UNIQUE KEY uq_user_backup_code (userId, codeHash)
+        )
+      `);
+
+    // v49 — login history (lib/loginEvents.ts): one row per login step that
+    // got past the password, shown on /settings. `alert` is what became of the
+    // new-device email (NULL when none was due). `attemptId` is the same on a
+    // two-factor login's password step and its code step, which the history
+    // joins by it. Pruned to a year on write. The city in `location` and the
+    // user agent are free text from headers, so utf8mb4.
+    await connection.query(`
+        CREATE TABLE IF NOT EXISTS login_events (
+          id VARCHAR(36) PRIMARY KEY,
+          userId VARCHAR(255) NOT NULL,
+          username VARCHAR(255) NOT NULL,
+          outcome VARCHAR(20) NOT NULL,
+          method VARCHAR(10) NOT NULL,
+          newDevice TINYINT(1) NOT NULL DEFAULT 0,
+          alert VARCHAR(16) DEFAULT NULL,
+          attemptId VARCHAR(36) DEFAULT NULL,
+          ip VARCHAR(64) DEFAULT NULL,
+          location VARCHAR(160) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+          userAgent VARCHAR(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+          createdAt VARCHAR(30) NOT NULL,
+          KEY idx_login_events_createdAt (createdAt)
         )
       `);
 

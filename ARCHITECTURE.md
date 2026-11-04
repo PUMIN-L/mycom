@@ -234,6 +234,7 @@ manual auth checks — that's the duplication this replaced.
 | `GET /api/auth/me`, `POST /api/auth/login`/`logout` | `POST /api/upload`, `DELETE /api/upload/delete` | |
 | `POST /api/auth/login/2fa` (needs the 5-min pending cookie, §10) | `GET /api/auth/2fa`, `POST /api/auth/2fa/{setup,enable,disable,backup-codes}` — the last three also re-ask the password (+ a code once on) | |
 | `POST /api/auth/forgot-password` + `/otp` (emailed code to the fixed address, + a 2FA code once on, §10) | `POST /api/auth/password` + `/otp` — the current password, an emailed code (+ a 2FA code once on) | |
+| — | `GET /api/auth/login-history` (every account's logins, §10) | |
 | `POST /api/contact` (sends email)               | all `/api/quotations/**` (GET/POST/[id]/docnos) | `cleanup` = **cron** (`CRON_SECRET`) |
 | `GET /api/health`                               | `GET`/`PUT /api/settings/contact-email` | |
 | —                                               | all `/api/admin/**`, incl. `POST`/`GET /api/admin/sales` + `[id]/items` and `GET /api/admin/equipments/serial-check` (§8a), plus the task board's `/api/admin/tasks/**` + `/api/admin/task-topics/**` (§8c), and the asset register / stock's `/api/admin/inventory/[kind]/**` (§8d) | |
@@ -1256,6 +1257,44 @@ package. Storage and checks in [`lib/twoFactor.ts`](./app/lib/twoFactor.ts).
   people share it, they all scan the same QR — it is per ACCOUNT, not per
   person. Per-person codes need per-person accounts first.
 
+**Login history and the new-device email (schema v49, table `login_events`)**
+— [`lib/loginEvents.ts`](./app/lib/loginEvents.ts), lines built by
+[`lib/loginHistory.ts`](./app/lib/loginHistory.ts), shown on /settings →
+"ประวัติการเข้าสู่ระบบ" (`GET /api/auth/login-history`):
+- **Every step that got past the password is stored:** a session on the
+  password alone (`signed_in` / `password`), a right password on a 2FA account
+  (`password_ok`), and its code step (`signed_in` / `totp` | `backup`). The
+  routes call `noteLoginEvent` only after the step succeeded; the write and the
+  email run in `after()`, so the login waits for neither and neither can fail
+  it. **Wrong passwords are not stored** — the lockout counts those, and rows
+  anyone could add by typing made-up usernames would be a way to fill the
+  database. Pruned to 365 days on each write.
+- **The email** goes when the PASSWORD step succeeds in a browser with no valid
+  device cookie for that account — never logged in there, cookies cleared, a
+  private window, or trust voided by "ออกจากระบบอุปกรณ์อื่นทั้งหมด" / a password
+  change. It goes to `PASSWORD_OTP_EMAIL`, never the editable contact email
+  (same reason as the codes). **On a 2FA account it goes at the password step
+  too**: a right password that no code follows means the password has leaked,
+  and that login never reaches a session. The code step never emails again.
+- **At most 5 emails an hour and 20 a day** (counted from rows with
+  `alert = 'sent'`). Someone with the password could otherwise log in over and
+  over and spend Gmail's daily sending limit — the mailbox the password-reset
+  codes come from. Past the cap the step is stored as `capped`. A failed count
+  sends anyway; a step that cannot be stored still gets its email.
+- **The history pairs the two steps of a 2FA login into one line**
+  (`mergeLoginSteps`) by their **`attemptId`**: the password step makes a UUID,
+  the pending token carries it as its jti (`readTwoFactorPendingToken` refuses
+  a token without one), and the code step stores the same id. ⚠️ Never pair by
+  time: one account can have several attempts open at once (a shared account,
+  or a stranger typing the password while the owner logs in), and "the latest
+  password step before the code" joined the owner's code to the stranger's
+  step — leaving the warning line with the OWNER's device and address. A
+  password step nothing joined is shown as "ใส่รหัสผ่านถูก แต่ไม่ได้ใส่รหัสยืนยัน
+  2 ขั้นต่อ", highlighted.
+- Address, place and browser are for reading only: `clientKey`, Vercel's
+  `x-vercel-ip-city` / `-country`, and Next's `userAgent()` for "Chrome บน
+  Windows". Nothing decides anything from them.
+
 **Emailed one-time codes (OTP)** gate the actions a stolen session should
 not be able to take alone: changing the contact email, the company profile,
 maintenance mode, deleting equipment with service history, and deleting
@@ -1717,7 +1756,7 @@ the public pages follow; `__tests__/components/MobileLayout.test.tsx` pins them:
   has a composite PK and, like the rest of that group, no foreign keys), plus
   the printed service job sheet (v38) — **`service_jobs`**,
   **`service_job_equipments`** (composite PK `(jobId, equipmentId)`, no foreign
-  keys; see §13).
+  keys; see §13), plus **`login_events`** (v49 — the login history, §10).
 
 > ⚠️ The seed inserts an `admin` user (id `admin-001`) from `ADMIN_USERNAME` /
 > `ADMIN_PASSWORD` (env, **not** source) — but only if the row doesn't already

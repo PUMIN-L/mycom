@@ -1,5 +1,6 @@
 import "server-only";
 import nodemailer from "nodemailer";
+import { formatDisplayDateTime } from "./dateFormat";
 
 // Outbound email via SMTP (nodemailer). Defaults target Gmail — create an App
 // Password (Google Account → Security → 2-Step Verification → App passwords)
@@ -272,6 +273,49 @@ export async function sendPasswordOtpEmail(
       `(รหัสนี้มีอายุ ${ttlMinutes} นาที และใช้ได้ครั้งเดียว)\n\n` +
       `ห้ามบอกรหัสนี้กับผู้อื่น ไม่มีใครมีเหตุผลที่ต้องขอรหัสนี้จากคุณ\n\n` +
       `หากคุณไม่ได้เป็นผู้ดำเนินการ แปลว่ามีผู้อื่นพยายามเปลี่ยนรหัสผ่านของบัญชีนี้ — อย่ากรอกรหัสนี้ที่ใด และตรวจสอบความปลอดภัยของบัญชีผู้ดูแลระบบทันที`
+  );
+}
+
+/**
+ * A browser this account has never logged in from got the password right
+ * (lib/loginEvents.ts) — so a stolen password is noticed. Always to
+ * lib/passwordReset.ts's fixed address. `awaitingCode`: the account has 2FA,
+ * and the code step is still ahead of whoever it was.
+ */
+export async function sendNewDeviceLoginEmail(
+  to: string,
+  info: {
+    username: string;
+    awaitingCode: boolean;
+    at: string;
+    device: string;
+    ip: string | null;
+    location: string | null;
+  }
+): Promise<void> {
+  const what = info.awaitingCode
+    ? `มีการใส่รหัสผ่านของบัญชีผู้ดูแลระบบ "${info.username}" ถูกต้อง จากอุปกรณ์ที่ระบบไม่รู้จัก\n\n` +
+      `บัญชีนี้เปิดการยืนยันตัวตน 2 ขั้นไว้ ผู้นั้นจึงยังเข้าระบบไม่ได้ จนกว่าจะใส่รหัสจากแอปหรือรหัสสำรองถูก`
+    : `บัญชีผู้ดูแลระบบ "${info.username}" เข้าสู่ระบบจากอุปกรณ์ที่ระบบไม่รู้จัก`;
+  const ifNotYou = info.awaitingCode
+    ? `ถ้าไม่ใช่คุณ แปลว่ารหัสผ่านรั่วแล้ว — เปลี่ยนรหัสผ่านทันทีที่หน้า "ตั้งค่าระบบ" (หรือหน้า "ลืมรหัสผ่าน" ถ้าเข้าระบบไม่ได้) และอย่าบอกรหัสจากแอปกับใคร`
+    : `ถ้าไม่ใช่คุณ แปลว่ารหัสผ่านรั่วแล้ว:\n` +
+      `1. เปลี่ยนรหัสผ่านทันทีที่หน้า "ตั้งค่าระบบ" (หรือหน้า "ลืมรหัสผ่าน" ถ้าเข้าระบบไม่ได้) — ทุกอุปกรณ์อื่นจะถูกออกจากระบบ\n` +
+      `2. เปิดการยืนยันตัวตน 2 ขั้น ถ้ายังไม่ได้เปิด`;
+  await sendOtpNotification(
+    to,
+    info.awaitingCode
+      ? "แจ้งเตือน: มีคนใส่รหัสผ่านถูกต้องจากอุปกรณ์ใหม่"
+      : "แจ้งเตือน: มีการเข้าสู่ระบบจากอุปกรณ์ใหม่",
+    `${what}\n\n` +
+      `เวลา: ${formatDisplayDateTime(info.at)} (เวลาไทย)\n` +
+      `อุปกรณ์: ${info.device}\n` +
+      `IP: ${info.ip ?? "ไม่ทราบ"}\n` +
+      `ตำแหน่งโดยประมาณ: ${info.location ?? "ไม่ทราบ"}\n\n` +
+      `ถ้าเป็นคุณเอง เช่น เข้าจากเครื่องหรือเบราว์เซอร์ใหม่ ใช้หน้าต่างไม่ระบุตัวตน (incognito) เพิ่งล้างคุกกี้ ` +
+      `หรือเพิ่งเปลี่ยนรหัสผ่าน / กดออกจากระบบอุปกรณ์อื่นทั้งหมด ไม่ต้องทำอะไร\n\n` +
+      `${ifNotYou}\n\n` +
+      `ดูประวัติการเข้าสู่ระบบทั้งหมดได้ที่หน้า "ตั้งค่าระบบ"`
   );
 }
 

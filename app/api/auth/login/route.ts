@@ -18,6 +18,7 @@ import {
 } from "../../../lib/loginThrottle";
 import { LOGIN_2FA_COOKIE, LOGIN_2FA_COOKIE_OPTIONS, issueTwoFactorPendingToken } from "../../../lib/twoFactorPending";
 import { clientKey } from "../../../lib/rateLimit";
+import { noteLoginEvent } from "../../../lib/loginEvents";
 import { RowDataPacket } from "mysql2";
 
 // Login throttle keyed on the *username* being targeted, persisted in the
@@ -120,6 +121,20 @@ export const POST = withRoute(
     // bucket, or it would reopen a lock someone else is still hammering.
     await clearLoginFailures(lockKey);
 
+    // Login history, and the new-device email — which goes out HERE even on a
+    // two-factor account: a right password that no code follows means the
+    // password has leaked (lib/loginEvents.ts). `attemptId` rides in the
+    // pending token to the code step, so the history joins the two steps of
+    // THIS attempt — never another one made meanwhile on the same account.
+    const attemptId = crypto.randomUUID();
+    const step = {
+      userId: String(user.id),
+      username: String(user.username),
+      method: "password" as const,
+      newDevice: deviceId === null,
+      attemptId,
+    };
+
     // Two-factor accounts get NO session here — only a 5-minute pending token,
     // good for nothing but POST /api/auth/login/2fa (its cookie path and its
     // signing key both say so). The session, and the trusted-device cookie,
@@ -130,9 +145,10 @@ export const POST = withRoute(
       const response = NextResponse.json({ twoFactorRequired: true });
       response.cookies.set(
         LOGIN_2FA_COOKIE,
-        await issueTwoFactorPendingToken(String(user.id), String(user.username)),
+        await issueTwoFactorPendingToken(String(user.id), String(user.username), attemptId),
         LOGIN_2FA_COOKIE_OPTIONS
       );
+      noteLoginEvent(request, { ...step, outcome: "password_ok" });
       return response;
     }
 
@@ -145,6 +161,7 @@ export const POST = withRoute(
       await issueLoginDeviceToken(user.username),
       LOGIN_DEVICE_COOKIE_OPTIONS
     );
+    noteLoginEvent(request, { ...step, outcome: "signed_in" });
     return response;
   }
 );

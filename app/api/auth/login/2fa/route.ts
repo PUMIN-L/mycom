@@ -21,6 +21,7 @@ import {
 } from "../../../../lib/twoFactorPending";
 import { countUnusedBackupCodes, verifySecondFactor } from "../../../../lib/twoFactor";
 import { clientKey } from "../../../../lib/rateLimit";
+import { noteLoginEvent } from "../../../../lib/loginEvents";
 
 // POST /api/auth/login/2fa — step two of logging in to a two-factor account.
 //
@@ -100,6 +101,16 @@ export const POST = withRoute(
       await issueLoginDeviceToken(pending.username),
       LOGIN_DEVICE_COOKIE_OPTIONS
     );
+    // Stored for the history only: the new-device email, if one was due, went
+    // out at the password step (lib/loginEvents.ts).
+    noteLoginEvent(request, {
+      userId: pending.userId,
+      username: pending.username,
+      outcome: "signed_in",
+      method: result.method,
+      newDevice: deviceId === null,
+      attemptId: pending.attemptId,
+    });
     return response;
   }
 );

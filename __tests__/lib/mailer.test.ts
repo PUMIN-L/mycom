@@ -25,6 +25,7 @@ import {
   sendCompanyProfileOtpEmail,
   sendOrphanDeleteOtpEmail,
   sendEquipmentDeleteOtpEmail,
+  sendNewDeviceLoginEmail,
   type ContactMessage,
 } from '@/app/lib/mailer';
 
@@ -247,6 +248,53 @@ describe('mailer', () => {
       await expect(
         sendEquipmentDeleteOtpEmail('a@site.com', '333333', { productName: 'X', completedScheduleCount: 1 })
       ).rejects.toThrow('SMTP down');
+    });
+  });
+
+  describe('sendNewDeviceLoginEmail', () => {
+    const info = {
+      username: 'admin',
+      awaitingCode: false,
+      at: '2026-11-04T07:00:00.000Z',
+      device: 'Chrome บน Windows',
+      ip: '203.0.113.9',
+      location: 'Bangkok, TH',
+    };
+
+    it('tells the owner who logged in, when (Thai time), from what and where, and what to do if it was not him', async () => {
+      process.env.SMTP_USER = 'system@example.com';
+      await sendNewDeviceLoginEmail('owner@site.com', info);
+      const mail = sendMailMock.mock.calls[0][0];
+      expect(mail.from).toEqual({ name: 'ระบบเว็บไซต์ (Profin Lab Scale)', address: 'system@example.com' });
+      expect(mail.to).toEqual({ name: '', address: 'owner@site.com' });
+      expect(mail.subject).toBe('แจ้งเตือน: มีการเข้าสู่ระบบจากอุปกรณ์ใหม่');
+      expect(mail.text).toContain('บัญชีผู้ดูแลระบบ "admin" เข้าสู่ระบบจากอุปกรณ์ที่ระบบไม่รู้จัก');
+      expect(mail.text).toContain('เวลา: 04 Nov 2026 14:00 (เวลาไทย)');
+      expect(mail.text).toContain('อุปกรณ์: Chrome บน Windows');
+      expect(mail.text).toContain('IP: 203.0.113.9');
+      expect(mail.text).toContain('ตำแหน่งโดยประมาณ: Bangkok, TH');
+      expect(mail.text).toContain('เปลี่ยนรหัสผ่านทันที');
+      expect(mail.text).toContain('เปิดการยืนยันตัวตน 2 ขั้น');
+      // The owner's own ordinary reasons for a "new" browser, so one is not alarming.
+      expect(mail.text).toContain('ใช้หน้าต่างไม่ระบุตัวตน (incognito)');
+      expect(mail.text).toContain('หรือเพิ่งเปลี่ยนรหัสผ่าน / กดออกจากระบบอุปกรณ์อื่นทั้งหมด ไม่ต้องทำอะไร');
+    });
+
+    it('on a two-factor account: the password was right, the code is still ahead', async () => {
+      await sendNewDeviceLoginEmail('owner@site.com', { ...info, awaitingCode: true, ip: null, location: null });
+      const mail = sendMailMock.mock.calls[0][0];
+      expect(mail.subject).toBe('แจ้งเตือน: มีคนใส่รหัสผ่านถูกต้องจากอุปกรณ์ใหม่');
+      expect(mail.text).toContain('ใส่รหัสผ่านของบัญชีผู้ดูแลระบบ "admin" ถูกต้อง');
+      expect(mail.text).toContain('ยังเข้าระบบไม่ได้ จนกว่าจะใส่รหัสจากแอปหรือรหัสสำรองถูก');
+      expect(mail.text).toContain('IP: ไม่ทราบ');
+      expect(mail.text).toContain('ตำแหน่งโดยประมาณ: ไม่ทราบ');
+      expect(mail.text).toContain('อย่าบอกรหัสจากแอปกับใคร');
+      expect(mail.text).not.toContain('เปิดการยืนยันตัวตน 2 ขั้น ถ้ายังไม่ได้เปิด');
+    });
+
+    it('propagates SMTP failures (throws)', async () => {
+      sendMailMock.mockRejectedValueOnce(new Error('SMTP down'));
+      await expect(sendNewDeviceLoginEmail('owner@site.com', info)).rejects.toThrow('SMTP down');
     });
   });
 });
