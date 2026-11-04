@@ -40,9 +40,20 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# local debug / scratch scripts — operator tooling, not for the repo
+# local debug / scratch scripts — operator tooling, not for the repo. One-off
+# patch scripts, a DB query script and a test log all reached the repo root
+# this way (removed in November 2026); tests live in __tests__/ only.
 /test-*.js
+/test-*.ts
+/test-*.tsx
+/test_*.js
 /scratch/
+/scratch.*
+/patch_*.js
+/query_*.js
+/*.patch
+/*.log
+/.dev_pid
 /dummy.pdf
 
 # patch/merge debris. A committed *.orig is a stale duplicate of a file that has
