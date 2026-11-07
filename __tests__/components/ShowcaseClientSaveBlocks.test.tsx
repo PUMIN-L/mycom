@@ -10,13 +10,18 @@
  * found out on the next reload.
  */
 
-import { render, screen, fireEvent, waitFor, cleanup, within, act } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, cleanup, within, act, configure } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // ShowcaseClient is the heaviest component rendered in the suite. Alone this
 // file runs its tests in ~4 s; in a full parallel run (the pre-push hook) a
 // starved worker has made single tests take 15–24 s and fail on the default
 // 5 s limit. More headroom here, for this file only — a real hang still fails.
+// testing-library's own 1 s wait gets the same headroom: on 2026-11-07 a
+// starved worker ran out of it while the delete dialog (a next/dynamic import)
+// was still loading. Every wait in this file is for something to APPEAR, so a
+// longer ceiling costs the passing tests nothing — keep it that way.
+configure({ asyncUtilTimeout: 10_000 });
 vi.setConfig({ testTimeout: 30_000 });
 
 vi.mock("next/navigation", () => ({
@@ -157,11 +162,14 @@ describe("ShowcaseClient — reordering blocks (moveBlock)", () => {
 });
 
 describe("ShowcaseClient — deleting a block", () => {
+  // ConfirmDialog has no role="dialog": waiting for one used up the whole wait
+  // on every run, then searched the entire page (Quill toolbar and all) for
+  // "ลบ". It is found by its question instead — once its module has loaded
+  // (next/dynamic) — and its own "ลบ" is clicked.
   async function confirmDelete() {
     fireEvent.click(screen.getAllByTitle("ลบบล็อกนี้")[0]);
-    const dialog = await screen.findByRole("dialog").catch(() => null);
-    const scope = dialog ? within(dialog) : screen;
-    fireEvent.click(await scope.findByRole("button", { name: /^ลบ/ }));
+    const question = await screen.findByText("ต้องการลบข้อความนี้ใช่ไหม?");
+    fireEvent.click(within(question.parentElement!).getByRole("button", { name: "ลบ" }));
   }
 
   it('does not say "ลบข้อความแล้ว" when the delete never reached the database', async () => {
