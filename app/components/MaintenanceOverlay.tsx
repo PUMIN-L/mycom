@@ -3,7 +3,7 @@ import { useState, useEffect } from "react";
 import { usePathname } from "next/navigation";
 import { useAuth } from "../context/AuthContext";
 import { SITE_LEGAL_NAME, SITE_NAME } from "../lib/site";
-import { MAINTENANCE_BLOCKED_PATHS } from "../lib/maintenanceConfig";
+import { isMaintenanceBlockedPath } from "../lib/maintenanceConfig";
 
 /**
  * Full-screen maintenance overlay shown to non-admin visitors when
@@ -58,8 +58,10 @@ export default function MaintenanceOverlay({
   if (isLoggedIn) return null;
 
   // Only block specific pages (/, /contact, /catalog). Other public pages
-  // like /about, /showcase remain accessible during maintenance.
-  if (!MAINTENANCE_BLOCKED_PATHS.includes(pathname as typeof MAINTENANCE_BLOCKED_PATHS[number])) return null;
+  // like /about, /showcase remain accessible during maintenance. The home
+  // page's cached HTML is rendered as "/index" — isMaintenanceBlockedPath
+  // reads that as "/", or the overlay is missing from it (maintenanceConfig.ts).
+  if (!isMaintenanceBlockedPath(pathname)) return null;
 
   // Maintenance mode is off — nothing to show.
   if (!enabled) return null;

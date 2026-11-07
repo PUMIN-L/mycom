@@ -16,6 +16,9 @@
 
 import { render, screen, cleanup, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { act } from "react";
+import { renderToString } from "react-dom/server";
+import { hydrateRoot, type Root } from "react-dom/client";
 import MaintenanceOverlay from "@/app/components/MaintenanceOverlay";
 import { SITE_LEGAL_NAME, SITE_NAME } from "@/app/lib/site";
 import { LINE_ID, LINE_URL, LINE_APP_URL, CONTACT_EMAIL } from "@/app/lib/contact";
@@ -117,6 +120,49 @@ describe("MaintenanceOverlay", () => {
     render(<MaintenanceOverlay initialEnabled={initialEnabled} />);
     await waitFor(() => expect(global.fetch).toHaveBeenCalled());
     expect(screen.queryByText(OVERLAY_HEADING)).not.toBeInTheDocument();
+  });
+});
+
+// Vercel's cached copy of the home page (ISR) is rendered with the path
+// "/index" — usePathname() says "/index" on the server, "/" in the browser
+// (the live page's flight data reads `"c":["","index"]`). The overlay must be
+// in that HTML, and the browser's first render must match it: when it was not,
+// visitors saw the home page until the JavaScript ran, and React threw the
+// whole server-rendered page away over the mismatch (error #418, every visit).
+describe("MaintenanceOverlay — the home page rendered as /index", () => {
+  it("is in the server's HTML of the home page", () => {
+    mockPathname = "/index";
+    const html = renderToString(<MaintenanceOverlay initialEnabled />);
+    expect(html).toContain(OVERLAY_HEADING);
+  });
+
+  it("hydrates over that HTML in the browser (path /) without a mismatch", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {}))); // the re-poll never answers
+    mockPathname = "/index";
+    const container = document.createElement("div");
+    container.innerHTML = renderToString(<MaintenanceOverlay initialEnabled />);
+    document.body.appendChild(container);
+
+    mockPathname = "/";
+    const onRecoverableError = vi.fn();
+    let root: Root | undefined;
+    await act(async () => {
+      root = hydrateRoot(container, <MaintenanceOverlay initialEnabled />, { onRecoverableError });
+    });
+    try {
+      expect(onRecoverableError).not.toHaveBeenCalled();
+      expect(container.textContent).toContain(OVERLAY_HEADING);
+    } finally {
+      act(() => root?.unmount());
+      container.remove();
+    }
+  });
+
+  it("still leaves every other page alone", () => {
+    for (const path of ["/about", "/showcase/1", "/index.html", "/contact/index"]) {
+      mockPathname = path;
+      expect(renderToString(<MaintenanceOverlay initialEnabled />)).not.toContain(OVERLAY_HEADING);
+    }
   });
 });
 

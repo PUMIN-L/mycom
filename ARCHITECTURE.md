@@ -1620,6 +1620,20 @@ language the visitor chose (saved in `localStorage` `idkt-lang`) is applied
 now; never re-add a guess. Indexing English/Chinese separately would need
 per-language URLs and hreflang — not built.
 
+**The maintenance overlay is part of the HTML** of the pages it covers
+(`MAINTENANCE_BLOCKED_PATHS`: `/`, `/contact`, `/catalog`) — `app/layout.tsx`
+passes the flag down, so a visitor never reads the page first. ⚠️ Vercel's
+cached copy of the home page (ISR) is rendered with the path **`/index`**:
+`usePathname()` says `/index` on the server and `/` in the browser (the live
+page's flight data reads `"c":["","index"]`). Match a page with
+`isMaintenanceBlockedPath()` (`lib/maintenanceConfig.ts`), never the list alone.
+Matching the list left the overlay out of the home page's HTML, and the
+browser's first render, overlay shown, no longer matched it: React threw the
+whole server-rendered page away and drew it again on every visit (hydration
+error #418, found 2026-11-07 by a headless-browser pass over the live site).
+`__tests__/components/MaintenanceOverlay.test.tsx` renders it as `/index` and
+hydrates it as `/`.
+
 **A service-area business.** Customers never come to the premises: the
 equipment is delivered and serviced at theirs, anywhere in Thailand. Its
 Google Business Profile hides the address, and the site must say the same:
