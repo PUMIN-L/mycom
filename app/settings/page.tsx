@@ -10,6 +10,7 @@ import TwoFactorSettings from "../components/TwoFactorSettings";
 import PasswordSettings from "../components/PasswordSettings";
 import LoginHistorySettings from "../components/LoginHistorySettings";
 import MissingImagesScanner from "../components/MissingImagesScanner";
+import { ORPHAN_DELETE_MAX } from "../lib/orphanDelete";
 
 interface OrphanAsset {
   publicId: string;
@@ -393,20 +394,25 @@ export default function SettingsPage() {
     }
   };
 
+  // One delete takes at most ORPHAN_DELETE_MAX files (one emailed code each),
+  // so the selection never holds more — the rest wait for the next round
+  // (the toolbar says so once the selection is full).
   const toggleOrphanSelection = (publicId: string) => {
     setSelectedOrphans((prev) => {
       const next = new Set(prev);
       if (next.has(publicId)) next.delete(publicId);
-      else next.add(publicId);
+      else if (next.size < ORPHAN_DELETE_MAX) next.add(publicId);
       return next;
     });
   };
 
+  const selectableOrphanCount = Math.min(orphans.length, ORPHAN_DELETE_MAX);
+  const orphanSelectionFull = orphans.length > ORPHAN_DELETE_MAX && selectedOrphans.size >= ORPHAN_DELETE_MAX;
   const toggleSelectAll = () => {
-    if (selectedOrphans.size === orphans.length) {
+    if (selectedOrphans.size >= selectableOrphanCount) {
       setSelectedOrphans(new Set());
     } else {
-      setSelectedOrphans(new Set(orphans.map((o) => o.publicId)));
+      setSelectedOrphans(new Set(orphans.slice(0, ORPHAN_DELETE_MAX).map((o) => o.publicId)));
     }
   };
 
@@ -456,12 +462,26 @@ export default function SettingsPage() {
         return;
       }
       showToast(
-        `ลบสำเร็จ ${data.deleted} รูป${data.skipped ? ` (ข้าม ${data.skipped} รูปที่ยังใช้อยู่)` : ""}`,
+        `ลบสำเร็จ ${data.deleted} รูป${data.skipped ? ` (ข้าม ${data.skipped} รูปที่ยังใช้อยู่)` : ""}${
+          data.failed ? ` · ลบไม่สำเร็จ ${data.failed} รูป (ยังอยู่ในรายการ ลองลบใหม่ได้)` : ""
+        }`,
         data.failed ? "error" : "success"
       );
-      // Remove deleted items from the list
-      setOrphans((prev) => prev.filter((o) => !selectedOrphans.has(o.publicId)));
-      setOrphanStats((prev) => prev ? { ...prev, orphanCount: prev.orphanCount - data.deleted } : null);
+      // Off the list: only what the server says is gone (deleted) or no longer
+      // an orphan (skipped — in use again). A file that failed stays listed.
+      const deletedIds: string[] = Array.isArray(data.deletedIds) ? data.deletedIds : [];
+      const skippedIds: string[] = Array.isArray(data.skippedIds) ? data.skippedIds : [];
+      const settled = new Set([...deletedIds, ...skippedIds]);
+      setOrphans((prev) => prev.filter((o) => !settled.has(o.publicId)));
+      setOrphanStats((prev) =>
+        prev
+          ? {
+              total: prev.total - deletedIds.length,
+              inUse: prev.inUse + skippedIds.length,
+              orphanCount: prev.orphanCount - settled.size,
+            }
+          : null
+      );
       setSelectedOrphans(new Set());
       setShowDeleteOtpModal(false);
       setDeleteOtp("");
@@ -1072,14 +1092,20 @@ export default function SettingsPage() {
                 <label className="flex items-center gap-2 text-sm font-medium text-gray-700 cursor-pointer">
                   <input
                     type="checkbox"
-                    checked={selectedOrphans.size === orphans.length && orphans.length > 0}
+                    checked={orphans.length > 0 && selectedOrphans.size >= selectableOrphanCount}
                     onChange={toggleSelectAll}
                     className="w-4 h-4 rounded border-gray-300 text-red-600 focus:ring-red-500"
                   />
-                  เลือกทั้งหมด ({orphans.length} รูป
-                  {orphans.length > 0 && (
-                    <> — {formatBytes(orphans.reduce((s, o) => s + o.bytes, 0))}</>  
-                  )})
+                  {orphans.length > ORPHAN_DELETE_MAX ? (
+                    <>
+                      เลือก {ORPHAN_DELETE_MAX} รูปแรก (จากทั้งหมด {orphans.length} รูป —{" "}
+                      {formatBytes(orphans.reduce((s, o) => s + o.bytes, 0))} · ลบได้ครั้งละไม่เกิน {ORPHAN_DELETE_MAX} รูป)
+                    </>
+                  ) : (
+                    <>
+                      เลือกทั้งหมด ({orphans.length} รูป — {formatBytes(orphans.reduce((s, o) => s + o.bytes, 0))})
+                    </>
+                  )}
                 </label>
                 {selectedOrphans.size > 0 && (
                   <button
@@ -1101,6 +1127,11 @@ export default function SettingsPage() {
                   </button>
                 )}
               </div>
+              {orphanSelectionFull && (
+                <p role="status" className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                  เลือกครบ {ORPHAN_DELETE_MAX} รูปแล้ว (ลบได้ครั้งละไม่เกิน {ORPHAN_DELETE_MAX} รูป) — ลบชุดนี้ก่อน แล้วค่อยเลือกชุดต่อไป
+                </p>
+              )}
 
               {/* Grid */}
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 max-h-[500px] overflow-y-auto pr-1">
@@ -1119,6 +1150,7 @@ export default function SettingsPage() {
                       <input
                         type="checkbox"
                         checked={selectedOrphans.has(orphan.publicId)}
+                        disabled={orphanSelectionFull && !selectedOrphans.has(orphan.publicId)}
                         onChange={() => toggleOrphanSelection(orphan.publicId)}
                         onClick={(e) => e.stopPropagation()}
                         className="w-4 h-4 rounded border-gray-300 text-red-600 focus:ring-red-500"

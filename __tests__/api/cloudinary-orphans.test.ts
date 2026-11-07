@@ -11,7 +11,8 @@ vi.mock('@/app/lib/cloudinaryHelper', () => ({
   listAllCloudinaryAssets: vi.fn(),
   extractPublicId: vi.fn(() => null),
 }));
-import { listAllCloudinaryAssets } from '@/app/lib/cloudinaryHelper';
+import { listAllCloudinaryAssets, extractPublicId } from '@/app/lib/cloudinaryHelper';
+import { ORPHAN_DELETE_MAX } from '@/app/lib/orphanDelete';
 
 vi.mock('@/app/lib/imageUsageHelper', () => ({
   getAllUsedImageUrls: vi.fn(),
@@ -70,6 +71,7 @@ import { sendOrphanDeleteOtpEmail } from '@/app/lib/mailer';
 vi.mock('cloudinary', () => ({
   v2: { uploader: { destroy: vi.fn().mockResolvedValue({ result: 'ok' }) } },
 }));
+import { v2 as cloudinary } from 'cloudinary';
 
 const admin = { userId: '1', username: 'admin', expiresAt: new Date() } as any;
 
@@ -158,6 +160,8 @@ describe('POST /api/cloudinary/orphans/otp', () => {
   });
 });
 
+const ONE = [{ publicId: 'orphan-1', resourceType: 'image' }];
+
 describe('DELETE /api/cloudinary/orphans', () => {
   it('rejects a malformed (wrong-length) OTP without touching the counter', async () => {
     mockSettingsState();
@@ -182,7 +186,7 @@ describe('DELETE /api/cloudinary/orphans', () => {
       orphan_delete_otp_expires: String(Date.now() + 100000),
     });
     const res = await DELETE(
-      req('http://localhost:3000/api/cloudinary/orphans', 'DELETE', { items: [], otp: '999999' })
+      req('http://localhost:3000/api/cloudinary/orphans', 'DELETE', { items: ONE, otp: '999999' })
     );
     expect(res.status).toBe(403);
     expect((await res.json()).error).toBe('รหัสยืนยันไม่ถูกต้อง');
@@ -197,14 +201,14 @@ describe('DELETE /api/cloudinary/orphans', () => {
     let lastRes;
     for (let i = 0; i < 5; i++) {
       lastRes = await DELETE(
-        req('http://localhost:3000/api/cloudinary/orphans', 'DELETE', { items: [], otp: '000000' })
+        req('http://localhost:3000/api/cloudinary/orphans', 'DELETE', { items: ONE, otp: '000000' })
       );
     }
     expect(lastRes!.status).toBe(403);
     expect((await lastRes!.json()).error).toContain('เกินจำนวนที่กำหนด');
 
     const afterLockout = await DELETE(
-      req('http://localhost:3000/api/cloudinary/orphans', 'DELETE', { items: [], otp: '123456' })
+      req('http://localhost:3000/api/cloudinary/orphans', 'DELETE', { items: ONE, otp: '123456' })
     );
     expect(afterLockout.status).toBe(403);
   });
@@ -243,5 +247,85 @@ describe('DELETE /api/cloudinary/orphans', () => {
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json.deleted).toBe(1);
+  });
+});
+
+// One delete takes at most ORPHAN_DELETE_MAX files. It used to take the first
+// 50 of a longer list and answer "deleted 50"; the screen then dropped every
+// selected file from its list, and the rest stayed on Cloudinary unseen.
+describe('DELETE /api/cloudinary/orphans — the list, and what became of each file', () => {
+  const validCode = () =>
+    mockSettingsState({
+      orphan_delete_otp: '123456',
+      orphan_delete_otp_expires: String(Date.now() + 100000),
+    });
+  const items = (n: number) => Array.from({ length: n }, (_, i) => ({ publicId: `orphan-${i}`, resourceType: 'image' }));
+
+  it('refuses more than 50 files (400) — without comparing or using up the code, and deletes nothing', async () => {
+    expect(ORPHAN_DELETE_MAX).toBe(50);
+    const state = validCode();
+    const res = await DELETE(
+      req('http://localhost:3000/api/cloudinary/orphans', 'DELETE', { items: items(51), otp: '123456' })
+    );
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe('ลบได้ครั้งละไม่เกิน 50 รูป');
+    expect(state.get('orphan_delete_otp')).toBe('123456');
+    expect(state.has('orphan_delete_otp_attempts')).toBe(false);
+    expect(cloudinary.uploader.destroy).not.toHaveBeenCalled();
+  });
+
+  it('refuses an empty list without using up the code', async () => {
+    const state = validCode();
+    const res = await DELETE(
+      req('http://localhost:3000/api/cloudinary/orphans', 'DELETE', { items: [], otp: '123456' })
+    );
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe('ต้องระบุรายการรูป (items)');
+    expect(state.get('orphan_delete_otp')).toBe('123456');
+    expect(state.has('orphan_delete_otp_attempts')).toBe(false);
+  });
+
+  it('deletes all of exactly 50', async () => {
+    validCode();
+    const res = await DELETE(
+      req('http://localhost:3000/api/cloudinary/orphans', 'DELETE', { items: items(50), otp: '123456' })
+    );
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.deleted).toBe(50);
+    expect(json.deletedIds).toEqual(items(50).map((i) => i.publicId));
+    expect(cloudinary.uploader.destroy).toHaveBeenCalledTimes(50);
+  });
+
+  it('names each file: deleted, skipped because it is in use again, or failed', async () => {
+    validCode();
+    const usedUrl = 'https://res.cloudinary.com/demo/image/upload/v1/in-use.jpg';
+    vi.mocked(getAllUsedImageUrls).mockResolvedValue(new Set([usedUrl]));
+    vi.mocked(extractPublicId).mockImplementation((url: string) => (url === usedUrl ? 'in-use' : null));
+    vi.mocked(cloudinary.uploader.destroy)
+      .mockResolvedValueOnce({ result: 'ok' })
+      .mockResolvedValueOnce({ result: 'error' });
+
+    const res = await DELETE(
+      req('http://localhost:3000/api/cloudinary/orphans', 'DELETE', {
+        items: [
+          { publicId: 'gone', resourceType: 'image' },
+          { publicId: 'in-use', resourceType: 'image' },
+          { publicId: 'stuck', resourceType: 'image' },
+          null,
+        ],
+        otp: '123456',
+      })
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      deleted: 1,
+      skipped: 1,
+      failed: 1,
+      deletedIds: ['gone'],
+      skippedIds: ['in-use'],
+      errors: ['stuck: error'],
+    });
+    vi.mocked(extractPublicId).mockImplementation(() => null);
   });
 });

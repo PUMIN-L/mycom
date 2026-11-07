@@ -7,6 +7,7 @@ import {
 import { getAllUsedImageUrls } from "../../../lib/imageUsageHelper";
 import { getSetting, setSetting } from "../../../lib/settingsStore";
 import { takeOtpAttempt, clearOtpAttempts } from "../../../lib/otpAttempts";
+import { ORPHAN_DELETE_MAX } from "../../../lib/orphanDelete";
 
 /**
  * GET /api/cloudinary/orphans  (admin only)
@@ -66,6 +67,10 @@ export const GET = withRoute(
  *
  * Requires a valid 6-digit OTP sent via POST /api/cloudinary/orphans/otp.
  * Each asset is double-checked against the DB before deletion as a safety net.
+ *
+ * At most ORPHAN_DELETE_MAX items, refused (400) rather than cut short, and
+ * the answer names what happened to each — `deletedIds`, `skippedIds` (in use
+ * again) and `errors` — so the screen removes only what is really gone.
  */
 export const DELETE = withRoute(
   "ลบรูปที่ไม่ได้ใช้ไม่สำเร็จ",
@@ -78,6 +83,21 @@ export const DELETE = withRoute(
     if (!otp || typeof otp !== "string" || otp.length !== 6) {
       return NextResponse.json(
         { error: "กรุณากรอกรหัสยืนยัน 6 หลัก" },
+        { status: 400 }
+      );
+    }
+
+    // The list is checked BEFORE the code is compared or used up, so a request
+    // this route refuses never costs the admin the emailed code.
+    if (!Array.isArray(items) || items.length === 0) {
+      return NextResponse.json(
+        { error: "ต้องระบุรายการรูป (items)" },
+        { status: 400 }
+      );
+    }
+    if (items.length > ORPHAN_DELETE_MAX) {
+      return NextResponse.json(
+        { error: `ลบได้ครั้งละไม่เกิน ${ORPHAN_DELETE_MAX} รูป` },
         { status: 400 }
       );
     }
@@ -122,17 +142,8 @@ export const DELETE = withRoute(
     await clearOtpAttempts("orphan_delete_otp");
 
     // ── Deletion ──────────────────────────────────────────────────────────
-    if (!Array.isArray(items) || items.length === 0) {
-      return NextResponse.json(
-        { error: "ต้องระบุรายการรูป (items)" },
-        { status: 400 }
-      );
-    }
-
-    // Cap at 50 per request to avoid timeouts
-    const batch = items.slice(0, 50);
-    let deleted = 0;
-    let skipped = 0;
+    const deletedIds: string[] = [];
+    const skippedIds: string[] = [];
     const errors: string[] = [];
 
     // Re-fetch used URLs for a fresh safety check
@@ -148,14 +159,14 @@ export const DELETE = withRoute(
     // Import cloudinary once, outside the loop
     const { v2: cloudinary } = await import("cloudinary");
 
-    for (const item of batch) {
-      const { publicId, resourceType = "image" } = item;
+    for (const item of items) {
+      const { publicId, resourceType = "image" } = item ?? {};
       if (typeof publicId !== "string" || !publicId) continue;
 
       // Safety: Skip if the asset is now in use (race protection)
       const pidNoExt = publicId.replace(/\.[^.]+$/, "");
       if (usedPublicIds.has(publicId) || usedPublicIds.has(pidNoExt)) {
-        skipped++;
+        skippedIds.push(publicId);
         continue;
       }
 
@@ -164,7 +175,7 @@ export const DELETE = withRoute(
           resource_type: resourceType,
         });
         if (result.result === "ok" || result.result === "not found") {
-          deleted++;
+          deletedIds.push(publicId);
         } else {
           errors.push(`${publicId}: ${result.result}`);
         }
@@ -174,9 +185,11 @@ export const DELETE = withRoute(
     }
 
     return NextResponse.json({
-      deleted,
-      skipped,
+      deleted: deletedIds.length,
+      skipped: skippedIds.length,
       failed: errors.length,
+      deletedIds,
+      skippedIds,
       errors: errors.length > 0 ? errors : undefined,
     });
   }

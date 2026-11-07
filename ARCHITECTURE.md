@@ -553,6 +553,16 @@ has to be added to both functions in `app/lib/imageUsageHelper.ts` — and to
 `listImageReferences` below (`__tests__/lib/imageReferences.test.ts` fails when
 the two disagree).
 
+**Orphan scanner (/settings → "Cloudinary Orphan Scanner")** lists the files
+on Cloudinary that `getAllUsedImageUrls` finds nowhere and deletes a selection
+with an emailed code. One delete takes at most `ORPHAN_DELETE_MAX` (50,
+[`lib/orphanDelete.ts`](./app/lib/orphanDelete.ts)). The route **refuses** a
+longer list (400) before comparing or using up the code. It used to take the
+first 50 and answer "deleted 50", while the screen dropped every selected file
+from its list — the rest stayed on Cloudinary unseen. The answer names
+`deletedIds`, `skippedIds` (in use again) and `errors`, and the screen removes
+only the first two; "เลือกทั้งหมด" selects the first 50.
+
 **Missing-image scan (/settings → "ตรวจหารูปที่หาย")** — which pages show a
 picture or PDF whose file is gone from Cloudinary. ⚠️ Why it exists: until
 2026-08-12 the showcase editor deleted a file the moment ✕ or "replace" was
