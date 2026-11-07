@@ -237,7 +237,7 @@ manual auth checks — that's the duplication this replaced.
 | — | `GET /api/auth/login-history` (every account's logins, §10) | |
 | `POST /api/contact` (sends email)               | all `/api/quotations/**` (GET/POST/[id]/docnos) | `cleanup` = **cron** (`CRON_SECRET`) |
 | `GET /api/health`                               | `GET`/`PUT /api/settings/contact-email` | |
-| —                                               | all `/api/admin/**`, incl. `POST`/`GET /api/admin/sales` + `[id]/items` and `GET /api/admin/equipments/serial-check` (§8a), plus the task board's `/api/admin/tasks/**` + `/api/admin/task-topics/**` (§8c), and the asset register / stock's `/api/admin/inventory/[kind]/**` (§8d) | |
+| —                                               | all `/api/admin/**`, incl. `POST`/`GET /api/admin/sales` + `[id]/items` and `GET /api/admin/equipments/serial-check` (§8a), plus the task board's `/api/admin/tasks/**` + `/api/admin/task-topics/**` (§8c), and the asset register / stock's `/api/admin/inventory/[kind]/**` (§8d), and the missing-image scan's `/api/admin/missing-images` + `/check` (§7) | |
 
 A public read returns only what a visitor may see: `GET /api/products/[id]`
 drops `supplierIds` (which suppliers a product comes from) unless the caller is
@@ -549,7 +549,57 @@ list it. So `isCloudinaryImageInUse` searches both quotation columns, and
 `getAllUsedImageUrls` collects every URL inside `data`, reading a page of
 quotations at a time. Billing documents copy line items onward and are
 covered the same way (whole `data`). Anything new that stores an image URL
-has to be added to both functions in `app/lib/imageUsageHelper.ts`.
+has to be added to both functions in `app/lib/imageUsageHelper.ts` — and to
+`listImageReferences` below (`__tests__/lib/imageReferences.test.ts` fails when
+the two disagree).
+
+**Missing-image scan (/settings → "ตรวจหารูปที่หาย")** — which pages show a
+picture or PDF whose file is gone from Cloudinary. ⚠️ Why it exists: until
+2026-08-12 the showcase editor deleted a file the moment ✕ or "replace" was
+pressed — before the page was saved and without checking anything else used
+it (Aug 10–12 it checked, but excluded the page being edited). A cancelled edit
+kept pointing at a file that no longer existed; Cloudinary answers such a URL
+with 404 `x-cld-error: Resource not found`. Those files cannot come back from
+the app; the scan finds the pages to re-upload them on.
+- [`lib/imageReferences.ts`](./app/lib/imageReferences.ts) `listImageReferences()`
+  — every Cloudinary URL the site SHOWS, with its page: content blocks (`imageUrl`,
+  `imageUrls[]`), product pictures, catalog covers and PDFs, and what quotations
+  and billing documents print (`data`, a page of rows at a time; line items
+  labelled by `items[i]`). Not `uploadedImages`: a file only listed there is
+  printed nowhere.
+- `GET /api/admin/missing-images` answers it as pages + files, each file once
+  (`indexImageReferences`, [`lib/missingImages.ts`](./app/lib/missingImages.ts));
+  `maxDuration` 60 and 10 a minute per admin, since it reads every quotation
+  and billing document.
+  `POST …/check { urls }` (1–20, 120 batches a minute per admin, `maxDuration`
+  60) answers each file with one **HEAD** request ([`lib/imageCheck.ts`](./app/lib/imageCheck.ts)):
+  2xx `ok`, 404/410 `missing`, anything else `error` ("could not tell", never
+  called missing). The URLs come from the browser, so only
+  `https://res.cloudinary.com` (no port, no credentials) is fetched and a
+  redirect is never followed; any other address is answered
+  `error / unsupported` without a request.
+- The section ([`components/MissingImagesScanner.tsx`](./app/components/MissingImagesScanner.tsx))
+  sends two batches at a time with a progress bar and หยุด, then lists the pages
+  with a missing file (pages visitors see first; 20, then "ดูทั้งหมด", under a
+  count by kind — one missing product picture can be on a hundred quotations),
+  each linking — in a new tab — to where it is fixed, and offers to re-check
+  only the files it could not. It reads; it never deletes or changes anything.
+  - A **429 from the check route is a pause, not a failure**: the batch waits
+    `Retry-After` (≤ 60 s, หยุด ends the wait) and asks again, three times,
+    before its files count as "ตรวจไม่ได้". A scan of more than ~2,400 files
+    meets the limit as a matter of course.
+  - A lapsed session (401) stops the other batches, and the scan ends only
+    once every batch already sent has come back. Ending it at the first 401
+    (`Promise.all` rejecting) brought ตรวจใหม่ back while a batch was still
+    out, and that batch then carried on through the old list into the new
+    scan.
+- ⚠️ **Limit: a file deleted less than ~30 days ago can still read "ok".**
+  Cloudinary delivers with `max-age=2592000`, its CDN ignores the query string
+  (a cache-busting parameter still answers `desc=hit`), and `deleteCloudinaryImage`
+  does not pass `invalidate: true` — so an edge that cached the file keeps
+  serving it, while other edges already answer 404. Older losses (the ones the
+  scan exists for) read "missing" correctly. Asking the Admin API
+  (`resources_by_ids`) would be exact, at the cost of its hourly quota.
 
 **⚠️ PDF Strict Delivery Restrictions:** By default, Cloudinary restricts
 delivery of `raw` PDFs to prevent XSS. A global setting (Security → Restricted

@@ -9,6 +9,7 @@ import ConfirmDialog from "../components/ConfirmDialog";
 import TwoFactorSettings from "../components/TwoFactorSettings";
 import PasswordSettings from "../components/PasswordSettings";
 import LoginHistorySettings from "../components/LoginHistorySettings";
+import MissingImagesScanner from "../components/MissingImagesScanner";
 
 interface OrphanAsset {
   publicId: string;
@@ -1005,6 +1006,9 @@ export default function SettingsPage() {
 
         {/* ── ยืนยันตัวตน 2 ขั้น (2FA) ───────────────────────────────────── */}
         <TwoFactorSettings showToast={showToast} />
+
+        {/* ── ตรวจหารูปที่หาย (ไฟล์บน Cloudinary ที่หน้าเว็บยังใช้อยู่) ──── */}
+        <MissingImagesScanner />
 
         {/* Cloudinary Orphan Scanner */}
         <div className="mt-8 bg-white rounded-lg shadow p-6 space-y-4">
