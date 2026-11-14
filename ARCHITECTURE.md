@@ -1034,6 +1034,62 @@ to sell on). Spec: `openspec/changes/add-inventory-tracking`.
   statement shape. Also `inventoryPure.test.ts`,
   `api/admin-inventory.test.ts` and `components/Inventory.test.tsx`.
 
+### 8e. Suppliers (`/suppliers`)
+The page ([`app/suppliers/page.tsx`](./app/suppliers/page.tsx), logic in
+[`supplierHelpers.ts`](./app/suppliers/supplierHelpers.ts)) has the same look
+and parts as /customers and /product-specs. One word everywhere a supplier is
+shown: **ซัพพลายเออร์**. It used to be ผู้ผลิต / รายชื่อ / Suppliers by turns, and
+the product forms that link suppliers said ผู้ผลิต.
+`__tests__/lib/supplierWording.test.ts` fails if the old word comes back.
+- **List.** The search matches the name, the contact, the phone or tax ID by
+  their digits ("081 234" finds "081-234-5678"), and the linked products'
+  plain names ("ZTA" finds who sells it). It used to search the name only.
+  Next to it: a count ("พบ 2 จาก 8"), and `SortableTh` on name, contact
+  (empties last either way) and product count (most first). Rows use
+  `RowActions` + `openOnKey`, the phone is `CopyText`, and `pb-32` keeps the
+  floating admin bell off the last row.
+  `missingPoFields` badges what a purchase order would print blank: the
+  address always, the tax ID only for a supplier with a Thai-script name.
+  One abroad has no Thai tax ID, and flagging every one of them would teach
+  the admin to ignore the badge.
+- **Load / save / delete.**
+  - A failed FIRST load is an error with ลองใหม่, never "no suppliers"; a
+    failed reload keeps the list and says so in a toast.
+  - Loads are latest-only: a slow reload answering last must not bring back
+    a supplier deleted meanwhile.
+  - A save is guarded by a ref and the disabled button: a double click on a
+    slow line used to add the supplier twice. A refusal stays inside the
+    form and is scrolled into view. A 401 says `SESSION_EXPIRED_MESSAGE` in
+    Thai, never requireAuth's "Unauthorized".
+  - A name or tax ID that is already used gets a WARNING and is never
+    refused, because a head office and its branches share one tax ID.
+  - The delete question says how many linked products lose the link
+    (`product_suppliers` cascades). It also says that issued POs and
+    assets / stock keep the old name: the PO holds a snapshot, and an
+    inventory item carries `supplierName`.
+- **Form.** A `<form>`: Enter submits, and Ctrl + Enter submits from the
+  address or note. Esc, the backdrop, ✕ and ยกเลิก ask first when there is
+  typing to lose, and so does the browser's `beforeunload`. The focus goes
+  back to whatever opened the form — the row, when it came from the
+  supplier's window.
+  The tax ID is checked by [`lib/thaiTaxId.ts`](./app/lib/thaiTaxId.ts)
+  (13 digits; the check digit is (11 − Σ dᵢ·(13−i) mod 11) mod 10). This only
+  ever WARNS, after the box is left. "-" means none, and a foreign number is
+  left to the admin.
+- **The supplier's window** ([`SupplierDetailsModal`](./app/suppliers/SupplierDetailsModal.tsx),
+  details in the shared [`SupplierInfo`](./app/components/SupplierInfo.tsx)):
+  - Thai labels, left-aligned. Each linked product opens `/edit-product/{id}`
+    in a new tab; an untitled one still counts, as "(สินค้าไม่มีชื่อ)".
+  - Two actions: แก้ไข, and สร้างใบสั่งซื้อ, which opens
+    `/purchase-order?supplierId=…`.
+  - The PO page picks that supplier once BOTH the new PO is seeded and the
+    supplier list is in, whichever is last: `seedFresh` replaces the whole
+    state, so a pick applied before it is wiped out. With `?id=` (an issued
+    PO) the parameter is ignored.
+  - The showcase's admin "ดูซัพพลายเออร์" window uses `SupplierInfo` as well.
+    A failed load there is an error with ลองใหม่ — it used to say "no
+    supplier linked", or keep the previous product's list.
+
 ### 9. Email (contact form) + lead persistence
 [`app/lib/mailer.ts`](./app/lib/mailer.ts) sends via SMTP (`nodemailer`, Gmail by
 default). Addresses go to nodemailer as structured `{ name, address }` objects,
@@ -1447,7 +1503,8 @@ with an eye button that shows what was typed), `Pagination` (a table pager:
 "แสดง a ถึง b จาก n", first / previous / next / last and a page-number box),
 `SortableTh` (a header that sorts its column, with `aria-sort`), `CopyText` (a
 phone or e-mail that copies itself on click, without opening the row around
-it), `RowActions` (a clickable row's copy / edit / delete icons, delete only on
+it), `SupplierInfo` (a supplier's contact / address / tax ID as Thai label:value
+rows, each copyable — /suppliers' window and the showcase's §8e), `RowActions` (a clickable row's copy / edit / delete icons, delete only on
 hover or focus; its `openOnKey` opens the row on Enter / Space),
 `NavButton` (any "go back to …" link drawn as a bordered button with an orange
 home / dashboard / back icon, e.g. "กลับไป Dashboard"; pass `onNavigate` for a

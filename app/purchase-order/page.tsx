@@ -188,6 +188,13 @@ export default function PurchaseOrderPage() {
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
   const hydratedRef = useRef(false);
+  // A new PO started from a supplier's window on /suppliers (สร้างใบสั่งซื้อ →
+  // ?supplierId=) opens with that supplier picked. Applied once BOTH the fresh
+  // PO is seeded and the suppliers are in, whichever comes last: seedFresh
+  // replaces the whole state, so picking before it would be wiped out.
+  const pendingSupplierRef = useRef<string | null>(null);
+  const loadedSuppliersRef = useRef<Supplier[] | null>(null);
+  const freshSeededRef = useRef(false);
 
   useEffect(() => {
     if (!isLoading && !isLoggedIn) router.replace("/login");
@@ -198,13 +205,48 @@ export default function PurchaseOrderPage() {
     setTimeout(() => setToast(null), 3500);
   };
 
+  function supplierFields(s: Supplier) {
+    return {
+      supplierId: s.id,
+      supplierCompany: s.companyName,
+      supplierContact: s.contactName || "",
+      supplierPhone: s.phone || "",
+      supplierAddress: s.address || "",
+      supplierTaxId: s.taxId || "",
+    };
+  }
+
+  const supplierLoadFailedRef = useRef(false);
+  function applyPendingSupplier() {
+    const wanted = pendingSupplierRef.current;
+    const list = loadedSuppliersRef.current;
+    if (!wanted || !list || !freshSeededRef.current) return;
+    pendingSupplierRef.current = null;
+    const s = list.find((x) => x.id === wanted);
+    if (s) setPo((prev) => ({ ...prev, ...supplierFields(s) }));
+    else if (supplierLoadFailedRef.current) showToast("โหลดรายชื่อซัพพลายเออร์ไม่สำเร็จ กรุณากรอกข้อมูลผู้ขายเอง", "error");
+    else showToast("ไม่พบซัพพลายเออร์ที่เลือกมา กรุณาเลือกจากรายการ", "error");
+  }
+
   const fetchSuppliers = async () => {
+    let list: Supplier[] = [];
+    let failed = true;
     try {
       const res = await fetch("/api/suppliers");
-      if (res.ok) setSuppliers(await res.json());
+      if (res.ok) {
+        const body = await res.json();
+        if (Array.isArray(body)) {
+          list = body;
+          failed = false;
+        }
+        setSuppliers(list);
+      }
     } catch {
       /* the supplier picker just stays empty — typing the fields by hand still works */
     }
+    supplierLoadFailedRef.current = failed;
+    loadedSuppliersRef.current = list;
+    applyPendingSupplier();
   };
 
   const fetchRecent = async () => {
@@ -250,6 +292,8 @@ export default function PurchaseOrderPage() {
     setViewMode(false);
     setLoadedMeta(null);
     setSupersedeOf(null);
+    freshSeededRef.current = true;
+    applyPendingSupplier();
   }
 
   async function loadExisting(id: string) {
@@ -287,6 +331,8 @@ export default function PurchaseOrderPage() {
     if (id) {
       loadExisting(id);
     } else {
+      // Only for a NEW PO: an issued one (?id=) keeps the supplier it has.
+      pendingSupplierRef.current = params.get("supplierId");
       seedFresh();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -314,15 +360,7 @@ export default function PurchaseOrderPage() {
   function pickSupplier(id: string) {
     const s = suppliers.find((x) => x.id === id);
     if (!s) return;
-    setPo((prev) => ({
-      ...prev,
-      supplierId: s.id,
-      supplierCompany: s.companyName,
-      supplierContact: s.contactName || "",
-      supplierPhone: s.phone || "",
-      supplierAddress: s.address || "",
-      supplierTaxId: s.taxId || "",
-    }));
+    setPo((prev) => ({ ...prev, ...supplierFields(s) }));
   }
 
   const totals = useMemo(() => computeQuoteTotals(po), [po]);

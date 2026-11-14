@@ -385,11 +385,11 @@ export default function EditProduct({ params }: { params: Promise<{ id: string }
 
         {/* Suppliers Section */}
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8 space-y-6 mb-6">
-          <h2 className="text-xl font-bold text-gray-800 border-b border-gray-100 pb-4">ผู้ผลิตสินค้า (Suppliers)</h2>
+          <h2 className="text-xl font-bold text-gray-800 border-b border-gray-100 pb-4">ซัพพลายเออร์</h2>
           <div className="space-y-3">
-            <label className="block text-sm font-semibold text-gray-700">เลือกผู้ผลิต (เลือกได้มากกว่า 1)</label>
+            <label className="block text-sm font-semibold text-gray-700">เลือกซัพพลายเออร์ (เลือกได้มากกว่า 1)</label>
             {suppliers.length === 0 ? (
-              <p className="text-sm text-gray-500">ไม่มีข้อมูลผู้ผลิต</p>
+              <p className="text-sm text-gray-500">ยังไม่มีซัพพลายเออร์ในระบบ</p>
             ) : (
               <MultiSelectDropdown
                 options={suppliers.map(sup => ({
@@ -398,7 +398,7 @@ export default function EditProduct({ params }: { params: Promise<{ id: string }
                 }))}
                 values={selectedSupplierIds}
                 onChange={setSelectedSupplierIds}
-                placeholder="เลือกผู้ผลิตสินค้า..."
+                placeholder="เลือกซัพพลายเออร์..."
               />
             )}
           </div>

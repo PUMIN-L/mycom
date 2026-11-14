@@ -341,11 +341,11 @@ export default function CreateProduct() {
 
         {/* Suppliers Section */}
         <div className="bg-white rounded-lg shadow p-6 mb-6">
-          <h2 className="text-sm font-semibold text-gray-700 mb-4">🤝 ผู้ผลิตสินค้า (Suppliers)</h2>
+          <h2 className="text-sm font-semibold text-gray-700 mb-4">🤝 ซัพพลายเออร์</h2>
           <div className="space-y-3">
-            <label className="block text-xs font-medium text-gray-500 mb-1">เลือกผู้ผลิต (เลือกได้มากกว่า 1)</label>
+            <label className="block text-xs font-medium text-gray-500 mb-1">เลือกซัพพลายเออร์ (เลือกได้มากกว่า 1)</label>
             {suppliers.length === 0 ? (
-              <p className="text-sm text-gray-500">ไม่มีข้อมูลผู้ผลิต</p>
+              <p className="text-sm text-gray-500">ยังไม่มีซัพพลายเออร์ในระบบ</p>
             ) : (
               <MultiSelectDropdown
                 options={suppliers.map(sup => ({
@@ -354,7 +354,7 @@ export default function CreateProduct() {
                 }))}
                 values={selectedSupplierIds}
                 onChange={setSelectedSupplierIds}
-                placeholder="เลือกผู้ผลิตสินค้า..."
+                placeholder="เลือกซัพพลายเออร์..."
               />
             )}
           </div>

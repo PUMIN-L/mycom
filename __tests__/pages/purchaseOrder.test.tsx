@@ -1,5 +1,5 @@
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const pushMock = vi.fn();
 const replaceMock = vi.fn();
@@ -217,5 +217,96 @@ describe("/purchase-order?id=... — viewing an issued PO", () => {
     // The replacement continues the PO it replaces, in its arithmetic — that
     // one was saved before the change, so the original (no version).
     expect(body.data.totalsVersion).toBeUndefined();
+  });
+});
+
+// /suppliers → a supplier's window → "สร้างใบสั่งซื้อ" opens a NEW PO with that
+// supplier picked. seedFresh() replaces the whole PO, so the pick must land
+// after it, whichever of it and the supplier list finishes last.
+describe("/purchase-order?supplierId=... — started from a supplier's window", () => {
+  afterEach(() => {
+    window.history.pushState({}, "", "/purchase-order");
+  });
+
+  function deferred() {
+    let resolve!: () => void;
+    const promise = new Promise<void>((r) => (resolve = r));
+    return { promise, resolve };
+  }
+  /** stubFetch, with the supplier list or the PO-number ledger held back. */
+  function stubHolding(hold: "suppliers" | "docnos", options: RouteOptions = {}) {
+    const { fetchMock } = stubFetch(options);
+    const base = fetchMock.getMockImplementation()!;
+    const held = deferred();
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (hold === "suppliers" && url.startsWith("/api/suppliers")) await held.promise;
+      if (hold === "docnos" && url.startsWith("/api/purchase-orders/docnos")) await held.promise;
+      return base(input, init);
+    });
+    return held;
+  }
+  const companyBox = () => screen.getByLabelText("ชื่อบริษัทซัพพลายเออร์") as HTMLInputElement;
+  const flush = () => act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+
+  it("picks the supplier when its list arrives after the new PO is ready", async () => {
+    window.history.pushState({}, "", "/purchase-order?supplierId=s1");
+    const held = stubHolding("suppliers");
+    render(<PurchaseOrderPage />);
+    const docNo = (await screen.findByLabelText("เลขที่ใบสั่งซื้อ")) as HTMLInputElement;
+    await waitFor(() => expect(docNo.value).toMatch(/^PO\d{6}-\d{2}$/));
+    expect(companyBox().value).toBe("");
+
+    held.resolve();
+    await waitFor(() => expect(companyBox().value).toBe("บริษัท ก จำกัด"));
+    expect(screen.getByDisplayValue("ที่อยู่ ก")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("0105500000000")).toBeInTheDocument();
+  });
+
+  it("…and when the list is in before the new PO is ready — the new PO does not wipe it", async () => {
+    window.history.pushState({}, "", "/purchase-order?supplierId=s1");
+    const held = stubHolding("docnos");
+    render(<PurchaseOrderPage />);
+    await flush(); // the supplier list is in; the PO number is not
+    held.resolve();
+    const docNo = (await screen.findByLabelText("เลขที่ใบสั่งซื้อ")) as HTMLInputElement;
+    await waitFor(() => expect(docNo.value).toMatch(/^PO\d{6}-\d{2}$/));
+    await waitFor(() => expect(companyBox().value).toBe("บริษัท ก จำกัด"));
+    expect(screen.getByDisplayValue("ที่อยู่ ก")).toBeInTheDocument();
+  });
+
+  it("never changes the supplier of an issued PO (?id=)", async () => {
+    window.history.pushState({}, "", "/purchase-order?id=po1&supplierId=s1");
+    stubFetch({
+      poById: { po1: { id: "po1", docNo: "PO150926-22", data: { docDate: "2026-09-15", supplierCompany: "บริษัท ข จำกัด", items: [] }, cancelledAt: null, supersededById: null } },
+    });
+    render(<PurchaseOrderPage />);
+    expect(await screen.findByText("PO150926-22")).toBeInTheDocument();
+    await flush();
+    expect(screen.queryByDisplayValue("ที่อยู่ ก")).not.toBeInTheDocument();
+    expect(screen.queryByText("ที่อยู่ ก")).not.toBeInTheDocument();
+    expect(screen.queryByText(/ไม่พบซัพพลายเออร์ที่เลือกมา/)).not.toBeInTheDocument();
+  });
+
+  it("says so when the supplier is not in the list (deleted meanwhile)", async () => {
+    window.history.pushState({}, "", "/purchase-order?supplierId=gone");
+    stubFetch();
+    render(<PurchaseOrderPage />);
+    expect(await screen.findByText(/ไม่พบซัพพลายเออร์ที่เลือกมา กรุณาเลือกจากรายการ/)).toBeInTheDocument();
+    expect(companyBox().value).toBe("");
+  });
+
+  it("says the list failed to load — not that the supplier is gone", async () => {
+    window.history.pushState({}, "", "/purchase-order?supplierId=s1");
+    const { fetchMock } = stubFetch();
+    const base = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) =>
+      String(input).startsWith("/api/suppliers")
+        ? ({ ok: false, status: 500, json: async () => ({ error: "x" }) } as unknown as Response)
+        : base(input, init)
+    );
+    render(<PurchaseOrderPage />);
+    expect(await screen.findByText(/โหลดรายชื่อซัพพลายเออร์ไม่สำเร็จ กรุณากรอกข้อมูลผู้ขายเอง/)).toBeInTheDocument();
+    expect(screen.queryByText(/ไม่พบซัพพลายเออร์ที่เลือกมา/)).not.toBeInTheDocument();
   });
 });

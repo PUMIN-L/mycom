@@ -17,7 +17,8 @@ import Toast from "../../components/Toast";
 import type { OrphanedImage } from "../../components/ImageDeleteConfirmDialog";
 import { stripHtml, htmlToText } from "../../lib/stripHtml";
 import { escapeHtmlText, richTextHtml, richTextInline, htmlToTextLines } from "../../lib/richTextDisplay";
-import type { ContentBlock } from "../../lib/types";
+import type { ContentBlock, Supplier } from "../../lib/types";
+import SupplierInfo from "../../components/SupplierInfo";
 import type { SearchableDropdownOption } from "../../components/SearchableDropdown";
 import YoutubeEmbed from "../../components/YoutubeEmbed";
 import ResponsiveImage from "../../components/ResponsiveImage";
@@ -464,32 +465,56 @@ export default function ShowcaseClient({
     setTimeout(() => setToast(null), 3000);
   }
 
-  // Suppliers view modal state
+  // The admin's window of the suppliers this product comes from.
   const [showSuppliersModal, setShowSuppliersModal] = useState(false);
-  const [productSuppliers, setProductSuppliers] = useState<any[]>([]);
+  const [productSuppliers, setProductSuppliers] = useState<Supplier[]>([]);
   const [loadingSuppliers, setLoadingSuppliers] = useState(false);
+  // A failed load is not "no suppliers": it used to say ไม่มีผู้ผลิตที่
+  // เชื่อมโยง (or keep the last product's list) when the fetch had failed.
+  const [suppliersFailed, setSuppliersFailed] = useState(false);
+  const [suppliersLoadKey, setSuppliersLoadKey] = useState(0);
+  /** Opens the window — or loads it again — starting from a clean slate. */
+  const loadProductSuppliers = () => {
+    setShowSuppliersModal(true);
+    setLoadingSuppliers(true);
+    setSuppliersFailed(false);
+    setProductSuppliers([]);
+    setSuppliersLoadKey((k) => k + 1);
+  };
+  const closeSuppliersModal = () => setShowSuppliersModal(false);
 
   useEffect(() => {
-    if (showSuppliersModal && content.productId) {
-      setLoadingSuppliers(true);
-      Promise.all([
-        fetch(`/api/products/${content.productId}`).then((res) => res.json()),
-        fetch('/api/suppliers').then((res) => res.json())
-      ])
-        .then(([product, allSuppliers]) => {
-          if (!product.error && !allSuppliers.error) {
-            const sIds = product.supplierIds || [];
-            const matched = allSuppliers.filter((s: any) => sIds.includes(s.id));
-            setProductSuppliers(matched);
-          }
-          setLoadingSuppliers(false);
-        })
-        .catch((err) => {
-          console.error(err);
-          setLoadingSuppliers(false);
-        });
-    }
-  }, [showSuppliersModal, content.productId]);
+    if (!showSuppliersModal || !content.productId) return;
+    let cancelled = false;
+    Promise.all([fetch(`/api/products/${content.productId}`), fetch("/api/suppliers")])
+      .then(async ([productRes, suppliersRes]) => {
+        if (!productRes.ok || !suppliersRes.ok) throw new Error(`suppliers ${productRes.status}/${suppliersRes.status}`);
+        const [product, allSuppliers] = await Promise.all([productRes.json(), suppliersRes.json()]);
+        if (!Array.isArray(allSuppliers)) throw new Error("suppliers: not a list");
+        const ids: string[] = Array.isArray(product?.supplierIds) ? product.supplierIds : [];
+        if (!cancelled) setProductSuppliers((allSuppliers as Supplier[]).filter((s) => ids.includes(s.id)));
+      })
+      .catch((err) => {
+        console.error(err);
+        if (!cancelled) setSuppliersFailed(true);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingSuppliers(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [showSuppliersModal, content.productId, suppliersLoadKey]);
+
+  // Escape closes it, as on every other admin window.
+  useEffect(() => {
+    if (!showSuppliersModal) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setShowSuppliersModal(false);
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [showSuppliersModal]);
 
   // ── Delete whole content ───────────────────────────────────────────────────
   async function handleDeleteContent() {
@@ -1093,7 +1118,7 @@ export default function ShowcaseClient({
                     <>
                       {content.productId && (
                         <button
-                          onClick={() => setShowSuppliersModal(true)}
+                          onClick={loadProductSuppliers}
                           className="px-4 py-2 rounded-lg border border-blue-400 text-blue-600 font-semibold hover:bg-blue-50 transition text-sm flex items-center gap-1.5"
                           title="ดูรายชื่อซัพพลายเออร์ของสินค้านี้"
                         >
@@ -1530,74 +1555,78 @@ export default function ShowcaseClient({
           )}
         </div>
 
-        {/* ── Suppliers Modal (Luxury Hotel UI) ── */}
+        {/* ── The product's suppliers (admin only) — the same look as /suppliers ── */}
         {showSuppliersModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-black/50 backdrop-blur-md animate-fadeIn" onClick={() => setShowSuppliersModal(false)}>
-            <div className="bg-[#FCFCFC] rounded-sm shadow-2xl w-full max-w-2xl overflow-hidden animate-slideUp flex flex-col max-h-[90vh] border border-gray-200" onClick={e => e.stopPropagation()}>
-
-              {/* Elegant Header - Minimalist */}
-              <div className="relative bg-white px-8 py-3 sm:py-4 flex-shrink-0 flex flex-col items-center justify-center">
-                <button
-                  onClick={() => setShowSuppliersModal(false)}
-                  className="absolute top-1/2 -translate-y-1/2 right-4 sm:right-6 p-2 text-gray-400 hover:text-gray-900 transition-colors"
-                >
-                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-gray-900/40 backdrop-blur-sm" onClick={closeSuppliersModal} data-testid="product-suppliers-backdrop"></div>
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="product-suppliers-title"
+              className="relative bg-white rounded-3xl shadow-2xl w-full max-w-xl max-h-[90vh] flex flex-col overflow-hidden"
+            >
+              <div className="px-8 py-5 border-b border-gray-100 flex items-center justify-between gap-4">
+                <div className="flex items-center gap-4 min-w-0">
+                  <div className="w-12 h-12 bg-orange-100 text-orange-600 rounded-2xl flex items-center justify-center shrink-0">
+                    <svg aria-hidden="true" className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path></svg>
+                  </div>
+                  <h2 id="product-suppliers-title" className="text-2xl font-bold text-gray-900">ซัพพลายเออร์ของสินค้านี้</h2>
+                </div>
+                <button type="button" onClick={closeSuppliersModal} aria-label="ปิด" className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full transition-colors shrink-0">
+                  <svg aria-hidden="true" className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
                 </button>
               </div>
 
-              {/* Elegant Body */}
-              <div className="p-6 sm:p-8 overflow-y-auto bg-white flex-1">
+              <div className="overflow-y-auto overscroll-contain flex-1 px-8 py-6">
                 {loadingSuppliers ? (
-                  <div className="flex flex-col items-center justify-center py-16">
-                    <svg className="animate-spin h-8 w-8 text-orange-400 mb-4" viewBox="0 0 24 24" fill="none">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                    </svg>
-                    <span className="text-gray-400 text-xs uppercase tracking-widest">Loading...</span>
+                  <div className="flex flex-col items-center justify-center py-12 gap-3 text-gray-500">
+                    <div className="w-8 h-8 border-4 border-orange-500 border-t-transparent rounded-full animate-spin"></div>
+                    <span className="text-sm">กำลังโหลด...</span>
+                  </div>
+                ) : suppliersFailed ? (
+                  <div role="alert" className="py-10 flex flex-col items-center gap-3 text-center">
+                    <p className="text-gray-800 font-semibold">โหลดรายชื่อซัพพลายเออร์ไม่สำเร็จ</p>
+                    <p className="text-sm text-gray-500">ตรวจสอบการเชื่อมต่อแล้วลองใหม่อีกครั้ง</p>
+                    <button type="button" onClick={loadProductSuppliers} className="bg-orange-500 hover:bg-orange-600 text-white px-5 py-2.5 rounded-xl font-medium transition-all shadow-sm">
+                      ลองใหม่
+                    </button>
                   </div>
                 ) : productSuppliers.length > 0 ? (
-                  <div className="space-y-10">
-                    {productSuppliers.map((supplier, index) => (
-                      <div key={supplier.id} className="relative">
-                        {index > 0 && <div className="absolute -top-5 left-1/2 transform -translate-x-1/2 w-8 h-[1px] bg-gray-200"></div>}
-                        <div className="text-center mb-6">
-                          <h4 className="text-xl font-medium text-gray-900">{supplier.companyName}</h4>
+                  <ul className="space-y-4">
+                    {productSuppliers.map((supplier) => (
+                      <li key={supplier.id} className="rounded-2xl border border-gray-100 p-5">
+                        <div className="flex items-start justify-between gap-3 mb-3">
+                          <h3 className="text-lg font-semibold text-gray-900 wrap-break-word min-w-0">{supplier.companyName}</h3>
+                          <a
+                            href={`/suppliers?id=${encodeURIComponent(supplier.id)}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            title="เปิดในหน้าซัพพลายเออร์ (แท็บใหม่)"
+                            className="shrink-0 text-sm font-semibold text-orange-600 hover:text-orange-700"
+                          >
+                            ดูข้อมูลทั้งหมด
+                          </a>
                         </div>
-
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 sm:gap-10 max-w-md mx-auto">
-                          <div className="text-center sm:text-right border-b sm:border-b-0 sm:border-r border-gray-100 pb-4 sm:pb-0 sm:pr-10">
-                            <p className="text-gray-400 uppercase tracking-[0.1em] text-[10px] mb-1.5 font-medium">Contact Person</p>
-                            <p className="text-gray-800 font-light text-base">{supplier.contactName || "-"}</p>
-                          </div>
-                          <div className="text-center sm:text-left pt-2 sm:pt-0 sm:pl-2">
-                            <p className="text-gray-400 uppercase tracking-[0.1em] text-[10px] mb-1.5 font-medium">Phone Number</p>
-                            <p className="text-gray-800 font-light text-base">{supplier.phone || "-"}</p>
-                          </div>
-                        </div>
-                      </div>
+                        <SupplierInfo
+                          supplier={supplier}
+                          purchaseOrderFields={false}
+                          onCopied={() => showToast("คัดลอกแล้ว", "success")}
+                          onFailed={() => showToast("คัดลอกไม่สำเร็จ", "error")}
+                        />
+                      </li>
                     ))}
-                  </div>
+                  </ul>
                 ) : (
-                  <div className="flex flex-col items-center justify-center py-16 text-center">
-                    <div className="w-16 h-16 rounded-full bg-gray-50 flex items-center justify-center text-gray-300 mb-6">
-                      <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
-                      </svg>
-                    </div>
-                    <span className="text-gray-400 font-light tracking-wide">ไม่มีผู้ผลิตที่เชื่อมโยงกับสินค้านี้</span>
+                  <div className="py-10 text-center text-gray-500">
+                    <p>สินค้านี้ยังไม่ได้ผูกกับซัพพลายเออร์</p>
+                    <p className="text-sm mt-1">ผูกได้ที่หน้าแก้ไขสินค้า</p>
                   </div>
                 )}
               </div>
 
-              {/* Elegant Footer */}
-              <div className="px-8 py-6 bg-white flex justify-center border-t border-gray-100">
-                <button
-                  onClick={() => setShowSuppliersModal(false)}
-                  className="px-10 py-3 text-xs font-semibold tracking-widest uppercase text-gray-600 bg-white border border-gray-200 hover:bg-gray-50 hover:text-gray-900 transition-colors duration-300"
-                >
-                  Close
+              <div className="px-8 py-4 border-t border-gray-100 bg-gray-50/50 flex justify-end">
+                <button type="button" onClick={closeSuppliersModal} className="px-6 py-2.5 font-semibold text-gray-600 bg-white border border-gray-200 rounded-xl hover:bg-gray-50 transition-all shadow-sm">
+                  ปิด
                 </button>
               </div>
             </div>

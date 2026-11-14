@@ -78,7 +78,7 @@ export default function DashboardActions() {
     },
     {
       href: "/suppliers",
-      title: "จัดการผู้ผลิต (Suppliers)",
+      title: "จัดการซัพพลายเออร์",
       description: "เพิ่ม แก้ไข และลบรายชื่อซัพพลายเออร์",
       icon: "🏭",
       color: "bg-amber-50 text-amber-600 border-amber-200 hover:border-amber-400 hover:shadow-amber-100",
