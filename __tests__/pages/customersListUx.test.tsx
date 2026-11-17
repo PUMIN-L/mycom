@@ -78,7 +78,7 @@ function stubClipboard(writeText = vi.fn(async () => {})) {
 }
 
 const tab = (name: RegExp) => screen.getByRole("tab", { name });
-const customerTable = () => screen.getByText("อัปเดตล่าสุด").closest("table")!;
+const customerTable = () => screen.getByText("บันทึกล่าสุด").closest("table")!;
 const companyTable = () => screen.getByText("ชื่อบริษัท").closest("table")!;
 /** First-column text of each body row, top to bottom. */
 const firstCells = (table: HTMLElement) =>
@@ -110,12 +110,12 @@ describe("/customers — a search that finds nothing", () => {
     mockFetch();
     render(<Customers />);
     await loaded();
-    const box = screen.getByPlaceholderText("ค้นหาชื่อลูกค้า บริษัท เบอร์โทร หรืออีเมล...") as HTMLInputElement;
+    const box = screen.getByRole("textbox", { name: "ค้นหาลูกค้า" }) as HTMLInputElement;
     fireEvent.change(box, { target: { value: "ไม่มีใครชื่อนี้" } });
 
     expect(screen.getByText("ไม่พบลูกค้าที่ตรงกับคำค้น")).toBeInTheDocument();
     expect(screen.queryByText("ยังไม่มีข้อมูลลูกค้า")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "ล้างคำค้น" }));
+    fireEvent.click(within(customerTable()).getByRole("button", { name: "ล้างคำค้น" }));
     expect(box.value).toBe("");
     expect(firstCells(customerTable())).toHaveLength(3);
   });
@@ -127,19 +127,17 @@ describe("/customers — a search that finds nothing", () => {
     expect(screen.queryByRole("button", { name: "ล้างคำค้น" })).not.toBeInTheDocument();
   });
 
-  it("companies: nothing matched, and clearing empties all three boxes", async () => {
+  it("companies: nothing matched, and clearing empties the box", async () => {
     mockFetch();
     render(<Customers />);
     await openCompaniesTab();
-    const name = screen.getByPlaceholderText("ค้นหาชื่อบริษัท...") as HTMLInputElement;
-    const province = screen.getByPlaceholderText("ค้นหาจังหวัด...") as HTMLInputElement;
-    fireEvent.change(name, { target: { value: "บริษัท" } });
-    fireEvent.change(province, { target: { value: "เชียงใหม่" } });
+    const box = screen.getByRole("textbox", { name: "ค้นหาบริษัท" }) as HTMLInputElement;
+    // Name and province in one box: every word must match.
+    fireEvent.change(box, { target: { value: "บริษัท เชียงใหม่" } });
     expect(screen.getByText("ไม่พบบริษัทที่ตรงกับคำค้น")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "ล้างคำค้น" }));
-    expect(name.value).toBe("");
-    expect(province.value).toBe("");
+    fireEvent.click(within(companyTable()).getByRole("button", { name: "ล้างคำค้น" }));
+    expect(box.value).toBe("");
     expect(firstCells(companyTable())).toHaveLength(3);
   });
 
@@ -148,9 +146,9 @@ describe("/customers — a search that finds nothing", () => {
     render(<Customers />);
     await loaded();
     fireEvent.click(tab(/^พนักงานขาย/));
-    fireEvent.change(screen.getByPlaceholderText("ค้นหาชื่อพนักงานขาย..."), { target: { value: "zzz" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "ค้นหาพนักงานขาย" }), { target: { value: "zzz" } });
     expect(screen.getByText("ไม่พบพนักงานขายที่ตรงกับคำค้น")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "ล้างคำค้น" }));
+    fireEvent.click(within(screen.getByText("ไม่พบพนักงานขายที่ตรงกับคำค้น").closest("table")!).getByRole("button", { name: "ล้างคำค้น" }));
     expect(screen.getByText("คุณวิชัย")).toBeInTheDocument();
   });
 });
@@ -160,7 +158,7 @@ describe("/customers — the customers list", () => {
     mockFetch();
     render(<Customers />);
     await loaded();
-    const box = screen.getByPlaceholderText("ค้นหาชื่อลูกค้า บริษัท เบอร์โทร หรืออีเมล...");
+    const box = screen.getByRole("textbox", { name: "ค้นหาลูกค้า" });
     fireEvent.change(box, { target: { value: "081-234" } });
     expect(firstCells(customerTable())).toEqual(["คุณสมชาย"]);
     fireEvent.change(box, { target: { value: "SOMCHAI@" } });
@@ -184,12 +182,12 @@ describe("/customers — the customers list", () => {
     await loaded();
     // Default: the note order, its header marked.
     expect(firstCells(customerTable())).toEqual(["คุณสมชาย", "คุณสมหญิง", "คุณกมล"]);
-    expect(header(/อัปเดตล่าสุด/).closest("th")).toHaveAttribute("aria-sort", "descending");
+    expect(header(/บันทึกล่าสุด/).closest("th")).toHaveAttribute("aria-sort", "descending");
 
     fireEvent.click(header(/ชื่อลูกค้า/));
     expect(firstCells(customerTable())).toEqual(["คุณกมล", "คุณสมชาย", "คุณสมหญิง"]);
     expect(header(/ชื่อลูกค้า/).closest("th")).toHaveAttribute("aria-sort", "ascending");
-    expect(header(/อัปเดตล่าสุด/).closest("th")).toHaveAttribute("aria-sort", "none");
+    expect(header(/บันทึกล่าสุด/).closest("th")).toHaveAttribute("aria-sort", "none");
     fireEvent.click(header(/ชื่อลูกค้า/));
     expect(firstCells(customerTable())).toEqual(["คุณสมหญิง", "คุณสมชาย", "คุณกมล"]);
 
@@ -198,9 +196,9 @@ describe("/customers — the customers list", () => {
     expect(firstCells(customerTable())[2]).toBe("คุณกมล");
 
     // Back to the date, which starts newest-first; again flips to oldest-first.
-    fireEvent.click(header(/อัปเดตล่าสุด/));
+    fireEvent.click(header(/บันทึกล่าสุด/));
     expect(firstCells(customerTable())).toEqual(["คุณสมชาย", "คุณสมหญิง", "คุณกมล"]);
-    fireEvent.click(header(/อัปเดตล่าสุด/));
+    fireEvent.click(header(/บันทึกล่าสุด/));
     expect(firstCells(customerTable())).toEqual(["คุณสมหญิง", "คุณสมชาย", "คุณกมล"]);
   });
 
@@ -226,8 +224,8 @@ describe("/customers — copy a phone or e-mail", () => {
     mockFetch();
     render(<Customers />);
     await loaded();
-    fireEvent.click(screen.getByRole("button", { name: "คัดลอก 0812345678" }));
-    await waitFor(() => expect(writeText).toHaveBeenCalledWith("0812345678"));
+    fireEvent.click(screen.getByRole("button", { name: "คัดลอก 081-234-5678" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("081-234-5678"));
     expect(await screen.findByText(/คัดลอกแล้ว/)).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "คุณสมชาย" })).not.toBeInTheDocument();
 
@@ -240,7 +238,7 @@ describe("/customers — copy a phone or e-mail", () => {
     mockFetch();
     render(<Customers />);
     await loaded();
-    fireEvent.click(screen.getByRole("button", { name: "คัดลอก 0812345678" }));
+    fireEvent.click(screen.getByRole("button", { name: "คัดลอก 081-234-5678" }));
     expect(await screen.findByText(/คัดลอกไม่สำเร็จ/)).toBeInTheDocument();
   });
 
@@ -251,7 +249,7 @@ describe("/customers — copy a phone or e-mail", () => {
     await loaded();
     vi.useFakeTimers();
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "คัดลอก 0812345678" }));
+      fireEvent.click(screen.getByRole("button", { name: "คัดลอก 081-234-5678" }));
     });
     expect(screen.getByText(/คัดลอกแล้ว/)).toBeInTheDocument();
     await act(async () => { vi.advanceTimersByTime(2000); });
@@ -336,7 +334,7 @@ describe("/customers — rows", () => {
     fireEvent.keyDown(screen.getByRole("row", { name: "ดูข้อมูล คุณวิชัย" }), { key: "Enter" });
     const heading = await screen.findByRole("heading", { name: "คุณวิชัย" });
     const modal = heading.closest(".relative") as HTMLElement;
-    expect(within(modal).getAllByRole("button", { name: "คัดลอก 0861111111" })).toHaveLength(1);
+    expect(within(modal).getAllByRole("button", { name: "คัดลอก 086-111-1111" })).toHaveLength(1);
     expect(within(modal).getByRole("button", { name: "คัดลอก wichai@example.com" })).toBeInTheDocument();
     expect(within(modal).queryByText("ค")).not.toBeInTheDocument();
   });
@@ -381,7 +379,7 @@ describe("/customers — companies", () => {
     await openCompaniesTab();
     fireEvent.click(within(screen.getByTestId("company-pagination")).getByRole("button", { name: "หน้าสุดท้าย" }));
     // 75 shops: two pages, and we must be on the first.
-    fireEvent.change(screen.getByPlaceholderText("ค้นหาชื่อบริษัท..."), { target: { value: "ร้าน" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "ค้นหาบริษัท" }), { target: { value: "ร้าน" } });
     expect(firstCells(companyTable())[0]).toBe("ร้าน 002");
     expect(screen.getByTestId("company-pagination").textContent).toContain("แสดง 1 ถึง 50 จาก 75 รายการ");
   });
@@ -405,7 +403,7 @@ describe("/customers — companies", () => {
     expect(firstCells(companyTable())[0]).toBe("ร้าน 01");
 
     fireEvent.click(within(pager()).getByRole("button", { name: "ถัดไป" }));
-    fireEvent.change(screen.getByPlaceholderText("ค้นหาชื่อบริษัท..."), { target: { value: "ร้าน 5" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "ค้นหาบริษัท" }), { target: { value: "ร้าน 5" } });
     expect(firstCells(companyTable())).toEqual(["ร้าน 50", "ร้าน 51", "ร้าน 52", "ร้าน 53", "ร้าน 54", "ร้าน 55", "ร้าน 56", "ร้าน 57", "ร้าน 58", "ร้าน 59"]);
     expect(screen.queryByTestId("company-pagination")).not.toBeInTheDocument();
   });
@@ -418,7 +416,7 @@ describe("/customers — companies", () => {
     const contacts = await screen.findByTestId("company-contacts");
     expect(contacts.textContent).toContain("ลูกค้าในบริษัทนี้ (2)");
     const buttons = within(contacts).getAllByRole("button").filter((b) => !b.textContent?.startsWith("+"));
-    expect(buttons.map((b) => b.textContent)).toEqual(["คุณสมชายแล็บ0812345678", "คุณสมหญิง0899999999"]);
+    expect(buttons.map((b) => b.textContent)).toEqual(["คุณสมชายแล็บ081-234-5678", "คุณสมหญิง089-999-9999"]);
     // No made-up status box.
     expect(screen.queryByText(/Active/)).not.toBeInTheDocument();
 
@@ -495,7 +493,9 @@ describe("/customers — tabs", () => {
     fireEvent.click(screen.getByRole("button", { name: "แก้ไข คุณสมชาย" }));
     fireEvent.click(screen.getByRole("button", { name: "บันทึกข้อมูล" }));
     await waitFor(() => expect(calls).toBeGreaterThan(1));
-    expect(screen.queryByText("คุณสมชาย")).not.toBeInTheDocument(); // the skeleton
+    // The rows stay while it reloads — no flash of skeleton bars.
+    expect(screen.getByText("คุณสมชาย")).toBeInTheDocument();
+    expect(document.querySelector("tr.animate-pulse")).toBeNull();
     expect(tab(/^ลูกค้า/).textContent).toBe("ลูกค้า 3");
   });
 

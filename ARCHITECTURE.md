@@ -238,6 +238,7 @@ manual auth checks — that's the duplication this replaced.
 | `POST /api/contact` (sends email)               | all `/api/quotations/**` (GET/POST/[id]/docnos) | `cleanup` = **cron** (`CRON_SECRET`) |
 | `GET /api/health`                               | `GET`/`PUT /api/settings/contact-email` | |
 | —                                               | all `/api/admin/**`, incl. `POST`/`GET /api/admin/sales` + `[id]/items` and `GET /api/admin/equipments/serial-check` (§8a), plus the task board's `/api/admin/tasks/**` + `/api/admin/task-topics/**` (§8c), and the asset register / stock's `/api/admin/inventory/[kind]/**` (§8d), and the missing-image scan's `/api/admin/missing-images` + `/check` (§7) | |
+| —                                               | `GET /api/{customers,companies,salespeople}/[id]/links` — what still points at a record, for /customers' delete dialog (§5c) | |
 
 A public read returns only what a visitor may see: `GET /api/products/[id]`
 drops `supplierIds` (which suppliers a product comes from) unless the caller is
@@ -401,15 +402,16 @@ existing name/company filter on that page, which this feature does not touch.
 - No schema change — `customers.note` already existed; nothing here bumped
   `SCHEMA_VERSION`.
 
-### 5b. Customer list order — "อัปเดตล่าสุด"
+### 5b. Customer list order — "บันทึกล่าสุด"
 `customers.noteUpdatedAt` (VARCHAR ISO-8601 UTC, schema v42) is when the
 **note** last changed — not when the row was last saved. `/customers` shows it
-as "อัปเดตล่าสุด" (`displayDateTimeParts`, Bangkok time, e.g.
+as "บันทึกล่าสุด" (`displayDateTimeParts`, Bangkok time, e.g.
 `05 Sep 2026 20:25`) and sorts by it, newest first, empty notes last
 (`app/lib/customerOrder.ts`). A row whose note changed in the last 12 hours
 (`isNoteRecentlyUpdated`, `NOTE_RECENT_WINDOW_MS`) gets a pastel green
 background (`bg-green-100`); the page's `now` ticks once a minute so the
-highlight expires without a reload.
+highlight expires without a reload. (The column was called "อัปเดตล่าสุด",
+which read as "the row was last saved" — a phone fix moves nobody.)
 
 - **The date column is laid out in parts so rows line up:** zero-padded day,
   `tabular-nums` on the cell (Inter has tabular figures), and the month in a
@@ -437,13 +439,24 @@ highlight expires without a reload.
   page is clamped by derivation (no setState-in-effect). The companies tab is
   paged the same way (`COMPANIES_PER_PAGE`), and so is the equipment tab (10),
   whose page is clamped too — a refetch after a save no longer sends it to
-  page 1.
+  page 1. A page change from the pager scrolls the list's top back into view
+  when it is above the screen (the pager sits under 50 rows). Skeleton rows
+  show only until a list FIRST arrives: a reload after a save keeps the rows,
+  the pager, the legend and the count on screen.
 - **Searching and sorting the lists is [`app/customers/listHelpers.ts`](./app/customers/listHelpers.ts)**
-  (pure, tested). The customer box matches name, company, e-mail, and a phone
-  by digits — only for a query that looks like a phone number ("ร้าน 2024"
-  is a name) and from three digits; "+66" reads as "0". A clicked header sorts
-  by name / company (blank values last either way, ties keep the note order);
-  "อัปเดตล่าสุด" is the default note order and flips to oldest-first.
+  (pure, tested). One box per tab. A query matches when the whole phrase is in
+  one field, or every word of it is somewhere among the fields — customers:
+  name, company, department, e-mail; companies: name, ตำบล, อำเภอ, จังหวัด,
+  รหัสไปรษณีย์ (the three boxes this tab had, in one); salespeople: name,
+  e-mail. A one-letter word or a number must START a word there ("บริษัท ก" is
+  not every row holding a ก, "ลูกค้า 00" is not ลูกค้า 100); longer words may
+  sit inside one (Thai runs words together: "คุณสมชาย"). A phone matches by
+  digits — only for a query that looks like a phone number ("ร้าน 2024" is a
+  name), from three digits, each number of a "02-…, 081-…" field on its own;
+  "+66" reads as "0" on both sides. A clicked header sorts by name / company
+  (blank values last either way, ties keep the note order); "บันทึกล่าสุด" is
+  the default note order and flips to oldest-first. Companies also sort by
+  their customer count (`countCustomersByCompany`, most first).
   `thCompare` ([`lib/thCompare.ts`](./app/lib/thCompare.ts), shared with
   /product-specs) uses one `Intl.Collator` — `localeCompare` with a locale
   builds a new one per call, ~80,000 calls for one sort of 6,000 customers.
@@ -463,6 +476,124 @@ highlight expires without a reload.
   wrong), else `createdAt`. A failure is logged
   (`noteUpdatedAt backfill FAILED`) and does not abort bootstrap; the page
   falls back to `createdAt` for a NULL stamp.
+
+### 5c. `/customers` — forms, deleting and loading
+The page ([`app/customers/page.tsx`](./app/customers/page.tsx)) holds the three
+lists and which window is open; the windows live beside it.
+
+- **Forms** — [`EntityForms.tsx`](./app/customers/EntityForms.tsx)
+  (`CompanyForm`, `CustomerForm`, `SalespersonForm`) in the shell
+  [`FormModal.tsx`](./app/customers/FormModal.tsx). Each keeps its own draft
+  ([`formHelpers.ts`](./app/customers/formHelpers.ts): every field as text,
+  `isDraftDirty`) and saves itself: a ref + the disabled button stop a second
+  submit (a double click used to create the customer twice), the route's own
+  `error` is shown ([`lib/apiErrorMessage.ts`](./app/lib/apiErrorMessage.ts),
+  a 401 always reads as "เซสชันหมดอายุ"), and the page only closes the form,
+  toasts and reloads. Closing with typing in it — backdrop, ✕, ยกเลิก — asks
+  first, and a refresh gets `beforeunload`; while saving it cannot close.
+  `CustomerForm` sends every field, **the note included**: `PUT` reads a
+  missing note as an empty one (§5b).
+- **What is wrong is said in Thai, under the field** — the forms are
+  `noValidate` (the browser's "Please fill out this field." bubble is gone);
+  `companyErrors` / `customerErrors` / `salespersonErrors` in
+  [`formHelpers.ts`](./app/customers/formHelpers.ts) decide (missing name, no
+  company — or one no longer on the list, a malformed e-mail, a note over its
+  column: 2,000 for customers and companies, 5,000 for salespeople), and only
+  after a save is tried; the cursor goes to the first field that is wrong. A
+  refused save stays in the form as an alert at its top, scrolled into view.
+  Notes grow with their text and count characters as you type.
+- **Keyboard** (`FormModal`): the cursor is put in the first field on open
+  (by the shell, not `autoFocus` — React's dev-mode double effect undid that);
+  Enter in a one-line field saves, Ctrl / ⌘ + Enter from a note, Esc closes
+  (asking when dirty; Esc again goes back to the form); the focus returns to
+  what opened the form. The title has the record's name under it.
+- **Likely duplicates are pointed out, never refused** — a company or
+  salesperson with the same name, a customer with the same name in the same
+  company or the same phone number (`sameNameAs`, `duplicateCustomers`;
+  case, spaces and punctuation ignored, phones compared as dialable numbers).
+- **"+ เพิ่มบริษัทใหม่" inside the customer form** opens the company form on
+  top of it (pre-filled with what was typed in the company list's search);
+  saved, the company is put on the page's list at once (`onCompanyCreated`)
+  and picked for the customer. The customer form keeps what was typed.
+- **Provinces are picked from the 77** ([`lib/thaiProvinces.ts`](./app/lib/thaiProvinces.ts),
+  `SearchableDropdown`). Stored values are never rewritten in bulk: a known
+  province typed another way ("กทม.", "จ.ชลบุรี") opens in the form under its
+  official name (and is saved so the next time the company is saved), is shown
+  and sorted under it in the list, and is found by any of its names
+  (`provinceSearchText`). A stored value that is none of the 77 stays as typed
+  and is offered in the list as "(ที่พิมพ์ไว้เดิม)". An address abroad (no Thai
+  in its province) is written without ตำบล / อำเภอ / จังหวัด.
+- **`SearchableDropdown`** now closes on Esc, marks its open list
+  `data-dropdown-panel` (so a window leaves that Esc to the list), and takes
+  `id` / `describedBy` for a label and an error message.
+- **Phone fields are free text** (`maxLength` 255): "02-123-4567 ต่อ 105",
+  two numbers, "+66 …". They used to strip every non-digit as it was typed,
+  running an extension into the number. Search still compares digits
+  (`listHelpers.matchesCustomerSearch`).
+- **Deleting** — [`DeleteDialog.tsx`](./app/customers/DeleteDialog.tsx) first
+  asks `GET /api/{customers,companies,salespeople}/[id]/links` (admin only;
+  [`lib/deleteBlockers.ts`](./app/lib/deleteBlockers.ts), one `COUNT` query
+  each) what still points at the record, and lists it ("เครื่องมือ 2 เครื่อง",
+  "ใบ Job 1 ใบ" — [`linkHelpers.ts`](./app/customers/linkHelpers.ts)) with only
+  ตกลง, instead of a bare "เกิดข้อผิดพลาดในการลบ" after pressing ลบ. The
+  DELETE routes stay the authority and are unchanged; a refusal the check did
+  not foresee (400) is shown in the server's words, a failed check (or one
+  slower than 8 s) just asks as before. `deleteBlockers.test.ts` reads the
+  DELETE routes' SQL and fails if the counts stop checking the same tables.
+- **Loading** — each list has its own status (`loading | ok | error`). A list
+  that has never loaded shows "โหลดรายชื่อ…ไม่สำเร็จ" + ลองใหม่ in its table —
+  not "ยังไม่มีข้อมูล…", no "0" on its tab or heading, Export off; a reload
+  that fails keeps the rows and toasts. Only the latest load is applied
+  (`loadSeqRef`); a 401 goes to /login.
+- **The customer window** (`CustomerDetailsModal`, shared with /crm/alerts and
+  /crm/tasks) asks before a backdrop click, ✕, Esc or ยกเลิก drops an edit of
+  the call log, and saves it once however often บันทึก is pressed. The note
+  editor opens with the cursor at the END (the log is written downwards),
+  counts characters against the column's 2,000 (amber from 1,800; over it,
+  บันทึก is off and it says by how many), and saves on Ctrl / ⌘ + Enter.
+  Department / phone / e-mail are one label:value table, phone and e-mail
+  copyable; the avatar is an icon (every "คุณ…" read "ค"). Two optional props
+  hosts may pass: `onEdit` ("แก้ไขข้อมูล" → the host's form) and
+  `onOpenCompany` (the company name becomes a button) — /customers passes
+  both, the CRM pages neither.
+- **The company and salesperson windows** —
+  [`ViewWindows.tsx`](./app/customers/ViewWindows.tsx) in the shell
+  [`ViewModal.tsx`](./app/customers/ViewModal.tsx), which carries แก้ไข beside
+  ✕. A company's address is written by
+  [`companyAddress.ts`](./app/customers/companyAddress.ts): "แขวง … เขต …" in
+  Bangkok, "ตำบล … อำเภอ … จังหวัด …" elsewhere, no word doubled when the admin
+  typed it ("ต.บางพลี"), no empty lines — and "ไม่มีข้อมูลที่อยู่" only when
+  every part is empty (it used to show beside a lone district).
+  "คัดลอกที่อยู่" copies it as one line.
+- **Every window here is a dialog** (`role`, `aria-modal`): Esc closes the
+  one on top and only that one (`useModalEscape`, §11) — the task form or a
+  call-schedule form over the customer window takes its own Esc — and the
+  focus goes into a window when it opens and back to the row it came from
+  when it closes. `CustomerCallScheduleSection`'s four sub-windows and
+  `TaskCreatedNotice` are marked the same way so this holds for them.
+- **Call schedules that fail to load** say "โหลดนัดหมายโทรติดตามไม่สำเร็จ" with
+  ลองใหม่ — not "ยังไม่มีนัดหมายโทรติดตาม".
+- **The อุปกรณ์ที่ขาย tab** ([`EquipmentTab.tsx`](./app/customers/EquipmentTab.tsx),
+  logic in [`equipmentHelpers.ts`](./app/customers/equipmentHelpers.ts)).
+  A warranty's END DATE is its last valid day: on it the row says "หมดวันนี้"
+  and "อยู่ในประกัน" (it used to say "หมดแล้ว" beside "Active"); expired is
+  past the end date or marked `Expired`; no end date is "ไม่ระบุวันหมด", not
+  a claimed "Active". Status, filter labels ("ประกัน: …") and the export's
+  สถานะ column are Thai; end dates read like the rest of the site
+  (`formatDisplayDate`). Headers sort (customer, product, S/N, end date —
+  blanks last). The list keeps its rows through a reload, only the latest
+  load is applied, a list that never loaded says so with ลองใหม่, the pager
+  takes the view back to the tab's top, and the delete dialog is `z-100`.
+- **Phones are shown dashed** — `formatThaiPhone` ([`lib/phone.ts`](./app/lib/phone.ts)):
+  a bare Thai number ("0812345678") reads "081-234-5678"; anything typed with
+  its own formatting stays as typed. Display only, and what CopyText copies.
+- **The note search-and-replace (§5a) is folded** behind "ค้นหา-แทนที่ในบันทึก"
+  beside the list's search box; open, it sat above the list as a second,
+  bigger search box.
+- **Every window on the page is `z-100`** — over the admin bell
+  (`GlobalAdminBell`, `z-90`), which used to float on top of them and lead off
+  the page when clicked. The page has `pb-32` so the bell does not cover the
+  pager either.
 
 ### 6. Security headers & CSRF
 - [`next.config.ts`](./next.config.ts) sets an **enforced**
@@ -1511,8 +1642,13 @@ home / dashboard / back icon, e.g. "กลับไป Dashboard"; pass `onNavig
 page's leave guard. `NavButton.test.tsx` fails if the old faint grey "← กลับไป …"
 text-link style comes back), `AdminHomeButton` (the way back to /adminpanel on
 every admin page — `NavButton` with the home icon, "กลับหน้าระบบจัดการ".
-`AdminHomeButton.test.tsx` fails if a page links to /adminpanel by hand). Import
-the shared version instead of defining a local one.
+`AdminHomeButton.test.tsx` fails if a page links to /adminpanel by hand),
+`SearchBox` (a list's search field with a magnifier and ✕ to clear),
+`useModalEscape` (Esc closes a window — only the one on top: the last
+`aria-modal="true"` in the document, with no dropdown list open; see
+[`lib/dialogLayer.ts`](./app/lib/dialogLayer.ts)). Import the shared version
+instead of defining a local one. A client reading a failed response's message
+uses [`lib/apiErrorMessage.ts`](./app/lib/apiErrorMessage.ts)'s `errorMessageOf`.
 
 **Dropdowns are always [`SearchableDropdown`](./app/components/SearchableDropdown.tsx),
 never a native `<select>`.** The OS paints a native one, so on a dark-mode machine

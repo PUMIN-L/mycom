@@ -47,6 +47,12 @@ interface SearchableDropdownProps {
    * Defaults to `true`, i.e. the historic local filtering.
    */
   filterOptions?: boolean;
+  /** Optional: the trigger button's id, so a `<label htmlFor>` names it and a
+   *  form can put the cursor on it. */
+  id?: string;
+  /** Optional: the id of the text that says what is wrong with the choice
+   *  (a required one not made) — read out with the trigger. */
+  describedBy?: string;
 }
 
 export default function SearchableDropdown({
@@ -59,6 +65,8 @@ export default function SearchableDropdown({
   searchable = true,
   onSearchChange,
   filterOptions = true,
+  id,
+  describedBy,
 }: SearchableDropdownProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -130,6 +138,18 @@ export default function SearchableDropdown({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
+  // Esc closes the open list. The list is marked `data-dropdown-panel`
+  // (lib/dialogLayer.ts), so a window that closes on Esc leaves this press to
+  // the list: one Esc closes the list, the next one the window.
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setIsOpen(false);
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [isOpen]);
+
   // Re-measure on resize, and on scroll anywhere (capture phase catches a
   // scrollable modal body too, not just the window) while the panel is open.
   useEffect(() => {
@@ -154,6 +174,9 @@ export default function SearchableDropdown({
     <div className={`relative ${className}`} ref={dropdownRef}>
       <button
         type="button"
+        id={id}
+        aria-expanded={isOpen}
+        aria-describedby={describedBy}
         className={`w-full bg-white border border-gray-300 rounded-lg px-3 py-1.5 text-left text-sm text-gray-700 flex justify-between items-center shadow-sm hover:bg-gray-50 transition ${buttonClassName}`}
         onClick={() => {
           // Measure before the panel first renders (same event handler, so
@@ -187,6 +210,7 @@ export default function SearchableDropdown({
       {isOpen && typeof document !== "undefined" && createPortal(
         <div
           ref={panelRef}
+          data-dropdown-panel=""
           className="fixed z-9999 bg-white border border-gray-200 rounded-xl shadow-xl flex flex-col"
           style={{
             maxHeight: panel.maxHeight,

@@ -128,7 +128,7 @@ describe("/customers อุปกรณ์ที่ขาย", () => {
   it("a new search starts again from page 1", async () => {
     await renderTab();
     fireEvent.click(within(pager()).getByRole("button", { name: "หน้าสุดท้าย" }));
-    fireEvent.change(screen.getByPlaceholderText("ค้นหาลูกค้า, บริษัท, สินค้า, Serial Number..."), {
+    fireEvent.change(screen.getByRole("textbox", { name: "ค้นหาอุปกรณ์" }), {
       target: { value: "SN-" },
     });
     expect(pageBox().value).toBe("1");
@@ -171,7 +171,7 @@ describe("/customers อุปกรณ์ที่ขาย", () => {
     const add = screen.getByRole("button", { name: /เพิ่มอุปกรณ์/ });
     expect(add.className).toContain("bg-orange-500");
     expect(add.className).not.toContain("gradient");
-    const exportButton = screen.getByRole("button", { name: /Export Excel/ });
+    const exportButton = screen.getByRole("button", { name: "ส่งออก Excel" });
     expect(exportButton.className).toContain("bg-white");
     expect(exportButton.className).not.toContain("emerald");
     expect(screen.getByRole("link", { name: /แจ้งเตือน/ }).className).not.toContain("amber");

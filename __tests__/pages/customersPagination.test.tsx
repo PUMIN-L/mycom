@@ -54,7 +54,7 @@ function mockFetch(list: unknown[]) {
 
 /** Customer names in the customers table, top to bottom. */
 function shownNames(): string[] {
-  const table = screen.getByText("อัปเดตล่าสุด").closest("table")!;
+  const table = screen.getByText("บันทึกล่าสุด").closest("table")!;
   return within(table)
     .getAllByRole("row")
     .slice(1)
@@ -65,7 +65,7 @@ const pager = () => screen.getByTestId("customer-pagination");
 /** "page N / M" as the pager shows it: the page box's value, then "/ M". */
 const pageShown = () =>
   `${(within(pager()).getByRole("textbox", { name: "ไปที่หน้า" }) as HTMLInputElement).value} ${pager().querySelector("label span")?.textContent}`;
-const SEARCH = "ค้นหาชื่อลูกค้า บริษัท เบอร์โทร หรืออีเมล...";
+const searchBox = () => screen.getByRole("textbox", { name: "ค้นหาลูกค้า" });
 
 beforeEach(() => {
   window.history.replaceState({}, "", "/customers");
@@ -120,7 +120,7 @@ describe("/customers — pagination", () => {
     fireEvent.click(within(pager()).getByRole("button", { name: "ถัดไป" }));
     fireEvent.click(within(pager()).getByRole("button", { name: "ถัดไป" }));
 
-    fireEvent.change(screen.getByPlaceholderText(SEARCH), {
+    fireEvent.change(searchBox(), {
       target: { value: "บริษัท ก" },
     });
 
@@ -138,7 +138,7 @@ describe("/customers — pagination", () => {
 
     // A search that leaves one page: the stored page (3) is clamped, not shown
     // as an empty table.
-    fireEvent.change(screen.getByPlaceholderText(SEARCH), {
+    fireEvent.change(searchBox(), {
       target: { value: "ลูกค้า 00" },
     });
     expect(shownNames()).toHaveLength(9);
@@ -158,7 +158,7 @@ describe("/customers — pagination", () => {
     render(<Customers />);
     await screen.findByText("ลูกค้า 001");
 
-    fireEvent.click(screen.getByRole("button", { name: /Export/ }));
+    fireEvent.click(screen.getByRole("button", { name: /ส่งออก Excel/ }));
     await waitFor(() => expect(downloadExcel).toHaveBeenCalled());
     const sheets = vi.mocked(downloadExcel).mock.calls[0][1] as { rows: unknown[] }[];
     expect(sheets[0].rows).toHaveLength(120);

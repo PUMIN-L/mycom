@@ -3,6 +3,7 @@
 import type { Customer } from "../lib/types";
 import { sortCustomersByNoteActivity, hasCustomerNote, customerNoteActivityAt } from "../lib/customerOrder";
 import { thCompare } from "../lib/thCompare";
+import { provinceName, provinceSearchText } from "../lib/thaiProvinces";
 
 export { thCompare };
 
@@ -31,26 +32,86 @@ const digitsOf = (s: string | null | undefined) => (s || "").replace(/\D/g, "");
  *  dashes, dots, brackets or a leading "+". */
 const PHONE_LIKE = /^\+?[\d\s().-]+$/;
 
+/** Between two numbers in one phone field: a comma, slash, semicolon, bar,
+ *  "หรือ" or "or" (as lib/phone.ts splits them). */
+const PHONE_SEPARATOR = /\s*(?:,|\/|;|\||หรือ|\bor\b)\s*/i;
+
+/** A number's digits as dialled at home: "+66 81…" and "081…" are one number. */
+function localDigits(text: string): string {
+  const digits = digitsOf(text);
+  return text.trim().startsWith("+66") ? "0" + digits.slice(2) : digits;
+}
+
+/** The query as matched: trimmed, lower-case, one space between words. */
+function normalizeQuery(query: string): string {
+  return query.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+/** Whether some space-separated word of `text` starts with `prefix`. */
+function startsAWord(text: string, prefix: string): boolean {
+  return text.split(" ").some((word) => word.startsWith(prefix));
+}
+
 /**
- * Whether a customer matches the search box: by name, company or email — and
- * by PHONE, comparing digits only, so "081-234 5678" finds 0812345678. The
- * phone is consulted only for a query that IS a number — "ร้าน 2024" is a
- * name, not a phone containing 2024 — and only from three digits, or a "1"
- * would match nearly everyone. "+66 81…" is the same number as "081…".
+ * Whether the query is in these texts, ignoring case: the whole phrase in one
+ * of them, or else every word of it somewhere among them — "สมชาย QC" finds
+ * คุณสมชาย of the QC department, "ศรีราชา ชลบุรี" a company by its district
+ * and province.
+ *
+ * A one-letter word, and a number, must START a word there: "บริษัท ก" means
+ * บริษัท ก, not every company whose people's names hold a ก ("ลูกค้า"); "ร้าน
+ * 5" means ร้าน 5…, not ร้าน 05 or ร้าน 15; "ลูกค้า 00" is not ลูกค้า 100.
+ * Longer words may sit anywhere — Thai runs words together ("คุณสมชาย").
+ */
+function everyWordIn(q: string, texts: readonly (string | null | undefined)[]): boolean {
+  const haystack = texts.map((t) => (t || "").toLowerCase().replace(/\s+/g, " "));
+  if (haystack.some((t) => t.includes(q))) return true;
+  const words = q.split(" ");
+  if (words.length < 2) return false;
+  return words.every((word) => {
+    const atStart = word.length === 1 || /^\d+$/.test(word);
+    return haystack.some((t) => (atStart ? startsAWord(t, word) : t.includes(word)));
+  });
+}
+
+/**
+ * Whether the query is (part of) one of the numbers in a phone field,
+ * comparing digits only, so "081-234 5678" finds 0812345678 and "+66 81…"
+ * finds 081…. Only for a query that IS a number — "ร้าน 2024" is a name, not a
+ * phone containing 2024 — and only from three digits, or a "1" would match
+ * nearly everyone. Each number of "02-123-4567, 081-…" is matched on its own,
+ * so the digits of two numbers are never read as one.
+ */
+function phoneMatches(q: string, phone: string | null | undefined): boolean {
+  if (!PHONE_LIKE.test(q)) return false;
+  const wanted = localDigits(q);
+  if (wanted.length < 3) return false;
+  return (phone || "").split(PHONE_SEPARATOR).some((part) => localDigits(part).includes(wanted));
+}
+
+/**
+ * Whether a customer matches the search box: every word in their name,
+ * company, department or e-mail — or the phone, by its digits.
  */
 export function matchesCustomerSearch(
-  c: Pick<Customer, "name" | "companyName" | "email" | "phone">,
+  c: Pick<Customer, "name" | "companyName" | "email" | "phone"> & { department?: string | null },
   query: string
 ): boolean {
-  const q = query.trim().toLowerCase();
+  const q = normalizeQuery(query);
   if (!q) return true;
-  if ((c.name || "").toLowerCase().includes(q)) return true;
-  if ((c.companyName || "").toLowerCase().includes(q)) return true;
-  if ((c.email || "").toLowerCase().includes(q)) return true;
-  if (!PHONE_LIKE.test(q)) return false;
-  let qDigits = digitsOf(q);
-  if (q.startsWith("+66")) qDigits = "0" + qDigits.slice(2);
-  return qDigits.length >= 3 && digitsOf(c.phone).includes(qDigits);
+  if (everyWordIn(q, [c.name, c.companyName, c.department, c.email])) return true;
+  return phoneMatches(q, c.phone);
+}
+
+/** A salesperson by name or e-mail — or the phone, by its digits. */
+export function matchesSalespersonSearch(
+  s: { name: string; email?: string | null; phone?: string | null },
+  query: string
+): boolean {
+  const q = normalizeQuery(query);
+  if (!q) return true;
+  if (everyWordIn(q, [s.name, s.email])) return true;
+  return phoneMatches(q, s.phone);
 }
 
 export type CustomerSortKey = "activity" | "name" | "company";
@@ -76,36 +137,66 @@ export function sortCustomers<T extends Customer>(list: readonly T[], sort: Sort
 }
 
 export interface CompanyLike {
+  id?: string;
   name: string;
   province?: string;
   district?: string;
+  subDistrict?: string;
+  postalCode?: string;
+  phone?: string;
 }
 
-/** "อำเภอ/เขต, จังหวัด", or "" when neither is known. */
+/** "อำเภอ/เขต, จังหวัด", or "" when neither is known. The province by its
+ *  official name: "กทม." and "กรุงเทพฯ" are both shown as กรุงเทพมหานคร. */
 export function companyLocation(c: CompanyLike): string {
-  return [c.district, c.province].map((s) => (s || "").trim()).filter(Boolean).join(", ");
+  return [c.district, provinceName(c.province)].map((s) => (s || "").trim()).filter(Boolean).join(", ");
 }
 
-export function matchesCompanySearch(
-  c: CompanyLike,
-  { name, province, district }: { name: string; province: string; district: string }
-): boolean {
-  const has = (value: string | undefined, q: string) => (value || "").toLowerCase().includes(q.trim().toLowerCase());
-  return has(c.name, name) && has(c.province, province) && has(c.district, district);
+/**
+ * Whether a company matches the search box: every word in its name or
+ * address (ตำบล, อำเภอ, จังหวัด, รหัสไปรษณีย์) — "แล็บ ชลบุรี" — or the phone,
+ * by its digits. One box: there used to be three (name / province /
+ * district), side by side.
+ */
+export function matchesCompanySearch(c: CompanyLike, query: string): boolean {
+  const q = normalizeQuery(query);
+  if (!q) return true;
+  // The province under every name it goes by: "กทม" finds กรุงเทพมหานคร.
+  if (everyWordIn(q, [c.name, c.subDistrict, c.district, provinceSearchText(c.province), c.postalCode])) return true;
+  return phoneMatches(q, c.phone);
 }
 
-export type CompanySortKey = "name" | "location";
+export type CompanySortKey = "name" | "location" | "customers";
 
-/** Sorted as asked, or left in the order given (newest first, from the API).
- *  By location: province, then district within it — blanks last. */
-export function sortCompanies<T extends CompanyLike>(list: readonly T[], sort: SortState<CompanySortKey> | null): T[] {
+/**
+ * Sorted as asked, or left in the order given (newest first, from the API).
+ * By location: province, then district within it — blanks last. By customers:
+ * how many each has (`customerCounts`, by company id), ties by name.
+ */
+export function sortCompanies<T extends CompanyLike>(
+  list: readonly T[],
+  sort: SortState<CompanySortKey> | null,
+  customerCounts?: ReadonlyMap<string, number>
+): T[] {
   if (!sort) return [...list];
   const sign = sort.dir === "asc" ? 1 : -1;
+  const countOf = (c: T) => (c.id && customerCounts?.get(c.id)) || 0;
   const compare = (a: T, b: T) =>
     sort.key === "name"
       ? compareBlanksLast(a.name, b.name, sign)
-      : compareBlanksLast(a.province, b.province, sign) || compareBlanksLast(a.district, b.district, sign);
+      : sort.key === "customers"
+        ? sign * (countOf(a) - countOf(b)) || thCompare(a.name, b.name)
+        : compareBlanksLast(provinceName(a.province), provinceName(b.province), sign) || compareBlanksLast(a.district, b.district, sign);
   return [...list].sort(compare);
+}
+
+/** How many customers each company has, by company id. */
+export function countCustomersByCompany(customers: readonly { companyId?: string | null }[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const c of customers) {
+    if (c.companyId) counts.set(c.companyId, (counts.get(c.companyId) || 0) + 1);
+  }
+  return counts;
 }
 
 /** Sorted by name as asked, or left in the order given. */

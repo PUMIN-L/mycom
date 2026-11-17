@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, it, expect } from 'vitest';
-import { phoneParts, toThaiE164 } from '@/app/lib/phone';
+import { formatThaiPhone, phoneParts, toThaiE164 } from '@/app/lib/phone';
 
 const joined = (text: string) => phoneParts(text).map((p) => p.text).join('');
 const links = (text: string) => phoneParts(text).filter((p) => p.href).map((p) => [p.text, p.href]);
@@ -67,5 +67,28 @@ describe('phoneParts — only a number of the right shape is linked', () => {
     ['+1 415 555 0100', 'tel:+14155550100'],
   ])('%p is linked as %p', (text, href) => {
     expect(links(text)).toEqual([[text, href]]);
+  });
+});
+
+describe('formatThaiPhone — a bare Thai number gets its dashes, anything else stays as typed', () => {
+  it('mobiles 3-3-4, Bangkok 2-3-4, the provinces 3-3-3', () => {
+    expect(formatThaiPhone('0812345678')).toBe('081-234-5678');
+    expect(formatThaiPhone('0612345678')).toBe('061-234-5678');
+    expect(formatThaiPhone('0912345678')).toBe('091-234-5678');
+    expect(formatThaiPhone('021234567')).toBe('02-123-4567');
+    expect(formatThaiPhone('038123456')).toBe('038-123-456');
+    expect(formatThaiPhone(' 0812345678 ')).toBe('081-234-5678');
+  });
+
+  it('leaves alone what was typed with its own formatting, or is not one Thai number', () => {
+    for (const typed of ['081-234-5678', '02 123 4567', '02-123-4567 ต่อ 105', '0812345678, 021234567', '+66812345678', '1234', '021234567105', '0112345678', 'สายใน 12']) {
+      expect(formatThaiPhone(typed)).toBe(typed);
+    }
+  });
+
+  it('nothing is nothing', () => {
+    expect(formatThaiPhone('')).toBe('');
+    expect(formatThaiPhone(null)).toBe('');
+    expect(formatThaiPhone(undefined)).toBe('');
   });
 });

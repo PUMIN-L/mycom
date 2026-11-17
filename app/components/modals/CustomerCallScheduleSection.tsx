@@ -1,6 +1,7 @@
 "use client";
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import DatePicker from "../DatePicker";
+import { useModalEscape } from "../useModalEscape";
 import type { ServiceSchedule } from "../../lib/types";
 import { toLocalDateString, formatDisplayDate } from "../../lib/dateFormat";
 
@@ -57,6 +58,9 @@ export default function CustomerCallScheduleSection({
 
   const [isSaving, setIsSaving] = useState(false);
   const [scheduleFormError, setScheduleFormError] = useState(false);
+  // Whether the appointments could not be loaded. Said as that, with a retry:
+  // a failed load used to read "ยังไม่มีนัดหมายโทรติดตาม", as if there were none.
+  const [loadFailed, setLoadFailed] = useState(false);
 
   useEffect(() => {
     fetchSchedules(customerId);
@@ -68,11 +72,32 @@ export default function CustomerCallScheduleSection({
       if (res.ok) {
         const data = await res.json();
         setSchedules(Array.isArray(data) ? data : data.schedules || []);
+        setLoadFailed(false);
+      } else {
+        setLoadFailed(true);
       }
     } catch (err) {
       console.error("Failed to fetch schedules", err);
+      setLoadFailed(true);
     }
   };
+
+  // The windows this section opens, each a dialog of its own: Esc closes the
+  // one on top (and not the customer window under it) — as its backdrop
+  // does, and never under a save.
+  const scheduleFormRef = useRef<HTMLDivElement>(null);
+  const completeFormRef = useRef<HTMLDivElement>(null);
+  const deleteConfirmRef = useRef<HTMLDivElement>(null);
+  const deleteCompletedRef = useRef<HTMLDivElement>(null);
+  const closeScheduleForm = () => {
+    if (isSaving) return;
+    setIsScheduleModalOpen(false);
+    setScheduleFormError(false);
+  };
+  useModalEscape(scheduleFormRef, closeScheduleForm, isScheduleModalOpen);
+  useModalEscape(completeFormRef, () => { if (!isSaving) setCompletingScheduleId(null); }, !!completingScheduleId);
+  useModalEscape(deleteConfirmRef, () => { if (!isSaving) setDeleteScheduleConfirm(null); }, !!deleteScheduleConfirm);
+  useModalEscape(deleteCompletedRef, () => { if (!isSaving) setDeleteCompletedSchedule(null); }, !!deleteCompletedSchedule);
 
   const fetchLogs = async (scheduleId: string) => {
     try {
@@ -203,13 +228,24 @@ export default function CustomerCallScheduleSection({
           <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wider">📞 นัดหมายโทรติดตาม</h3>
           <button
             onClick={() => { setEditingSchedule({ scheduledDate: "", notes: "" }); setIsScheduleModalOpen(true); }}
-            className="px-3 py-1.5 bg-indigo-500 text-white font-semibold rounded-xl hover:bg-indigo-600 transition-all text-xs flex items-center gap-1"
+            className="px-3 py-1.5 bg-orange-500 text-white font-semibold rounded-xl hover:bg-orange-600 transition-all text-xs flex items-center gap-1"
           >
             + เพิ่มนัดหมาย
           </button>
         </div>
 
-        {schedules.length === 0 ? (
+        {loadFailed && schedules.length === 0 ? (
+          <div role="alert" className="flex flex-col items-center gap-2 py-6 text-sm bg-gray-50 rounded-2xl border border-gray-100">
+            <p className="text-gray-700 font-semibold">โหลดนัดหมายโทรติดตามไม่สำเร็จ</p>
+            <button
+              type="button"
+              onClick={() => fetchSchedules(customerId)}
+              className="px-3 py-1.5 bg-white border border-gray-200 text-gray-700 font-semibold rounded-lg hover:bg-gray-50 transition-all text-xs"
+            >
+              ลองใหม่
+            </button>
+          </div>
+        ) : schedules.length === 0 ? (
           <p className="text-gray-400 text-center py-6 text-sm bg-gray-50 rounded-2xl border border-gray-100">ยังไม่มีนัดหมายโทรติดตาม</p>
         ) : (
           <div className="space-y-3">
@@ -226,7 +262,7 @@ export default function CustomerCallScheduleSection({
                       <>
                         <button
                           onClick={(e) => { e.stopPropagation(); setEditingSchedule(s); setIsScheduleModalOpen(true); }}
-                          className="px-2.5 py-1.5 bg-blue-50 text-blue-600 hover:bg-blue-100 text-xs font-semibold rounded-lg transition-all flex items-center gap-1"
+                          className="px-2.5 py-1.5 bg-orange-50 text-orange-700 hover:bg-orange-100 text-xs font-semibold rounded-lg transition-all flex items-center gap-1"
                           title="แก้ไขนัดหมาย"
                         >
                           ✏️ แก้ไข
@@ -275,7 +311,7 @@ export default function CustomerCallScheduleSection({
                         </div>
                         {log.resultDetails && <p className="text-gray-600">{log.resultDetails}</p>}
                         {log.customerFeedback && (
-                          <p className="text-blue-600 mt-1">💡 Feedback: {log.customerFeedback}</p>
+                          <p className="text-blue-600 mt-1">💡 ความเห็นลูกค้า: {log.customerFeedback}</p>
                         )}
                       </div>
                     ))}
@@ -289,10 +325,10 @@ export default function CustomerCallScheduleSection({
 
       {/* ── Schedule Add/Edit Modal ───────────────────────────────────────── */}
       {isScheduleModalOpen && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[160] flex items-center justify-center p-4" onClick={() => { setIsScheduleModalOpen(false); setScheduleFormError(false); }}>
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg" onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[160] flex items-center justify-center p-4" onClick={closeScheduleForm}>
+          <div ref={scheduleFormRef} role="dialog" aria-modal="true" aria-labelledby="call-schedule-form-title" className="bg-white rounded-2xl shadow-2xl w-full max-w-lg" onClick={(e) => e.stopPropagation()}>
             <div className="p-6 border-b border-gray-100">
-              <h3 className="text-xl font-bold text-gray-800">{editingSchedule?.id ? "แก้ไขนัดหมายโทรติดตาม" : "เพิ่มนัดหมายโทรติดตาม"}</h3>
+              <h3 id="call-schedule-form-title" className="text-xl font-bold text-gray-800">{editingSchedule?.id ? "แก้ไขนัดหมายโทรติดตาม" : "เพิ่มนัดหมายโทรติดตาม"}</h3>
             </div>
             <form onSubmit={handleSaveSchedule} className="p-6 space-y-5">
               <div>
@@ -312,7 +348,7 @@ export default function CustomerCallScheduleSection({
                 <textarea
                   value={editingSchedule?.notes || ""}
                   onChange={(e) => setEditingSchedule((prev) => ({ ...prev, notes: e.target.value }))}
-                  className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400"
+                  className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-400"
                   rows={3}
                   placeholder="รายละเอียดนัดหมาย"
                 />
@@ -329,7 +365,7 @@ export default function CustomerCallScheduleSection({
                           name="status"
                           checked={(editingSchedule?.status || "pending") === s}
                           onChange={() => setEditingSchedule((prev) => ({ ...prev, status: s as any }))}
-                          className="accent-indigo-500"
+                          className="accent-orange-500"
                         />
                         <span className="text-sm text-gray-700">
                           {s === "pending" ? "รอดำเนินการ" : "ยกเลิก"}
@@ -341,8 +377,8 @@ export default function CustomerCallScheduleSection({
               )}
 
               <div className="flex justify-end gap-3 pt-4 border-t border-gray-100">
-                <button type="button" onClick={() => { setIsScheduleModalOpen(false); setScheduleFormError(false); }} className="px-5 py-2.5 text-sm font-semibold text-gray-700 bg-white border border-gray-300 rounded-xl hover:bg-gray-50 transition-all">ยกเลิก</button>
-                <button type="submit" disabled={isSaving} className="px-5 py-2.5 bg-indigo-600 text-white font-semibold rounded-xl hover:bg-indigo-700 transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed text-sm">
+                <button type="button" onClick={closeScheduleForm} className="px-5 py-2.5 text-sm font-semibold text-gray-700 bg-white border border-gray-300 rounded-xl hover:bg-gray-50 transition-all">ยกเลิก</button>
+                <button type="submit" disabled={isSaving} className="px-5 py-2.5 bg-orange-500 text-white font-semibold rounded-xl hover:bg-orange-600 transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed text-sm">
                   {isSaving ? "กำลังบันทึก..." : "บันทึกข้อมูล"}
                 </button>
               </div>
@@ -354,9 +390,9 @@ export default function CustomerCallScheduleSection({
       {/* ── Complete Schedule Modal ───────────────────────────────────────── */}
       {completingScheduleId && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[160] flex items-center justify-center p-4 animate-fade-in" onClick={() => setCompletingScheduleId(null)}>
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg" onClick={(e) => e.stopPropagation()}>
+          <div ref={completeFormRef} role="dialog" aria-modal="true" aria-labelledby="call-complete-form-title" className="bg-white rounded-2xl shadow-2xl w-full max-w-lg" onClick={(e) => e.stopPropagation()}>
             <div className="p-6 border-b border-gray-100">
-              <h3 className="text-xl font-bold text-gray-800">✅ บันทึกผลการโทรติดตาม</h3>
+              <h3 id="call-complete-form-title" className="text-xl font-bold text-gray-800">✅ บันทึกผลการโทรติดตาม</h3>
             </div>
             <form onSubmit={handleComplete} className="p-6 space-y-5">
               <div>
@@ -393,7 +429,7 @@ export default function CustomerCallScheduleSection({
               </div>
 
               <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1.5">Feedback จากลูกค้า</label>
+                <label className="block text-sm font-semibold text-gray-700 mb-1.5">ความเห็นจากลูกค้า</label>
                 <textarea
                   value={completeForm.customerFeedback}
                   onChange={(e) => setCompleteForm((prev) => ({ ...prev, customerFeedback: e.target.value }))}
@@ -417,9 +453,9 @@ export default function CustomerCallScheduleSection({
       {/* ── Delete Confirm (pending) ─────────────────────────────────────── */}
       {deleteScheduleConfirm && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[160] flex items-center justify-center p-4" onClick={() => setDeleteScheduleConfirm(null)}>
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 text-center" onClick={(e) => e.stopPropagation()}>
+          <div ref={deleteConfirmRef} role="alertdialog" aria-modal="true" aria-labelledby="call-delete-title" className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 text-center" onClick={(e) => e.stopPropagation()}>
             <div className="text-5xl mb-4">🗑️</div>
-            <h3 className="text-lg font-bold text-gray-800 mb-2">ลบนัดหมายนี้?</h3>
+            <h3 id="call-delete-title" className="text-lg font-bold text-gray-800 mb-2">ลบนัดหมายนี้?</h3>
             <p className="text-gray-500 text-sm mb-6">{formatDisplayDate(deleteScheduleConfirm.scheduledDate)}</p>
             <div className="flex gap-3 justify-center">
               <button onClick={() => setDeleteScheduleConfirm(null)} className="px-5 py-2.5 border border-gray-200 text-gray-600 font-semibold rounded-xl hover:bg-gray-50 transition-all">ยกเลิก</button>
@@ -438,11 +474,15 @@ export default function CustomerCallScheduleSection({
           }}
         >
           <div
+            ref={deleteCompletedRef}
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="call-delete-completed-title"
             className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 text-center"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="text-5xl mb-4">🗑️</div>
-            <h3 className="text-lg font-bold text-gray-800 mb-2">ลบนัดหมายที่เสร็จแล้วนี้?</h3>
+            <h3 id="call-delete-completed-title" className="text-lg font-bold text-gray-800 mb-2">ลบนัดหมายที่เสร็จแล้วนี้?</h3>
             <p className="text-gray-500 text-sm mb-6">
               นัดหมายวันที่ {formatDisplayDate(deleteCompletedSchedule.scheduledDate)} ดำเนินการเสร็จแล้ว
             </p>

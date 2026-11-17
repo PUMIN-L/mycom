@@ -1,6 +1,7 @@
 import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import SearchableDropdown from '@/app/components/SearchableDropdown';
+import { DROPDOWN_PANEL_ATTR } from '@/app/lib/dialogLayer';
 
 const options = [
   { value: 'a', label: 'ค่าน้ำ/ค่าไฟ' },
@@ -118,5 +119,53 @@ describe('SearchableDropdown', () => {
     fireEvent.mouseDown(screen.getByPlaceholderText('ค้นหา...'));
 
     expect(screen.getByText('ค่าน้ำ/ค่าไฟ')).toBeInTheDocument();
+  });
+});
+
+describe('SearchableDropdown — Esc, and how a window knows the list is open', () => {
+  it('Esc closes the open list and picks nothing', () => {
+    const onChange = vi.fn();
+    render(<SearchableDropdown options={options} value="" onChange={onChange} />);
+    fireEvent.click(screen.getByRole('button', { name: /select/i }));
+    expect(screen.getByText('ค่าเดินทาง')).toBeInTheDocument();
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByText('ค่าเดินทาง')).not.toBeInTheDocument();
+    expect(onChange).not.toHaveBeenCalled();
+    // Other keys leave it open.
+    fireEvent.click(screen.getByRole('button', { name: /select/i }));
+    fireEvent.keyDown(document, { key: 'a' });
+    expect(screen.getByText('ค่าเดินทาง')).toBeInTheDocument();
+  });
+
+  it('marks its open list the way lib/dialogLayer looks for it, and only while open', () => {
+    render(<SearchableDropdown options={options} value="" onChange={vi.fn()} />);
+    const trigger = screen.getByRole('button', { name: /select/i });
+    expect(document.querySelector(`[${DROPDOWN_PANEL_ATTR}]`)).toBeNull();
+    expect(trigger).toHaveAttribute('aria-expanded', 'false');
+
+    fireEvent.click(trigger);
+    expect(document.querySelector(`[${DROPDOWN_PANEL_ATTR}]`)).not.toBeNull();
+    expect(trigger).toHaveAttribute('aria-expanded', 'true');
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(document.querySelector(`[${DROPDOWN_PANEL_ATTR}]`)).toBeNull();
+  });
+
+  it('takes an id, so a label names it, and points at the text that says what is wrong', () => {
+    render(
+      <>
+        <label htmlFor="pick">หมวด</label>
+        <SearchableDropdown id="pick" options={options} value="" onChange={vi.fn()} describedBy="pick-error" />
+      </>
+    );
+    const trigger = screen.getByLabelText('หมวด');
+    expect(trigger).toHaveAttribute('id', 'pick');
+    expect(trigger).toHaveAttribute('aria-describedby', 'pick-error');
+  });
+
+  it('points at nothing unless told to', () => {
+    render(<SearchableDropdown options={options} value="" onChange={vi.fn()} />);
+    expect(screen.getByRole('button', { name: /select/i })).not.toHaveAttribute('aria-describedby');
   });
 });

@@ -71,7 +71,7 @@ function mockFetch(
 
 /** Customer names in the order the customers table shows them. */
 function customerOrder(): string[] {
-  const table = screen.getByText("อัปเดตล่าสุด").closest("table")!;
+  const table = screen.getByText("บันทึกล่าสุด").closest("table")!;
   return within(table)
     .getAllByRole("row")
     .slice(1)

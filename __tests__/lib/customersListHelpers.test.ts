@@ -8,8 +8,10 @@ import {
   TAB_PARAM,
   anyRecentlyNoted,
   companyLocation,
+  countCustomersByCompany,
   matchesCompanySearch,
   matchesCustomerSearch,
+  matchesSalespersonSearch,
   nextSort,
   searchWithTab,
   sortByName,
@@ -157,21 +159,116 @@ describe("companyLocation", () => {
   });
 });
 
-describe("matchesCompanySearch", () => {
-  const co = { name: "Profin Lab", province: "กรุงเทพมหานคร", district: "บางนา" };
-  const q = (name = "", province = "", district = "") => ({ name, province, district });
+describe("matchesCompanySearch — one box for name, address and phone", () => {
+  const co = {
+    name: "Profin Lab",
+    subDistrict: "บางนาเหนือ",
+    district: "บางนา",
+    province: "กรุงเทพมหานคร",
+    postalCode: "10260",
+    phone: "02-123-4567 ต่อ 105, 081-234-5678",
+  };
 
-  it("ANDs the three boxes, ignoring case and outer spaces", () => {
-    expect(matchesCompanySearch(co, q())).toBe(true);
-    expect(matchesCompanySearch(co, q("profin"))).toBe(true);
-    expect(matchesCompanySearch(co, q(" lab ", "กรุงเทพ", "บางนา"))).toBe(true);
-    expect(matchesCompanySearch(co, q("profin", "ชลบุรี"))).toBe(false);
-    expect(matchesCompanySearch(co, q("", "", "บางรัก"))).toBe(false);
+  it("matches everything on an empty query, and any one field by itself", () => {
+    expect(matchesCompanySearch(co, "")).toBe(true);
+    expect(matchesCompanySearch(co, "  ")).toBe(true);
+    expect(matchesCompanySearch(co, "PROFIN")).toBe(true);
+    expect(matchesCompanySearch(co, " lab ")).toBe(true);
+    expect(matchesCompanySearch(co, "กรุงเทพ")).toBe(true);
+    expect(matchesCompanySearch(co, "บางนาเหนือ")).toBe(true);
+    expect(matchesCompanySearch(co, "10260")).toBe(true);
+    expect(matchesCompanySearch(co, "ชลบุรี")).toBe(false);
   });
 
-  it("does not match a location search against a company with none", () => {
-    expect(matchesCompanySearch({ name: "x" }, q("", "กรุงเทพ"))).toBe(false);
-    expect(matchesCompanySearch({ name: "x" }, q("x"))).toBe(true);
+  it("needs every word, each anywhere — what the three boxes did together", () => {
+    expect(matchesCompanySearch(co, "lab กรุงเทพ")).toBe(true);
+    expect(matchesCompanySearch(co, "lab   บางนา   กรุงเทพ")).toBe(true);
+    expect(matchesCompanySearch(co, "profin ชลบุรี")).toBe(false);
+  });
+
+  it("finds each number of the phone by its digits", () => {
+    expect(matchesCompanySearch(co, "021234567")).toBe(true);
+    expect(matchesCompanySearch(co, "081 234 5678")).toBe(true);
+    // The digits of two numbers are not one number.
+    expect(matchesCompanySearch(co, "1050812")).toBe(false);
+  });
+
+  it("copes with a company with no address or phone", () => {
+    expect(matchesCompanySearch({ name: "x" }, "กรุงเทพ")).toBe(false);
+    expect(matchesCompanySearch({ name: "x" }, "x")).toBe(true);
+    expect(matchesCompanySearch({ name: "x" }, "0812")).toBe(false);
+  });
+});
+
+describe("one-letter words", () => {
+  it("must start a word: บริษัท ก is not every name that holds a ก", () => {
+    const a = { name: "บริษัท ก" };
+    const b = { name: "บริษัท ข", district: "ลูกค้า" };
+    expect(matchesCompanySearch(a, "บริษัท ก")).toBe(true);
+    expect(matchesCompanySearch(b, "บริษัท ก")).toBe(false);
+  });
+
+  it("ร้าน 5 is ร้าน 5…, not ร้าน 05 or ร้าน 15", () => {
+    expect(matchesCompanySearch({ name: "ร้าน 50" }, "ร้าน 5")).toBe(true);
+    expect(matchesCompanySearch({ name: "ร้าน 05" }, "ร้าน 5")).toBe(false);
+    expect(matchesCompanySearch({ name: "ร้าน 15" }, "ร้าน 5")).toBe(false);
+    // …but it may start a word in another field.
+    expect(matchesCompanySearch({ name: "ร้าน ทอง", district: "5 แยก" }, "ร้าน 5")).toBe(true);
+  });
+
+  it("a query of ONE word is matched anywhere, number or not", () => {
+    expect(matchesCompanySearch({ name: "ร้าน 145" }, "45")).toBe(true);
+    expect(matchesCompanySearch({ name: "บริษัท กขค" }, "ข")).toBe(true);
+  });
+
+  it("so must a number: ลูกค้า 00 is not ลูกค้า 100", () => {
+    expect(matchesCustomerSearch(customer("a", { name: "ลูกค้า 001" }), "ลูกค้า 00")).toBe(true);
+    expect(matchesCustomerSearch(customer("b", { name: "ลูกค้า 100" }), "ลูกค้า 00")).toBe(false);
+    // A word of letters may sit inside another: Thai runs them together.
+    expect(matchesCustomerSearch(customer("c", { name: "คุณสมชาย", department: "ฝ่ายQC" }), "สมชาย QC")).toBe(true);
+  });
+});
+
+describe("matchesCustomerSearch — department and words across fields", () => {
+  const c = customer("c1", {
+    name: "คุณสมชาย ใจดี",
+    companyName: "บริษัท แล็บ จำกัด",
+    department: "QC",
+    email: "somchai@example.co.th",
+    phone: "+66 81 234 5678",
+  });
+
+  it("finds a customer by department, and by words from different fields", () => {
+    expect(matchesCustomerSearch(c, "qc")).toBe(true);
+    expect(matchesCustomerSearch(c, "สมชาย QC")).toBe(true);
+    expect(matchesCustomerSearch(c, "แล็บ ใจดี")).toBe(true);
+    expect(matchesCustomerSearch(c, "สมชาย จัดซื้อ")).toBe(false);
+  });
+
+  it("reads a phone stored with +66 as the 0 number it is", () => {
+    expect(matchesCustomerSearch(c, "0812345678")).toBe(true);
+    expect(matchesCustomerSearch(c, "081-234")).toBe(true);
+  });
+});
+
+describe("matchesSalespersonSearch", () => {
+  const s = { name: "คุณวิชัย ขายดี", email: "wichai@example.com", phone: "086-111-1111" };
+  it("by name, e-mail or phone", () => {
+    expect(matchesSalespersonSearch(s, "")).toBe(true);
+    expect(matchesSalespersonSearch(s, "วิชัย")).toBe(true);
+    expect(matchesSalespersonSearch(s, "WICHAI@")).toBe(true);
+    expect(matchesSalespersonSearch(s, "0861111111")).toBe(true);
+    expect(matchesSalespersonSearch(s, "สมชาย")).toBe(false);
+    expect(matchesSalespersonSearch({ name: "ก" }, "123")).toBe(false);
+  });
+});
+
+describe("countCustomersByCompany", () => {
+  it("counts customers per company id, skipping those with none", () => {
+    const counts = countCustomersByCompany([{ companyId: "a" }, { companyId: "b" }, { companyId: "a" }, { companyId: "" }, {}]);
+    expect(counts.get("a")).toBe(2);
+    expect(counts.get("b")).toBe(1);
+    expect(counts.size).toBe(2);
   });
 });
 
@@ -198,6 +295,15 @@ describe("sortCompanies", () => {
   it("sorts by province, then district within it — blanks last either way", () => {
     expect(ids(sortCompanies(list, { key: "location", dir: "asc" }))).toEqual(["3", "2", "5", "1", "4"]);
     expect(ids(sortCompanies(list, { key: "location", dir: "desc" }))).toEqual(["1", "2", "3", "5", "4"]);
+  });
+
+  it("sorts by how many customers each has, ties by name", () => {
+    const counts = new Map([["1", 3], ["2", 1], ["3", 3]]);
+    // 1 (ค) and 3 (ข) both have 3: ข before ค either way.
+    expect(ids(sortCompanies(list, { key: "customers", dir: "desc" }, counts))).toEqual(["3", "1", "2", "4", "5"]);
+    expect(ids(sortCompanies(list, { key: "customers", dir: "asc" }, counts))).toEqual(["4", "5", "2", "3", "1"]);
+    // No counts given: everyone has none, so by name.
+    expect(ids(sortCompanies(list, { key: "customers", dir: "desc" }))).toEqual(["2", "3", "1", "4", "5"]);
   });
 });
 
@@ -248,5 +354,33 @@ describe("anyRecentlyNoted", () => {
     expect(anyRecentlyNoted([bare, noted], () => false)).toBe(false);
     expect(anyRecentlyNoted([bare], () => true)).toBe(false);
     expect(anyRecentlyNoted([], () => true)).toBe(false);
+  });
+});
+
+describe("provinces by any of their names", () => {
+  const bkk = { id: "1", name: "บริษัท หนึ่ง", district: "บางนา", province: "กทม." };
+  const official = { id: "2", name: "บริษัท สอง", district: "ลาดพร้าว", province: "กรุงเทพมหานคร" };
+  const chon = { id: "3", name: "บริษัท สาม", district: "ศรีราชา", province: "จ.ชลบุรี" };
+
+  it("a search finds Bangkok whichever way it was stored or is typed", () => {
+    for (const query of ["กทม", "กรุงเทพ", "กรุงเทพมหานคร", "bangkok"]) {
+      expect(matchesCompanySearch(bkk, query)).toBe(true);
+      expect(matchesCompanySearch(official, query)).toBe(true);
+      expect(matchesCompanySearch(chon, query)).toBe(false);
+    }
+    expect(matchesCompanySearch(chon, "ชลบุรี")).toBe(true);
+  });
+
+  it("the list shows the official name", () => {
+    expect(companyLocation(bkk)).toBe("บางนา, กรุงเทพมหานคร");
+    expect(companyLocation(chon)).toBe("ศรีราชา, ชลบุรี");
+    expect(companyLocation({ name: "x", province: "Osaka" })).toBe("Osaka");
+  });
+
+  it("sorting by location puts the same province together, however it was typed", () => {
+    const krabi = { id: "4", name: "บริษัท สี่", district: "เมือง", province: "กระบี่" };
+    // กระบี่, then both Bangkok rows (บางนา before ลาดพร้าว), then ชลบุรี. By the
+    // stored text, "กทม." would sort ahead of กระบี่ and apart from กรุงเทพมหานคร.
+    expect(ids(sortCompanies([chon, official, krabi, bkk], { key: "location", dir: "asc" }))).toEqual(["4", "1", "2", "3"]);
   });
 });

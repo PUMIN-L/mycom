@@ -1,7 +1,21 @@
 "use client";
-import DatePicker from "../components/DatePicker";
-import { toLocalDateString } from "../lib/dateFormat";
+import { formatDisplayDate, toLocalDateString } from "../lib/dateFormat";
 import { downloadExcel } from "../lib/xlsxExport";
+import SearchBox from "../components/SearchBox";
+import SortableTh from "../components/SortableTh";
+import { nextSort } from "./listHelpers";
+import {
+  WARRANTY_FILTER_OPTIONS,
+  WARRANTY_STATE_LABEL,
+  matchesEquipmentSearch,
+  matchesWarrantyFilter,
+  sortEquipments,
+  warrantyDaysLeft,
+  warrantyLeftText,
+  warrantyState,
+  type EquipmentSort,
+  type EquipmentSortKey,
+} from "./equipmentHelpers";
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import Link from "next/link";
 import SearchableDropdown from "../components/SearchableDropdown";
@@ -38,31 +52,11 @@ function stripHtml(html: string | null | undefined): string {
   return html.replace(/<[^>]*>/g, "").trim();
 }
 
-/**
- * Days until the warranty ends (negative once past), or null when there is no
- * usable end date. Module-level on purpose: the filtered list below is computed
- * during render, ABOVE where the component's other helpers are declared, so a
- * `const` arrow inside the component would be in its temporal dead zone the
- * moment a warranty filter is picked.
- */
-function warrantyDaysLeft(endDate: unknown): number | null {
-  if (!endDate || typeof endDate !== "string") return null;
-
-  const parts = endDate.split("T")[0].split("-");
-  if (parts.length < 3) return null;
-
-  // Parse as local midnight to avoid timezone offsets
-  const [year, month, day] = parts.map(Number);
-  const end = new Date(year, month - 1, day).getTime();
-  if (isNaN(end)) return null;
-
-  // Get today at local midnight
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-
-  const diff = Math.ceil((end - today) / 86400000);
-  return isNaN(diff) ? null : diff;
-}
+/** The same look as the other tabs' tables. */
+const TH = "px-4 py-3 text-xs font-semibold";
+/** The white button the other tabs use for ส่งออก Excel. */
+const SECONDARY_BUTTON =
+  "bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 px-5 py-2.5 rounded-xl font-medium transition-all shadow-sm flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed";
 
 /** Full Thai wording for the machine's origin — the raw DB value never reaches
  * a screen or an export file. Rows written before the column existed read back
@@ -118,6 +112,17 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
   const [companies, setCompanies] = useState<Company[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  // Whether the machines have ever arrived. Skeleton rows only before then: a
+  // reload after a save keeps the rows on screen (they used to flash to grey
+  // bars and back). And a list that never arrived is an error with ลองใหม่ —
+  // not "ยังไม่มีอุปกรณ์ที่บันทึกไว้", which said every machine was gone.
+  const [hasLoaded, setHasLoaded] = useState(false);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const loadSeqRef = useRef(0);
+  // null: the API's order (newest first) until a header is clicked.
+  const [sort, setSort] = useState<EquipmentSort | null>(null);
+  // The tab's top: a page change from the pager under the table goes back to it.
+  const topRef = useRef<HTMLDivElement>(null);
 
   // Equipment Modal
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -226,7 +231,7 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
           "เริ่มประกัน": eq.warrantyStartDate || "",
           "หมดประกัน": eq.warrantyEndDate || "",
           "วันที่สอบเทียบล่าสุด": eq.calibrationDate || "",
-          "สถานะ": eq.status,
+          "สถานะ": WARRANTY_STATE_LABEL[warrantyState(eq)],
           "หมายเหตุ": eq.note || "",
           "ประวัตินัดหมาย/ติดตาม": scheduleText || "-",
           "วันที่บันทึก": eq.createdAt,
@@ -253,10 +258,10 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
         { name: "อุปกรณ์", rows: eqData, autoSizeColumns: true },
         { name: "นัดหมาย", rows: schedData, autoSizeColumns: true },
       ]);
-      showToast("Export สำเร็จ", "success");
+      showToast("ส่งออกไฟล์อุปกรณ์สำเร็จ", "success");
     } catch (err) {
       console.error(err);
-      showToast("Export ไม่สำเร็จ", "error");
+      showToast("ส่งออกไฟล์อุปกรณ์ไม่สำเร็จ", "error");
     } finally {
       setIsExporting(false);
     }
@@ -269,6 +274,8 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
   showToastRef.current = showToast;
 
   const fetchEquipments = useCallback(async () => {
+    // Only the latest load is applied (a save then a quick delete start two).
+    const seq = ++loadSeqRef.current;
     setIsLoading(true);
     try {
       const [eqRes, custRes, compRes, prodRes] = await Promise.all([
@@ -277,7 +284,19 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
         fetch("/api/companies"),
         fetch("/api/products"),
       ]);
-      if (eqRes.ok) setEquipments(await eqRes.json());
+      if (seq !== loadSeqRef.current) return;
+      if (eqRes.ok) {
+        const rows = await eqRes.json();
+        if (seq !== loadSeqRef.current) return;
+        if (Array.isArray(rows)) {
+          setEquipments(rows);
+          setHasLoaded(true);
+        } else {
+          setLoadFailed(true);
+        }
+      } else {
+        setLoadFailed(true);
+      }
       if (custRes.ok) setCustomers(await custRes.json());
       if (compRes.ok) setCompanies(await compRes.json());
       if (prodRes.ok) {
@@ -288,10 +307,12 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
         showToastRef.current("โหลดข้อมูลบางส่วนไม่สำเร็จ กรุณาลองใหม่", "error");
       }
     } catch (err) {
+      if (seq !== loadSeqRef.current) return;
       console.error(err);
+      setLoadFailed(true);
       showToastRef.current("โหลดข้อมูลอุปกรณ์ไม่สำเร็จ", "error");
     } finally {
-      setIsLoading(false);
+      if (seq === loadSeqRef.current) setIsLoading(false);
     }
   }, []);
 
@@ -354,43 +375,32 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
 
   // ── Filtered list ──────────────────────────────────────────────────────────
 
-  const filtered = equipments.filter((eq) => {
-    if (searchText) {
-      const q = searchText.toLowerCase();
-      const match = (
-        (eq.customerName || "").toLowerCase().includes(q) ||
-        (eq.companyName || "").toLowerCase().includes(q) ||
-        displayText(eq.productName).toLowerCase().includes(q) ||
-        (eq.serialNumber || "").toLowerCase().includes(q) ||
-        (eq.quotationNumber || "").toLowerCase().includes(q)
-      );
-      if (!match) return false;
-    }
-
-    if (filterType !== "all") {
-      const daysLeft = warrantyDaysLeft(eq.warrantyEndDate);
-      const isExpired = eq.status === "Expired" || (daysLeft !== null && daysLeft < 0);
-      
-      if (filterType === "expired") {
-        if (!isExpired) return false;
-      } else if (filterType === "expiring_30") {
-        if (isExpired || daysLeft === null || daysLeft > 30) return false;
-      } else if (filterType === "expiring_60") {
-        if (isExpired || daysLeft === null || daysLeft <= 30 || daysLeft > 60) return false;
+  const filtered = sortEquipments(
+    equipments.filter((eq) => {
+      if (!matchesEquipmentSearch(eq, searchText)) return false;
+      if (!matchesWarrantyFilter(eq, filterType)) return false;
+      // AND, never OR: "which machines do we service that we did NOT sell" is
+      // still answerable while a search term and a warranty window are active.
+      if (filterSource !== "all") {
+        const source = eq.ownershipSource === "customer_owned" ? "customer_owned" : "sold_by_us";
+        if (source !== filterSource) return false;
       }
-    }
+      return true;
+    }),
+    sort
+  );
+  const sortBy = (key: EquipmentSortKey) => {
+    setSort((s) => nextSort(s, key));
+    setCurrentPage(1);
+  };
+  const dirOf = (key: EquipmentSortKey) => (sort?.key === key ? sort.dir : null);
+  const goToPage = (page: number) => {
+    setCurrentPage(page);
+    const top = topRef.current;
+    if (top && top.getBoundingClientRect().top < 0) top.scrollIntoView?.({ block: "start" });
+  };
 
-    // AND, never OR: "which machines do we service that we did NOT sell" is
-    // still answerable while a search term and a warranty window are active.
-    if (filterSource !== "all") {
-      const source = eq.ownershipSource === "customer_owned" ? "customer_owned" : "sold_by_us";
-      if (source !== filterSource) return false;
-    }
-
-    return true;
-  });
-
-  const isFiltered = !!searchText || filterType !== "all" || filterSource !== "all";
+  const isFiltered = !!searchText.trim() || filterType !== "all" || filterSource !== "all";
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / itemsPerPage));
   // Derived, not stored, so a list that shrank (a delete) lands on its new
@@ -496,12 +506,14 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
   // ── Helpers ────────────────────────────────────────────────────────────────
 
   const statusBadge = (eq: CustomerEquipment) => {
-    const daysLeft = warrantyDaysLeft(eq.warrantyEndDate);
-    const isExpired = eq.status === "Expired" || (daysLeft !== null && daysLeft < 0);
-
-    if (isExpired)
-      return <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-red-100 text-red-700">Expired</span>;
-    return <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-green-100 text-green-700">Active</span>;
+    const state = warrantyState(eq);
+    const tone =
+      state === "expired" ? "bg-red-100 text-red-700" : state === "active" ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500";
+    return (
+      <span data-testid="warranty-status" className={`px-2.5 py-1 text-xs font-semibold rounded-full whitespace-nowrap ${tone}`}>
+        {WARRANTY_STATE_LABEL[state]}
+      </span>
+    );
   };
 
   // Two visibly different colours, not two shades of one: "we sold it" and "the
@@ -541,7 +553,7 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
-    <div className="p-6">
+    <div ref={topRef} className="p-6 scroll-mt-4">
       {/* Header — the same look as the other tabs on /customers: one primary
           orange button, the rest plain white. */}
       <div className="flex flex-wrap justify-between items-center gap-3 mb-5">
@@ -553,11 +565,17 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
         </div>
         <div className="flex gap-3">
           <button
+            type="button"
             onClick={exportToExcel}
-            disabled={isExporting || isLoading}
-            className="px-5 py-2.5 bg-white border border-gray-200 text-gray-700 font-medium rounded-xl hover:bg-gray-50 transition-all shadow-sm flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled={isExporting || !hasLoaded}
+            className={SECONDARY_BUTTON}
           >
-            📥 {isExporting ? "กำลัง Export..." : "Export Excel"}
+            {isExporting ? (
+              <div className="w-5 h-5 border-2 border-gray-500 border-t-transparent rounded-full animate-spin"></div>
+            ) : (
+              <svg aria-hidden="true" className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+            )}
+            {isExporting ? "กำลังส่งออก..." : "ส่งออก Excel"}
           </button>
           <Link
             href="/crm/alerts"
@@ -577,21 +595,16 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
 
       {/* Search and Filters */}
       <div className="mb-5 flex flex-col sm:flex-row gap-3">
-        <input
-          type="text"
+        <SearchBox
+          className="w-full sm:w-96 shrink-0"
+          label="ค้นหาอุปกรณ์"
+          placeholder="ค้นหาลูกค้า บริษัท สินค้า หรือ S/N..."
           value={searchText}
-          onChange={(e) => setSearchText(e.target.value)}
-          placeholder="ค้นหาลูกค้า, บริษัท, สินค้า, Serial Number..."
-          className="w-full sm:w-96 bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 focus:bg-white focus:ring-2 focus:ring-orange-500 outline-none transition-all shrink-0"
+          onChange={setSearchText}
         />
         <div className="w-full sm:w-72 shrink-0 relative z-[5]">
           <SearchableDropdown
-            options={[
-              { value: "all", label: "ทั้งหมด (All)" },
-              { value: "expired", label: "อุปกรณ์ที่หมดอายุ" },
-              { value: "expiring_30", label: "กำลังจะหมดอายุใน 30 วัน" },
-              { value: "expiring_60", label: "กำลังจะหมดอายุใน 31-60 วัน" }
-            ]}
+            options={WARRANTY_FILTER_OPTIONS}
             value={filterType}
             onChange={setFilterType}
             searchable={false}
@@ -612,7 +625,7 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
       {/* The count the ownership filter exists to produce ("how many machines
           do we look after that we didn't sell?") — shown against the total so
           a narrow result never reads as missing data. */}
-      {!isLoading && isFiltered && (
+      {hasLoaded && isFiltered && (
         <div className="-mt-3 mb-5 text-sm text-gray-500">
           พบ <strong className="text-gray-700">{filtered.length}</strong> รายการที่ตรงกับตัวกรอง จากทั้งหมด {equipments.length} รายการ
           {filterSource !== "all" && (
@@ -626,18 +639,35 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
         <table className="w-full text-left">
           <thead>
             <tr className="bg-gray-50 text-gray-500 uppercase tracking-wider">
-              <th className="px-4 py-3 text-xs font-semibold rounded-l-xl">ลูกค้า / บริษัท</th>
-              <th className="px-4 py-3 text-xs font-semibold">สินค้า</th>
-              <th className="px-4 py-3 text-xs font-semibold">S/N</th>
-              <th className="px-4 py-3 text-xs font-semibold">ที่มาของเครื่อง</th>
-              <th className="px-4 py-3 text-xs font-semibold">ประกัน</th>
-              <th className="px-4 py-3 text-xs font-semibold">หมดประกัน</th>
+              <SortableTh className={`${TH} rounded-l-xl`} dir={dirOf("customer")} onSort={() => sortBy("customer")}>ลูกค้า / บริษัท</SortableTh>
+              <SortableTh className={TH} dir={dirOf("product")} onSort={() => sortBy("product")}>สินค้า</SortableTh>
+              <SortableTh className={TH} dir={dirOf("serial")} onSort={() => sortBy("serial")}>S/N</SortableTh>
+              <th className={TH}>ที่มาของเครื่อง</th>
+              <th className={TH}>ประกัน</th>
+              <SortableTh className={TH} dir={dirOf("warrantyEnd")} onSort={() => sortBy("warrantyEnd")}>หมดประกัน</SortableTh>
               <th className="px-4 py-3 text-xs font-semibold">สถานะ</th>
               <th className="px-4 py-3 text-xs font-semibold rounded-r-xl"><span className="sr-only">จัดการ</span></th>
             </tr>
           </thead>
           <tbody>
-            {isLoading ? (
+            {loadFailed && !hasLoaded ? (
+              <tr>
+                <td colSpan={8} className="py-14 text-center">
+                  <div role="alert" className="flex flex-col items-center gap-3">
+                    <p className="text-gray-800 font-semibold">โหลดรายการอุปกรณ์ไม่สำเร็จ</p>
+                    <p className="text-sm text-gray-500">ตรวจสอบการเชื่อมต่อแล้วลองใหม่อีกครั้ง</p>
+                    <button
+                      type="button"
+                      onClick={() => fetchEquipments()}
+                      disabled={isLoading}
+                      className="px-5 py-2.5 bg-orange-500 hover:bg-orange-600 text-white font-medium rounded-xl transition-all shadow-sm disabled:opacity-60"
+                    >
+                      {isLoading ? "กำลังโหลด..." : "ลองใหม่"}
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ) : !hasLoaded ? (
               Array.from({ length: 5 }).map((_, i) => (
                 <tr key={i} className="border-b border-gray-50 animate-pulse">
                   <td className="px-4 py-3"><div className="h-4 bg-gray-200 rounded w-36"></div><div className="h-3 bg-gray-100 rounded w-24 mt-1"></div></td>
@@ -681,7 +711,7 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
               </tr>
             ) : (
               paginatedEquipments.map((eq) => {
-                const daysLeft = warrantyDaysLeft(eq.warrantyEndDate);
+                const left = warrantyLeftText(warrantyDaysLeft(eq.warrantyEndDate));
                 return (
                   <tr
                     key={eq.id}
@@ -717,10 +747,13 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
                     <td className="px-4 py-3">
                       {eq.warrantyEndDate ? (
                         <div>
-                          <div className="text-sm text-gray-700">{eq.warrantyEndDate}</div>
-                          {daysLeft !== null && (
-                            <div className={`text-xs mt-0.5 ${daysLeft <= 0 ? "text-red-500 font-semibold" : daysLeft <= 30 ? "text-amber-500" : "text-gray-400"}`}>
-                              {daysLeft <= 0 ? "หมดแล้ว" : `เหลือ ${daysLeft} วัน`}
+                          <div className="text-sm text-gray-700 whitespace-nowrap tabular-nums">{formatDisplayDate(eq.warrantyEndDate)}</div>
+                          {left && (
+                            <div
+                              data-testid="warranty-left"
+                              className={`text-xs mt-0.5 ${left.tone === "expired" ? "text-red-500 font-semibold" : left.tone === "soon" ? "text-amber-600 font-semibold" : "text-gray-400"}`}
+                            >
+                              {left.text}
                             </div>
                           )}
                         </div>
@@ -780,13 +813,13 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
           </tbody>
         </table>
       </div>
-      {!isLoading && (
+      {hasLoaded && (
         <Pagination
           page={safePage}
           totalPages={totalPages}
           totalItems={filtered.length}
           perPage={itemsPerPage}
-          onPageChange={setCurrentPage}
+          onPageChange={goToPage}
           testId="equipment-pagination"
         />
       )}
@@ -827,7 +860,8 @@ export default function EquipmentTab({ showToast }: EquipmentTabProps) {
           (this dialog was lost in an earlier refactor, see
           openspec/changes/fix-crm-data-integrity). */}
       {deleteConfirm && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+        // z-100: over the admin bell (z-90), which floated on top of it.
+        <div className="fixed inset-0 z-100 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-gray-900/40 backdrop-blur-sm" onClick={() => { if (!isSaving && !isSendingDeleteOtp) closeDeleteDialog(); }}></div>
           <div className="relative bg-white rounded-3xl shadow-2xl max-w-sm w-full p-6 text-center transform transition-all scale-100 opacity-100">
             <div className="w-16 h-16 bg-red-100 text-red-500 rounded-full flex items-center justify-center mx-auto mb-4">

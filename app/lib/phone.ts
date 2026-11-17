@@ -28,6 +28,22 @@ export function toThaiE164(phone: string): string {
   return `+66${local}`;
 }
 
+/**
+ * A phone as people read it. A bare Thai number gets its dashes —
+ * "0812345678" → "081-234-5678", "021234567" → "02-123-4567",
+ * "038123456" → "038-123-456" — which is how most of the stored ones were
+ * typed before the form stopped deleting every dash. Anything else (already
+ * dashed, an extension, two numbers, "+66 …", a number of another shape) is
+ * shown exactly as typed. Display only: the stored value is never changed.
+ */
+export function formatThaiPhone(raw: string | null | undefined): string {
+  const text = (raw || "").trim();
+  if (/^0[689]\d{8}$/.test(text)) return `${text.slice(0, 3)}-${text.slice(3, 6)}-${text.slice(6)}`;
+  if (/^02\d{7}$/.test(text)) return `02-${text.slice(2, 5)}-${text.slice(5)}`;
+  if (/^0[3-7]\d{7}$/.test(text)) return `${text.slice(0, 3)}-${text.slice(3, 6)}-${text.slice(6)}`;
+  return text;
+}
+
 export interface PhonePart {
   /** Exactly as typed — separators, labels and all. */
   text: string;

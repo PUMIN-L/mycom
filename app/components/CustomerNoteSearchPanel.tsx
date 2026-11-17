@@ -280,6 +280,9 @@ interface CustomerNoteSearchPanelProps {
    *  customer list rather than trusting a report. */
   onReplaced: () => void;
   onUnauthorized: () => void;
+  /** Put the cursor in the search field on mount — /customers opens this
+   *  block from a button, to search right away. */
+  autoFocus?: boolean;
 }
 
 export default function CustomerNoteSearchPanel({
@@ -287,6 +290,7 @@ export default function CustomerNoteSearchPanel({
   onOpenCustomer,
   onReplaced,
   onUnauthorized,
+  autoFocus = false,
 }: CustomerNoteSearchPanelProps) {
   // ── The search control ────────────────────────────────────────────────────
   const [term, setTerm] = useState("");
@@ -672,6 +676,7 @@ export default function CustomerNoteSearchPanel({
             onChange={(e) => setTerm(e.target.value)}
             maxLength={NOTE_SEARCH_TERM_MAX_LENGTH}
             aria-label="คำที่ต้องการค้นในบันทึกลูกค้า"
+            autoFocus={autoFocus}
             placeholder="พิมพ์คำที่ต้องการหาในบันทึกลูกค้า เช่น เวอร์เนีย"
             className="flex-1 min-w-[16rem] bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 focus:bg-white focus:ring-2 focus:ring-orange-500 outline-none transition-all"
           />
