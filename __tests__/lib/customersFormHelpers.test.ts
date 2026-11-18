@@ -32,11 +32,12 @@ describe("drafts", () => {
     expect(toSalespersonDraft({ id: "sp1", name: "ก", createdAt: "x" })).toEqual({ name: "ก", phone: "", email: "", note: "" });
     expect(Object.keys(toCompanyDraft({ id: "co1", name: "บริษัท", companyName: "x" }))).toEqual([
       "name", "addressNo", "moo", "soi", "road", "subDistrict", "district", "province", "postalCode", "phone", "note",
+      "taxId", "branchCode", "whtPercent",
     ]);
   });
 
   it("an empty form is all empty strings", () => {
-    expect(Object.values(toCompanyDraft())).toEqual(Array(11).fill(""));
+    expect(Object.values(toCompanyDraft())).toEqual(Array(14).fill(""));
     expect(Object.values(toCustomerDraft(null))).toEqual(Array(6).fill(""));
   });
 });
@@ -185,5 +186,29 @@ describe("provinceOptions", () => {
     const options = provinceOptions("Osaka");
     expect(options).toHaveLength(79);
     expect(options[1]).toEqual({ value: "Osaka", label: "Osaka (ที่พิมพ์ไว้เดิม)" });
+  });
+});
+
+// v50 — the tax fields, for the accounting module's tax invoices.
+describe("the company's tax fields", () => {
+  it("open the branch in words, and the withholding as the list names it", () => {
+    expect(toCompanyDraft({ name: "ก", branchCode: "00000" }).branchCode).toBe("สำนักงานใหญ่");
+    expect(toCompanyDraft({ name: "ก", branchCode: "00002" }).branchCode).toBe("สาขา 00002");
+    expect(toCompanyDraft({ name: "ก", branchCode: null }).branchCode).toBe("");
+    expect(toCompanyDraft({ name: "ก", whtPercent: "3.00" }).whtPercent).toBe("3");
+    expect(toCompanyDraft({ name: "ก", whtPercent: null }).whtPercent).toBe("");
+  });
+
+  it("want a branch number once สาขา is picked", () => {
+    const base = toCompanyDraft({ name: "บริษัท ก" });
+    expect(companyErrors({ ...base, branchCode: "สาขา " }).branchCode).toContain("เลขสาขา");
+    expect(companyErrors({ ...base, branchCode: "สาขา 1" }).branchCode).toBeUndefined();
+    expect(companyErrors({ ...base, branchCode: "สำนักงานใหญ่" }).branchCode).toBeUndefined();
+  });
+
+  it("only warn about a tax ID (beside the field) — a number from abroad is saved", () => {
+    const base = toCompanyDraft({ name: "บริษัท ก" });
+    expect(companyErrors({ ...base, taxId: "TW-12345678" }).taxId).toBeUndefined();
+    expect(companyErrors({ ...base, taxId: "0107537000115" }).taxId).toBeUndefined();
   });
 });

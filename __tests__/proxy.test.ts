@@ -92,7 +92,7 @@ describe('proxy — the file convention', () => {
   it('still gates every admin area, and never the public pages beside them', () => {
     const matcher = config.matcher as string[];
     for (const area of [
-      '/adminpanel', '/assets', '/billing', '/create-content', '/create-product', '/crm', '/customers',
+      '/accounting', '/adminpanel', '/assets', '/billing', '/create-content', '/create-product', '/crm', '/customers',
       '/dashboard', '/documents', '/edit-product', '/expenses', '/product-specs',
       '/purchase-order', '/quotation', '/service-job', '/settings', '/stock', '/suppliers', '/tools',
     ]) {

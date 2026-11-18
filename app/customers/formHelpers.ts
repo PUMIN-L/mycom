@@ -4,6 +4,7 @@
 // the forms render it, the tests pin it.
 import { phoneParts } from "../lib/phone";
 import { THAI_PROVINCES, provinceName } from "../lib/thaiProvinces";
+import { normalizeBranchCode } from "../lib/thaiTaxId";
 
 /** Column sizes the routes cut to (VARCHAR(255) everywhere but the notes). */
 export const NAME_MAX = 255;
@@ -26,6 +27,12 @@ export interface CompanyDraft {
   postalCode: string;
   phone: string;
   note: string;
+  /** For tax invoices (the accounting module): as typed; a Thai one is 13 digits. */
+  taxId: string;
+  /** "" none · "00000" สำนักงานใหญ่ · five digits a branch. */
+  branchCode: string;
+  /** The percent this company usually withholds ("3"), or "" for none. */
+  whtPercent: string;
 }
 
 export interface CustomerDraft {
@@ -54,7 +61,10 @@ function text(value: unknown): string {
 
 type Source = Record<string, unknown> | null | undefined;
 
-const COMPANY_FIELDS = ["name", "addressNo", "moo", "soi", "road", "subDistrict", "district", "province", "postalCode", "phone", "note"] as const;
+const COMPANY_FIELDS = [
+  "name", "addressNo", "moo", "soi", "road", "subDistrict", "district", "province", "postalCode", "phone", "note",
+  "taxId", "branchCode", "whtPercent",
+] as const;
 const CUSTOMER_FIELDS = ["name", "companyId", "department", "phone", "email", "note"] as const;
 const SALESPERSON_FIELDS = ["name", "phone", "email", "note"] as const;
 
@@ -74,7 +84,23 @@ function pick<K extends string>(fields: readonly K[], source: Source): Record<K,
 export function toCompanyDraft(c?: Source): CompanyDraft {
   const draft = pick(COMPANY_FIELDS, c);
   draft.province = provinceName(draft.province);
+  // DECIMAL arrives as "3.00"; the form's list says "3".
+  const wht = draft.whtPercent === "" ? NaN : Number(draft.whtPercent);
+  draft.whtPercent = Number.isFinite(wht) ? String(wht) : "";
+  draft.branchCode = branchDraftOf(draft.branchCode);
   return draft;
+}
+
+/**
+ * The branch as the form holds it: "" (not given), "สำนักงานใหญ่", or
+ * "สาขา 00001" — "สาขา " with no number yet while one is being typed. The
+ * API reads all three (normalizeBranchCode) and stores five digits.
+ */
+export function branchDraftOf(stored: string): string {
+  const code = normalizeBranchCode(stored);
+  if (code === null) return stored;
+  if (code === "") return "";
+  return code === "00000" ? "สำนักงานใหญ่" : `สาขา ${code}`;
 }
 export const toCustomerDraft = (c?: Source): CustomerDraft => pick(CUSTOMER_FIELDS, c);
 export const toSalespersonDraft = (s?: Source): SalespersonDraft => pick(SALESPERSON_FIELDS, s);
@@ -98,6 +124,13 @@ const tooLong = (label: string, max: number) => `${label}ยาวเกิน $
 export function companyErrors(d: CompanyDraft): FieldErrors<CompanyDraft> {
   const errors: FieldErrors<CompanyDraft> = {};
   if (!d.name.trim()) errors.name = "กรุณากรอกชื่อบริษัท";
+  // A tax ID is only WARNED about (taxIdWarning, beside the field): a buyer
+  // abroad has its own kind of number. A branch must read as one, though —
+  // the tax invoice prints it.
+  if (d.taxId.trim().length > 30) errors.taxId = tooLong("เลขประจำตัวผู้เสียภาษี", 30);
+  if (d.branchCode.trim() && !normalizeBranchCode(d.branchCode)) {
+    errors.branchCode = "กรุณากรอกเลขสาขาเป็นตัวเลขไม่เกิน 5 หลัก เช่น 00001";
+  }
   if (d.note.length > COMPANY_NOTE_MAX) errors.note = tooLong("หมายเหตุ", COMPANY_NOTE_MAX);
   return errors;
 }

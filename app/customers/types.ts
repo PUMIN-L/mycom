@@ -15,6 +15,12 @@ export interface Company {
   postalCode: string;
   phone: string;
   note: string;
+  /** v50 (accounting): NULL until someone fills them in. */
+  taxId?: string | null;
+  /** "00000" สำนักงานใหญ่ · five digits a branch. */
+  branchCode?: string | null;
+  /** DECIMAL — arrives as text ("3.00"). */
+  whtPercent?: string | number | null;
 }
 
 export interface Salesperson {

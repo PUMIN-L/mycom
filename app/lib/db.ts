@@ -13,7 +13,7 @@ import { repairTruncatedRichText } from "./sanitizeHtml";
 // did not lower the 33 already written to `settings`, so the next change to
 // reuse 33 was skipped entirely and its tables were never created in
 // production. Reverting a migration means moving FORWARD to a new number.
-const SCHEMA_VERSION = 49;
+const SCHEMA_VERSION = 50;
 
 type DbPool = ReturnType<typeof mysql.createPool>;
 
@@ -1864,6 +1864,9 @@ async function bootstrapSchemaOnce(): Promise<void> {
       }
     }
 
+    // ── v50: accounting module (lib/accounting/*, ARCHITECTURE.md §8g) ─────
+    await createAccountingTables(connection);
+
     // ── Seed default admin user ────────────────────────────────────────────
     // Credentials come from the environment, never from source. If
     // ADMIN_PASSWORD is unset we skip the seed instead of creating a weak
@@ -2297,6 +2300,189 @@ const BENIGN_SCHEMA_ERROR_CODES = new Set([
 // schema_version still gets stamped as if it did. Telling them apart needs
 // the message text, not just the code.
 const DUPLICATE_CONSTRAINT_MESSAGE_HINTS = ["duplicate", "already exists"];
+
+/**
+ * v50 — the accounting module (ARCHITECTURE.md §8g). Additive only: new
+ * tables, and three nullable columns on `companies` (a customer's tax ID,
+ * branch and usual withholding). Like the task board and the asset register,
+ * NO foreign keys — the store's transactions keep the links.
+ *
+ * Kept small on purpose (the owner asked to store only what is needed): money
+ * is whole satang in BIGINT, a document carries the customer as printed but
+ * points at OUR company's version (acc_seller_versions) instead of copying it,
+ * there is no JSON copy of a document, no file, no PDF.
+ */
+async function createAccountingTables(connection: mysql.PoolConnection): Promise<void> {
+  const TEXT = "CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci";
+  for (const columnDef of [
+    "ADD COLUMN IF NOT EXISTS taxId VARCHAR(30) DEFAULT NULL",
+    "ADD COLUMN IF NOT EXISTS branchCode VARCHAR(5) DEFAULT NULL",
+    "ADD COLUMN IF NOT EXISTS whtPercent DECIMAL(5,2) DEFAULT NULL",
+  ]) {
+    try {
+      await connection.query(`ALTER TABLE companies ${columnDef}`);
+    } catch (error) {
+      if (!isBenignSchemaError(error)) throw error;
+    }
+  }
+
+  // Our company as it prints — one row per real change, newest is current.
+  await connection.query(`
+      CREATE TABLE IF NOT EXISTS acc_seller_versions (
+        id VARCHAR(36) PRIMARY KEY,
+        name VARCHAR(255) ${TEXT} NOT NULL,
+        address VARCHAR(500) ${TEXT} NOT NULL,
+        taxId VARCHAR(13) NOT NULL,
+        branchCode VARCHAR(5) NOT NULL,
+        phone VARCHAR(100) ${TEXT} NOT NULL DEFAULT '',
+        email VARCHAR(255) NOT NULL DEFAULT '',
+        createdAt VARCHAR(30) NOT NULL,
+        createdBy VARCHAR(255) NOT NULL,
+        INDEX idx_asv_createdAt (createdAt)
+      )
+    `);
+  await connection.query(`
+      CREATE TABLE IF NOT EXISTS acc_bank_accounts (
+        id VARCHAR(36) PRIMARY KEY,
+        bankName VARCHAR(100) ${TEXT} NOT NULL,
+        accountNo VARCHAR(30) NOT NULL,
+        accountName VARCHAR(255) ${TEXT} NOT NULL DEFAULT '',
+        isActive TINYINT(1) NOT NULL DEFAULT 1,
+        sortOrder INT NOT NULL DEFAULT 0,
+        createdAt VARCHAR(30) NOT NULL
+      )
+    `);
+  // The last number handed out per series and month (lib/accounting/numbering.ts).
+  await connection.query(`
+      CREATE TABLE IF NOT EXISTS acc_counters (
+        docType VARCHAR(4) NOT NULL,
+        period CHAR(6) NOT NULL,
+        lastNo INT NOT NULL DEFAULT 0,
+        PRIMARY KEY (docType, period)
+      )
+    `);
+  // One row per document of every type. `docNo` is NULL while a draft (the
+  // number comes with issuing); a draft or an SO (customer PO) row may have
+  // none for good. Statuses: draft | issued | void. `source` 'external' is a
+  // document issued elsewhere and only recorded here (`externalNote`: where the
+  // paper is kept). `paidSatang` is a cache with one writer (the payments store).
+  await connection.query(`
+      CREATE TABLE IF NOT EXISTS acc_documents (
+        id VARCHAR(36) PRIMARY KEY,
+        docType VARCHAR(4) NOT NULL,
+        docNo VARCHAR(60) ${TEXT} DEFAULT NULL,
+        status VARCHAR(10) NOT NULL,
+        source VARCHAR(10) NOT NULL DEFAULT 'internal',
+        externalNote VARCHAR(255) ${TEXT} NOT NULL DEFAULT '',
+        isTaxInvoice TINYINT(1) NOT NULL DEFAULT 0,
+        issueDate VARCHAR(10) NOT NULL,
+        dueDate VARCHAR(10) DEFAULT NULL,
+        creditDays SMALLINT DEFAULT NULL,
+        companyId VARCHAR(255) DEFAULT NULL,
+        customerId VARCHAR(255) DEFAULT NULL,
+        salespersonId VARCHAR(255) DEFAULT NULL,
+        buyerName VARCHAR(255) ${TEXT} NOT NULL DEFAULT '',
+        buyerAddress VARCHAR(500) ${TEXT} NOT NULL DEFAULT '',
+        buyerTaxId VARCHAR(30) NOT NULL DEFAULT '',
+        buyerBranch VARCHAR(5) NOT NULL DEFAULT '',
+        sellerVersionId VARCHAR(36) DEFAULT NULL,
+        priceMode VARCHAR(10) NOT NULL DEFAULT 'exclusive',
+        vatRate DECIMAL(5,2) NOT NULL DEFAULT 7.00,
+        subtotalSatang BIGINT NOT NULL DEFAULT 0,
+        discountSatang BIGINT NOT NULL DEFAULT 0,
+        depositSatang BIGINT NOT NULL DEFAULT 0,
+        vatBaseSatang BIGINT NOT NULL DEFAULT 0,
+        vatSatang BIGINT NOT NULL DEFAULT 0,
+        totalSatang BIGINT NOT NULL DEFAULT 0,
+        paidSatang BIGINT NOT NULL DEFAULT 0,
+        customerPoNo VARCHAR(100) ${TEXT} NOT NULL DEFAULT '',
+        projectName VARCHAR(255) ${TEXT} NOT NULL DEFAULT '',
+        note VARCHAR(1000) ${TEXT} NOT NULL DEFAULT '',
+        quotationId VARCHAR(36) DEFAULT NULL,
+        salesOrderId VARCHAR(36) DEFAULT NULL,
+        relatedDocId VARCHAR(36) DEFAULT NULL,
+        salesRecordId VARCHAR(36) DEFAULT NULL,
+        expectedDeliveryDate VARCHAR(10) DEFAULT NULL,
+        voidReason VARCHAR(500) ${TEXT} DEFAULT NULL,
+        voidedAt VARCHAR(30) DEFAULT NULL,
+        voidedBy VARCHAR(255) DEFAULT NULL,
+        issuedAt VARCHAR(30) DEFAULT NULL,
+        issuedBy VARCHAR(255) DEFAULT NULL,
+        createdAt VARCHAR(30) NOT NULL,
+        createdBy VARCHAR(255) NOT NULL,
+        updatedAt VARCHAR(30) NOT NULL,
+        UNIQUE INDEX uq_acc_doc_no (docType, docNo),
+        INDEX idx_acc_doc_type_date (docType, issueDate),
+        INDEX idx_acc_doc_company (companyId),
+        INDEX idx_acc_doc_related (relatedDocId),
+        INDEX idx_acc_doc_so (salesOrderId)
+      )
+    `);
+  await connection.query(`
+      CREATE TABLE IF NOT EXISTS acc_document_lines (
+        id VARCHAR(36) PRIMARY KEY,
+        documentId VARCHAR(36) NOT NULL,
+        sortOrder INT NOT NULL DEFAULT 0,
+        lineType VARCHAR(10) NOT NULL DEFAULT 'goods',
+        productId VARCHAR(255) NOT NULL DEFAULT '',
+        name VARCHAR(500) ${TEXT} NOT NULL,
+        qty DECIMAL(12,2) NOT NULL DEFAULT 1,
+        unit VARCHAR(30) ${TEXT} NOT NULL DEFAULT '',
+        unitPriceSatang BIGINT NOT NULL DEFAULT 0,
+        discountSatang BIGINT NOT NULL DEFAULT 0,
+        amountSatang BIGINT NOT NULL DEFAULT 0,
+        serials VARCHAR(1000) ${TEXT} NOT NULL DEFAULT '',
+        warrantyMonths SMALLINT DEFAULT NULL,
+        deliveredQty DECIMAL(12,2) NOT NULL DEFAULT 0,
+        sourceLineId VARCHAR(36) DEFAULT NULL,
+        INDEX idx_adl_doc (documentId)
+      )
+    `);
+  // Money received against a document. Never deleted: a mistake is VOIDED
+  // (voidedAt + reason) and recorded again, as in billingPayments.ts.
+  await connection.query(`
+      CREATE TABLE IF NOT EXISTS acc_payments (
+        id VARCHAR(36) PRIMARY KEY,
+        documentId VARCHAR(36) NOT NULL,
+        receiptId VARCHAR(36) DEFAULT NULL,
+        billingNoteId VARCHAR(36) DEFAULT NULL,
+        paidDate VARCHAR(10) NOT NULL,
+        method VARCHAR(10) NOT NULL,
+        bankAccountId VARCHAR(36) DEFAULT NULL,
+        amountSatang BIGINT NOT NULL,
+        whtPercent DECIMAL(5,2) NOT NULL DEFAULT 0,
+        whtSatang BIGINT NOT NULL DEFAULT 0,
+        feeSatang BIGINT NOT NULL DEFAULT 0,
+        cert50Received TINYINT(1) NOT NULL DEFAULT 0,
+        cert50Note VARCHAR(255) ${TEXT} NOT NULL DEFAULT '',
+        externalReceiptNo VARCHAR(60) ${TEXT} NOT NULL DEFAULT '',
+        note VARCHAR(500) ${TEXT} NOT NULL DEFAULT '',
+        voidedAt VARCHAR(30) DEFAULT NULL,
+        voidedBy VARCHAR(255) DEFAULT NULL,
+        voidReason VARCHAR(500) ${TEXT} DEFAULT NULL,
+        createdAt VARCHAR(30) NOT NULL,
+        createdBy VARCHAR(255) NOT NULL,
+        INDEX idx_ap_doc (documentId),
+        INDEX idx_ap_receipt (receiptId),
+        INDEX idx_ap_bank (bankAccountId)
+      )
+    `);
+  // Who did what, when — appended only (lib/accounting/audit.ts).
+  await connection.query(`
+      CREATE TABLE IF NOT EXISTS acc_audit_log (
+        id VARCHAR(36) PRIMARY KEY,
+        at VARCHAR(30) NOT NULL,
+        userId VARCHAR(255) NOT NULL,
+        username VARCHAR(255) NOT NULL,
+        action VARCHAR(32) NOT NULL,
+        documentId VARCHAR(36) DEFAULT NULL,
+        docNo VARCHAR(60) ${TEXT} DEFAULT NULL,
+        detail VARCHAR(1000) ${TEXT} NOT NULL DEFAULT '',
+        INDEX idx_aal_at (at),
+        INDEX idx_aal_doc (documentId)
+      )
+    `);
+}
 
 function isBenignSchemaError(error: unknown): boolean {
   const err = error as { code?: string; message?: string; sqlMessage?: string } | null | undefined;

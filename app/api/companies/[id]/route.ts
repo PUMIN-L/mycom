@@ -10,13 +10,21 @@ export const PUT = withRoute(
     await requireAuth();
 
     const { id } = await params;
-    const { name, addressNo, moo, soi, road, subDistrict, district, province, postalCode, phone, note } =
+    const { name, addressNo, moo, soi, road, subDistrict, district, province, postalCode, phone, note, taxId, branchCode, whtPercent } =
       readCompanyInput(await request.json());
 
+    // The tax fields are written only when the request sent them: a caller
+    // that knows nothing of tax IDs must not wipe one out.
+    const taxSets: string[] = [];
+    const taxValues: unknown[] = [];
+    if (taxId !== undefined) { taxSets.push("taxId = ?"); taxValues.push(taxId); }
+    if (branchCode !== undefined) { taxSets.push("branchCode = ?"); taxValues.push(branchCode); }
+    if (whtPercent !== undefined) { taxSets.push("whtPercent = ?"); taxValues.push(whtPercent); }
+
     const [result] = await query<ResultSetHeader>(
-      `UPDATE companies SET 
-        name = ?, addressNo = ?, moo = ?, soi = ?, road = ?, 
-        subDistrict = ?, district = ?, province = ?, postalCode = ?, phone = ?, note = ? 
+      `UPDATE companies SET
+        name = ?, addressNo = ?, moo = ?, soi = ?, road = ?,
+        subDistrict = ?, district = ?, province = ?, postalCode = ?, phone = ?, note = ?${taxSets.map((s) => `, ${s}`).join("")}
        WHERE id = ?`,
       [
         name,
@@ -30,6 +38,7 @@ export const PUT = withRoute(
         postalCode,
         phone,
         note,
+        ...taxValues,
         id,
       ]
     );

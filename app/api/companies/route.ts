@@ -18,14 +18,14 @@ export const POST = withRoute(
   async (request: Request) => {
     await requireAuth();
 
-    const { name, addressNo, moo, soi, road, subDistrict, district, province, postalCode, phone, note } =
+    const { name, addressNo, moo, soi, road, subDistrict, district, province, postalCode, phone, note, taxId, branchCode, whtPercent } =
       readCompanyInput(await request.json());
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
 
     await query(
-      `INSERT INTO companies (id, name, addressNo, moo, soi, road, subDistrict, district, province, postalCode, phone, note, createdAt)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO companies (id, name, addressNo, moo, soi, road, subDistrict, district, province, postalCode, phone, note, taxId, branchCode, whtPercent, createdAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
         name,
@@ -39,6 +39,9 @@ export const POST = withRoute(
         postalCode,
         phone,
         note,
+        taxId ?? null,
+        branchCode ?? null,
+        whtPercent ?? null,
         now,
       ]
     );

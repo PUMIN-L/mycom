@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { useAuth } from "../context/AuthContext";
+import { isAccountingEnabled } from "../lib/accounting/flags";
 
 export default function DashboardActions() {
   const { isLoggedIn, user, logout } = useAuth();
@@ -51,6 +52,18 @@ export default function DashboardActions() {
       icon: "📋",
       color: "bg-teal-50 text-teal-600 border-teal-200 hover:border-teal-400 hover:shadow-teal-100",
     },
+    // The new accounting module (§8g) — only once it is switched on.
+    ...(isAccountingEnabled()
+      ? [
+          {
+            href: "/accounting",
+            title: "ระบบบัญชี",
+            description: "ใบแจ้งหนี้ ใบกำกับภาษี ใบเสร็จ รับชำระ หัก ณ ที่จ่าย และรายงานส่งผู้ทำบัญชี",
+            icon: "🧮",
+            color: "bg-green-50 text-green-700 border-green-200 hover:border-green-400 hover:shadow-green-100",
+          },
+        ]
+      : []),
     {
       // ใบ Job — the printed service job sheet. Points at the LIST rather than
       // the builder (like the accounting card above): the office comes here far

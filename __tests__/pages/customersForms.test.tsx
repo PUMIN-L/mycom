@@ -424,3 +424,45 @@ describe("/customers forms — the province is picked from the 77", () => {
     expect(screen.getAllByRole("row", { name: /^ดูข้อมูล / })).toHaveLength(1);
   });
 });
+
+// v50 — the company's tax fields, for the accounting module's tax invoices.
+describe("/customers company form — tax fields", () => {
+  it("warns about a tax ID that looks mistyped, but still saves it (a number from abroad is legal)", async () => {
+    const dialog = await openCompanyForm("add");
+    fireEvent.change(within(dialog).getByLabelText(/ชื่อบริษัท/), { target: { value: "บริษัท ภาษี จำกัด" } });
+    fireEvent.change(within(dialog).getByLabelText("เลขประจำตัวผู้เสียภาษี"), { target: { value: "0107537000115" } });
+    expect(within(dialog).getByText(/อาจพิมพ์ผิด/)).toBeInTheDocument();
+    fireEvent.click(saveButton());
+    await waitFor(() => expect(callsOf("POST", "/api/companies")).toHaveLength(1));
+    expect(bodyOf(callsOf("POST", "/api/companies")[0]).taxId).toBe("0107537000115");
+  });
+
+  it("wants a branch number once สาขา is picked, and sends the branch and the usual withholding", async () => {
+    const dialog = await openCompanyForm("add");
+    fireEvent.change(within(dialog).getByLabelText(/ชื่อบริษัท/), { target: { value: "บริษัท สาขา จำกัด" } });
+    await pickOption(/สำนักงานใหญ่ \/ สาขา/, "สาขา (ระบุเลขสาขา)");
+    fireEvent.click(saveButton());
+    expect(problems()).toEqual(["กรุณากรอกเลขสาขาเป็นตัวเลขไม่เกิน 5 หลัก เช่น 00001"]);
+    expect(document.activeElement).toBe(within(dialog).getByLabelText("เลขสาขา"));
+    expect(callsOf("POST")).toHaveLength(0);
+
+    fireEvent.change(within(dialog).getByLabelText("เลขสาขา"), { target: { value: "2x" } });
+    expect((within(dialog).getByLabelText("เลขสาขา") as HTMLInputElement).value).toBe("2");
+    await pickOption(/หัก ณ ที่จ่ายประจำ/, "3% (ค่าบริการ / จ้างทำของ)");
+    fireEvent.click(saveButton());
+    await waitFor(() => expect(callsOf("POST", "/api/companies")).toHaveLength(1));
+    expect(bodyOf(callsOf("POST", "/api/companies")[0])).toMatchObject({ branchCode: "สาขา 2", whtPercent: "3" });
+  });
+
+  it("opens a company's saved tax fields as they were, and shows them in its window", async () => {
+    lists.companies = [{ ...companiesFixture()[0], taxId: "0107537000114", branchCode: "00000", whtPercent: "3.00" }];
+    render(<Customers />);
+    await loaded();
+    fireEvent.click(tab(/^บริษัท/));
+    fireEvent.click(screen.getByRole("button", { name: "แก้ไข บริษัท ไทยแล็บ จำกัด" }));
+    const dialog = screen.getByRole("dialog");
+    expect((within(dialog).getByLabelText("เลขประจำตัวผู้เสียภาษี") as HTMLInputElement).value).toBe("0107537000114");
+    expect(within(dialog).getByLabelText(/สำนักงานใหญ่ \/ สาขา/)).toHaveTextContent("สำนักงานใหญ่");
+    expect(within(dialog).getByLabelText(/หัก ณ ที่จ่ายประจำ/)).toHaveTextContent("3% (ค่าบริการ / จ้างทำของ)");
+  });
+});

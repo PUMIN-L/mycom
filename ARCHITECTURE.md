@@ -1244,6 +1244,54 @@ the product forms that link suppliers said ผู้ผลิต.
   period opens it. Export writes exactly the table's list, money as numbers
   (mysql2 sends DECIMAL as strings, which Excel kept as text).
 
+### 8g. Accounting module (`/accounting`, schema v50) — sales side
+The in-house accounting module that is replacing `/billing` for issuing
+documents (plan: 10 steps; this section grows with each). Files:
+[`lib/accounting/`](./app/lib/accounting/), routes under
+[`api/accounting/`](./app/api/accounting/), pages under
+[`app/accounting/`](./app/accounting/).
+
+- **Who may use it — checked by every route** (`requireAccountingUser`,
+  [`guard.ts`](./app/lib/accounting/guard.ts)): the module switched on
+  (always outside production; in production only with
+  `NEXT_PUBLIC_ACCOUNTING_ENABLED=1` — [`flags.ts`](./app/lib/accounting/flags.ts),
+  also read by the admin panel's menu card), a signed-in admin (401), with
+  **two-factor login ON** (403, Thai message). `GET /api/accounting/status` is
+  the one route that answers without 2FA, so the page
+  ([`AccountingFrame.tsx`](./app/accounting/AccountingFrame.tsx)) can say
+  "turn 2FA on first" (link to `/settings#two-factor`) instead of failing.
+  Every answer is `Cache-Control: no-store` (`noStoreJson`). `/accounting` is
+  in proxy.ts's matcher and robots.ts's disallow list.
+- **Password again** before changing what every tax invoice prints
+  (`PUT /api/accounting/settings` → `twoFactorReauth.requirePassword`, its own
+  lockout) — [`PasswordConfirmDialog.tsx`](./app/accounting/PasswordConfirmDialog.tsx),
+  reused for deleting/voiding issued documents later.
+- **Our company is kept as VERSIONS** (`acc_seller_versions`, newest =
+  current; an unchanged save writes no row). A document points at the version
+  it was issued under (`sellerVersionId`) instead of copying it, so a move of
+  address never changes an old invoice. Before the first save the form starts
+  from the website's company profile. The tax ID must be a valid Thai one
+  (13 digits + check digit — [`lib/thaiTaxId.ts`](./app/lib/thaiTaxId.ts),
+  shared with the supplier form); branch "00000" = สำนักงานใหญ่.
+- **Running numbers** ([`numbering.ts`](./app/lib/accounting/numbering.ts)):
+  `TYPE + YYYYMM + 4 digits` (INV2026110001), from 0001 each month, per series
+  (INV / RE / BN / CN; a customer PO — SO — has none of ours). Handed out ONLY
+  when a document is issued, inside its transaction, from `acc_counters` read
+  `FOR UPDATE` (and never below the highest number on a document), so
+  concurrent issues neither share nor skip one. Deleting the LATEST document of
+  a series/month gives its number back (`releaseDocNoIfLatest`).
+- **Audit log** (`acc_audit_log`, [`audit.ts`](./app/lib/accounting/audit.ts)):
+  one short line per action, appended only — no UPDATE/DELETE path. Kept
+  small: a summary of what changed, never a copy of the document.
+- **Customers' tax fields** — `companies.taxId / branchCode / whtPercent`
+  (nullable). The /customers company form has a "ข้อมูลภาษี" section: a tax
+  ID is only WARNED about (a buyer abroad has its own kind), a branch must be
+  one; the API writes the three only when the request sends them (a caller that
+  knows nothing of them cannot wipe them).
+- **Saving database space** (owner's request): money is whole satang in
+  BIGINT; no JSON copy of a document, no stored PDF or file; reports are
+  computed on demand; indexes only where a list or a lookup needs them.
+
 ### 9. Email (contact form) + lead persistence
 [`app/lib/mailer.ts`](./app/lib/mailer.ts) sends via SMTP (`nodemailer`, Gmail by
 default). Addresses go to nodemailer as structured `{ name, address }` objects,

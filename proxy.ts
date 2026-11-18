@@ -89,6 +89,10 @@ export const config = {
     '/dashboard/:path*',
     '/expenses',
     '/expenses/:path*',
+    // The accounting module — tax invoices, receipts, every customer's money.
+    // Its routes also demand two-factor login (lib/accounting/guard.ts).
+    '/accounting',
+    '/accounting/:path*',
     // Asset register + stock — also the pages a sticker's QR opens, so a
     // phone that is not logged in lands on /login first.
     '/assets',

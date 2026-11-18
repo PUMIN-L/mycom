@@ -36,6 +36,7 @@ export default function robots(): MetadataRoute.Robots {
         "/dashboard",
         "/crm",
         "/expenses",
+        "/accounting",
         "/assets",
         "/stock",
         "/tools",

@@ -2,6 +2,7 @@
 
 import CopyText from "../components/CopyText";
 import { formatThaiPhone } from "../lib/phone";
+import { branchLabel, formatTaxId } from "../lib/thaiTaxId";
 import type { Customer } from "../lib/types";
 import { companyAddressLines, companyAddressText } from "./companyAddress";
 import { thCompare } from "./listHelpers";
@@ -37,6 +38,8 @@ export function CompanyWindow({
 }) {
   const address = companyAddressLines(company);
   const contacts = customers.filter((c) => c.companyId === company.id).sort((a, b) => thCompare(a.name, b.name));
+  // DECIMAL: "3.00" — and "0.00" is a real choice ("never withholds"), so not a falsy test.
+  const hasWht = company.whtPercent !== null && company.whtPercent !== undefined && company.whtPercent !== "";
 
   const copyAddress = async () => {
     try {
@@ -85,6 +88,20 @@ export function CompanyWindow({
             <CopyText value={formatThaiPhone(company.phone)} onCopied={onCopied} onFailed={onCopyFailed} />
           </p>
         </div>
+
+        {(!!company.taxId || !!company.branchCode || hasWht) && (
+          <div className="bg-gray-50 rounded-2xl p-5 border border-gray-100 space-y-1" data-testid="company-tax-view">
+            <h3 className={`${SECTION_TITLE} mb-1`}>ข้อมูลภาษี</h3>
+            {company.taxId && (
+              <p className="text-gray-800 tabular-nums">
+                เลขผู้เสียภาษี <CopyText value={formatTaxId(company.taxId)} onCopied={onCopied} onFailed={onCopyFailed} />
+                {company.branchCode ? <span className="text-gray-500"> · {branchLabel(company.branchCode)}</span> : null}
+              </p>
+            )}
+            {!company.taxId && company.branchCode && <p className="text-gray-800">{branchLabel(company.branchCode)}</p>}
+            {hasWht && <p className="text-gray-800">หัก ณ ที่จ่ายประจำ {Number(company.whtPercent)}%</p>}
+          </div>
+        )}
 
         {company.note && (
           <div className="bg-orange-50 rounded-2xl p-5 border border-orange-100">

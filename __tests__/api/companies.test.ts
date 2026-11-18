@@ -166,3 +166,52 @@ describe('DELETE /api/companies/[id]', () => {
     expect(String(vi.mocked(query).mock.calls[2][0])).toContain('DELETE FROM companies');
   });
 });
+
+// v50 — a customer's tax ID, branch and usual withholding, for the accounting
+// module's tax invoices. Written only when sent: the PUT tests above send none
+// and leave the columns out of the UPDATE.
+describe('the tax fields', () => {
+  it('stores a Thai tax ID as its digits, the head office as 00000, the withholding as a number', async () => {
+    vi.mocked(query).mockResolvedValue([{ affectedRows: 1 }] as never);
+    await POST(request('POST', { ...COMPANY, taxId: '0-1075-37000-11-4', branchCode: 'สำนักงานใหญ่', whtPercent: '3' }));
+    const [sql, params] = vi.mocked(query).mock.calls[0];
+    expect(sql).toContain('taxId, branchCode, whtPercent');
+    expect((params as unknown[]).slice(12, 15)).toEqual(['0107537000114', '00000', 3]);
+  });
+
+  it('adds a company with none as NULLs', async () => {
+    vi.mocked(query).mockResolvedValue([{ affectedRows: 1 }] as never);
+    await POST(request('POST', COMPANY));
+    expect((vi.mocked(query).mock.calls[0][1] as unknown[]).slice(12, 15)).toEqual([null, null, null]);
+  });
+
+  it('keeps a number from abroad as typed, and a branch as five digits', async () => {
+    vi.mocked(query).mockResolvedValue([{ affectedRows: 1 }] as never);
+    await PUT(request('PUT', { ...COMPANY, taxId: ' TW-12345678 ', branchCode: 'สาขา 2', whtPercent: '' }), ctx);
+    const [sql, params] = vi.mocked(query).mock.calls[0];
+    expect(sql).toContain('taxId = ?');
+    expect(sql).toContain('branchCode = ?');
+    expect(sql).toContain('whtPercent = ?');
+    expect(params).toEqual([
+      COMPANY.name, '99/1', '', '', 'งามวงศ์วาน', 'บางกระสอ', 'เมืองนนทบุรี', 'นนทบุรี', '11000',
+      '02-000-0000', '', 'TW-12345678', '00002', null, 'c1',
+    ]);
+  });
+
+  it('clears a tax ID sent empty', async () => {
+    vi.mocked(query).mockResolvedValue([{ affectedRows: 1 }] as never);
+    await PUT(request('PUT', { ...COMPANY, taxId: '' }), ctx);
+    const [sql, params] = vi.mocked(query).mock.calls[0];
+    expect(sql).toContain('taxId = ?');
+    expect(sql).not.toContain('branchCode = ?');
+    expect((params as unknown[]).slice(-2)).toEqual([null, 'c1']);
+  });
+
+  it('refuses a branch that is not one, and a withholding outside 0–15%, writing nothing', async () => {
+    for (const bad of [{ branchCode: 'สาขา' }, { branchCode: '123456' }, { whtPercent: 20 }, { whtPercent: true }, { taxId: { x: 1 } }]) {
+      const res = await POST(request('POST', { ...COMPANY, ...bad }));
+      expect(res.status, JSON.stringify(bad)).toBe(400);
+    }
+    expect(query).not.toHaveBeenCalled();
+  });
+});

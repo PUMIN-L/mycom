@@ -1,6 +1,14 @@
 // @vitest-environment node
 import { describe, it, expect } from "vitest";
-import { checkThaiTaxId, taxIdWarning } from "@/app/lib/thaiTaxId";
+import {
+  branchLabel,
+  checkThaiTaxId,
+  formatTaxId,
+  isValidThaiTaxId,
+  normalizeBranchCode,
+  normalizeTaxId,
+  taxIdWarning,
+} from "@/app/lib/thaiTaxId";
 
 describe("checkThaiTaxId", () => {
   it("accepts real company tax IDs, with or without dashes and spaces", () => {
@@ -48,5 +56,48 @@ describe("taxIdWarning", () => {
     expect(taxIdWarning("12345678")).toBe("เลขผู้เสียภาษีของไทยมี 13 หลัก (ตอนนี้ 8 หลัก) — ถ้าเป็นเลขของต่างประเทศ ปล่อยไว้ได้");
     expect(taxIdWarning("TW 12345678")).toContain("ถ้าเป็นเลขของต่างประเทศ ปล่อยไว้ได้");
     expect(taxIdWarning("0107537000115")).toBe("เลขนี้อาจพิมพ์ผิด: หลักสุดท้ายไม่ตรงกับเลขตรวจสอบ ลองเทียบกับเอกสารอีกครั้ง");
+  });
+});
+
+// ── As a tax invoice prints it (the accounting module) ──────────────────────
+
+describe("normalizeTaxId / isValidThaiTaxId / formatTaxId", () => {
+  it("keep the digits, check them, and group them as the card does", () => {
+    expect(normalizeTaxId(" 0-1075-37000-11-4 ")).toBe("0107537000114");
+    expect(isValidThaiTaxId("0-1075-37000-11-4")).toBe(true);
+    expect(isValidThaiTaxId("0107537000115")).toBe(false);
+    expect(isValidThaiTaxId("")).toBe(false);
+    expect(formatTaxId("0107537000114")).toBe("0-1075-37000-11-4");
+  });
+
+  it("leaves anything that is not 13 digits as typed (a number from abroad)", () => {
+    expect(formatTaxId(" TW-12345678 ")).toBe("TW-12345678");
+    expect(formatTaxId(null)).toBe("");
+  });
+});
+
+describe("normalizeBranchCode / branchLabel", () => {
+  it("reads the head office in words or as 0", () => {
+    expect(normalizeBranchCode("สำนักงานใหญ่")).toBe("00000");
+    expect(normalizeBranchCode("0")).toBe("00000");
+    expect(normalizeBranchCode(0)).toBe("00000");
+    expect(branchLabel("00000")).toBe("สำนักงานใหญ่");
+  });
+
+  it("reads a branch however it was written, as five digits", () => {
+    for (const typed of ["1", "00001", "สาขา 1", "สาขาที่ 00001", "branch 1"]) {
+      expect(normalizeBranchCode(typed), typed).toBe("00001");
+    }
+    expect(branchLabel("12")).toBe("สาขาที่ 00012");
+  });
+
+  it("is empty for nothing given, and null for what is not a branch", () => {
+    expect(normalizeBranchCode("")).toBe("");
+    expect(normalizeBranchCode(null)).toBe("");
+    expect(normalizeBranchCode("สาขา")).toBeNull();
+    expect(normalizeBranchCode("123456")).toBeNull();
+    expect(normalizeBranchCode("กรุงเทพ")).toBeNull();
+    expect(branchLabel("")).toBe("");
+    expect(branchLabel("x")).toBe("");
   });
 });

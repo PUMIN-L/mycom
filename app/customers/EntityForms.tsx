@@ -3,6 +3,7 @@
 import { useRef, useState, type ReactNode } from "react";
 import SearchableDropdown from "../components/SearchableDropdown";
 import { errorMessageOf } from "../lib/apiErrorMessage";
+import { taxIdWarning } from "../lib/thaiTaxId";
 import FormModal from "./FormModal";
 import type { Company, Salesperson } from "./types";
 import type { Customer } from "../lib/types";
@@ -201,7 +202,22 @@ function focusFirstProblem<T>(prefix: string, order: readonly (keyof T)[], error
 
 // ── Company ──────────────────────────────────────────────────────────────────
 
-const COMPANY_ORDER = ["name", "note"] as const;
+const COMPANY_ORDER = ["name", "taxId", "branchCode", "note"] as const;
+
+/** The usual withholding rates — what a customer deducts when it pays. */
+const WHT_OPTIONS = [
+  { value: "", label: "ไม่หักประจำ" },
+  { value: "1", label: "1% (ค่าขนส่ง)" },
+  { value: "2", label: "2% (ค่าโฆษณา)" },
+  { value: "3", label: "3% (ค่าบริการ / จ้างทำของ)" },
+  { value: "5", label: "5% (ค่าเช่า)" },
+];
+
+/** The branch picker's three states, read from the draft (formHelpers.branchDraftOf). */
+function branchModeOf(branchCode: string): "" | "head" | "branch" {
+  if (!branchCode.trim()) return "";
+  return branchCode === "สำนักงานใหญ่" ? "head" : "branch";
+}
 
 export function CompanyForm({
   company,
@@ -225,6 +241,13 @@ export function CompanyForm({
 
   const errors = companyErrors(draft);
   const nameProblem = submitAttempted ? errors.name : undefined;
+  const branchProblem = submitAttempted ? errors.branchCode : undefined;
+  const taxIdNote = taxIdWarning(draft.taxId);
+  const branchMode = branchModeOf(draft.branchCode);
+  const branchNo = branchMode === "branch" ? draft.branchCode.replace(/^สาขา\s*/, "") : "";
+  const whtOptions = WHT_OPTIONS.some((o) => o.value === draft.whtPercent)
+    ? WHT_OPTIONS
+    : [...WHT_OPTIONS, { value: draft.whtPercent, label: `${draft.whtPercent}%` }];
   const sameName = sameNameAs(companies, draft.name, editId);
 
   const save = async () => {
@@ -330,6 +353,75 @@ export function CompanyForm({
         <div>
           <label htmlFor="company-phone" className={LABEL}>เบอร์โทรศัพท์</label>
           <PhoneInput id="company-phone" value={draft.phone} onChange={(phone) => set({ phone })} placeholder="เช่น 02-123-4567 ต่อ 105" />
+        </div>
+
+        {/* What a tax invoice prints for this buyer, and what it usually
+            withholds when it pays — the accounting module fills both in. */}
+        <div className="bg-gray-50/50 p-6 rounded-2xl border border-gray-100 space-y-4" data-testid="company-tax">
+          <h3 className="text-sm font-bold text-gray-500 uppercase tracking-wider">ข้อมูลภาษี (สำหรับใบกำกับภาษี)</h3>
+          <div>
+            <label htmlFor="company-taxId" className={ADDRESS_LABEL}>เลขประจำตัวผู้เสียภาษี</label>
+            <input
+              id="company-taxId"
+              type="text"
+              inputMode="numeric"
+              maxLength={30}
+              aria-describedby={taxIdNote ? "company-taxId-note" : undefined}
+              className={`${ADDRESS_INPUT} tabular-nums`}
+              placeholder="13 หลัก เช่น 0105512345678"
+              value={draft.taxId}
+              onChange={(e) => set({ taxId: e.target.value })}
+            />
+            {taxIdNote && (
+              <p id="company-taxId-note" className="mt-1.5 text-sm text-amber-700">{taxIdNote}</p>
+            )}
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label htmlFor="company-branchMode" className={ADDRESS_LABEL}>สำนักงานใหญ่ / สาขา</label>
+              <SearchableDropdown
+                id="company-branchMode"
+                value={branchMode}
+                onChange={(mode) => set({ branchCode: mode === "head" ? "สำนักงานใหญ่" : mode === "branch" ? "สาขา " : "" })}
+                options={[
+                  { value: "", label: "ไม่ระบุ" },
+                  { value: "head", label: "สำนักงานใหญ่" },
+                  { value: "branch", label: "สาขา (ระบุเลขสาขา)" },
+                ]}
+                searchable={false}
+                buttonClassName={dropdownClass(false, "!bg-white")}
+              />
+            </div>
+            {branchMode === "branch" && (
+              <div>
+                <label htmlFor="company-branchCode" className={ADDRESS_LABEL}>เลขสาขา</label>
+                <input
+                  id="company-branchCode"
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={5}
+                  aria-invalid={!!branchProblem || undefined}
+                  aria-describedby={branchProblem ? "company-branchCode-error" : undefined}
+                  className={branchProblem ? inputClass(true) : `${ADDRESS_INPUT} tabular-nums`}
+                  placeholder="เช่น 00001"
+                  value={branchNo}
+                  onChange={(e) => set({ branchCode: `สาขา ${e.target.value.replace(/\D/g, "")}` })}
+                />
+                {branchProblem && <Problem id="company-branchCode-error">{branchProblem}</Problem>}
+              </div>
+            )}
+          </div>
+          <div>
+            <label htmlFor="company-whtPercent" className={ADDRESS_LABEL}>หัก ณ ที่จ่ายประจำ (ตอนลูกค้าจ่ายเงิน)</label>
+            <SearchableDropdown
+              id="company-whtPercent"
+              value={draft.whtPercent}
+              onChange={(whtPercent) => set({ whtPercent })}
+              options={whtOptions}
+              searchable={false}
+              buttonClassName={dropdownClass(false, "!bg-white")}
+            />
+          </div>
         </div>
 
         <NoteField
