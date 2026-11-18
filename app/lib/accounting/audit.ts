@@ -23,6 +23,7 @@ export type AuditAction =
   | "doc.delete"
   | "doc.void"
   | "payment.create"
+  | "payment.update"
   | "payment.void";
 
 export const AUDIT_DETAIL_MAX = 1000;

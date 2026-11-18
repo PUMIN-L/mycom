@@ -10,6 +10,8 @@ import { SESSION_EXPIRED_MESSAGE } from "../lib/apiErrorMessage";
 export const ACCOUNTING_TABS = [
   { key: "home", href: "/accounting", label: "หน้าหลักบัญชี" },
   { key: "invoices", href: "/accounting/invoices", label: "ใบแจ้งหนี้ / ใบกำกับภาษี" },
+  { key: "receipts", href: "/accounting/receipts", label: "ใบเสร็จรับเงิน" },
+  { key: "receivables", href: "/accounting/receivables", label: "ลูกหนี้คงค้าง" },
   { key: "settings", href: "/accounting/settings", label: "ตั้งค่าบัญชี" },
 ] as const;
 export type AccountingTabKey = (typeof ACCOUNTING_TABS)[number]["key"];

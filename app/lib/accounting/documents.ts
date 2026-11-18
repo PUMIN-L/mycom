@@ -9,6 +9,7 @@ import type { EquipmentRowInput } from "../crmStore";
 import { allocateDocNo, docPeriod, formatDocNo, parseDocNo, releaseDocNoIfLatest } from "./numbering";
 import type { NumberedDocType } from "./types";
 import { writeAudit } from "./audit";
+import { recomputePaidSatang, syncSaleReceiptRef } from "./paymentLedger";
 import { getSellerProfile, getVatRate } from "./settings";
 import { allocateProportionally, computeTotals, formatSatang, lineAmountSatang, satangToBaht, withVatOverride, type DocTotals } from "./money";
 import {
@@ -100,6 +101,9 @@ export interface AccListRow {
   customerPoNo: string;
   totalSatang: number;
   paidSatang: number;
+  /** A receipt's invoice (RE → INV). */
+  relatedDocId: string | null;
+  relatedDocNo: string | null;
 }
 
 const str = (v: unknown) => (v === null || v === undefined ? "" : String(v));
@@ -205,8 +209,9 @@ export async function listAccDocuments(opts: { type: AccDocType; from?: string; 
     params.push(like, like, like, like);
   }
   const [rows] = await query<RowDataPacket[]>(
-    `SELECT id, docType, docNo, status, source, isTaxInvoice, issueDate, dueDate, buyerName, projectName, customerPoNo, totalSatang, paidSatang
-       FROM acc_documents WHERE ${where.join(" AND ")}
+    `SELECT id, docType, docNo, status, source, isTaxInvoice, issueDate, dueDate, buyerName, projectName, customerPoNo, totalSatang, paidSatang,
+            relatedDocId, (SELECT rel.docNo FROM acc_documents rel WHERE rel.id = d.relatedDocId) AS relatedDocNo
+       FROM acc_documents d WHERE ${where.join(" AND ")}
       ORDER BY issueDate DESC, docNo DESC, createdAt DESC LIMIT ${LIST_LIMIT}`,
     params
   );
@@ -224,6 +229,8 @@ export async function listAccDocuments(opts: { type: AccDocType; from?: string; 
     customerPoNo: str(r.customerPoNo),
     totalSatang: num(r.totalSatang),
     paidSatang: num(r.paidSatang),
+    relatedDocId: strOrNull(r.relatedDocId),
+    relatedDocNo: strOrNull(r.relatedDocNo),
   }));
 }
 
@@ -539,6 +546,8 @@ export interface DeletionImpact {
   /** The /dashboard sale it created, and what deleting would take with it. */
   sale: { id: string; costSatang: number; sharedWithOtherDocs: boolean } | null;
   machines: { total: number; withHistory: number };
+  /** A receipt: the payment it records, which goes with it, and the invoice that then owes it again. */
+  receiptPayment: { amountSatang: number; voided: boolean; invoiceId: string; invoiceNo: string | null } | null;
 }
 
 type Exec = { query: PoolConnection["query"] } | null;
@@ -547,9 +556,26 @@ async function run(conn: Exec, sql: string, params: unknown[]): Promise<RowDataP
   return rows;
 }
 
-async function impactOf(conn: Exec, doc: { id: string; status: AccDocStatus; docNo: string | null; salesRecordId: string | null }): Promise<DeletionImpact> {
-  const [payments] = await run(conn, "SELECT COUNT(*) AS n FROM acc_payments WHERE documentId = ? AND voidedAt IS NULL", [doc.id]);
-  const [dependents] = await run(conn, "SELECT COUNT(*) AS n FROM acc_documents WHERE relatedDocId = ?", [doc.id]);
+async function impactOf(
+  conn: Exec,
+  doc: { id: string; docType: string; status: AccDocStatus; docNo: string | null; salesRecordId: string | null; relatedDocId: string | null }
+): Promise<DeletionImpact> {
+  // Inside the delete's transaction these are LOCKING reads: a plain SELECT
+  // reads the snapshot the transaction began with (TiDB), which misses a
+  // payment — or its receipt — committed while the delete waited for its
+  // lock, and the invoice would go with a live payment hanging off it.
+  const current = conn ? " FOR UPDATE" : "";
+  let receiptPayment: DeletionImpact["receiptPayment"] = null;
+  if (doc.docType === "RE") {
+    const [p] = await run(conn, `SELECT amountSatang, voidedAt, documentId FROM acc_payments WHERE receiptId = ? LIMIT 1${current}`, [doc.id]);
+    const invoiceId = p ? String(p.documentId) : doc.relatedDocId;
+    if (p && invoiceId) {
+      const [inv] = await run(conn, "SELECT docNo FROM acc_documents WHERE id = ?", [invoiceId]);
+      receiptPayment = { amountSatang: num(p.amountSatang), voided: Boolean(p.voidedAt), invoiceId, invoiceNo: strOrNull(inv?.docNo) };
+    }
+  }
+  const [payments] = await run(conn, `SELECT COUNT(*) AS n FROM acc_payments WHERE documentId = ? AND voidedAt IS NULL${current}`, [doc.id]);
+  const [dependents] = await run(conn, `SELECT COUNT(*) AS n FROM acc_documents WHERE relatedDocId = ?${current}`, [doc.id]);
   let isLatestNumber = false;
   const parsed = parseDocNo(doc.docNo);
   if (doc.status !== "draft" && parsed) {
@@ -568,7 +594,7 @@ async function impactOf(conn: Exec, doc: { id: string; status: AccDocStatus; doc
       machines.withHistory = units.filter((u) => u.hasHistory).length;
     }
   }
-  return { status: doc.status, docNo: doc.docNo, isLatestNumber, livePayments: num(payments?.n), dependentDocs: num(dependents?.n), sale, machines };
+  return { status: doc.status, docNo: doc.docNo, isLatestNumber, livePayments: num(payments?.n), dependentDocs: num(dependents?.n), sale, machines, receiptPayment };
 }
 
 /** The sale's machines, and whether anything has been recorded against each (a schedule, a service log, a job sheet). */
@@ -587,9 +613,16 @@ async function machinesOf(conn: Exec, salesRecordId: string): Promise<{ id: stri
 
 /** What deleting would do — for the dialog, before anything is deleted. Null when there is no such document. */
 export async function deletionImpact(id: string): Promise<DeletionImpact | null> {
-  const [row] = await run(null, "SELECT id, status, docNo, salesRecordId FROM acc_documents WHERE id = ?", [id]);
+  const [row] = await run(null, "SELECT id, docType, status, docNo, salesRecordId, relatedDocId FROM acc_documents WHERE id = ?", [id]);
   if (!row) return null;
-  return impactOf(null, { id: String(row.id), status: String(row.status) as AccDocStatus, docNo: strOrNull(row.docNo), salesRecordId: strOrNull(row.salesRecordId) });
+  return impactOf(null, {
+    id: String(row.id),
+    docType: String(row.docType),
+    status: String(row.status) as AccDocStatus,
+    docNo: strOrNull(row.docNo),
+    salesRecordId: strOrNull(row.salesRecordId),
+    relatedDocId: strOrNull(row.relatedDocId),
+  });
 }
 
 export interface DeletionResult {
@@ -606,12 +639,33 @@ export interface DeletionResult {
  * has been recorded against (the others are kept, unlinked). Refused while
  * payments or other documents hang off it. The latest number of its series
  * goes back to the counter. The audit log keeps a line.
+ *
+ * A RECEIPT takes the payment it records along (the invoice owes that again);
+ * an invoice takes the payments voided on it (a live one refuses the delete).
  */
 export async function deleteAccDocument(id: string, actor: Actor, opts: { passwordChecked: boolean }): Promise<DeletionResult> {
   return withTransaction(async (conn) => {
-    const [row] = await run(conn, "SELECT id, docType, status, docNo, salesRecordId, buyerName, totalSatang FROM acc_documents WHERE id = ? FOR UPDATE", [id]);
+    // A receipt's invoice is locked BEFORE the receipt: the order every
+    // payment change takes (payments.ts), so the two cannot deadlock.
+    const [peek] = await run(conn, "SELECT docType, relatedDocId FROM acc_documents WHERE id = ?", [id]);
+    const paidInvoiceId = peek?.docType === "RE" ? strOrNull(peek.relatedDocId) : null;
+    const [paidInvoice] = paidInvoiceId
+      ? await run(conn, "SELECT id, docNo, salesRecordId FROM acc_documents WHERE id = ? FOR UPDATE", [paidInvoiceId])
+      : [];
+    const [row] = await run(
+      conn,
+      "SELECT id, docType, status, docNo, salesRecordId, relatedDocId, buyerName, totalSatang FROM acc_documents WHERE id = ? FOR UPDATE",
+      [id]
+    );
     if (!row) throw new ApiError(404, "ไม่พบเอกสารนี้");
-    const doc = { id, status: String(row.status) as AccDocStatus, docNo: strOrNull(row.docNo), salesRecordId: strOrNull(row.salesRecordId) };
+    const doc = {
+      id,
+      docType: String(row.docType),
+      status: String(row.status) as AccDocStatus,
+      docNo: strOrNull(row.docNo),
+      salesRecordId: strOrNull(row.salesRecordId),
+      relatedDocId: strOrNull(row.relatedDocId),
+    };
     // Checked again under the lock: a draft issued in another tab since the
     // route looked must not be deleted without the password an issued one needs.
     if (doc.status !== "draft" && !opts.passwordChecked) {
@@ -620,6 +674,14 @@ export async function deleteAccDocument(id: string, actor: Actor, opts: { passwo
     const impact = await impactOf(conn, doc);
     if (impact.livePayments > 0) throw new ApiError(409, "ใบนี้มีรายการรับชำระแล้ว — ยกเลิกรายการรับชำระก่อนจึงจะลบได้");
     if (impact.dependentDocs > 0) throw new ApiError(409, "มีเอกสารอื่นอ้างถึงใบนี้ (ใบเสร็จ / ใบลดหนี้) — ลบเอกสารนั้นก่อน");
+
+    if (doc.docType === "RE") {
+      await conn.query("DELETE FROM acc_payments WHERE receiptId = ?", [id]);
+    } else {
+      // Only VOIDED payments can be left here (a live one refused above):
+      // dead rows of a document that is going — kept, they would only take space.
+      await conn.query("DELETE FROM acc_payments WHERE documentId = ?", [id]);
+    }
 
     let machinesDeleted = 0;
     let machinesKept = 0;
@@ -646,10 +708,25 @@ export async function deleteAccDocument(id: string, actor: Actor, opts: { passwo
     await conn.query("DELETE FROM acc_document_lines WHERE documentId = ?", [id]);
     await conn.query("DELETE FROM acc_documents WHERE id = ?", [id]);
 
+    const livePayment = impact.receiptPayment && !impact.receiptPayment.voided ? impact.receiptPayment : null;
+    if (paidInvoice) {
+      const invoiceId = String(paidInvoice.id);
+      await recomputePaidSatang(conn, invoiceId);
+      await syncSaleReceiptRef(conn, strOrNull(paidInvoice.salesRecordId), invoiceId);
+      await writeAudit(conn, {
+        ...actor,
+        action: "doc.delete",
+        documentId: invoiceId,
+        docNo: strOrNull(paidInvoice.docNo),
+        detail: `ลบใบเสร็จ ${doc.docNo ?? ""}${livePayment ? ` · รายการรับชำระ ${formatSatang(livePayment.amountSatang)} บาท ถูกลบด้วย (กลับเป็นยอดค้าง)` : ""}`,
+      });
+    }
+
     const parts = [
       doc.docNo ?? "ร่าง",
       String(row.buyerName ?? ""),
       `${formatSatang(num(row.totalSatang))} บาท`,
+      livePayment ? `ลบรายการรับชำระของ ${livePayment.invoiceNo ?? "ใบแจ้งหนี้"}` : null,
       saleDeleted ? "ลบรายการขายใน dashboard" : null,
       machinesDeleted ? `ลบเครื่อง ${machinesDeleted} เครื่อง` : null,
       machinesKept ? `เก็บเครื่องที่มีประวัติไว้ ${machinesKept} เครื่อง` : null,

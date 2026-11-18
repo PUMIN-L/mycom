@@ -1265,7 +1265,7 @@ documents (plan: 10 steps; this section grows with each). Files:
 - **Password again** before changing what every tax invoice prints
   (`PUT /api/accounting/settings` → `twoFactorReauth.requirePassword`, its own
   lockout) — [`PasswordConfirmDialog.tsx`](./app/accounting/PasswordConfirmDialog.tsx),
-  reused for deleting/voiding issued documents later.
+  reused for deleting issued documents and voiding payments.
 - **Our company is kept as VERSIONS** (`acc_seller_versions`, newest =
   current; an unchanged save writes no row). A document points at the version
   it was issued under (`sellerVersionId`) instead of copying it, so a move of
@@ -1345,6 +1345,60 @@ documents (plan: 10 steps; this section grows with each). Files:
   and fixes a typo in the number or storage note with a reason
   (`updateExternalReference`, audited; the sale's `invoiceRef` follows); a
   wrong amount is deleted and recorded again. The list tags it "ภายนอก".
+- **Payments, receipts, withholding, receivables (step 4)** —
+  [`payments.ts`](./app/lib/accounting/payments.ts), rules in
+  [`paymentRules.ts`](./app/lib/accounting/paymentRules.ts), the two caches in
+  [`paymentLedger.ts`](./app/lib/accounting/paymentLedger.ts); UI in
+  [`app/accounting/payments/`](./app/accounting/payments/) (the dialog and the
+  invoice's payment panel), [`receipts/`](./app/accounting/receipts/) and
+  [`receivables/`](./app/accounting/receivables/):
+  - **รับชำระเงิน on an issued invoice** (internal or external) records ONE
+    `acc_payments` row: `amountSatang` = what it settles; `whtSatang` withheld
+    by the customer; `feeSatang` kept by the bank; what arrived = amount − wht
+    − fee. More than is owed is refused — checked again under the invoice's
+    lock. A future date is refused; one before the invoice is only warned of.
+  - **Its receipt is issued in the same transaction**: an `RE` document (our
+    next RE number in the month of the payment date), `relatedDocId` = the
+    invoice, the buyer copied as printed, **no lines stored** — the paper
+    prints the invoice's items as the description. `isTaxInvoice` = NOT the
+    invoice's: services → "ใบเสร็จรับเงิน/ใบกำกับภาษี" (VAT falls due on
+    payment); goods → a plain ใบเสร็จรับเงิน (the invoice was the tax
+    invoice). The receipt's VAT is its share of the invoice's, and the payment
+    that settles the invoice takes what is left, so an invoice's receipts add
+    up to its VAT to the satang (`receiptVatSatang`; products of satang can pass
+    2^53, so these ratios are BigInt-exact). With "ออกใบเสร็จจากที่อื่นแล้ว"
+    the outside number is kept (`externalReceiptNo`) and no RE is issued.
+    (Step 9: only REs with `isTaxInvoice = 1` and not void go in ภาษีขาย.)
+  - **Withholding (หัก ณ ที่จ่าย)** is worked out on the SERVICES before VAT
+    only (`serviceBaseSatang`: the services' share of the VAT base), in
+    proportion to what is paid, at the customer's usual rate
+    (`companies.whtPercent`) — a suggestion the dialog lets the admin type over.
+  - **50 ทวิ**: a received flag + where the paper is kept (`cert50Note`) — no
+    file (owner's choice); ticked when paying or later (`PATCH
+    /api/accounting/payments/[id]`, audited). /accounting/receivables lists the
+    ones still to come in.
+  - **`paidSatang` is a cache with one writer** (`recomputePaidSatang`): a full
+    re-sum of live payments in the same transaction, never `+= amount` (as
+    `billingPayments.ts`). The sale's `receiptRef` follows the live payments'
+    receipt numbers (`syncSaleReceiptRef`) — it belongs to the module now.
+  - **⚠️ Locks: invoice first, then its payments/receipts** — recording, voiding
+    and deleting a receipt all take that order, so they cannot deadlock each
+    other. And every read inside those transactions that a money decision rests
+    on is a LOCKING read (`FOR UPDATE`): a plain SELECT reads the snapshot the
+    transaction began with (TiDB), which misses a payment committed while it
+    waited for the invoice's lock — deleting an invoice would have counted
+    "no payments" and gone ahead.
+  - **A payment is never edited.** A mistake is VOIDED (reason + password —
+    `POST /api/accounting/payments/[id]/void`; a missing reason spends no
+    password try): its receipt is voided with it, keeping its number in the
+    register. Deleting the RECEIPT (password, impact dialog; latest number goes
+    back) takes its payment along — for test data or a paper never handed over.
+    Deleting an invoice takes the payments voided on it; a live one, or any
+    receipt pointing at it, still refuses it.
+  - **Receivables** (`GET /api/accounting/receivables`): open invoices by
+    customer (the record when linked, else the printed name; named as on the
+    latest invoice) in ageing buckets from the due date as of today in Bangkok
+    (`ยังไม่ถึงกำหนด`, 1–30, 31–60, 61–90, 90+).
 
 ### 9. Email (contact form) + lead persistence
 [`app/lib/mailer.ts`](./app/lib/mailer.ts) sends via SMTP (`nodemailer`, Gmail by

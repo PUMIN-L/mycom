@@ -14,12 +14,15 @@ import { errorMessageOf } from "../../../lib/apiErrorMessage";
 import { bangkokDateString, formatDisplayDate, formatDisplayDateTime } from "../../../lib/dateFormat";
 import { formatSatang } from "../../../lib/accounting/money";
 import { displayStatusOf } from "../../../lib/accounting/invoiceRules";
-import type { AuditEntry, SellerProfile } from "../../../lib/accounting/types";
+import type { AuditEntry, BankAccount, SellerProfile } from "../../../lib/accounting/types";
 import { useAccountingLookups } from "../../useAccountingLookups";
 import { useAccountingSettings } from "../../useAccountingSettings";
+import PaymentDialog, { type RecordedPaymentView } from "../../payments/PaymentDialog";
+import PaymentsPanel, { useInvoicePayments } from "../../payments/PaymentsPanel";
 
 type LoadedDocument = EditorDocument &
   PaperDocument & {
+    docType: string;
     paidSatang: number;
     salesRecordId: string | null;
     issuedAt: string | null;
@@ -50,6 +53,7 @@ function InvoiceDocument({ id, onTitle }: { id: string; onTitle: (title: string)
   const lookups = useAccountingLookups();
   const settings = useAccountingSettings();
   const [state, setState] = useState<{ status: "loading" } | { status: "error"; message: string } | ({ status: "ok" } & Loaded)>({ status: "loading" });
+  // Bumping this fetches the document again; the page stays on screen meanwhile.
   const [reload, setReload] = useState(0);
   const [deleting, setDeleting] = useState(false);
 
@@ -65,6 +69,11 @@ function InvoiceDocument({ id, onTitle }: { id: string; onTitle: (title: string)
         }
         const body: Loaded = await res.json();
         if (cancelled) return;
+        // A receipt's link opened here by hand — its own page prints it.
+        if (body.document.docType === "RE") {
+          router.replace(`/accounting/receipts/${encodeURIComponent(id)}`);
+          return;
+        }
         setState({ status: "ok", ...body });
         onTitle(body.document.status === "draft" ? "แก้ไขร่างใบแจ้งหนี้" : body.document.docNo ?? "ใบแจ้งหนี้");
       } catch {
@@ -74,7 +83,7 @@ function InvoiceDocument({ id, onTitle }: { id: string; onTitle: (title: string)
     return () => {
       cancelled = true;
     };
-  }, [id, reload, onTitle]);
+  }, [id, reload, onTitle, router]);
 
   if (state.status === "loading" || settings.state.status === "loading") {
     return (
@@ -139,11 +148,9 @@ function InvoiceDocument({ id, onTitle }: { id: string; onTitle: (title: string)
       <IssuedView
         doc={doc}
         seller={seller}
+        bankAccounts={accSettings.bankAccounts}
         onDelete={() => setDeleting(true)}
-        onChanged={() => {
-          setState({ status: "loading" });
-          setReload((n) => n + 1);
-        }}
+        onChanged={() => setReload((n) => n + 1)}
       />
       {deleteDialog}
     </>
@@ -153,20 +160,30 @@ function InvoiceDocument({ id, onTitle }: { id: string; onTitle: (title: string)
 function IssuedView({
   doc,
   seller,
+  bankAccounts,
   onDelete,
   onChanged,
 }: {
   doc: LoadedDocument;
   seller: SellerProfile | null;
+  bankAccounts: BankAccount[];
   onDelete: () => void;
+  /** Something changed it (a payment, a corrected number): fetch it again. */
   onChanged: () => void;
 }) {
   const external = doc.source === "external";
   const [editingReference, setEditingReference] = useState(false);
   const [copyLabel, setCopyLabel] = useState<"ต้นฉบับ" | "สำเนา">("ต้นฉบับ");
   const [audit, setAudit] = useState<AuditEntry[] | null>(null);
+  const [paying, setPaying] = useState(false);
+  const [recorded, setRecorded] = useState<RecordedPaymentView | null>(null);
+  // Bumped by every payment change — each one adds lines to the history.
+  const [auditKey, setAuditKey] = useState(0);
+  const payments = useInvoicePayments(doc.id);
   const status = displayStatusOf(doc, bangkokDateString(new Date()));
+  const outstanding = Math.max(0, doc.totalSatang - doc.paidSatang);
 
+  // The history again whenever the document or its payments change.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -181,7 +198,13 @@ function IssuedView({
     return () => {
       cancelled = true;
     };
-  }, [doc.id]);
+  }, [doc.id, doc.docNo, doc.externalNote, auditKey]);
+
+  const afterPaymentChange = () => {
+    payments.reload();
+    setAuditKey((n) => n + 1);
+    onChanged();
+  };
 
   // Print after the label has been drawn on the paper.
   const printAs = (label: "ต้นฉบับ" | "สำเนา") => {
@@ -218,7 +241,7 @@ function IssuedView({
             <dt className="text-gray-500">รับชำระแล้ว</dt>
             <dd className="text-right">{formatSatang(doc.paidSatang)}</dd>
             <dt className="text-gray-500">ค้างชำระ</dt>
-            <dd className="text-right font-semibold">{formatSatang(Math.max(0, doc.totalSatang - doc.paidSatang))}</dd>
+            <dd className="text-right font-semibold">{formatSatang(outstanding)}</dd>
             {doc.dueDate && (
               <>
                 <dt className="text-gray-500">ครบกำหนด</dt>
@@ -226,6 +249,29 @@ function IssuedView({
               </>
             )}
           </dl>
+          {doc.status === "issued" && outstanding > 0 && (
+            <button
+              type="button"
+              onClick={() => {
+                setRecorded(null);
+                setPaying(true);
+              }}
+              disabled={payments.state.status !== "ok"}
+              className="w-full px-3 py-2.5 rounded-xl bg-green-600 text-white font-semibold hover:bg-green-700 disabled:opacity-60"
+            >
+              รับชำระเงิน
+            </button>
+          )}
+          {recorded && (
+            <div role="status" className="rounded-xl border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800 space-y-1">
+              <p>บันทึกรับชำระแล้ว{recorded.receipt && <> — ออก{recorded.receipt.title} <span className="tabular-nums font-semibold">{recorded.receipt.docNo}</span></>}</p>
+              {recorded.receipt && (
+                <Link href={`/accounting/receipts/${recorded.receipt.id}`} className="font-semibold text-green-800 underline">
+                  เปิด / พิมพ์ใบเสร็จ
+                </Link>
+              )}
+            </div>
+          )}
           {external ? (
             <button type="button" onClick={() => setEditingReference(true)} className="w-full px-3 py-2.5 rounded-xl border border-amber-300 text-amber-800 font-semibold hover:bg-amber-50">
               แก้เลขที่ / ที่เก็บต้นฉบับ
@@ -244,6 +290,16 @@ function IssuedView({
             </>
           )}
         </div>
+
+        <PaymentsPanel
+          state={payments.state}
+          onChanged={() => {
+            // A void or a 50 ทวิ change makes "just recorded …" old news.
+            setRecorded(null);
+            afterPaymentChange();
+          }}
+          onRetry={payments.reload}
+        />
 
         {doc.salesRecordId && (
           <div className="bg-white rounded-2xl border border-gray-200 p-5 text-sm space-y-2">
@@ -283,6 +339,19 @@ function IssuedView({
           onSaved={() => {
             setEditingReference(false);
             onChanged();
+          }}
+        />
+      )}
+      {paying && payments.state.status === "ok" && (
+        <PaymentDialog
+          invoice={{ id: doc.id, docNo: doc.docNo, issueDate: doc.issueDate, totalSatang: doc.totalSatang }}
+          context={payments.state.context}
+          bankAccounts={bankAccounts}
+          onCancel={() => setPaying(false)}
+          onRecorded={(result) => {
+            setPaying(false);
+            setRecorded(result);
+            afterPaymentChange();
           }}
         />
       )}

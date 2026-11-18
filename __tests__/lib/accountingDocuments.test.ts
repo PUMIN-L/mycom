@@ -48,6 +48,7 @@ import { allocateDocNo, releaseDocNoIfLatest } from "@/app/lib/accounting/number
 import {
   createInvoiceDraft,
   deleteAccDocument,
+  deletionImpact,
   issueInvoice,
   listAccDocuments,
   recordExternalInvoice,
@@ -256,15 +257,25 @@ describe("deleteAccDocument", () => {
 
   it("refuses while a payment is recorded against it", async () => {
     conn.query.mockImplementation(router([
-      [/FOR UPDATE/, () => [issuedRow]],
+      [/FROM acc_documents WHERE id = \? FOR UPDATE/, () => [issuedRow]],
       [/FROM acc_payments/, () => [{ n: 1 }]],
     ]));
     await expect(deleteAccDocument("d1", actor, { passwordChecked: true })).rejects.toMatchObject({ status: 409, message: expect.stringContaining("รับชำระ") });
   });
 
+  it("counts payments and receipts with LOCKING reads — the snapshot would miss one committed while it waited", async () => {
+    conn.query.mockImplementation(router([
+      [/FROM acc_documents WHERE id = \? FOR UPDATE/, () => [issuedRow]],
+      [/FROM acc_payments/, () => [{ n: 1 }]],
+    ]));
+    await expect(deleteAccDocument("d1", actor, { passwordChecked: true })).rejects.toMatchObject({ status: 409 });
+    expect(statements()).toContain("SELECT COUNT(*) AS n FROM acc_payments WHERE documentId = ? AND voidedAt IS NULL FOR UPDATE");
+    expect(statements()).toContain("SELECT COUNT(*) AS n FROM acc_documents WHERE relatedDocId = ? FOR UPDATE");
+  });
+
   it("takes the sale and the history-free machines along, keeps the others, gives the number back", async () => {
     conn.query.mockImplementation(router([
-      [/FOR UPDATE/, () => [issuedRow]],
+      [/FROM acc_documents WHERE id = \? FOR UPDATE/, () => [issuedRow]],
       [/FROM acc_payments/, () => [{ n: 0 }]],
       [/WHERE relatedDocId/, () => [{ n: 0 }]],
       [/FROM acc_counters/, () => [{ lastNo: 5 }]],
@@ -287,6 +298,68 @@ describe("deleteAccDocument", () => {
     expect(releaseDocNoIfLatest).toHaveBeenCalledWith(conn, "INV2026110005");
     expect(writeAudit).toHaveBeenCalledWith(conn, expect.objectContaining({ action: "doc.delete", detail: expect.stringContaining("คืนเลขเอกสาร") }));
   });
+
+  it("takes the payments voided on an invoice along — dead rows of a document that is going", async () => {
+    conn.query.mockImplementation(router([
+      [/FROM acc_documents WHERE id = \? FOR UPDATE/, () => [{ ...issuedRow, salesRecordId: null }]],
+      [/COUNT\(\*\) AS n FROM acc_payments/, () => [{ n: 0 }]],
+      [/WHERE relatedDocId/, () => [{ n: 0 }]],
+    ]));
+    await deleteAccDocument("d1", actor, { passwordChecked: true });
+    expect(vi.mocked(conn.query).mock.calls).toContainEqual(["DELETE FROM acc_payments WHERE documentId = ?", ["d1"]]);
+  });
+
+  // Step 4 — a receipt takes the payment it records along.
+  describe("a receipt", () => {
+    const receiptRow = { id: "re1", docType: "RE", status: "issued", docNo: "RE2026110003", salesRecordId: null, relatedDocId: "inv1", buyerName: "บริษัท เอ", totalSatang: 2033000 };
+    function receiptDb() {
+      conn.query.mockImplementation(router([
+        [/SELECT docType, relatedDocId FROM acc_documents WHERE id = \?$/, () => [{ docType: "RE", relatedDocId: "inv1" }]],
+        [/SELECT id, docNo, salesRecordId FROM acc_documents WHERE id = \? FOR UPDATE/, () => [{ id: "inv1", docNo: "INV2026110001", salesRecordId: "sale-1" }]],
+        [/SELECT id, docType, status, docNo, salesRecordId, relatedDocId, buyerName, totalSatang FROM acc_documents WHERE id = \? FOR UPDATE/, () => [receiptRow]],
+        [/SELECT amountSatang, voidedAt, documentId FROM acc_payments WHERE receiptId/, () => [{ amountSatang: 2033000, voidedAt: null, documentId: "inv1" }]],
+        [/SELECT docNo FROM acc_documents WHERE id = \?/, () => [{ docNo: "INV2026110001" }]],
+        [/COUNT\(\*\) AS n FROM acc_payments/, () => [{ n: 0 }]],
+        [/WHERE relatedDocId/, () => [{ n: 0 }]],
+        [/FROM acc_counters/, () => [{ lastNo: 3 }]],
+        [/COALESCE\(SUM\(amountSatang\), 0\) AS paid/, () => [{ paid: 0 }]],
+        [/SELECT receiptId, externalReceiptNo FROM acc_payments/, () => []],
+      ]));
+    }
+
+    it("deletes its payment, so the invoice owes that again, and the sale loses the receipt number — invoice locked first", async () => {
+      receiptDb();
+      const result = await deleteAccDocument("re1", actor, { passwordChecked: true });
+      expect(result).toMatchObject({ docNo: "RE2026110003", releasedNumber: true, saleDeleted: false });
+      const calls = vi.mocked(conn.query).mock.calls;
+      expect(calls).toContainEqual(["DELETE FROM acc_payments WHERE receiptId = ?", ["re1"]]);
+      expect(calls).toContainEqual(["UPDATE acc_documents SET paidSatang = ? WHERE id = ?", [0, "inv1"]]);
+      expect(calls).toContainEqual(["UPDATE sales_records SET receiptRef = ? WHERE id = ?", ["", "sale-1"]]);
+      expect(calls).toContainEqual(["DELETE FROM acc_documents WHERE id = ?", ["re1"]]);
+      const order = statements();
+      expect(order.findIndex((s) => s.startsWith("SELECT id, docNo, salesRecordId FROM acc_documents"))).toBeLessThan(
+        order.findIndex((s) => s.startsWith("SELECT id, docType, status"))
+      );
+      // The invoice's own history says what happened to its payment.
+      expect(writeAudit).toHaveBeenCalledWith(conn, expect.objectContaining({ action: "doc.delete", documentId: "inv1", detail: expect.stringContaining("20,330.00") }));
+      expect(writeAudit).toHaveBeenCalledWith(conn, expect.objectContaining({ action: "doc.delete", documentId: "re1", detail: expect.stringContaining("ลบรายการรับชำระของ INV2026110001") }));
+    });
+
+    it("says what goes with it before anything is deleted", async () => {
+      vi.mocked(query).mockImplementation(router([
+        [/SELECT id, docType, status, docNo, salesRecordId, relatedDocId FROM acc_documents WHERE id = \?/, () => [receiptRow]],
+        [/SELECT amountSatang, voidedAt, documentId FROM acc_payments WHERE receiptId/, () => [{ amountSatang: 2033000, voidedAt: null, documentId: "inv1" }]],
+        [/SELECT docNo FROM acc_documents WHERE id = \?/, () => [{ docNo: "INV2026110001" }]],
+        [/COUNT\(\*\) AS n/, () => [{ n: 0 }]],
+        [/FROM acc_counters/, () => [{ lastNo: 3 }]],
+      ]) as never);
+      expect(await deletionImpact("re1")).toMatchObject({
+        isLatestNumber: true,
+        livePayments: 0,
+        receiptPayment: { amountSatang: 2033000, voided: false, invoiceId: "inv1", invoiceNo: "INV2026110001" },
+      });
+    });
+  });
 });
 
 describe("peekNextDocNo", () => {
@@ -307,6 +380,12 @@ describe("listAccDocuments", () => {
     expect(sql).toContain("ORDER BY issueDate DESC, docNo DESC");
     expect(sql).toContain("ESCAPE '!'");
     expect(params).toEqual(["INV", "2026-01-01", "2027-01-01", "%50!%!_off%", "%50!%!_off%", "%50!%!_off%", "%50!%!_off%"]);
+  });
+
+  it("names a receipt's invoice", async () => {
+    vi.mocked(query).mockResolvedValue([[{ id: "re1", docType: "RE", docNo: "RE2026110001", status: "issued", relatedDocId: "inv1", relatedDocNo: "INV2026110001", totalSatang: 100 }], []] as never);
+    const [row] = await listAccDocuments({ type: "RE" });
+    expect(row).toMatchObject({ relatedDocId: "inv1", relatedDocNo: "INV2026110001" });
   });
 });
 

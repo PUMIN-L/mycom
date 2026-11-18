@@ -15,6 +15,8 @@ export interface DeletionImpactView {
   dependentDocs: number;
   sale: { id: string; costSatang: number; sharedWithOtherDocs: boolean } | null;
   machines: { total: number; withHistory: number };
+  /** A receipt: the payment that goes with it. */
+  receiptPayment?: { amountSatang: number; voided: boolean; invoiceId: string; invoiceNo: string | null } | null;
 }
 
 /**
@@ -93,6 +95,12 @@ export default function DocumentDeleteDialog({
   return (
     <PasswordConfirmDialog title={`ลบ ${label}?`} confirmText="ลบเอกสาร" danger onSubmit={send} onCancel={onCancel} onDone={onDeleted}>
       <ul className="list-disc pl-5 space-y-1">
+        {impact.receiptPayment && !impact.receiptPayment.voided && (
+          <li className="tabular-nums">
+            รายการรับชำระ {formatSatang(impact.receiptPayment.amountSatang)} บาท ของ {impact.receiptPayment.invoiceNo ?? "ใบแจ้งหนี้"} จะถูกลบด้วย —
+            ยอดนี้กลับเป็นยอดค้างชำระ
+          </li>
+        )}
         {impact.sale && !impact.sale.sharedWithOtherDocs && (
           <li>
             รายการขายใน dashboard ที่สร้างจากใบนี้จะถูกลบด้วย
@@ -112,7 +120,11 @@ export default function DocumentDeleteDialog({
         </li>
       </ul>
       <p className="text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
-        ถ้าส่งเอกสารนี้ให้ลูกค้าไปแล้ว ไม่ควรลบ — จะหายจากรายงานภาษีขาย ให้ยกเลิกหรือทำใบลดหนี้แทน
+        {!impact.receiptPayment
+          ? "ถ้าส่งเอกสารนี้ให้ลูกค้าไปแล้ว ไม่ควรลบ — จะหายจากรายงานภาษีขาย ให้ยกเลิกหรือทำใบลดหนี้แทน"
+          : impact.receiptPayment.voided
+            ? "ใบเสร็จนี้ยกเลิกแล้ว — ถ้าเคยส่งให้ลูกค้า ควรเก็บไว้ในทะเบียน ไม่ควรลบ (ลบได้เมื่อเป็นข้อมูลทดสอบ)"
+            : "ถ้าส่งใบเสร็จนี้ให้ลูกค้าไปแล้ว ไม่ควรลบ — ให้กด ยกเลิกใบเสร็จ แทน (เลขที่ยังอยู่ในทะเบียน พร้อมเหตุผล)"}
       </p>
     </PasswordConfirmDialog>
   );

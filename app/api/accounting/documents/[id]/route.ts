@@ -5,22 +5,26 @@ import { noStoreJson, requireAccountingUser } from "../../../../lib/accounting/g
 import { deleteAccDocument, deletionImpact, getAccDocument, updateInvoiceDraft } from "../../../../lib/accounting/documents";
 import { cleanInvoiceInput } from "../../../../lib/accounting/invoiceRules";
 import { getSellerProfile, getSellerVersion } from "../../../../lib/accounting/settings";
+import { receiptDetail } from "../../../../lib/accounting/payments";
 
 type Ctx = { params: Promise<{ id: string }> };
 
 // GET /api/accounting/documents/[id] — the document, its lines, our company
 // as it prints on it (its own version once issued; the current one on a
-// draft), and what deleting it would do.
+// draft), and what deleting it would do. A receipt also brings the payment it
+// records and the invoice it pays (`receipt`) — it prints both.
 export const GET = withRoute("โหลดเอกสารไม่สำเร็จ", async (_request: NextRequest, { params }: Ctx) => {
   await requireAccountingUser();
   const { id } = await params;
   const doc = await getAccDocument(id);
   if (!doc) return jsonError("ไม่พบเอกสารนี้", 404);
   const seller = doc.sellerVersionId ? await getSellerVersion(doc.sellerVersionId) : (await getSellerProfile()).seller;
-  return noStoreJson({ document: doc, seller, impact: await deletionImpact(id) });
+  const receipt = doc.docType === "RE" ? await receiptDetail(id, doc.relatedDocId) : undefined;
+  return noStoreJson({ document: doc, seller, impact: await deletionImpact(id), ...(receipt ? { receipt } : {}) });
 });
 
 // PUT /api/accounting/documents/[id] — saves over a DRAFT ({ …invoice, expectedUpdatedAt }).
+// (A receipt is never a draft — updateInvoiceDraft refuses anything issued.)
 export const PUT = withRoute("บันทึกร่างเอกสารไม่สำเร็จ", async (request: NextRequest, { params }: Ctx) => {
   const { actor } = await requireAccountingUser();
   const { id } = await params;
