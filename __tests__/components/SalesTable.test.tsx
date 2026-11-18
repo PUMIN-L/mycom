@@ -54,17 +54,23 @@ const ITEMS_BODY = {
   ],
 };
 
+/** The props a table needs besides its records and handlers. */
+const FILTER_PROPS = {
+  periodLabel: 'ปี 2569',
+  scope: 'period' as const,
+  onScopeChange: vi.fn(),
+  focus: null,
+  onClearFocus: vi.fn(),
+  recordSearch: '',
+  setRecordSearch: vi.fn(),
+};
+
 function renderTable(props: Partial<React.ComponentProps<typeof SalesTable>> = {}) {
   const onView = vi.fn();
   const utils = render(
     <SalesTable
       records={[makeRecord()]}
-      recordSearch=""
-      setRecordSearch={vi.fn()}
-      recordMonth=""
-      setRecordMonth={vi.fn()}
-      recordYear=""
-      setRecordYear={vi.fn()}
+      {...FILTER_PROPS}
       onView={onView}
       onEdit={vi.fn()}
       onDelete={vi.fn()}
@@ -277,9 +283,7 @@ describe('SalesTable — expandable sale rows', () => {
     rerender(
       <SalesTable
         records={[makeRecord({ totalAmount: 290000 })]}
-        recordSearch="" setRecordSearch={vi.fn()}
-        recordMonth="" setRecordMonth={vi.fn()}
-        recordYear="" setRecordYear={vi.fn()}
+        {...FILTER_PROPS}
         onView={vi.fn()} onEdit={vi.fn()} onDelete={vi.fn()} onHide={vi.fn()}
       />
     );
@@ -327,5 +331,78 @@ describe('SalesTable — product names', () => {
   it('reads a rich catalog title as text', () => {
     renderTable({ records: [makeRecord({ productName: '<p>A &amp; B</p>' })] });
     expect(screen.getByText('A & B')).toBeTruthy();
+  });
+
+  it("names the bill's other products under the one its columns name", () => {
+    renderTable({
+      records: [makeRecord({
+        productName: 'เครื่องชั่ง XA-220',
+        lineItems: [
+          { productId: 'p-1', productName: 'เครื่องชั่ง XA-220' },
+          { productId: 'p-2', productName: '<p>ตู้อบ &amp; ถาด</p>' },
+          { productId: '', productName: 'ค่าติดตั้ง' },
+        ],
+      })],
+    });
+    expect(document.querySelector('[data-other-products]')!.textContent).toBe('+ ตู้อบ & ถาด, ค่าติดตั้ง');
+  });
+
+  it('adds nothing for a one-product bill', () => {
+    renderTable({ records: [makeRecord({ lineItems: [{ productId: 'p-1', productName: 'เครื่องชั่ง XA-220' }] })] });
+    expect(document.querySelector('[data-other-products]')).toBeNull();
+  });
+});
+
+describe('SalesTable — which sales it lists', () => {
+  it('says the period in its heading, or ทุกช่วงเวลา', () => {
+    const { rerender } = renderTable();
+    expect(screen.getByRole('heading', { name: 'รายการขาย ปี 2569 (1)' })).toBeTruthy();
+    rerender(
+      <SalesTable records={[]} {...FILTER_PROPS} scope="all" onView={vi.fn()} onEdit={vi.fn()} onDelete={vi.fn()} onHide={vi.fn()} />
+    );
+    expect(screen.getByRole('heading', { name: 'รายการขาย ทุกช่วงเวลา (0)' })).toBeTruthy();
+    expect(screen.getByText('ยังไม่มีรายการขาย')).toBeTruthy();
+  });
+
+  it('switches between the period and every period', () => {
+    const onScopeChange = vi.fn();
+    renderTable({ onScopeChange });
+    fireEvent.click(screen.getByRole('button', { name: 'ตามช่วงด้านบน' }));
+    fireEvent.click(screen.getByRole('button', { name: 'ทุกช่วงเวลา' }));
+    expect(onScopeChange).toHaveBeenCalledWith('all');
+  });
+
+  it('shows what a Top 10 row narrowed it to, and lets go of it', () => {
+    const onClearFocus = vi.fn();
+    renderTable({ focus: { kind: 'product', id: 'p-2', name: '<p>ตู้อบ</p>' }, onClearFocus });
+    expect(document.querySelector('[data-sales-focus]')!.textContent).toContain('เฉพาะสินค้า «ตู้อบ»');
+    fireEvent.click(screen.getByRole('button', { name: 'เลิกกรองเฉพาะสินค้า «ตู้อบ»' }));
+    expect(onClearFocus).toHaveBeenCalledTimes(1);
+  });
+
+  it('says why the list is empty', () => {
+    const { rerender } = renderTable({ records: [] });
+    expect(screen.getByText('ยังไม่มีรายการขายในปี 2569')).toBeTruthy();
+
+    rerender(
+      <SalesTable records={[]} {...FILTER_PROPS} recordSearch=" ตู้ " onView={vi.fn()} onEdit={vi.fn()} onDelete={vi.fn()} onHide={vi.fn()} />
+    );
+    expect(screen.getByText('ไม่พบรายการขายที่ตรงกับ «ตู้» ในปี 2569')).toBeTruthy();
+
+    rerender(
+      <SalesTable records={[]} {...FILTER_PROPS} focus={{ kind: 'company', id: 'co-9', name: 'บริษัท บี' }} onView={vi.fn()} onEdit={vi.fn()} onDelete={vi.fn()} onHide={vi.fn()} />
+    );
+    expect(screen.getByText('ไม่มีรายการขายของบริษัท «บริษัท บี» ในปี 2569')).toBeTruthy();
+  });
+
+  it('goes back to the first page when it is handed a new list', () => {
+    const records = Array.from({ length: 15 }, (_, i) => makeRecord({ id: `sale-${i}`, productName: `สินค้า ${i}` }));
+    const { rerender } = renderTable({ records });
+    fireEvent.click(screen.getByRole('button', { name: 'ถัดไป' }));
+    expect(screen.getByText('หน้า 2 / 2')).toBeTruthy();
+    rerender(
+      <SalesTable records={records.slice(0, 12)} {...FILTER_PROPS} onView={vi.fn()} onEdit={vi.fn()} onDelete={vi.fn()} onHide={vi.fn()} />
+    );
+    expect(screen.getByText('หน้า 1 / 2')).toBeTruthy();
   });
 });

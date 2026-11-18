@@ -344,9 +344,9 @@ describe('salesDashboardStore', () => {
     });
 
     it('listSalesRecords applies filters properly', async () => {
-      vi.mocked(query).mockResolvedValueOnce([
-        [{ id: 'rec-1', totalAmount: 1000 }],
-      ] as any);
+      vi.mocked(query)
+        .mockResolvedValueOnce([[{ id: 'rec-1', totalAmount: 1000 }]] as any)
+        .mockResolvedValueOnce([[]] as any); // its line items
 
       const rows = await listSalesRecords({
         salespersonId: 'sp-1',
@@ -360,6 +360,40 @@ describe('salesDashboardStore', () => {
       const sqlCall = vi.mocked(query).mock.calls[0];
       expect(sqlCall[0]).toContain('WHERE sr.salespersonId = ? AND sr.customerId = ? AND sr.categoryId = ? AND sr.saleDate >= ? AND sr.saleDate <= ?');
       expect(sqlCall[1]).toEqual(['sp-1', 'c-1', 2, '2026-01-01', '2026-12-31']);
+    });
+
+    // The dashboard's Top 10 สินค้า counts line items, so its table must find a
+    // bill by any product on it — the list carries them.
+    it('listSalesRecords attaches every bill its products, in one query, in line order', async () => {
+      vi.mocked(query)
+        .mockResolvedValueOnce([[{ id: 'rec-1' }, { id: 'rec-2' }, { id: 'rec-3' }]] as any)
+        .mockResolvedValueOnce([
+          [
+            { salesRecordId: 'rec-1', productId: 'p-a', productName: 'Scale A' },
+            { salesRecordId: 'rec-2', productId: '', productName: 'ค่าติดตั้ง' },
+            { salesRecordId: 'rec-1', productId: 'p-b', productName: 'Scale B' },
+          ],
+        ] as any);
+
+      const rows = await listSalesRecords();
+
+      expect(rows.map((r) => r.lineItems)).toEqual([
+        [{ productId: 'p-a', productName: 'Scale A' }, { productId: 'p-b', productName: 'Scale B' }],
+        [{ productId: '', productName: 'ค่าติดตั้ง' }],
+        [],
+      ]);
+      expect(vi.mocked(query)).toHaveBeenCalledTimes(2);
+      const [sql, params] = vi.mocked(query).mock.calls[1];
+      expect(sql).toContain('FROM sales_record_items');
+      expect(sql).toContain('WHERE salesRecordId IN (?, ?, ?)');
+      expect(sql).toContain('ORDER BY sortOrder ASC');
+      expect(params).toEqual(['rec-1', 'rec-2', 'rec-3']);
+    });
+
+    it('listSalesRecords asks for no line items when there are no sales', async () => {
+      vi.mocked(query).mockResolvedValueOnce([[]] as any);
+      expect(await listSalesRecords()).toEqual([]);
+      expect(vi.mocked(query)).toHaveBeenCalledTimes(1);
     });
   });
 

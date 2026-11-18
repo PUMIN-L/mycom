@@ -10,6 +10,7 @@ import {
   currentPeriodName,
   currentPeriodValue,
   parsePeriod,
+  periodDateRange,
   periodLabel,
   previousPeriodPhrase,
   shiftPeriod,
@@ -98,5 +99,21 @@ describe("phrases", () => {
     expect(currentPeriodName("month")).toBe("เดือนนี้");
     expect(currentPeriodName("quarter")).toBe("ไตรมาสนี้");
     expect(currentPeriodName("year")).toBe("ปีนี้");
+  });
+});
+
+describe("periodDateRange", () => {
+  it("covers a year, a quarter and a month — the end is the day after the last one", () => {
+    expect(periodDateRange("year", "2026", NOW)).toEqual({ start: "2026-01-01", end: "2027-01-01" });
+    expect(periodDateRange("quarter", "2026-Q4", NOW)).toEqual({ start: "2026-10-01", end: "2027-01-01" });
+    expect(periodDateRange("quarter", "2026-Q1", NOW)).toEqual({ start: "2026-01-01", end: "2026-04-01" });
+    expect(periodDateRange("month", "2026-12", NOW)).toEqual({ start: "2026-12-01", end: "2027-01-01" });
+    expect(periodDateRange("month", "2026-02", NOW)).toEqual({ start: "2026-02-01", end: "2026-03-01" });
+  });
+
+  it("reads a malformed part as now's, like the rest of the period helpers", () => {
+    expect(periodDateRange("quarter", "2026-Q9", NOW)).toEqual({ start: "2026-10-01", end: "2027-01-01" });
+    expect(periodDateRange("month", "2026-13", NOW)).toEqual({ start: "2026-10-01", end: "2026-11-01" });
+    expect(periodDateRange("year", undefined, NOW)).toEqual({ start: "2026-01-01", end: "2027-01-01" });
   });
 });

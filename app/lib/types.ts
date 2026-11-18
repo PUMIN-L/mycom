@@ -352,6 +352,10 @@ export interface SalesRecord {
   salespersonName?: string;
   customerName?: string;
   companyName?: string;
+  /** The products on the bill (`sales_record_items`), in line order — sent by
+   * the list (`GET /api/admin/sales`) only. A bill can hold several products;
+   * the columns above name just one of them. */
+  lineItems?: { productId: string; productName: string }[];
 }
 
 export interface CostItem {

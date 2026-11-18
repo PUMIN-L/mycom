@@ -4,7 +4,7 @@ import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { sanitizePlainText } from "./sanitizeHtml";
 import { bangkokDateString, bangkokParts, isValidDateString } from "./dateFormat";
 import { MAX_MONEY_AMOUNT, toSatang } from "./moneyAmount";
-import { parsePeriod, periodLabel as periodLabelOf, type PeriodType } from "./dashboardPeriod";
+import { periodDateRange, periodLabel as periodLabelOf, shiftPeriod, type PeriodType } from "./dashboardPeriod";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 import type { SalesRecord, CostItem, CustomerEquipment } from "./types";
@@ -818,7 +818,26 @@ export async function listSalesRecords(filters?: {
     `${LIST_SELECT}${clause} ORDER BY sr.saleDate DESC LIMIT 1000`,
     params
   );
-  return rows as SalesRecord[];
+  const records = rows as SalesRecord[];
+  if (records.length === 0) return records;
+
+  // Which products each bill holds. The dashboard's Top 10 สินค้า counts line
+  // items, so its table has to find a bill by ANY of its lines — not just the
+  // one product the record's own columns name.
+  const [lineRows] = await query<RowDataPacket[]>(
+    `SELECT salesRecordId, productId, productName FROM sales_record_items
+      WHERE salesRecordId IN (${records.map(() => "?").join(", ")})
+      ORDER BY sortOrder ASC, createdAt ASC`,
+    records.map((r) => r.id)
+  );
+  const linesBySale = new Map<string, { productId: string; productName: string }[]>();
+  for (const line of lineRows) {
+    const key = String(line.salesRecordId);
+    const list = linesBySale.get(key) ?? [];
+    list.push({ productId: String(line.productId ?? ""), productName: String(line.productName ?? "") });
+    linesBySale.set(key, list);
+  }
+  return records.map((r) => ({ ...r, lineItems: linesBySale.get(String(r.id)) ?? [] }));
 }
 
 // ── Aggregate Queries ────────────────────────────────────────────────────────
@@ -828,22 +847,17 @@ export function getPeriodDateRange(periodType?: string, periodValue?: string) {
   // Only the DEFAULT (no explicit periodValue) reads "now" — use Bangkok's
   // calendar date/month, not the server's own (UTC on Vercel), or the
   // default view picks the wrong month/quarter/year for up to 7 hours a day.
-  // parsePeriod (shared with the page) also turns a malformed part — "Q9",
-  // month "13" — into the current one rather than a NaN date in the SQL.
+  // periodDateRange (dashboardPeriod.ts, shared with the page — its sales
+  // table keeps to the same days) also turns a malformed part — "Q9", month
+  // "13" — into the current one rather than a NaN date in the SQL.
   const now = bangkokParts(new Date());
-  const { year, month } = parsePeriod(type, periodValue, now);
-  const span = type === "year" ? 12 : type === "quarter" ? 3 : 1;
-  // First of the month `m` months into `year`; Date.UTC rolls the year over.
-  const firstOf = (m: number) => {
-    const d = new Date(Date.UTC(year, m, 1));
-    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-01`;
-  };
-  const curStart = firstOf(month);
+  const cur = periodDateRange(type, periodValue, now);
+  const prev = periodDateRange(type, shiftPeriod(type, periodValue, -1, now), now);
   return {
-    curStart,
-    curEnd: firstOf(month + span),
-    prevStart: firstOf(month - span),
-    prevEnd: curStart,
+    curStart: cur.start,
+    curEnd: cur.end,
+    prevStart: prev.start,
+    prevEnd: cur.start,
     periodLabel: periodLabelOf(type, periodValue, now),
   };
 }

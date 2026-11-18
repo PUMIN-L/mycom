@@ -1221,6 +1221,29 @@ the product forms that link suppliers said ผู้ผลิต.
     A failed load there is an error with ลองใหม่ — it used to say "no
     supplier linked", or keep the previous product's list.
 
+### 8f. `/dashboard` — the sale form and the sales table
+- **The บันทึกยอดขาย / แก้ไขรายการ window** is
+  [`SaleFormShell.tsx`](./app/dashboard/SaleFormShell.tsx) (a dialog, `z-100`
+  — over the admin bell). Closing it with typing in it (backdrop, ✕, ยกเลิก,
+  Esc) asks first; "typing" is `saleFormSnapshot`
+  ([`saleFormHelpers.ts`](./app/dashboard/saleFormHelpers.ts)) differing from
+  the snapshot taken as the form opened — an empty cost row is not typing.
+  While a save, or the serial check before it, runs it cannot close (closing
+  mid-check used to let the save go on behind a closed form). Esc closes one
+  layer: an open dropdown list, then the page's own questions over the form
+  (`interceptEscape`), then the form. The page's confirm dialogs and the toast
+  are rendered AFTER the form so they are drawn over it.
+- **The table keeps to the period picked at the top** (or "ทุกช่วงเวลา"): its
+  days are `periodDateRange` ([`lib/dashboardPeriod.ts`](./app/lib/dashboardPeriod.ts)),
+  the same function `getPeriodDateRange` uses for the figures, so the two never
+  cover different days. A Top 10 row narrows it to that row's bills by the
+  API's own grouping keys ([`salesFilters.ts`](./app/dashboard/salesFilters.ts)):
+  a product by `(productId, productName)` of ANY line item — `GET /api/admin/sales`
+  (`listSalesRecords`, one extra `IN (…)` query) carries each bill's
+  `lineItems` for this — a company by `companyId`; a row with one bill in the
+  period opens it. Export writes exactly the table's list, money as numbers
+  (mysql2 sends DECIMAL as strings, which Excel kept as text).
+
 ### 9. Email (contact form) + lead persistence
 [`app/lib/mailer.ts`](./app/lib/mailer.ts) sends via SMTP (`nodemailer`, Gmail by
 default). Addresses go to nodemailer as structured `{ name, address }` objects,

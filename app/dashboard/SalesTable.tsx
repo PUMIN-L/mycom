@@ -3,8 +3,21 @@ import React, { useState, useEffect, useCallback } from "react";
 import type { SalesRecord } from "../lib/types";
 import SearchableDropdown from "../components/SearchableDropdown";
 import Spinner from "../components/Spinner";
-import { fmtDec, safeImageUrl, MONTHS_TH } from "./types";
+import { fmtDec, safeImageUrl } from "./types";
 import { displayText } from "../lib/stripHtml";
+import type { SalesFocus } from "./salesFilters";
+
+/** Which sales the table lists: the period picked at the top of the page, or every sale. */
+export type RecordScope = "period" | "all";
+
+/** The bill's other products, beside the one its own columns name — so a bill
+ * listed for a product on its second line shows why it is there. */
+function otherProductsOf(r: SalesRecord): string[] {
+  const main = displayText(r.productName).toLowerCase();
+  const names = (r.lineItems ?? []).map((line) => displayText(line.productName)).filter(Boolean);
+  const skip = names.findIndex((name) => name.toLowerCase() === main);
+  return skip === -1 ? (names.length > 1 ? names : []) : names.filter((_, i) => i !== skip);
+}
 
 // ── Expandable row: what is actually inside one bill ────────────────────────
 // Shapes mirror GET /api/admin/sales/[id]/items exactly (line items from
@@ -256,13 +269,18 @@ function SaleDetailPanel({
 }
 
 interface SalesTableProps {
+  /** The sales to list — already kept to the scope, the focus and the search
+   * (dashboard/salesFilters.ts), the same list the page exports. */
   records: SalesRecord[];
+  /** The period picked at the top of the page, e.g. "ปี 2569". */
+  periodLabel: string;
+  scope: RecordScope;
+  onScopeChange: (scope: RecordScope) => void;
+  /** A Top 10 row the list is narrowed to. */
+  focus: SalesFocus | null;
+  onClearFocus: () => void;
   recordSearch: string;
   setRecordSearch: (v: string) => void;
-  recordMonth: string;
-  setRecordMonth: (v: string) => void;
-  recordYear: string;
-  setRecordYear: (v: string) => void;
   onView: (r: SalesRecord) => void;
   onEdit: (r: SalesRecord) => void;
   onDelete: (id: string) => void;
@@ -271,57 +289,41 @@ interface SalesTableProps {
 
 export default function SalesTable({
   records,
+  periodLabel,
+  scope,
+  onScopeChange,
+  focus,
+  onClearFocus,
   recordSearch,
   setRecordSearch,
-  recordMonth,
-  setRecordMonth,
-  recordYear,
-  setRecordYear,
   onView,
   onEdit,
   onDelete,
   onHide,
 }: SalesTableProps) {
-  // Compute available years from records
-  const availableYears = React.useMemo(() => {
-    const yearSet = new Set<string>();
-    records.forEach((r) => {
-      if (r.saleDate) yearSet.add(r.saleDate.substring(0, 4));
-    });
-    const sorted = Array.from(yearSet).sort((a, b) => b.localeCompare(a));
-    return sorted;
-  }, [records]);
+  const filtered = records;
+  const scopeText = scope === "period" ? periodLabel : "ทุกช่วงเวลา";
+  const focusText = focus ? `${focus.kind === "product" ? "สินค้า" : "บริษัท"} «${displayText(focus.name)}»` : "";
 
-  // Filter records
-  const filtered = records.filter((r) => {
-    if (recordYear) {
-      const year = r.saleDate?.substring(0, 4);
-      if (year !== recordYear) return false;
-    }
-    if (recordMonth) {
-      const month = r.saleDate?.substring(5, 7);
-      if (month !== recordMonth) return false;
-    }
-    if (recordSearch) {
-      const q = recordSearch.toLowerCase();
-      const haystack = [
-        r.productName, r.customerName, r.companyName,
-        r.salespersonName, r.saleDate, r.quotationRef,
-      ].filter(Boolean).join(" ").toLowerCase();
-      if (!haystack.includes(q)) return false;
-    }
-    return true;
-  });
+  /** What an empty list means, in words. */
+  const emptyText = focus
+    ? `ไม่มีรายการขายของ${focusText} ใน${scopeText}`
+    : recordSearch.trim()
+      ? `ไม่พบรายการขายที่ตรงกับ «${recordSearch.trim()}» ใน${scopeText}`
+      : scope === "period"
+        ? `ยังไม่มีรายการขายใน${periodLabel}`
+        : "ยังไม่มีรายการขาย";
 
   // Pagination
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 10;
   const totalPages = Math.max(1, Math.ceil(filtered.length / itemsPerPage));
 
-  // Reset page when filters change
+  // Back to the first page whenever the list changes (any filter does that:
+  // the page hands in a new list).
   useEffect(() => {
     setCurrentPage(1);
-  }, [recordSearch, recordMonth, recordYear, records]);
+  }, [records]);
 
   const paginatedRecords = filtered.slice(
     (currentPage - 1) * itemsPerPage,
@@ -340,7 +342,8 @@ export default function SalesTable({
   const requestedRef = React.useRef<Set<string>>(new Set());
 
   // A refreshed `records` array can carry edited amounts/line items, so drop the
-  // cache and collapse rather than keep showing a stale bill.
+  // cache and collapse rather than keep showing a stale bill. A new period,
+  // focus or search hands in a new list too, which then starts folded.
   useEffect(() => {
     setExpandedIds(new Set());
     setDetails({});
@@ -416,27 +419,24 @@ export default function SalesTable({
     <div id="sales-records-section" className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 mb-8 scroll-mt-6">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
         <div>
-          <h2 className="text-lg font-bold text-gray-800">รายการขาย ({filtered.length})</h2>
+          <h2 className="text-lg font-bold text-gray-800">รายการขาย {scopeText} ({filtered.length})</h2>
           <p className="text-xs text-gray-500">คลิกที่แถวหรือกดปุ่ม &quot;แก้ไข&quot; เพื่อแก้ไขรายละเอียดของยอดขาย — กดลูกศร ▸ หน้าแถวเพื่อดูรายการสินค้าและเครื่องในบิลนั้น</p>
         </div>
         <div className="flex gap-2 w-full sm:w-auto items-center">
+          {/* The period comes from the picker at the top of the page — the
+              figures above are counted over it — and the heading names it.
+              "ทุกช่วงเวลา" is the way to look further back without changing
+              them. Not labelled with the period itself: a second "ปี 2569"
+              button beside the picker's own read as the same control. */}
           <SearchableDropdown
-            value={recordYear}
-            onChange={setRecordYear}
+            value={scope}
+            onChange={(v) => onScopeChange(v === "all" ? "all" : "period")}
             options={[
-              { value: "", label: "ทุกปี" },
-              ...availableYears.map((y) => ({ value: y, label: `พ.ศ. ${Number(y) + 543}` }))
+              { value: "period", label: "ตามช่วงด้านบน" },
+              { value: "all", label: "ทุกช่วงเวลา" },
             ]}
-            className="w-36"
-          />
-          <SearchableDropdown
-            value={recordMonth}
-            onChange={setRecordMonth}
-            options={[
-              { value: "", label: "ทุกเดือน" },
-              ...MONTHS_TH.map((m, i) => ({ value: String(i + 1).padStart(2, '0'), label: m }))
-            ]}
-            className="w-36"
+            searchable={false}
+            className="w-40 shrink-0"
           />
           <input
             type="text"
@@ -459,6 +459,21 @@ export default function SalesTable({
           </button>
         </div>
       </div>
+      {focus && (
+        <div className="mb-4 flex flex-wrap items-center gap-2 text-sm" data-sales-focus>
+          <span className="inline-flex items-center gap-2 rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-indigo-700">
+            <span>เฉพาะ{focusText}</span>
+            <button
+              type="button"
+              onClick={onClearFocus}
+              aria-label={`เลิกกรองเฉพาะ${focusText}`}
+              className="rounded-full px-1 text-indigo-400 hover:bg-indigo-100 hover:text-indigo-700"
+            >
+              ✕
+            </button>
+          </span>
+        </div>
+      )}
       {filtered.length > 0 ? (
         <>
           <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
@@ -498,11 +513,18 @@ export default function SalesTable({
                   </td>
                   <td className="py-3 pr-3 text-sm text-gray-600">{r.saleDate}</td>
                   <td className="py-3 pr-3 text-sm font-medium text-gray-800">
-
                     {displayText(r.productName)}
                     {safeImageUrl(r.productImage) && (
                       <img src={safeImageUrl(r.productImage)!} alt="" className="inline-block ml-2 w-6 h-6 rounded object-cover border border-gray-100 bg-gray-50" />
                     )}
+                    {(() => {
+                      const others = otherProductsOf(r);
+                      return others.length > 0 ? (
+                        <div className="text-xs font-normal text-gray-400" data-other-products>
+                          + {others.join(", ")}
+                        </div>
+                      ) : null;
+                    })()}
                   </td>
                   <td className="py-3 pr-3">
                     <div className="text-sm text-gray-800">{r.customerName || "—"}</div>
@@ -591,7 +613,7 @@ export default function SalesTable({
         )}
         </>
       ) : (
-        <div className="text-center text-gray-400 py-8 text-sm">ยังไม่มีรายการขาย</div>
+        <div className="text-center text-gray-400 py-8 text-sm">{emptyText}</div>
       )}
     </div>
   );

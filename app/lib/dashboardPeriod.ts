@@ -94,6 +94,24 @@ function fromOrdinal(type: PeriodType, n: number): PeriodParts {
   return { year, quarter: Math.floor(month / 3) + 1, month };
 }
 
+/** "YYYY-MM-01" of the month `m` months into `year` (Date.UTC rolls the year over). */
+function firstOfMonth(year: number, m: number): string {
+  const d = new Date(Date.UTC(year, m, 1));
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-01`;
+}
+
+/**
+ * The days a period covers, as "YYYY-MM-DD": `start` is its first day, `end`
+ * the day AFTER its last (exclusive) — the range the dashboard API reads
+ * (salesDashboardStore.getPeriodDateRange), and the one the page's sales table
+ * keeps to, so the two never count a different set of sales.
+ */
+export function periodDateRange(type: PeriodType, value: string | undefined, now: PeriodNow): { start: string; end: string } {
+  const { year, month } = parsePeriod(type, value, now);
+  const span = type === "year" ? 12 : type === "quarter" ? 3 : 1;
+  return { start: firstOfMonth(year, month), end: firstOfMonth(year, month + span) };
+}
+
 /** The period `delta` steps after (or, negative, before) `value`. */
 export function shiftPeriod(type: PeriodType, value: string | undefined, delta: number, now: PeriodNow): string {
   return formatPeriodValue(type, fromOrdinal(type, ordinal(type, parsePeriod(type, value, now)) + delta));

@@ -34,10 +34,14 @@ import {
 import type { MissingCostLocation, SaleLineDraft } from "../lib/quotationToSale";
 import ViewRecordModal from "./ViewRecordModal";
 import SalesTable from "./SalesTable";
+import SaleFormShell from "./SaleFormShell";
+import { saleFormSnapshot } from "./saleFormHelpers";
+import { filterSalesRecords, salesExportFileName, type SalesFocus } from "./salesFilters";
+import type { RecordScope } from "./SalesTable";
 import {
   type DashboardData, type TopItem, type SalespersonStat,
   type CostItemLocal, type Product, type Customer, type Company, type Salesperson,
-  type LoadedEquipment,
+  type LoadedEquipment, type SalesFormData,
   isMixedModelBill,
   COST_TYPE_LABELS, COST_TYPE_OPTIONS,
   fmt, fmtDec, MONTHS_TH,
@@ -51,6 +55,7 @@ import {
   comparePeriods,
   currentPeriodName,
   currentPeriodValue,
+  periodDateRange,
   periodLabel,
   previousPeriodPhrase,
   shiftPeriod,
@@ -150,8 +155,10 @@ export default function DashboardPage() {
   const [viewingRecord, setViewingRecord] = useState<SalesRecord | null>(null);
   const [showRecords, setShowRecords] = useState(true);
   const [recordSearch, setRecordSearch] = useState("");
-  const [recordMonth, setRecordMonth] = useState("");
-  const [recordYear, setRecordYear] = useState("");
+  /** The table keeps to the period picked at the top ("period"), or shows every sale ("all"). */
+  const [recordScope, setRecordScope] = useState<RecordScope>("period");
+  /** A Top 10 row the table is narrowed to. */
+  const [recordFocus, setRecordFocus] = useState<SalesFocus | null>(null);
   const [toast, setToast] = useState<{ msg: string; type: "success" | "error" } | null>(null);
   const [costItems, setCostItems] = useState<CostItemLocal[]>([]);
   const [showCostCalc, setShowCostCalc] = useState(false);
@@ -288,17 +295,47 @@ export default function DashboardPage() {
   useEffect(() => { fetchDashboard(); }, [fetchDashboard]);
   useEffect(() => { fetchLookups(); fetchRecords(); }, [fetchLookups, fetchRecords]);
 
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && showForm) {
-        setShowForm(false);
-        setEditingId(null);
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [showForm]);
+  // ── Opening and closing the form ──────────────────────────────────────────
+  // What the form held as it opened, so closing it can tell whether anything
+  // was typed since (SaleFormShell asks before throwing that away).
+  const [formOpenSnapshot, setFormOpenSnapshot] = useState("");
+  const formDirty = useMemo(
+    () => showForm && saleFormSnapshot({ form, costItems, quotationId, lines }) !== formOpenSnapshot,
+    [showForm, form, costItems, quotationId, lines, formOpenSnapshot]
+  );
 
+  /** Opens the form on `initialForm` — a new sale when `id` is null. The red
+   * marks of an earlier attempt are cleared: they used to come back on a
+   * fresh, empty form. */
+  const openSaleForm = (id: string | null, initialForm: SalesFormData, initialCosts: CostItemLocal[]) => {
+    resetQuotationState();
+    setEditingId(id);
+    setForm(initialForm);
+    setCostItems(initialCosts);
+    setShowCostCalc(initialCosts.length > 0);
+    setFormErrors({});
+    setCostSubmitError(false);
+    setFormOpenSnapshot(saleFormSnapshot({ form: initialForm, costItems: initialCosts, quotationId: "", lines: [] }));
+    setShowForm(true);
+  };
+
+  const closeSaleForm = () => {
+    setShowForm(false);
+    setEditingId(null);
+  };
+
+  /** Esc over the form closes the page's own question first, if one is open. */
+  const interceptFormEscape = () => {
+    if (serialConfirm) {
+      if (!isSaving) setSerialConfirm(null);
+      return true;
+    }
+    if (soldLineConfirm) {
+      setSoldLineConfirm(null);
+      return true;
+    }
+    return false;
+  };
 
 
   // Dropdown options
@@ -343,6 +380,22 @@ export default function DashboardPage() {
   const isCurrentPeriod = comparePeriods(periodType, periodValue, latestPeriod, nowParts) === 0;
   const stepPeriod = (delta: number) => setPeriodValue((v) => shiftPeriod(periodType, v, delta, bangkokNow()));
   const shownPeriodLabel = periodLabel(periodType, periodValue, nowParts);
+
+  // ── The sales table ────────────────────────────────────────────────────────
+  // It keeps to the period on screen — the days the API counted the figures
+  // above over — so a Top 10 row's "3 ดีล" is 3 bills in it. The same list is
+  // what Export writes. Both memoized: a new array on every render would
+  // reset the table's page and fold its open rows each time anything changed.
+  const periodRange = useMemo(() => periodDateRange(periodType, periodValue, bangkokNow()), [periodType, periodValue]);
+  const visibleRecords = useMemo(
+    () =>
+      filterSalesRecords(salesRecords, {
+        range: recordScope === "period" ? periodRange : null,
+        focus: recordFocus,
+        search: recordSearch,
+      }),
+    [salesRecords, recordScope, periodRange, recordFocus, recordSearch]
+  );
 
   // Chart data
   const chartData = useMemo(() => {
@@ -863,9 +916,7 @@ export default function DashboardPage() {
 
       // Editing an existing record is the legacy single-product flow: no
       // picker, no line editor, no multi-line payload (see `quotationEnabled`).
-      resetQuotationState();
-      setEditingId(fullRec.id);
-      setForm({
+      const loadedForm: SalesFormData = {
         saleType: fullRec.saleType || "equipment",
         salespersonId: fullRec.salespersonId || "",
         customerId: fullRec.customerId || "",
@@ -903,22 +954,18 @@ export default function DashboardPage() {
             }))
           : [],
         note: fullRec.note || "",
-      });
+      };
 
-      if (data.items && data.items.length > 0) {
-        setCostItems(data.items.map((it: any) => ({
-          id: it.id, costType: it.costType, label: it.label,
-          amount: Number(it.amount), note: it.note || "",
-        })));
-        setShowCostCalc(true);
-      } else {
-        setCostItems([]);
-        setShowCostCalc(false);
-      }
+      const loadedCosts: CostItemLocal[] = Array.isArray(data.items)
+        ? data.items.map((it: any) => ({
+            id: it.id, costType: it.costType, label: it.label,
+            amount: Number(it.amount), note: it.note || "",
+          }))
+        : [];
 
       // Show form ONLY after all data (including cost items) is fully loaded
       // This prevents the user from clicking Save too early and accidentally wiping out cost items
-      setShowForm(true);
+      openSaleForm(fullRec.id, loadedForm, loadedCosts);
     } catch {
       showToast("เกิดข้อผิดพลาดในการดึงข้อมูลต้นทุน กรุณาลองใหม่", "error");
     }
@@ -954,84 +1001,76 @@ export default function DashboardPage() {
     setCostItems(costItems.map((c, i) => i === idx ? { ...c, [field]: value } : c));
   };
 
-  // Quick click-to-edit from rankings
-  const handleSalespersonClick = (s: SalespersonStat) => {
+  /** The table, narrowed to one Top 10 row within the period on screen. */
+  const showFocusedRecords = (focus: SalesFocus | null, search = "") => {
     setShowRecords(true);
-    setRecordSearch(s.name === "ไม่ระบุเซลล์" ? "" : s.name);
+    setRecordScope("period");
+    setRecordFocus(focus);
+    setRecordSearch(search);
     setTimeout(() => {
       document.getElementById("sales-records-section")?.scrollIntoView({ behavior: "smooth" });
     }, 50);
   };
 
-  const handleProductClick = (p: TopItem) => {
-    setShowRecords(true);
-    const cleanName = displayText(p.name);
-    const matching = salesRecords.filter(
-      (r) => r.productId === p.id || displayText(r.productName) === cleanName
-    );
-    if (matching.length === 1) {
-      handleView(matching[0]);
-    } else {
-      setRecordSearch(cleanName);
-      setTimeout(() => {
-        document.getElementById("sales-records-section")?.scrollIntoView({ behavior: "smooth" });
-      }, 50);
-    }
+  // Quick click-to-edit from rankings
+  const handleSalespersonClick = (s: SalespersonStat) => {
+    showFocusedRecords(null, s.name === "ไม่ระบุเซลล์" ? "" : s.name);
   };
 
-  const handleCustomerClick = (c: TopItem) => {
-    setShowRecords(true);
-    const matching = salesRecords.filter(
-      (r) => r.companyId === c.id || r.customerName === c.name || r.companyName === c.name
-    );
+  /** A Top 10 row with ONE bill behind it in the period opens that bill;
+   * otherwise the table is narrowed to the row's bills. */
+  const openTopItem = (focus: SalesFocus) => {
+    const matching = filterSalesRecords(salesRecords, { range: periodRange, focus, search: "" });
     if (matching.length === 1) {
-      handleView(matching[0]);
-    } else {
-      setRecordSearch(c.name === "ไม่ระบุ" ? "" : c.name);
-      setTimeout(() => {
-        document.getElementById("sales-records-section")?.scrollIntoView({ behavior: "smooth" });
-      }, 50);
+      void handleView(matching[0]);
+      return;
     }
+    showFocusedRecords(focus);
   };
 
-  // Export Excel
+  const handleProductClick = (p: TopItem) => openTopItem({ kind: "product", id: p.id, name: p.name });
+
+  const handleCustomerClick = (c: TopItem) => openTopItem({ kind: "company", id: c.id, name: c.name });
+
+  // Export Excel — exactly the sales the table shows.
   const [isExporting, setIsExporting] = useState(false);
   const handleExport = async () => {
     if (isExporting) return;
-    // Filter records to match the active table filters (year + month)
-    const targetRecords = salesRecords.filter((r) => {
-      if (recordYear && r.saleDate?.substring(0, 4) !== recordYear) return false;
-      if (recordMonth && r.saleDate?.substring(5, 7) !== recordMonth) return false;
-      return true;
-    });
+    const targetRecords = visibleRecords;
     if (targetRecords.length === 0) {
       showToast("ไม่มีข้อมูลยอดขายสำหรับส่งออก", "error");
       return;
     }
     setIsExporting(true);
     try {
-      const rows = targetRecords.map((r) => ({
-        "วันที่": r.saleDate,
-        "สินค้า": displayText(r.productName),
-        "จำนวน": r.qty,
-        "ราคาต่อหน่วย": r.unitPrice,
-        "ยอดรวม": r.totalAmount,
-        "ต้นทุน": r.costAmount || 0,
-        "กำไร": r.totalAmount - (r.costAmount || 0),
-        "Margin%": r.totalAmount > 0 ? Math.round(((r.totalAmount - (r.costAmount || 0)) / r.totalAmount) * 100) : 0,
-        "ลูกค้า": r.customerName || "",
-        "บริษัท": r.companyName || "",
-        "เซลล์": r.salespersonName || "",
-        "อ้างอิงใบเสนอราคา": r.quotationRef || "",
-        "หมายเหตุ": r.note || "",
-      }));
-      const sheetLabel = recordYear ? `พ.ศ. ${Number(recordYear) + 543}` : "ทั้งหมด";
-      const parts = ["sales-report"];
-      if (recordYear) parts.push(recordYear);
-      if (recordMonth) parts.push(recordMonth);
-      const filename = parts.join("-") + ".xlsx";
+      // Money arrives as DECIMAL strings ("3000.00"); written as they came,
+      // Excel kept them as text, and a column of them would not sum.
+      const money = (v: unknown) => Number(v) || 0;
+      const rows = targetRecords.map((r) => {
+        const total = money(r.totalAmount);
+        const cost = money(r.costAmount);
+        return {
+          "วันที่": r.saleDate,
+          "สินค้า": displayText(r.productName),
+          "สินค้าทั้งหมดในบิล": (r.lineItems ?? []).map((line) => displayText(line.productName)).filter(Boolean).join(", "),
+          "จำนวน": Number(r.qty) || 0,
+          "ราคาต่อหน่วย": money(r.unitPrice),
+          "ยอดรวม": total,
+          "ต้นทุน": cost,
+          "กำไร": total - cost,
+          "Margin%": total > 0 ? Math.round(((total - cost) / total) * 100) : 0,
+          "ลูกค้า": r.customerName || "",
+          "บริษัท": r.companyName || "",
+          "เซลล์": r.salespersonName || "",
+          "อ้างอิงใบเสนอราคา": r.quotationRef || "",
+          "หมายเหตุ": r.note || "",
+        };
+      });
+      const periodScoped = recordScope === "period";
+      const sheetLabel = periodScoped ? shownPeriodLabel : "ทุกช่วงเวลา";
+      const filename = salesExportFileName(periodScoped ? periodValue : null);
       await downloadExcel(filename, [{ name: `Sales ${sheetLabel}`, rows }]);
-      showToast(`ส่งออกไฟล์ ${filename} เรียบร้อยแล้ว`, "success");
+      showToast(`ส่งออก ${rows.length} รายการเป็นไฟล์ ${filename} เรียบร้อยแล้ว`, "success");
     } catch {
       showToast("ไม่สามารถส่งออกไฟล์ Excel ได้", "error");
     } finally {
@@ -1051,58 +1090,6 @@ export default function DashboardPage() {
       <Suspense fallback={null}>
         <AutoEditHandler salesRecords={salesRecords} onEdit={handleEdit} />
       </Suspense>
-      {/* Delete Confirmation Dialog */}
-      {deleteTarget && (
-        <ConfirmDialog
-          title="ยืนยันการลบ"
-          message="ต้องการลบรายการขายนี้หรือไม่? การลบจะไม่สามารถย้อนกลับได้"
-          confirmText="ลบ"
-          cancelText="ยกเลิก"
-          onConfirm={confirmDelete}
-          onCancel={() => setDeleteTarget(null)}
-        />
-      )}
-      {/* Task 13.3 — ticking a line this quotation already sold. Confirm and
-          ALLOW: the customer coming back for the remaining machine is the
-          normal case. Cancelling leaves the line unticked and the form as it
-          was. */}
-      {soldLineConfirm && (
-        <ConfirmDialog
-          title="รายการนี้เคยบันทึกขายแล้ว"
-          message={
-            `«${soldLineConfirm.line.productName || "ไม่ระบุชื่อสินค้า"}» ` +
-            `ของใบเสนอราคานี้เคยบันทึกขายไปแล้ว ${soldLineConfirm.line.soldQty} รายการ\n\n` +
-            "ต้องการเลือกรายการนี้เพื่อบันทึกขายเพิ่มหรือไม่? (ใบขายเดิมจะไม่ถูกแก้ไขหรือลบ)"
-          }
-          confirmText="เลือกรายการนี้"
-          cancelText="ยกเลิก"
-          onConfirm={confirmSelectSoldLine}
-          onCancel={() => setSoldLineConfirm(null)}
-        />
-      )}
-      {/* Tasks 12.2/13.4-13.6 and report 5 — over-quoted quantities, duplicate
-          serials, an already-sold line and "no bill-level cost was entered",
-          all in ONE dialog. The save request has NOT been sent yet; cancelling
-          returns to the form with everything intact, confirming always proceeds
-          to the save. */}
-      {serialConfirm && (
-        <ConfirmDialog
-          title="ตรวจสอบก่อนบันทึก"
-          message={serialConfirm}
-          confirmText="ยืนยันและบันทึก"
-          loadingText="กำลังบันทึก..."
-          cancelText="ยกเลิก"
-          loading={isSaving}
-          onConfirm={() => { setSerialConfirm(null); void runSave(true); }}
-          onCancel={() => setSerialConfirm(null)}
-        />
-      )}
-      {/* Toast */}
-      {toast && (
-        <div className={`fixed top-6 right-6 z-[100] px-5 py-3 rounded-xl shadow-lg text-white font-semibold animate-fade-in ${toast.type === "success" ? "bg-emerald-500" : "bg-red-500"}`}>
-          {toast.msg}
-        </div>
-      )}
 
       {/* Header */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8">
@@ -1136,7 +1123,9 @@ export default function DashboardPage() {
                 onClick={handleScrollToRecords}
                 className="px-4 py-1.5 text-gray-900 bg-white shadow-sm border border-gray-200/50 font-semibold rounded-full text-sm transition-all flex items-center gap-2 whitespace-nowrap shrink-0"
               >
-                รายการขาย {salesRecords.length > 0 && <span className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full font-bold text-xs">{salesRecords.length}</span>}
+                {/* The table's own count — every year's sales here said 120
+                    beside a table that listed this year's 35. */}
+                รายการขาย {visibleRecords.length > 0 && <span className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full font-bold text-xs" data-records-count>{visibleRecords.length}</span>}
               </button>
               <Link href="/customers?tab=equipment" className="px-4 py-1.5 text-gray-500 font-medium rounded-full hover:text-gray-900 hover:bg-white/60 transition-all text-sm whitespace-nowrap shrink-0 ml-1">
                 อุปกรณ์ที่ขาย
@@ -1153,7 +1142,7 @@ export default function DashboardPage() {
             </div>
             
             {/* Action Button */}
-            <button onClick={() => { setShowForm(true); setEditingId(null); setForm(emptyForm()); setCostItems([]); setShowCostCalc(false); resetQuotationState(); }} className="px-5 py-2 bg-[#065f46] text-white rounded-full text-sm font-semibold hover:bg-[#047857] transition-all shadow-md flex items-center justify-center gap-1.5 whitespace-nowrap w-full sm:w-auto h-[40px] shrink-0 border border-[#064e3b]">
+            <button onClick={() => openSaleForm(null, emptyForm(), [])} className="px-5 py-2 bg-[#065f46] text-white rounded-full text-sm font-semibold hover:bg-[#047857] transition-all shadow-md flex items-center justify-center gap-1.5 whitespace-nowrap w-full sm:w-auto h-[40px] shrink-0 border border-[#064e3b]">
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"/></svg>
               บันทึกยอดขาย
             </button>
@@ -1578,13 +1567,14 @@ export default function DashboardPage() {
         {/* ── Sales Records Table ──────────────────────────────────────────── */}
         {showRecords && (
           <SalesTable
-            records={salesRecords}
+            records={visibleRecords}
+            periodLabel={shownPeriodLabel}
+            scope={recordScope}
+            onScopeChange={setRecordScope}
+            focus={recordFocus}
+            onClearFocus={() => setRecordFocus(null)}
             recordSearch={recordSearch}
             setRecordSearch={setRecordSearch}
-            recordMonth={recordMonth}
-            setRecordMonth={setRecordMonth}
-            recordYear={recordYear}
-            setRecordYear={setRecordYear}
             onView={handleView}
             onEdit={handleEdit}
             onDelete={handleDelete}
@@ -1604,15 +1594,18 @@ export default function DashboardPage() {
 
       {/* ── Add/Edit Sales Record Modal ─────────────────────────────────── */}
       {showForm && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => { setShowForm(false); setEditingId(null); }}>
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-            <div className="p-6 border-b border-gray-100 flex justify-between items-center">
-              <h3 className="text-xl font-bold text-gray-800">{editingId ? "แก้ไขรายการ" : "บันทึกยอดขาย"}</h3>
-              <button onClick={() => { setShowForm(false); setEditingId(null); }} className="p-2 text-gray-400 hover:text-gray-600">
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
-              </button>
-            </div>
-            <div className="p-6 space-y-4">
+        <SaleFormShell
+          title={editingId ? "แก้ไขรายการ" : "บันทึกยอดขาย"}
+          dirty={formDirty}
+          busy={isSaving || checkingSerials}
+          onClose={closeSaleForm}
+          interceptEscape={interceptFormEscape}
+          actions={
+            <button onClick={handleSave} disabled={isSaving || checkingSerials} className="px-5 py-2.5 bg-indigo-600 text-white rounded-xl font-semibold hover:bg-indigo-700 transition-all text-sm disabled:opacity-50">
+              {isSaving ? "กำลังบันทึก..." : checkingSerials ? "กำลังตรวจสอบ Serial..." : editingId ? "บันทึกการแก้ไข" : "บันทึกยอดขาย"}
+            </button>
+          }
+        >
               <div className="flex items-center gap-6 pb-2">
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input type="radio" name="saleType" value="equipment" checked={form.saleType === "equipment"} onChange={(e) => { const v = e.target.value; setForm(prev => ({ ...prev, saleType: v })); }} className="w-4 h-4 text-indigo-600 focus:ring-indigo-500" />
@@ -2048,17 +2041,59 @@ export default function DashboardPage() {
                 <textarea value={form.note} onChange={(e) => { const v = e.target.value; setForm(prev => ({ ...prev, note: v })); }} rows={2} placeholder="หมายเหตุ (ถ้ามี)"
                   className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none resize-none" />
               </div>
-            </div>
+        </SaleFormShell>
+      )}
 
-            <div className="p-6 border-t border-gray-100 flex justify-end gap-3">
-              <button onClick={() => { setShowForm(false); setEditingId(null); }} className="px-5 py-2.5 bg-gray-100 text-gray-700 rounded-xl font-semibold hover:bg-gray-200 transition-all text-sm">
-                ยกเลิก
-              </button>
-              <button onClick={handleSave} disabled={isSaving || checkingSerials} className="px-5 py-2.5 bg-indigo-600 text-white rounded-xl font-semibold hover:bg-indigo-700 transition-all text-sm disabled:opacity-50">
-                {isSaving ? "กำลังบันทึก..." : checkingSerials ? "กำลังตรวจสอบ Serial..." : editingId ? "บันทึกการแก้ไข" : "บันทึกยอดขาย"}
-              </button>
-            </div>
-          </div>
+      {/* The questions and the toast come AFTER the form, so they are drawn
+          over it (same z-100 layer; the later one is on top). */}
+      {deleteTarget && (
+        <ConfirmDialog
+          title="ยืนยันการลบ"
+          message="ต้องการลบรายการขายนี้หรือไม่? การลบจะไม่สามารถย้อนกลับได้"
+          confirmText="ลบ"
+          cancelText="ยกเลิก"
+          onConfirm={confirmDelete}
+          onCancel={() => setDeleteTarget(null)}
+        />
+      )}
+      {/* Task 13.3 — ticking a line this quotation already sold. Confirm and
+          ALLOW: the customer coming back for the remaining machine is the
+          normal case. Cancelling leaves the line unticked and the form as it
+          was. */}
+      {soldLineConfirm && (
+        <ConfirmDialog
+          title="รายการนี้เคยบันทึกขายแล้ว"
+          message={
+            `«${soldLineConfirm.line.productName || "ไม่ระบุชื่อสินค้า"}» ` +
+            `ของใบเสนอราคานี้เคยบันทึกขายไปแล้ว ${soldLineConfirm.line.soldQty} รายการ\n\n` +
+            "ต้องการเลือกรายการนี้เพื่อบันทึกขายเพิ่มหรือไม่? (ใบขายเดิมจะไม่ถูกแก้ไขหรือลบ)"
+          }
+          confirmText="เลือกรายการนี้"
+          cancelText="ยกเลิก"
+          onConfirm={confirmSelectSoldLine}
+          onCancel={() => setSoldLineConfirm(null)}
+        />
+      )}
+      {/* Tasks 12.2/13.4-13.6 and report 5 — over-quoted quantities, duplicate
+          serials, an already-sold line and "no bill-level cost was entered",
+          all in ONE dialog. The save request has NOT been sent yet; cancelling
+          returns to the form with everything intact, confirming always proceeds
+          to the save. */}
+      {serialConfirm && (
+        <ConfirmDialog
+          title="ตรวจสอบก่อนบันทึก"
+          message={serialConfirm}
+          confirmText="ยืนยันและบันทึก"
+          loadingText="กำลังบันทึก..."
+          cancelText="ยกเลิก"
+          loading={isSaving}
+          onConfirm={() => { setSerialConfirm(null); void runSave(true); }}
+          onCancel={() => setSerialConfirm(null)}
+        />
+      )}
+      {toast && (
+        <div className={`fixed top-6 right-6 z-110 px-5 py-3 rounded-xl shadow-lg text-white font-semibold animate-fade-in ${toast.type === "success" ? "bg-emerald-500" : "bg-red-500"}`}>
+          {toast.msg}
         </div>
       )}
     </div>
