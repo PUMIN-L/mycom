@@ -50,6 +50,8 @@ import {
   deleteAccDocument,
   issueInvoice,
   listAccDocuments,
+  recordExternalInvoice,
+  updateExternalReference,
   peekNextDocNo,
   saleInputFromInvoice,
   updateInvoiceDraft,
@@ -305,5 +307,77 @@ describe("listAccDocuments", () => {
     expect(sql).toContain("ORDER BY issueDate DESC, docNo DESC");
     expect(sql).toContain("ESCAPE '!'");
     expect(params).toEqual(["INV", "2026-01-01", "2027-01-01", "%50!%!_off%", "%50!%!_off%", "%50!%!_off%", "%50!%!_off%"]);
+  });
+});
+
+// Step 3 — an invoice issued elsewhere, recorded here.
+describe("recordExternalInvoice", () => {
+  const FIELDS = { docNo: "IV-2569/0042", externalNote: "แฟ้มใบกำกับ 2569", vatSatangOverride: 406002 };
+  const recorded = () =>
+    vi.mocked(query).mockImplementation(router([
+      [/WHERE docType = 'INV' AND docNo = \? LIMIT 1/, () => []],
+      [/FROM products WHERE id IN/, () => []],
+      [/FROM acc_documents WHERE id/, () => [{ ...DOC_ROW, status: "issued", source: "external", docNo: FIELDS.docNo }]],
+      [/FROM acc_document_lines/, () => [LINE_ROW]],
+    ]) as never);
+
+  it("records it as issued, with its own number, where the paper is kept, the VAT as printed — and its sale", async () => {
+    recorded();
+    conn.query.mockResolvedValue([{}, []]);
+    await recordExternalInvoice(INPUT, FIELDS, actor);
+
+    const insert = vi.mocked(conn.query).mock.calls.find(([sql]) => String(sql).startsWith("INSERT INTO acc_documents"))!;
+    const cols = String(insert[0]).match(/\(([^)]+)\) VALUES/)![1].split(", ");
+    const at = (col: string) => (insert[1] as unknown[])[cols.indexOf(col)];
+    expect(at("status")).toBe("issued");
+    expect(at("source")).toBe("external");
+    expect(at("docNo")).toBe("IV-2569/0042");
+    expect(at("externalNote")).toBe("แฟ้มใบกำกับ 2569");
+    expect(at("vatSatang")).toBe(406002);
+    expect(at("totalSatang")).toBe(6206002);
+    expect(allocateDocNo).not.toHaveBeenCalled(); // never one of our numbers
+    const prepared = vi.mocked(insertPreparedSaleTx).mock.calls[0][1] as { v: Record<string, unknown> };
+    expect(prepared.v.invoiceRef).toBe("IV-2569/0042");
+    expect(writeAudit).toHaveBeenCalledWith(conn, expect.objectContaining({ action: "doc.issue", detail: expect.stringContaining("บันทึกเอกสารจากภายนอก") }));
+  });
+
+  it("refuses a number already recorded, before opening a transaction", async () => {
+    vi.mocked(query).mockImplementation(router([[/WHERE docType = 'INV' AND docNo = \? LIMIT 1/, () => [{ id: "other" }]]]) as never);
+    await expect(recordExternalInvoice(INPUT, FIELDS, actor)).rejects.toMatchObject({ status: 409, message: "เลขที่ IV-2569/0042 บันทึกไว้แล้ว" });
+    expect(withTransaction).not.toHaveBeenCalled();
+  });
+
+  it("says so when the database refuses a number that arrived at the same moment", async () => {
+    recorded();
+    vi.mocked(withTransaction).mockRejectedValueOnce(Object.assign(new Error("dup"), { code: "ER_DUP_ENTRY" }));
+    await expect(recordExternalInvoice(INPUT, FIELDS, actor)).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("refuses a number shaped like ours, and a VAT a typo away from the system's", async () => {
+    await expect(recordExternalInvoice(INPUT, { ...FIELDS, docNo: "INV2026110001" }, actor)).rejects.toMatchObject({ status: 400 });
+    await expect(recordExternalInvoice(INPUT, { ...FIELDS, vatSatangOverride: 40600 }, actor)).rejects.toMatchObject({ status: 400 });
+    expect(withTransaction).not.toHaveBeenCalled();
+  });
+});
+
+describe("updateExternalReference", () => {
+  it("fixes the number and the storage note, with the reason in the audit log — the sale's number follows", async () => {
+    vi.mocked(query).mockImplementation(router([
+      [/FROM acc_documents WHERE id/, () => [{ ...DOC_ROW, status: "issued", source: "external" }]],
+      [/FROM acc_document_lines/, () => [LINE_ROW]],
+    ]) as never);
+    conn.query.mockImplementation(router([
+      [/FOR UPDATE/, () => [{ source: "external", docNo: "IV-42", externalNote: "แฟ้ม", salesRecordId: "sale-1" }]],
+      [/AND id <>/, () => []],
+    ]));
+    await updateExternalReference("d1", { docNo: "IV-0042", externalNote: "แฟ้ม", reason: "พิมพ์เลขผิด" }, actor);
+    expect(vi.mocked(conn.query).mock.calls).toContainEqual(["UPDATE sales_records SET invoiceRef = ? WHERE id = ?", ["IV-0042", "sale-1"]]);
+    expect(writeAudit).toHaveBeenCalledWith(conn, expect.objectContaining({ detail: "แก้ เลขที่ IV-42 → IV-0042 · เหตุผล: พิมพ์เลขผิด" }));
+  });
+
+  it("wants a reason, and only for an outside document", async () => {
+    await expect(updateExternalReference("d1", { docNo: "IV-1", externalNote: "แฟ้ม", reason: " " }, actor)).rejects.toMatchObject({ status: 400 });
+    conn.query.mockImplementation(router([[/FOR UPDATE/, () => [{ source: "internal", docNo: "INV2026110001", externalNote: "", salesRecordId: null }]]]));
+    await expect(updateExternalReference("d1", { docNo: "IV-1", externalNote: "แฟ้ม", reason: "ผิด" }, actor)).rejects.toMatchObject({ status: 409 });
   });
 });

@@ -14,6 +14,7 @@ import {
   lineGrossSatang,
   parseBahtToSatang,
   satangToBaht,
+  withVatOverride,
 } from "@/app/lib/accounting/money";
 
 const line = (qty: number, baht: number, discountBaht = 0) => ({
@@ -106,5 +107,22 @@ describe("allocateProportionally", () => {
   it("puts it all on the first line when the weights are all zero", () => {
     expect(allocateProportionally([0, 0], 500)).toEqual([500, 0]);
     expect(allocateProportionally([], 5)).toEqual([]);
+  });
+});
+
+describe("withVatOverride — the VAT as printed on a paper issued elsewhere", () => {
+  it("exclusive: the base stays, the total follows the VAT", () => {
+    const t = exclusive([line(1, 19000)]);
+    expect(withVatOverride(t, 133002, "exclusive")).toMatchObject({ vatBaseSatang: 1900000, vatSatang: 133002, totalSatang: 2033002 });
+  });
+
+  it("inclusive: what was charged stays, the base follows", () => {
+    const t = computeTotals({ lines: [line(1, 1000)], priceMode: "inclusive", vatRate: 7 });
+    expect(withVatOverride(t, 6540, "inclusive")).toMatchObject({ totalSatang: 100000, vatSatang: 6540, vatBaseSatang: 93460 });
+  });
+
+  it("is the system's own figures without one", () => {
+    const t = exclusive([line(1, 100)]);
+    expect(withVatOverride(t, null, "exclusive")).toBe(t);
   });
 });

@@ -1332,6 +1332,19 @@ documents (plan: 10 steps; this section grows with each). Files:
     `deleteAccDocument` — not `getDocument` & co., which are the PDF
     catalog's (`documentStore.ts`; `catalogCacheInvalidation.test.ts` matches
     mutators by name).
+- **Documents issued elsewhere (step 3)** — `/accounting/invoices/record-external`,
+  `recordExternalInvoice`: the number as printed and where the paper is kept
+  (`externalNote`, required; recent ones suggested) — **no file upload** (the
+  owner's choice). Recorded as issued at once (`source = 'external'`), with
+  its dashboard sale and machines in the same transaction, so it counts in
+  receivables and on the dashboard like one issued here. It never takes one
+  of our numbers, and a number shaped like ours (`INV2026110001`) is refused —
+  the two series would collide (the unique `(docType, docNo)` index is the
+  backstop). The VAT may be typed as printed, within ฿1 of the system's
+  (`withVatOverride`). Its page prints nothing (the original is elsewhere)
+  and fixes a typo in the number or storage note with a reason
+  (`updateExternalReference`, audited; the sale's `invoiceRef` follows); a
+  wrong amount is deleted and recorded again. The list tags it "ภายนอก".
 
 ### 9. Email (contact form) + lead persistence
 [`app/lib/mailer.ts`](./app/lib/mailer.ts) sends via SMTP (`nodemailer`, Gmail by

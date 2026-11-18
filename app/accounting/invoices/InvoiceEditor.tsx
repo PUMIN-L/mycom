@@ -10,15 +10,18 @@ import { bangkokDateString, formatDisplayDate, toLocalDateString } from "../../l
 import { normalizeBranchCode, taxIdWarning } from "../../lib/thaiTaxId";
 import { companyAddressText } from "../../customers/companyAddress";
 import { branchDraftOf } from "../../customers/formHelpers";
-import { computeTotals, formatSatang, lineGrossSatang, parseBahtToSatang, type PriceMode } from "../../lib/accounting/money";
+import { computeTotals, formatSatang, lineGrossSatang, parseBahtToSatang, withVatOverride, type PriceMode } from "../../lib/accounting/money";
 import {
+  EXTERNAL_LIMITS,
   INVOICE_LIMITS,
   defaultIsTaxInvoice,
   dueDateOf,
+  externalProblems,
   invoiceProblems,
   invoiceTitle,
   issueProblems,
   type DocLineInput,
+  type ExternalFields,
   type InvoiceInput,
   type LineType,
 } from "../../lib/accounting/invoiceRules";
@@ -68,6 +71,10 @@ interface Draft {
   projectName: string;
   note: string;
   lines: LineDraft[];
+  /** Outside documents only: the number as printed, where the paper is kept, the VAT as printed ("" = the system's). */
+  docNo: string;
+  externalNote: string;
+  vatOverride: string;
 }
 
 let keySeq = 0;
@@ -108,6 +115,9 @@ function draftOf(doc: EditorDocument | null, creditDays: number): Draft {
       projectName: "",
       note: "",
       lines: [emptyLine()],
+      docNo: "",
+      externalNote: "",
+      vatOverride: "",
     };
   }
   return {
@@ -140,6 +150,9 @@ function draftOf(doc: EditorDocument | null, creditDays: number): Draft {
       serials: l.serials,
       warrantyMonths: l.warrantyMonths === null ? "" : String(l.warrantyMonths),
     })),
+    docNo: "",
+    externalNote: "",
+    vatOverride: "",
   };
 }
 
@@ -209,6 +222,8 @@ export default function InvoiceEditor({
   onSaved,
   onIssued,
   onDeleteDraft,
+  mode = "internal",
+  noteSuggestions = [],
 }: {
   initial: EditorDocument | null;
   vatRate: number;
@@ -219,7 +234,12 @@ export default function InvoiceEditor({
   onSaved: (doc: EditorDocument) => void;
   onIssued: (doc: EditorDocument) => void;
   onDeleteDraft?: () => void;
+  /** "external": recording an invoice issued elsewhere — its own number, where the paper is kept, saved as issued at once. */
+  mode?: "internal" | "external";
+  /** Where outside papers were kept lately (external mode). */
+  noteSuggestions?: string[];
 }) {
+  const external = mode === "external";
   const [opened] = useState<Draft>(() => draftOf(initial, defaultCreditDays));
   const [draft, setDraft] = useState<Draft>(opened);
   const [savedSnapshot, setSavedSnapshot] = useState(() => JSON.stringify(opened));
@@ -240,10 +260,24 @@ export default function InvoiceEditor({
   }, [dirty]);
 
   const input = useMemo(() => inputOf(draft), [draft]);
-  const totals = useMemo(
+  const computedTotals = useMemo(
     () => computeTotals({ lines: forTotals(input.lines), discountSatang: Math.max(0, input.discountSatang), priceMode: input.priceMode, vatRate }),
     [input, vatRate]
   );
+  /** Outside documents: the number, the storage note and the VAT as printed. */
+  const externalFields: ExternalFields = useMemo(
+    () => ({
+      docNo: draft.docNo.trim(),
+      externalNote: draft.externalNote.trim(),
+      vatSatangOverride: draft.vatOverride.trim() === "" ? null : parseBahtToSatang(draft.vatOverride) ?? -1,
+    }),
+    [draft.docNo, draft.externalNote, draft.vatOverride]
+  );
+  const externalIssues = external ? externalProblems(externalFields, computedTotals.vatSatang) : {};
+  const totals =
+    external && externalFields.vatSatangOverride !== null && externalFields.vatSatangOverride >= 0
+      ? withVatOverride(computedTotals, externalFields.vatSatangOverride, input.priceMode)
+      : computedTotals;
   // A branch typed as something that is not one would otherwise be dropped
   // without a word on its way to the API (inputOf sends ""), so it is a
   // problem of its own, said under the field.
@@ -255,7 +289,9 @@ export default function InvoiceEditor({
     }
     return p;
   }, [input, vatRate, draft.buyerBranch]);
+  const firstExternal = Object.values(externalIssues).find(Boolean) ?? null;
   const shown = attempted ? problems : { fields: {}, lines: {}, first: null };
+  const shownExternal = attempted ? externalIssues : {};
   const dueDate = dueDateOf(input.issueDate, Math.max(0, input.creditDays));
 
   const set = (patch: Partial<Draft>) => {
@@ -339,6 +375,39 @@ export default function InvoiceEditor({
     }
   };
 
+  /** External mode: records the outside invoice — issued at once, never a draft. */
+  const onRecordClick = async () => {
+    if (busy) return;
+    setAttempted(true);
+    if (problems.first || firstExternal) {
+      setTimeout(() => document.querySelector<HTMLElement>("[aria-invalid='true']")?.focus(), 0);
+      return;
+    }
+    if (totals.totalSatang <= 0) return showError("ยอดรวมต้องมากกว่า 0 บาท");
+    if (input.lines.some((l) => l.isMachine) && !input.customerId) {
+      return showError("มีเครื่องที่ต้องลงทะเบียน — กรุณาเลือกผู้ติดต่อของลูกค้าที่จะผูกเครื่องไว้");
+    }
+    setBusy("issue");
+    try {
+      const res = await fetch("/api/accounting/documents/external", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...input, ...externalFields }),
+      });
+      if (!res.ok) {
+        showError(await errorMessageOf(res, "บันทึกเอกสารไม่สำเร็จ"));
+        return;
+      }
+      const doc: EditorDocument = await res.json();
+      setSavedSnapshot(JSON.stringify(draft)); // nothing left unsaved
+      onIssued(doc);
+    } catch {
+      showError("บันทึกเอกสารไม่สำเร็จ ตรวจสอบการเชื่อมต่อแล้วลองใหม่");
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const issueIssues = issueProblems(input, totals);
   const onIssueClick = async () => {
     if (busy) return;
@@ -389,10 +458,41 @@ export default function InvoiceEditor({
           {error}
         </p>
       )}
-      {attempted && problems.first && (
+      {attempted && (firstExternal || problems.first) && (
         <p role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          ยังบันทึกไม่ได้: {problems.first}
+          ยังบันทึกไม่ได้: {firstExternal ?? problems.first}
         </p>
+      )}
+
+      {external && (
+        <section className="bg-amber-50/60 rounded-2xl border border-amber-200 p-5 space-y-4" aria-labelledby="inv-external">
+          <div>
+            <h2 id="inv-external" className="text-base font-bold text-gray-900">เอกสารที่ออกจากที่อื่น</h2>
+            <p className="text-sm text-gray-600">
+              ใส่เลขที่และยอดตามเอกสารจริง ระบบไม่ใช้เลขรันของตัวเองกับใบนี้ — บันทึกแล้วเข้าลูกหนี้และรายการขายใน dashboard ทันที
+            </p>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label htmlFor="inv-docNo" className={LABEL}>เลขที่ตามเอกสารจริง <span className="text-red-500">*</span></label>
+              <input id="inv-docNo" className={inputClass(!!shownExternal.docNo)} maxLength={EXTERNAL_LIMITS.docNo}
+                aria-invalid={!!shownExternal.docNo || undefined} value={draft.docNo} onChange={(e) => set({ docNo: e.target.value })} />
+              <Problem id="inv-docNo-error">{shownExternal.docNo}</Problem>
+            </div>
+            <div>
+              <label htmlFor="inv-externalNote" className={LABEL}>เก็บต้นฉบับไว้ที่ <span className="text-red-500">*</span></label>
+              <input id="inv-externalNote" list="inv-externalNote-options" placeholder="เช่น แฟ้มใบกำกับ 2569 ตู้ 2"
+                className={inputClass(!!shownExternal.externalNote)} maxLength={EXTERNAL_LIMITS.externalNote}
+                aria-invalid={!!shownExternal.externalNote || undefined} value={draft.externalNote} onChange={(e) => set({ externalNote: e.target.value })} />
+              <datalist id="inv-externalNote-options">
+                {noteSuggestions.map((n) => (
+                  <option key={n} value={n} />
+                ))}
+              </datalist>
+              <Problem id="inv-externalNote-error">{shownExternal.externalNote}</Problem>
+            </div>
+          </div>
+        </section>
       )}
 
       <section className="bg-white rounded-2xl border border-gray-200 p-5 space-y-4" aria-labelledby="inv-customer">
@@ -460,7 +560,7 @@ export default function InvoiceEditor({
         <h2 id="inv-doc" className="text-base font-bold text-gray-900">เอกสาร</h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div>
-            <label htmlFor="inv-issueDate" className={LABEL}>วันที่ออกเอกสาร <span className="text-red-500">*</span></label>
+            <label htmlFor="inv-issueDate" className={LABEL}>{external ? "วันที่ตามเอกสารจริง" : "วันที่ออกเอกสาร"} <span className="text-red-500">*</span></label>
             <DatePicker
               id="inv-issueDate"
               selected={draft.issueDate ? new Date(`${draft.issueDate}T00:00:00`) : null}
@@ -653,8 +753,23 @@ export default function InvoiceEditor({
             {shown.fields.discountSatang && <dd className="col-span-2 text-sm text-red-600 text-right">{shown.fields.discountSatang}</dd>}
             <dt className="text-gray-600">มูลค่าก่อนภาษี</dt>
             <dd className="text-right">{formatSatang(totals.vatBaseSatang)}</dd>
-            <dt className="text-gray-600">ภาษีมูลค่าเพิ่ม {vatRate}%</dt>
-            <dd className="text-right">{formatSatang(totals.vatSatang)}</dd>
+            {external ? (
+              <>
+                <dt className="text-gray-600 self-center"><label htmlFor="inv-vatOverride">ภาษีมูลค่าเพิ่ม {vatRate}% (ตามเอกสาร)</label></dt>
+                <dd>
+                  <input id="inv-vatOverride" inputMode="decimal" placeholder={formatSatang(computedTotals.vatSatang)}
+                    className={`${inputClass(!!shownExternal.vatSatangOverride)} text-right w-36 ml-auto block py-1`}
+                    aria-invalid={!!shownExternal.vatSatangOverride || undefined}
+                    value={draft.vatOverride} onChange={(e) => set({ vatOverride: e.target.value })} />
+                </dd>
+                {shownExternal.vatSatangOverride && <dd className="col-span-2 text-sm text-red-600 text-right">{shownExternal.vatSatangOverride}</dd>}
+              </>
+            ) : (
+              <>
+                <dt className="text-gray-600">ภาษีมูลค่าเพิ่ม {vatRate}%</dt>
+                <dd className="text-right">{formatSatang(totals.vatSatang)}</dd>
+              </>
+            )}
             <dt className="font-bold text-gray-900 border-t border-gray-200 pt-2">ยอดรวมสุทธิ</dt>
             <dd className="font-bold text-gray-900 text-right border-t border-gray-200 pt-2">{formatSatang(totals.totalSatang)}</dd>
           </dl>
@@ -671,16 +786,26 @@ export default function InvoiceEditor({
           </button>
         )}
         <div className="ml-auto flex flex-wrap gap-3">
-          <button type="button" onClick={() => void onSaveClick()} disabled={!!busy}
-            className="px-5 py-2.5 rounded-xl border border-sky-300 text-sky-700 font-semibold hover:bg-sky-50 disabled:opacity-60 flex items-center gap-2">
-            {busy === "save" && <Spinner className="h-4 w-4 text-sky-600" />}
-            บันทึกร่าง
-          </button>
-          <button type="button" onClick={() => void onIssueClick()} disabled={!!busy}
-            className="px-5 py-2.5 rounded-xl bg-green-600 text-white font-semibold hover:bg-green-700 disabled:opacity-60 flex items-center gap-2">
-            {busy === "issue" && <Spinner className="h-4 w-4 text-white" />}
-            ออกเอกสาร ▸
-          </button>
+          {external ? (
+            <button type="button" onClick={() => void onRecordClick()} disabled={!!busy}
+              className="px-5 py-2.5 rounded-xl bg-green-600 text-white font-semibold hover:bg-green-700 disabled:opacity-60 flex items-center gap-2">
+              {busy === "issue" && <Spinner className="h-4 w-4 text-white" />}
+              บันทึกเอกสาร
+            </button>
+          ) : (
+            <>
+              <button type="button" onClick={() => void onSaveClick()} disabled={!!busy}
+                className="px-5 py-2.5 rounded-xl border border-sky-300 text-sky-700 font-semibold hover:bg-sky-50 disabled:opacity-60 flex items-center gap-2">
+                {busy === "save" && <Spinner className="h-4 w-4 text-sky-600" />}
+                บันทึกร่าง
+              </button>
+              <button type="button" onClick={() => void onIssueClick()} disabled={!!busy}
+                className="px-5 py-2.5 rounded-xl bg-green-600 text-white font-semibold hover:bg-green-700 disabled:opacity-60 flex items-center gap-2">
+                {busy === "issue" && <Spinner className="h-4 w-4 text-white" />}
+                ออกเอกสาร ▸
+              </button>
+            </>
+          )}
         </div>
       </div>
 
@@ -691,7 +816,7 @@ export default function InvoiceEditor({
           seller={seller ?? { name: "", address: "", taxId: "", branchCode: "", phone: "", email: "" }}
           doc={{
             ...input,
-            docNo: null,
+            docNo: external ? externalFields.docNo || null : null,
             dueDate,
             creditDays: Math.max(0, input.creditDays),
             vatRate,

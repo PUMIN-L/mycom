@@ -102,6 +102,20 @@ export function computeTotals(input: {
 }
 
 /**
+ * The totals with the VAT as printed on a paper issued elsewhere (its own
+ * rounding may differ by a satang or two). Exclusive: the base stays, the
+ * total follows the VAT. Inclusive: the total (what was charged) stays, the
+ * base follows.
+ */
+export function withVatOverride(totals: DocTotals, vatSatang: number | null, priceMode: PriceMode): DocTotals {
+  if (vatSatang === null) return totals;
+  if (priceMode === "inclusive") {
+    return { ...totals, vatSatang, vatBaseSatang: totals.totalSatang - vatSatang };
+  }
+  return { ...totals, vatSatang, totalSatang: totals.vatBaseSatang + vatSatang };
+}
+
+/**
  * `total` shared out over `weights` in proportion, in whole satang that add
  * up to `total` exactly (largest remainder). Used to put a bill-level discount
  * — and VAT taken out of inclusive prices — onto each line for the dashboard,

@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useModalEscape } from "../../../components/useModalEscape";
 import AccountingFrame from "../../AccountingFrame";
 import StatusBadge from "../../StatusBadge";
 import DocumentDeleteDialog, { type DeletionImpactView } from "../../DocumentDeleteDialog";
@@ -24,6 +25,8 @@ type LoadedDocument = EditorDocument &
     issuedAt: string | null;
     issuedBy: string | null;
     createdBy: string;
+    source: "internal" | "external";
+    externalNote: string;
   };
 
 interface Loaded {
@@ -133,13 +136,33 @@ function InvoiceDocument({ id, onTitle }: { id: string; onTitle: (title: string)
 
   return (
     <>
-      <IssuedView doc={doc} seller={seller} onDelete={() => setDeleting(true)} />
+      <IssuedView
+        doc={doc}
+        seller={seller}
+        onDelete={() => setDeleting(true)}
+        onChanged={() => {
+          setState({ status: "loading" });
+          setReload((n) => n + 1);
+        }}
+      />
       {deleteDialog}
     </>
   );
 }
 
-function IssuedView({ doc, seller, onDelete }: { doc: LoadedDocument; seller: SellerProfile | null; onDelete: () => void }) {
+function IssuedView({
+  doc,
+  seller,
+  onDelete,
+  onChanged,
+}: {
+  doc: LoadedDocument;
+  seller: SellerProfile | null;
+  onDelete: () => void;
+  onChanged: () => void;
+}) {
+  const external = doc.source === "external";
+  const [editingReference, setEditingReference] = useState(false);
   const [copyLabel, setCopyLabel] = useState<"ต้นฉบับ" | "สำเนา">("ต้นฉบับ");
   const [audit, setAudit] = useState<AuditEntry[] | null>(null);
   const status = displayStatusOf(doc, bangkokDateString(new Date()));
@@ -168,7 +191,20 @@ function IssuedView({ doc, seller, onDelete }: { doc: LoadedDocument; seller: Se
 
   return (
     <div className="grid grid-cols-1 xl:grid-cols-[1fr_20rem] gap-6 items-start">
-      <InvoicePaper doc={doc} seller={seller ?? { name: "", address: "", taxId: "", branchCode: "", phone: "", email: "" }} copyLabel={copyLabel} printable />
+      <div className="space-y-3 min-w-0">
+        {external && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900" data-testid="external-banner">
+            <p className="font-semibold">เอกสารนี้ออกจากที่อื่น — ข้อมูลด้านล่างคือที่บันทึกไว้ ไม่ใช่ต้นฉบับ</p>
+            <p>ต้นฉบับเก็บไว้ที่: {doc.externalNote}</p>
+          </div>
+        )}
+        <InvoicePaper
+          doc={doc}
+          seller={seller ?? { name: "", address: "", taxId: "", branchCode: "", phone: "", email: "" }}
+          copyLabel={external ? null : copyLabel}
+          printable={!external}
+        />
+      </div>
 
       <aside className="space-y-4 xl:sticky xl:top-6" aria-label="รายละเอียดเอกสาร">
         <div className="bg-white rounded-2xl border border-gray-200 p-5 space-y-3">
@@ -190,15 +226,23 @@ function IssuedView({ doc, seller, onDelete }: { doc: LoadedDocument; seller: Se
               </>
             )}
           </dl>
-          <div className="grid grid-cols-2 gap-2 pt-1">
-            <button type="button" onClick={() => printAs("ต้นฉบับ")} className="px-3 py-2.5 rounded-xl bg-sky-600 text-white font-semibold hover:bg-sky-700">
-              พิมพ์ต้นฉบับ
+          {external ? (
+            <button type="button" onClick={() => setEditingReference(true)} className="w-full px-3 py-2.5 rounded-xl border border-amber-300 text-amber-800 font-semibold hover:bg-amber-50">
+              แก้เลขที่ / ที่เก็บต้นฉบับ
             </button>
-            <button type="button" onClick={() => printAs("สำเนา")} className="px-3 py-2.5 rounded-xl border border-sky-200 text-sky-700 font-semibold hover:bg-sky-50">
-              พิมพ์สำเนา
-            </button>
-          </div>
-          <p className="text-xs text-gray-500">เลือกเครื่องพิมพ์ «Save as PDF» เพื่อบันทึกเป็นไฟล์ PDF</p>
+          ) : (
+            <>
+              <div className="grid grid-cols-2 gap-2 pt-1">
+                <button type="button" onClick={() => printAs("ต้นฉบับ")} className="px-3 py-2.5 rounded-xl bg-sky-600 text-white font-semibold hover:bg-sky-700">
+                  พิมพ์ต้นฉบับ
+                </button>
+                <button type="button" onClick={() => printAs("สำเนา")} className="px-3 py-2.5 rounded-xl border border-sky-200 text-sky-700 font-semibold hover:bg-sky-50">
+                  พิมพ์สำเนา
+                </button>
+              </div>
+              <p className="text-xs text-gray-500">เลือกเครื่องพิมพ์ «Save as PDF» เพื่อบันทึกเป็นไฟล์ PDF</p>
+            </>
+          )}
         </div>
 
         {doc.salesRecordId && (
@@ -232,6 +276,85 @@ function IssuedView({ doc, seller, onDelete }: { doc: LoadedDocument; seller: Se
           ลบเอกสาร
         </button>
       </aside>
+      {editingReference && (
+        <ReferenceDialog
+          doc={doc}
+          onCancel={() => setEditingReference(false)}
+          onSaved={() => {
+            setEditingReference(false);
+            onChanged();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+/** Fixing a typo in an outside document's number or storage note — the reason goes in the audit log. */
+function ReferenceDialog({ doc, onCancel, onSaved }: { doc: LoadedDocument; onCancel: () => void; onSaved: () => void }) {
+  const [docNo, setDocNo] = useState(doc.docNo ?? "");
+  const [externalNote, setExternalNote] = useState(doc.externalNote);
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const ref = useRef<HTMLDivElement>(null);
+  useModalEscape(ref, () => {
+    if (!busy) onCancel();
+  });
+
+  const save = async () => {
+    if (busy) return;
+    if (!reason.trim()) {
+      setError("กรุณาบอกเหตุผลที่แก้");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/accounting/documents/${encodeURIComponent(doc.id)}/external`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ docNo, externalNote, reason }),
+      });
+      if (!res.ok) {
+        setError(await errorMessageOf(res, "แก้ไขไม่สำเร็จ"));
+        return;
+      }
+      onSaved();
+    } catch {
+      setError("แก้ไขไม่สำเร็จ ตรวจสอบการเชื่อมต่อแล้วลองใหม่");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const field = "w-full border border-gray-200 rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-sky-500";
+  return (
+    <div className="fixed inset-0 z-110 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => !busy && onCancel()}></div>
+      <div ref={ref} role="dialog" aria-modal="true" aria-labelledby="reference-title" className="relative bg-white rounded-2xl shadow-2xl p-6 w-full max-w-md space-y-3">
+        <h2 id="reference-title" className="text-lg font-bold text-gray-900">แก้เลขที่ / ที่เก็บต้นฉบับ</h2>
+        <p className="text-sm text-gray-600">สำหรับแก้ที่พิมพ์ผิดเท่านั้น — ถ้ายอดเงินหรือรายการผิด ให้ลบแล้วบันทึกใหม่</p>
+        <div>
+          <label htmlFor="ref-docNo" className="block text-sm font-semibold text-gray-700 mb-1">เลขที่ตามเอกสารจริง</label>
+          <input id="ref-docNo" className={field} value={docNo} onChange={(e) => setDocNo(e.target.value)} />
+        </div>
+        <div>
+          <label htmlFor="ref-note" className="block text-sm font-semibold text-gray-700 mb-1">เก็บต้นฉบับไว้ที่</label>
+          <input id="ref-note" className={field} value={externalNote} onChange={(e) => setExternalNote(e.target.value)} />
+        </div>
+        <div>
+          <label htmlFor="ref-reason" className="block text-sm font-semibold text-gray-700 mb-1">เหตุผลที่แก้ <span className="text-red-500">*</span></label>
+          <input id="ref-reason" className={field} maxLength={300} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="เช่น พิมพ์เลขที่ผิด" />
+        </div>
+        {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
+        <div className="flex gap-3 pt-2">
+          <button type="button" onClick={onCancel} disabled={busy} className="flex-1 px-4 py-2.5 rounded-xl border border-gray-300 font-semibold hover:bg-gray-50 disabled:opacity-60">ยกเลิก</button>
+          <button type="button" onClick={() => void save()} disabled={busy} className="flex-1 px-4 py-2.5 rounded-xl bg-sky-600 text-white font-semibold hover:bg-sky-700 disabled:opacity-60">
+            {busy ? "กำลังบันทึก…" : "บันทึก"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

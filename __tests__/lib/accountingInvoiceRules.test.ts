@@ -7,7 +7,9 @@
  */
 import { describe, it, expect } from "vitest";
 import {
+  cleanExternalFields,
   cleanInvoiceInput,
+  externalProblems,
   defaultIsTaxInvoice,
   displayStatusOf,
   dueDateOf,
@@ -135,5 +137,36 @@ describe("displayStatusOf", () => {
     expect(displayStatusOf(issued({ paidSatang: 1000 }), "2026-12-19")).toBe("paid");
     expect(displayStatusOf({ ...issued(), status: "void" }, "2026-11-18")).toBe("void");
     expect(displayStatusOf(issued({ dueDate: null }), "2030-01-01")).toBe("awaiting");
+  });
+});
+
+// Step 3 — a document issued elsewhere, recorded here.
+describe("externalProblems / cleanExternalFields", () => {
+  const ok = { docNo: "IV-2569/0042", externalNote: "แฟ้มใบกำกับ 2569 ตู้ 2", vatSatangOverride: null };
+
+  it("is clean with a number and where the paper is kept", () => {
+    expect(externalProblems(ok, 406000)).toEqual({});
+  });
+
+  it("wants the number as printed, and where the paper is kept", () => {
+    expect(externalProblems({ ...ok, docNo: "" }, 0).docNo).toBe("กรุณากรอกเลขที่ตามที่พิมพ์บนเอกสารจริง");
+    expect(externalProblems({ ...ok, externalNote: "" }, 0).externalNote).toContain("เก็บต้นฉบับไว้ที่ไหน");
+  });
+
+  it("refuses a number shaped like the system's own — the two series could collide", () => {
+    expect(externalProblems({ ...ok, docNo: "INV2026110001" }, 0).docNo).toContain("รูปแบบเดียวกับเลขที่ระบบออกเอง");
+    expect(externalProblems({ ...ok, docNo: "INV-2026110001" }, 0).docNo).toBeUndefined();
+  });
+
+  it("takes the VAT as printed within a baht of the system's, and refuses more (a typo)", () => {
+    expect(externalProblems({ ...ok, vatSatangOverride: 406003 }, 406000)).toEqual({});
+    expect(externalProblems({ ...ok, vatSatangOverride: 406100 }, 406000)).toEqual({});
+    expect(externalProblems({ ...ok, vatSatangOverride: 40600 }, 406000).vatSatangOverride).toContain("เกิน 1 บาท");
+  });
+
+  it("reads the fields from a request", () => {
+    expect(cleanExternalFields({ docNo: " IV-1 ", externalNote: " แฟ้ม ", vatSatangOverride: "406001" })).toEqual({ docNo: "IV-1", externalNote: "แฟ้ม", vatSatangOverride: 406001 });
+    expect(cleanExternalFields({}).vatSatangOverride).toBeNull();
+    expect(cleanExternalFields({ vatSatangOverride: "abc" }).vatSatangOverride).toBe(-1);
   });
 });

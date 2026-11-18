@@ -25,6 +25,9 @@ vi.mock("@/app/lib/accounting/documents", () => ({
   issueInvoice: vi.fn(async () => ({ id: "d1", status: "issued" })),
   peekNextDocNo: vi.fn(async () => "INV2026110008"),
   documentSummary: vi.fn(async () => ({})),
+  recordExternalInvoice: vi.fn(async () => ({ id: "x1" })),
+  updateExternalReference: vi.fn(async () => ({ id: "x1" })),
+  recentExternalNotes: vi.fn(async () => ["แฟ้ม 2569"]),
 }));
 import * as docs from "@/app/lib/accounting/documents";
 vi.mock("@/app/lib/accounting/settings", () => ({
@@ -37,6 +40,8 @@ import { GET as getOne, PUT as update, DELETE as remove } from "@/app/api/accoun
 import { POST as issue } from "@/app/api/accounting/documents/[id]/issue/route";
 import { GET as nextNumber } from "@/app/api/accounting/documents/next-number/route";
 import { GET as summary } from "@/app/api/accounting/documents/summary/route";
+import { GET as externalNotes, POST as recordExternal } from "@/app/api/accounting/documents/external/route";
+import { PATCH as fixReference } from "@/app/api/accounting/documents/[id]/external/route";
 
 const admin = { userId: "admin-001", username: "admin", expiresAt: new Date() } as never;
 const user = { id: "admin-001", username: "admin", passwordHash: "x", totpEnabled: true };
@@ -151,5 +156,28 @@ describe("issue / next number / summary", () => {
     await summary(req("/api/accounting/documents/summary?month=2026-10"));
     expect(vi.mocked(docs.documentSummary).mock.calls[0].slice(1)).toEqual(["2026-10-01", "2026-11-01"]);
     expect((await summary(req("/api/accounting/documents/summary?month=2026-13"))).status).toBe(400);
+  });
+});
+
+describe("outside documents", () => {
+  it("records one with its number, storage note and printed VAT", async () => {
+    const res = await recordExternal(req("/api/accounting/documents/external", { method: "POST", body: { buyerName: "ก", docNo: " IV-42 ", externalNote: "แฟ้ม", vatSatangOverride: 406002, lines: [] } }));
+    expect(res.status).toBe(201);
+    expect(vi.mocked(docs.recordExternalInvoice).mock.calls[0][1]).toEqual({ docNo: "IV-42", externalNote: "แฟ้ม", vatSatangOverride: 406002 });
+  });
+
+  it("suggests where papers were kept lately", async () => {
+    expect(await (await externalNotes()).json()).toEqual({ notes: ["แฟ้ม 2569"] });
+  });
+
+  it("fixes a number with a reason", async () => {
+    await fixReference(req("/api/accounting/documents/x1/external", { method: "PATCH", body: { docNo: " IV-0042 ", externalNote: "แฟ้ม", reason: "พิมพ์ผิด" } }), ctx("x1"));
+    expect(docs.updateExternalReference).toHaveBeenCalledWith("x1", { docNo: "IV-0042", externalNote: "แฟ้ม", reason: "พิมพ์ผิด" }, expect.anything());
+  });
+
+  it("is behind the same gate", async () => {
+    vi.mocked(getTwoFactorUser).mockResolvedValue({ ...user, totpEnabled: false });
+    expect((await recordExternal(req("/api/accounting/documents/external", { method: "POST", body: {} }))).status).toBe(403);
+    expect(docs.recordExternalInvoice).not.toHaveBeenCalled();
   });
 });

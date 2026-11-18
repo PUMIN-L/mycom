@@ -220,6 +220,51 @@ export function issueProblems(input: InvoiceInput, totals: DocTotals): string[] 
   return problems;
 }
 
+// ── A document issued elsewhere, recorded here (step 3) ─────────────────────
+
+export interface ExternalFields {
+  /** The number as printed on the paper. */
+  docNo: string;
+  /** Where the paper is kept (no file is uploaded — the owner's choice). */
+  externalNote: string;
+  /** VAT as printed, when it differs from what the system works out; null = the system's. */
+  vatSatangOverride: number | null;
+}
+
+export const EXTERNAL_LIMITS = { docNo: 60, externalNote: 255, vatToleranceSatang: 100 } as const;
+
+/** Our own numbers' shape — an outside number must not look like one, or the two series could collide. */
+const INTERNAL_NUMBER = /^(INV|RE|BN|CN)\d{10}$/;
+
+export function cleanExternalFields(raw: unknown): ExternalFields {
+  const body = (raw ?? {}) as Record<string, unknown>;
+  const override = body.vatSatangOverride;
+  return {
+    docNo: text(body.docNo, EXTERNAL_LIMITS.docNo + 1),
+    externalNote: text(body.externalNote, EXTERNAL_LIMITS.externalNote + 1),
+    vatSatangOverride: override === null || override === undefined || override === "" ? null : int(override, -1),
+  };
+}
+
+/** What is wrong with the outside-document fields, by field; `computedVatSatang` is the system's VAT for the same lines. */
+export function externalProblems(fields: ExternalFields, computedVatSatang: number): Partial<Record<keyof ExternalFields, string>> {
+  const problems: Partial<Record<keyof ExternalFields, string>> = {};
+  if (!fields.docNo) problems.docNo = "กรุณากรอกเลขที่ตามที่พิมพ์บนเอกสารจริง";
+  else if (fields.docNo.length > EXTERNAL_LIMITS.docNo) problems.docNo = `เลขที่ยาวเกิน ${EXTERNAL_LIMITS.docNo} ตัวอักษร`;
+  else if (INTERNAL_NUMBER.test(fields.docNo)) {
+    problems.docNo = "เลขนี้มีรูปแบบเดียวกับเลขที่ระบบออกเอง (เช่น INV2026110001) — เอกสารจากที่อื่นต้องใช้เลขคนละรูปแบบ ไม่อย่างนั้นเลขจะชนกัน";
+  }
+  if (!fields.externalNote) problems.externalNote = "กรุณาบอกว่าเก็บต้นฉบับไว้ที่ไหน เช่น แฟ้มใบกำกับ 2569 ตู้ 2";
+  else if (fields.externalNote.length > EXTERNAL_LIMITS.externalNote) problems.externalNote = `ยาวเกิน ${EXTERNAL_LIMITS.externalNote} ตัวอักษร`;
+  if (fields.vatSatangOverride !== null) {
+    if (fields.vatSatangOverride < 0) problems.vatSatangOverride = "กรุณากรอก VAT เป็นตัวเลข";
+    else if (Math.abs(fields.vatSatangOverride - computedVatSatang) > EXTERNAL_LIMITS.vatToleranceSatang) {
+      problems.vatSatangOverride = "VAT ต่างจากที่คำนวณได้เกิน 1 บาท — ตรวจตัวเลขกับเอกสารจริงอีกครั้ง";
+    }
+  }
+  return problems;
+}
+
 // ── How a document shows in a list ──────────────────────────────────────────
 
 export type DisplayStatus = "draft" | "awaiting" | "overdue" | "partial" | "paid" | "void";

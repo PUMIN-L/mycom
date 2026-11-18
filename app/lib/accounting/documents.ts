@@ -10,8 +10,17 @@ import { allocateDocNo, docPeriod, formatDocNo, parseDocNo, releaseDocNoIfLatest
 import type { NumberedDocType } from "./types";
 import { writeAudit } from "./audit";
 import { getSellerProfile, getVatRate } from "./settings";
-import { allocateProportionally, computeTotals, formatSatang, lineAmountSatang, satangToBaht } from "./money";
-import { dueDateOf, invoiceProblems, issueProblems, splitSerials, type DocLineInput, type InvoiceInput } from "./invoiceRules";
+import { allocateProportionally, computeTotals, formatSatang, lineAmountSatang, satangToBaht, withVatOverride, type DocTotals } from "./money";
+import {
+  dueDateOf,
+  externalProblems,
+  invoiceProblems,
+  issueProblems,
+  splitSerials,
+  type DocLineInput,
+  type ExternalFields,
+  type InvoiceInput,
+} from "./invoiceRules";
 import type { AccDocSource, AccDocStatus, AccDocType } from "./types";
 
 // Documents of the accounting module (ARCHITECTURE.md §8g). This file: the
@@ -273,8 +282,12 @@ async function draftColumns(input: InvoiceInput) {
   const problems = invoiceProblems(input, vatRate);
   if (problems.first) throw new ApiError(400, problems.first);
   const totals = computeTotals({ lines: input.lines, discountSatang: input.discountSatang, priceMode: input.priceMode, vatRate });
+  return { columns: columnsOf(input, totals, vatRate), lines: input.lines };
+}
+
+/** A document's header columns for `input` with these totals. */
+function columnsOf(input: InvoiceInput, totals: DocTotals, vatRate: number) {
   return {
-    columns: {
       isTaxInvoice: input.isTaxInvoice ? 1 : 0,
       issueDate: input.issueDate,
       dueDate: dueDateOf(input.issueDate, input.creditDays),
@@ -297,8 +310,6 @@ async function draftColumns(input: InvoiceInput) {
       customerPoNo: input.customerPoNo,
       projectName: input.projectName,
       note: input.note,
-    },
-    lines: input.lines,
   };
 }
 
@@ -647,4 +658,139 @@ export async function deleteAccDocument(id: string, actor: Actor, opts: { passwo
     await writeAudit(conn, { ...actor, action: "doc.delete", documentId: id, docNo: doc.docNo, detail: `ลบ · ${parts.join(" · ")}` });
     return { docNo: doc.docNo, releasedNumber, machinesDeleted, machinesKept, saleDeleted };
   });
+}
+
+// ── A document issued elsewhere, recorded here (step 3) ─────────────────────
+
+/** "Duplicate entry" from the unique (docType, docNo) index. */
+const isDuplicateKey = (error: unknown) => (error as { code?: string } | null)?.code === "ER_DUP_ENTRY";
+
+/**
+ * Records an invoice issued ELSEWHERE (another program, a hand-written book):
+ * the number as printed, where the paper is kept — no file — and its lines,
+ * so it counts in receivables and on the dashboard exactly as one issued
+ * here. It is "issued" at once (the paper already exists), with its sale and
+ * machines in the same transaction. It never takes one of our numbers, and a
+ * number shaped like ours is refused (the two series could collide).
+ */
+export async function recordExternalInvoice(input: InvoiceInput, fields: ExternalFields, actor: Actor): Promise<AccDocument> {
+  const vatRate = await getVatRate();
+  const problems = invoiceProblems(input, vatRate);
+  if (problems.first) throw new ApiError(400, problems.first);
+  const computed = computeTotals({ lines: input.lines, discountSatang: input.discountSatang, priceMode: input.priceMode, vatRate });
+  const external = Object.values(externalProblems(fields, computed.vatSatang)).find(Boolean);
+  if (external) throw new ApiError(400, external);
+  const totals = withVatOverride(computed, fields.vatSatangOverride, input.priceMode);
+  if (totals.totalSatang <= 0) throw new ApiError(400, "ยอดรวมต้องมากกว่า 0 บาท");
+  if (input.lines.some((l) => l.isMachine) && !input.customerId) {
+    throw new ApiError(400, "มีเครื่องที่ต้องลงทะเบียน — กรุณาเลือกผู้ติดต่อของลูกค้าที่จะผูกเครื่องไว้");
+  }
+  const [taken] = await run(null, "SELECT id FROM acc_documents WHERE docType = 'INV' AND docNo = ? LIMIT 1", [fields.docNo]);
+  if (taken) throw new ApiError(409, `เลขที่ ${fields.docNo} บันทึกไว้แล้ว`);
+
+  const columns = columnsOf(input, totals, vatRate);
+  const lines = input.lines.map((l, i) => ({ ...l, id: "", sortOrder: i, amountSatang: lineAmountSatang(l) }));
+  const asIssued = { ...(columns as unknown as AccDocument), ...input, vatBaseSatang: totals.vatBaseSatang, quotationId: null, lines };
+  const prepared = await prepareSaleWithLineItems(saleInputFromInvoice(asIssued, await categoriesOf(input.lines.map((l) => l.productId))));
+  const { versionId } = await getSellerProfile();
+
+  let id: string;
+  try {
+    id = await withTransaction(async (conn) => {
+      const docId = crypto.randomUUID();
+      const now = new Date().toISOString();
+      const row: Record<string, unknown> = {
+        id: docId,
+        docType: "INV",
+        docNo: fields.docNo,
+        status: "issued",
+        source: "external",
+        externalNote: fields.externalNote,
+        ...columns,
+        sellerVersionId: versionId,
+        issuedAt: now,
+        issuedBy: actor.username,
+        createdAt: now,
+        createdBy: actor.username,
+        updatedAt: now,
+      };
+      const keys = Object.keys(row);
+      await conn.query(`INSERT INTO acc_documents (${keys.join(", ")}) VALUES (${keys.map(() => "?").join(", ")})`, Object.values(row));
+      await replaceLines(conn, docId, input.lines);
+      prepared.v.invoiceRef = fields.docNo;
+      prepared.v.note = `บันทึกจากเอกสารภายนอก ${fields.docNo}`;
+      const saleId = await insertPreparedSaleTx(conn, prepared);
+      await conn.query("UPDATE acc_documents SET salesRecordId = ? WHERE id = ?", [saleId, docId]);
+      await writeAudit(conn, {
+        ...actor,
+        action: "doc.issue",
+        documentId: docId,
+        docNo: fields.docNo,
+        detail: `บันทึกเอกสารจากภายนอก · ${input.buyerName} · ${formatSatang(totals.totalSatang)} บาท · เก็บที่ ${fields.externalNote}`,
+      });
+      return docId;
+    });
+  } catch (error) {
+    if (isDuplicateKey(error)) throw new ApiError(409, `เลขที่ ${fields.docNo} บันทึกไว้แล้ว`);
+    throw error;
+  }
+  return (await getAccDocument(id))!;
+}
+
+export const REFERENCE_REASON_MAX = 300;
+
+/**
+ * Fixes the number or the storage note of an outside document — a typo,
+ * not an amount (an amount that is wrong is deleted and recorded again). The
+ * reason goes in the audit log; the dashboard sale's invoice number follows.
+ */
+export async function updateExternalReference(
+  id: string,
+  change: { docNo: string; externalNote: string; reason: string },
+  actor: Actor
+): Promise<AccDocument> {
+  const reason = change.reason.trim();
+  const problem = Object.values(externalProblems({ docNo: change.docNo, externalNote: change.externalNote, vatSatangOverride: null }, 0)).find(Boolean);
+  if (problem) throw new ApiError(400, problem);
+  if (!reason) throw new ApiError(400, "กรุณาบอกเหตุผลที่แก้");
+  if (reason.length > REFERENCE_REASON_MAX) throw new ApiError(400, `เหตุผลยาวเกิน ${REFERENCE_REASON_MAX} ตัวอักษร`);
+  try {
+    await withTransaction(async (conn) => {
+      const [row] = await run(conn, "SELECT source, docNo, externalNote, salesRecordId FROM acc_documents WHERE id = ? FOR UPDATE", [id]);
+      if (!row) throw new ApiError(404, "ไม่พบเอกสารนี้");
+      if (row.source !== "external") throw new ApiError(409, "แก้เลขที่ได้เฉพาะเอกสารที่บันทึกจากภายนอก");
+      const [taken] = await run(conn, "SELECT id FROM acc_documents WHERE docType = 'INV' AND docNo = ? AND id <> ? LIMIT 1", [change.docNo, id]);
+      if (taken) throw new ApiError(409, `เลขที่ ${change.docNo} บันทึกไว้แล้ว`);
+      await conn.query("UPDATE acc_documents SET docNo = ?, externalNote = ?, updatedAt = ? WHERE id = ?", [
+        change.docNo,
+        change.externalNote,
+        new Date().toISOString(),
+        id,
+      ]);
+      if (row.salesRecordId) {
+        await conn.query("UPDATE sales_records SET invoiceRef = ? WHERE id = ?", [change.docNo, row.salesRecordId]);
+      }
+      const what = [
+        row.docNo !== change.docNo ? `เลขที่ ${row.docNo} → ${change.docNo}` : null,
+        row.externalNote !== change.externalNote ? `ที่เก็บ → ${change.externalNote}` : null,
+      ].filter(Boolean);
+      await writeAudit(conn, { ...actor, action: "doc.update", documentId: id, docNo: change.docNo, detail: `แก้ ${what.join(", ") || "ไม่มีการเปลี่ยน"} · เหตุผล: ${reason}` });
+    });
+  } catch (error) {
+    if (isDuplicateKey(error)) throw new ApiError(409, `เลขที่ ${change.docNo} บันทึกไว้แล้ว`);
+    throw error;
+  }
+  return (await getAccDocument(id))!;
+}
+
+/** Where outside papers were kept lately — the storage field suggests them. */
+export async function recentExternalNotes(): Promise<string[]> {
+  const rows = await run(
+    null,
+    `SELECT externalNote, MAX(createdAt) AS lastUsed FROM acc_documents
+      WHERE source = 'external' AND externalNote <> ''
+      GROUP BY externalNote ORDER BY lastUsed DESC LIMIT 20`,
+    []
+  );
+  return rows.map((r) => String(r.externalNote));
 }

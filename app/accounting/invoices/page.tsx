@@ -45,9 +45,14 @@ export default function InvoiceListPage() {
       tab="invoices"
       title="ใบส่งสินค้า / ใบแจ้งหนี้ / ใบกำกับภาษี"
       actions={
-        <Link href="/accounting/invoices/new" className="px-6 py-2.5 rounded-xl bg-green-600 text-white font-semibold hover:bg-green-700 shadow-sm">
-          + สร้างใหม่
-        </Link>
+        <>
+          <Link href="/accounting/invoices/record-external" className="px-4 py-2.5 rounded-xl border border-gray-300 bg-white text-gray-700 font-semibold hover:bg-gray-50">
+            บันทึกเอกสารจากที่อื่น
+          </Link>
+          <Link href="/accounting/invoices/new" className="px-6 py-2.5 rounded-xl bg-green-600 text-white font-semibold hover:bg-green-700 shadow-sm">
+            + สร้างใหม่
+          </Link>
+        </>
       }
     >
       <InvoiceList />
@@ -225,6 +230,7 @@ function InvoiceList() {
                       <Link href={`/accounting/invoices/${r.id}`} onClick={(e) => e.stopPropagation()} className="hover:text-sky-700">
                         {r.docNo ?? "ร่าง"}
                       </Link>
+                      {r.source === "external" && <ExternalTag />}
                     </span>
                   </td>
                   <td className="py-3 px-4">
@@ -260,6 +266,7 @@ function InvoiceList() {
                     <span className="inline-flex items-center gap-2 font-semibold tabular-nums">
                       <StatusDot status={r.display} />
                       {r.docNo ?? "ร่าง"}
+                      {r.source === "external" && <ExternalTag />}
                     </span>
                     <StatusBadge status={r.display} />
                   </div>
@@ -290,6 +297,15 @@ function InvoiceList() {
         />
       )}
     </div>
+  );
+}
+
+/** A document issued elsewhere and only recorded here. */
+function ExternalTag() {
+  return (
+    <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 text-[11px] font-semibold" title="ออกจากที่อื่น บันทึกไว้ในระบบ">
+      ภายนอก
+    </span>
   );
 }
 
