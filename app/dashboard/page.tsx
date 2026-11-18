@@ -35,6 +35,7 @@ import type { MissingCostLocation, SaleLineDraft } from "../lib/quotationToSale"
 import ViewRecordModal from "./ViewRecordModal";
 import SalesTable from "./SalesTable";
 import SaleFormShell from "./SaleFormShell";
+import { isAccountingEnabled } from "../lib/accounting/flags";
 import { saleFormSnapshot } from "./saleFormHelpers";
 import { filterSalesRecords, salesExportFileName, type SalesFocus } from "./salesFilters";
 import type { RecordScope } from "./SalesTable";
@@ -1141,11 +1142,25 @@ export default function DashboardPage() {
               </button>
             </div>
             
-            {/* Action Button */}
-            <button onClick={() => openSaleForm(null, emptyForm(), [])} className="px-5 py-2 bg-[#065f46] text-white rounded-full text-sm font-semibold hover:bg-[#047857] transition-all shadow-md flex items-center justify-center gap-1.5 whitespace-nowrap w-full sm:w-auto h-[40px] shrink-0 border border-[#064e3b]">
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"/></svg>
-              บันทึกยอดขาย
-            </button>
+            {/* Action Button. With the accounting module on, a sale starts as an
+                invoice (§8g): issuing it records the sale here by itself, so
+                typing it in again would count it twice. Until then (the live
+                site before go-live) the form below still records it. */}
+            {isAccountingEnabled() ? (
+              <Link
+                href="/accounting/invoices/new"
+                title="ออกใบแจ้งหนี้ในระบบบัญชี — ระบบจะบันทึกยอดขายที่นี่ให้อัตโนมัติ"
+                className="px-5 py-2 bg-[#065f46] text-white rounded-full text-sm font-semibold hover:bg-[#047857] transition-all shadow-md flex items-center justify-center gap-1.5 whitespace-nowrap w-full sm:w-auto h-[40px] shrink-0 border border-[#064e3b]"
+              >
+                <svg aria-hidden="true" className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"/></svg>
+                บันทึกยอดขาย (ออกใบแจ้งหนี้)
+              </Link>
+            ) : (
+              <button onClick={() => openSaleForm(null, emptyForm(), [])} className="px-5 py-2 bg-[#065f46] text-white rounded-full text-sm font-semibold hover:bg-[#047857] transition-all shadow-md flex items-center justify-center gap-1.5 whitespace-nowrap w-full sm:w-auto h-[40px] shrink-0 border border-[#064e3b]">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"/></svg>
+                บันทึกยอดขาย
+              </button>
+            )}
           </div>
         </div>
 

@@ -2431,6 +2431,7 @@ async function createAccountingTables(connection: mysql.PoolConnection): Promise
         unitPriceSatang BIGINT NOT NULL DEFAULT 0,
         discountSatang BIGINT NOT NULL DEFAULT 0,
         amountSatang BIGINT NOT NULL DEFAULT 0,
+        isMachine TINYINT(1) NOT NULL DEFAULT 0,
         serials VARCHAR(1000) ${TEXT} NOT NULL DEFAULT '',
         warrantyMonths SMALLINT DEFAULT NULL,
         deliveredQty DECIMAL(12,2) NOT NULL DEFAULT 0,

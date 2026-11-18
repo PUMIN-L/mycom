@@ -696,6 +696,21 @@ export interface CreateSaleWithLineItemsInput {
 export async function createSaleWithLineItems(
   input: CreateSaleWithLineItemsInput
 ): Promise<SalesRecord> {
+  const prepared = await prepareSaleWithLineItems(input);
+  const saleId = await withTransaction((conn) => insertPreparedSaleTx(conn, prepared));
+  return (await getSalesRecord(saleId))!;
+}
+
+/** A sale ready to write: cleaned, its products resolved from the catalog. */
+export type PreparedSale = Awaited<ReturnType<typeof prepareSaleWithLineItems>>;
+
+/**
+ * Everything `createSaleWithLineItems` does BEFORE its transaction — the
+ * cleaning and the catalog reads — so another module's transaction can write
+ * the sale as part of its own (the accounting module issues an invoice and
+ * creates its sale all-or-nothing). Pair with `insertPreparedSaleTx`.
+ */
+export async function prepareSaleWithLineItems(input: CreateSaleWithLineItemsInput) {
   const rawItems = (input.items || []).filter(Boolean);
   if (rawItems.length === 0) {
     throw new Error("ต้องมีรายการสินค้าอย่างน้อย 1 รายการ");
@@ -761,25 +776,28 @@ export async function createSaleWithLineItems(
     status: "Active",
   };
 
-  const saleId = await withTransaction(async (conn) => {
-    // Every UUID is generated INSIDE the callback: withTransaction retries the
-    // whole body up to 3x on a transient connection loss, and ids minted
-    // outside would be reused across attempts.
-    const id = crypto.randomUUID();
-    const now = new Date().toISOString();
+  return { v, itemsToPersist, equipments, sharedEquipment };
+}
 
-    await insertSalesRecordRow(executorFor(conn), id, v, now);
-    await replaceLineItemsForSale(conn, id, itemsToPersist);
-    // Re-derive the cached totals from what was actually persisted, so the
-    // invariant holds against the line-item writer's own rounding.
-    await recalcSaleTotalsTx(conn, id);
-    if (equipments.length > 0) {
-      await syncEquipmentRowsForSalesRecord(id, equipments, sharedEquipment, conn);
-    }
-    return id;
-  });
+/**
+ * Writes a prepared sale — the record, its line items, its machines — through
+ * `conn`, inside the caller's transaction. Returns the new sale's id. Every
+ * UUID is minted here, inside the transaction: withTransaction retries the
+ * whole body on a lost connection, and ids minted outside would be reused.
+ */
+export async function insertPreparedSaleTx(conn: TxConnection, prepared: PreparedSale): Promise<string> {
+  const id = crypto.randomUUID();
+  const now = new Date().toISOString();
 
-  return (await getSalesRecord(saleId))!;
+  await insertSalesRecordRow(executorFor(conn), id, prepared.v, now);
+  await replaceLineItemsForSale(conn, id, prepared.itemsToPersist);
+  // Re-derive the cached totals from what was actually persisted, so the
+  // invariant holds against the line-item writer's own rounding.
+  await recalcSaleTotalsTx(conn, id);
+  if (prepared.equipments.length > 0) {
+    await syncEquipmentRowsForSalesRecord(id, prepared.equipments, prepared.sharedEquipment, conn);
+  }
+  return id;
 }
 
 export async function listSalesRecords(filters?: {

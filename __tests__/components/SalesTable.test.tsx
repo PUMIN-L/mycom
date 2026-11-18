@@ -406,3 +406,17 @@ describe('SalesTable — which sales it lists', () => {
     expect(screen.getByText('หน้า 1 / 2')).toBeTruthy();
   });
 });
+
+describe('SalesTable — a sale with no cost yet', () => {
+  it('says ยังไม่กรอกต้นทุน instead of a 100% margin (an invoice-made sale starts that way)', () => {
+    renderTable({ records: [makeRecord({ costAmount: 0 }), makeRecord({ id: 'sale-2', costAmount: '0.00' as never, totalAmount: '5000.00' as never })] });
+    expect(screen.getAllByTestId('no-cost-badge')).toHaveLength(2);
+    expect(screen.queryByText('100%')).toBeNull();
+  });
+
+  it('still shows the margin once a cost is in', () => {
+    renderTable({ records: [makeRecord({ costAmount: 207000, totalAmount: 300000 })] });
+    expect(screen.queryByTestId('no-cost-badge')).toBeNull();
+    expect(screen.getByText('31%')).toBeTruthy();
+  });
+});

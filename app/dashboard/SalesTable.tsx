@@ -544,8 +544,18 @@ export default function SalesTable({
                   </td>
                   <td className="py-3 pr-3 text-right">
                     {(() => {
-                      const cost = r.costAmount || 0;
-                      const margin = r.totalAmount > 0 ? Math.round(((r.totalAmount - cost) / r.totalAmount) * 100) : 0;
+                      const cost = Number(r.costAmount) || 0;
+                      const total = Number(r.totalAmount) || 0;
+                      // No cost typed yet — a sale an invoice created (§8g) starts
+                      // that way. "100%" there read as a real margin.
+                      if (cost === 0 && total > 0) {
+                        return (
+                          <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-amber-50 text-amber-700 whitespace-nowrap" data-testid="no-cost-badge">
+                            ยังไม่กรอกต้นทุน
+                          </span>
+                        );
+                      }
+                      const margin = total > 0 ? Math.round(((total - cost) / total) * 100) : 0;
                       const color = margin >= 20 ? "bg-emerald-100 text-emerald-700" : margin >= 10 ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700";
                       return <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${color}`}>{margin}%</span>;
                     })()}

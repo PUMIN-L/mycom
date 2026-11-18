@@ -77,6 +77,11 @@ let override: ((path: string, init?: RequestInit) => unknown) | null = null;
 beforeEach(() => {
   Element.prototype.scrollIntoView = vi.fn();
   override = null;
+  // The new-sale FORM is what the live site uses until the accounting module
+  // is switched on there (with it on, บันทึกยอดขาย opens an invoice instead —
+  // pinned at the end of this file). React is already loaded, so this only
+  // switches the module flag off.
+  vi.stubEnv("NODE_ENV", "production");
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input), "http://localhost");
     const custom = override?.(url.pathname, init);
@@ -96,6 +101,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
 });
 
 const esc = () => fireEvent.keyDown(document, { key: "Escape" });
@@ -231,5 +237,15 @@ describe("dashboard sale form — a fresh start", () => {
     const toast = await screen.findByText(/^กรุณากรอก:/);
     // Same z-layer or above, and later in the page: painted on top.
     expect(dialog.compareDocumentPosition(toast) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+});
+
+describe("dashboard — บันทึกยอดขาย with the accounting module on", () => {
+  it("leads to a new invoice instead of the form — issuing it records the sale here", async () => {
+    vi.unstubAllEnvs(); // the module is on outside production
+    await renderPage();
+    const link = screen.getByRole("link", { name: /บันทึกยอดขาย/ });
+    expect(link).toHaveAttribute("href", "/accounting/invoices/new");
+    expect(screen.queryByRole("button", { name: "บันทึกยอดขาย" })).toBeNull();
   });
 });

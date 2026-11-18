@@ -9,6 +9,7 @@ import { SESSION_EXPIRED_MESSAGE } from "../lib/apiErrorMessage";
 /** The module's pages, in the order its tabs show them. */
 export const ACCOUNTING_TABS = [
   { key: "home", href: "/accounting", label: "หน้าหลักบัญชี" },
+  { key: "invoices", href: "/accounting/invoices", label: "ใบแจ้งหนี้ / ใบกำกับภาษี" },
   { key: "settings", href: "/accounting/settings", label: "ตั้งค่าบัญชี" },
 ] as const;
 export type AccountingTabKey = (typeof ACCOUNTING_TABS)[number]["key"];

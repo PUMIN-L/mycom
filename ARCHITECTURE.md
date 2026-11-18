@@ -1291,6 +1291,47 @@ documents (plan: 10 steps; this section grows with each). Files:
 - **Saving database space** (owner's request): money is whole satang in
   BIGINT; no JSON copy of a document, no stored PDF or file; reports are
   computed on demand; indexes only where a list or a lookup needs them.
+- **Money** ([`money.ts`](./app/lib/accounting/money.ts)): typed text is
+  parsed into satang without floats; each figure is one `Math.round` of an
+  integer ratio (half up). Exclusive prices add VAT on the base; inclusive
+  ones take it out. The server computes every total again on save — the
+  browser's figures are never stored.
+- **Invoices (step 2)** — [`documents.ts`](./app/lib/accounting/documents.ts),
+  rules in [`invoiceRules.ts`](./app/lib/accounting/invoiceRules.ts), pages
+  under [`app/accounting/invoices/`](./app/accounting/invoices/):
+  - **Draft → issue.** A draft has no number and can be edited or deleted.
+    Issuing (`issueInvoice`) gives the number, points the document at our
+    company's current version, and creates its **/dashboard sale and
+    machines in the SAME transaction** (`prepareSaleWithLineItems` before it,
+    `insertPreparedSaleTx` inside — split out of `createSaleWithLineItems`
+    for this). A draft changed since it was checked (`updatedAt`) is refused
+    with no number spent. Saves over a newer save (another tab) are refused.
+  - **The VAT timing rule** (owner confirmed): goods → the invoice is the
+    tax invoice ("ใบส่งสินค้า / ใบแจ้งหนี้ / ใบกำกับภาษี"); services only → a
+    plain ใบแจ้งหนี้, the receipt will be the tax invoice; overridable per
+    document (`isTaxInvoice`).
+  - **The sale it creates** is the invoice ex VAT, the bill discount (and VAT
+    out of inclusive prices) shared over the lines (`allocateProportionally`)
+    so they add up to the VAT base; no cost yet — the dashboard's table says
+    "ยังไม่กรอกต้นทุน" for any sale with none instead of a 100% margin. A line
+    ticked as a machine registers one `customer_equipments` row per unit
+    (serials in order, warranty = issue date + months − 1 day), under the
+    contact person (issuing needs one when there are machines).
+  - **Deleting an issued invoice** (password again) takes its sale (and its
+    lines and costs — deleted explicitly, not left to FK cascades) and the
+    machines with no service history; machines with history are kept,
+    unlinked. Refused while payments or other documents point at it. The
+    dialog says all of this first (`deletionImpact`).
+  - **Printing** is the browser's: the paper ([`InvoicePaper.tsx`](./app/accounting/invoices/InvoicePaper.tsx))
+    hides the rest of the page in print, original or copy; "Save as PDF"
+    makes the file. Nothing is stored.
+  - **The dashboard's บันทึกยอดขาย** leads to a new invoice while the module
+    is on (so a sale is never typed in twice); with it off (the live site
+    before go-live) the old form still records sales.
+  - The store's functions are `getAccDocument` / `listAccDocuments` /
+    `deleteAccDocument` — not `getDocument` & co., which are the PDF
+    catalog's (`documentStore.ts`; `catalogCacheInvalidation.test.ts` matches
+    mutators by name).
 
 ### 9. Email (contact form) + lead persistence
 [`app/lib/mailer.ts`](./app/lib/mailer.ts) sends via SMTP (`nodemailer`, Gmail by

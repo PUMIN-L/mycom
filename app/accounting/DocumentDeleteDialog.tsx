@@ -1,0 +1,119 @@
+"use client";
+
+import { useState } from "react";
+import ConfirmDialog from "../components/ConfirmDialog";
+import PasswordConfirmDialog from "./PasswordConfirmDialog";
+import { errorMessageOf } from "../lib/apiErrorMessage";
+import { formatSatang } from "../lib/accounting/money";
+
+/** What deleting would do — GET /api/accounting/documents/[id] answers it as `impact`. */
+export interface DeletionImpactView {
+  status: string;
+  docNo: string | null;
+  isLatestNumber: boolean;
+  livePayments: number;
+  dependentDocs: number;
+  sale: { id: string; costSatang: number; sharedWithOtherDocs: boolean } | null;
+  machines: { total: number; withHistory: number };
+}
+
+/**
+ * Deleting a document. A draft: an ordinary "are you sure". An issued one:
+ * everything it takes with it, said first — the dashboard sale (and costs
+ * typed into it), the machines, whether its number comes back — and the
+ * password again. What blocks it (payments, documents pointing at it) is said
+ * instead of a delete button.
+ */
+export default function DocumentDeleteDialog({
+  documentId,
+  label,
+  impact,
+  onCancel,
+  onDeleted,
+}: {
+  documentId: string;
+  /** "INV2026110034" or "ร่างใบแจ้งหนี้". */
+  label: string;
+  impact: DeletionImpactView;
+  onCancel: () => void;
+  onDeleted: () => void;
+}) {
+  const [draftBusy, setDraftBusy] = useState(false);
+  const [draftError, setDraftError] = useState<string | null>(null);
+  const send = async (password?: string): Promise<string | null> => {
+    const res = await fetch(`/api/accounting/documents/${encodeURIComponent(documentId)}`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(password === undefined ? {} : { password }),
+    });
+    return res.ok ? null : errorMessageOf(res, "ลบเอกสารไม่สำเร็จ");
+  };
+
+  if (impact.livePayments > 0 || impact.dependentDocs > 0) {
+    return (
+      <ConfirmDialog
+        title="ลบเอกสารนี้ไม่ได้"
+        message={
+          impact.livePayments > 0
+            ? `${label} มีรายการรับชำระแล้ว — ยกเลิกรายการรับชำระก่อนจึงจะลบได้`
+            : `มีเอกสารอื่นอ้างถึง ${label} (ใบเสร็จ / ใบลดหนี้) — ลบเอกสารนั้นก่อน`
+        }
+        confirmText="ตกลง"
+        cancelText="ปิด"
+        onConfirm={onCancel}
+        onCancel={onCancel}
+      />
+    );
+  }
+
+  if (impact.status === "draft") {
+    return (
+      <ConfirmDialog
+        title="ลบร่างนี้?"
+        message={draftError ? `ลบไม่สำเร็จ: ${draftError}` : `${label} ยังไม่ได้ออกเป็นเอกสาร — ลบแล้วกู้คืนไม่ได้`}
+        confirmText={draftError ? "ลองอีกครั้ง" : "ลบร่าง"}
+        loading={draftBusy}
+        onConfirm={async () => {
+          setDraftBusy(true);
+          let problem: string | null;
+          try {
+            problem = await send();
+          } catch {
+            problem = "ตรวจสอบการเชื่อมต่อแล้วลองใหม่";
+          }
+          setDraftBusy(false);
+          if (problem) setDraftError(problem);
+          else onDeleted();
+        }}
+        onCancel={onCancel}
+      />
+    );
+  }
+
+  return (
+    <PasswordConfirmDialog title={`ลบ ${label}?`} confirmText="ลบเอกสาร" danger onSubmit={send} onCancel={onCancel} onDone={onDeleted}>
+      <ul className="list-disc pl-5 space-y-1">
+        {impact.sale && !impact.sale.sharedWithOtherDocs && (
+          <li>
+            รายการขายใน dashboard ที่สร้างจากใบนี้จะถูกลบด้วย
+            {impact.sale.costSatang > 0 && <> (รวมต้นทุนที่กรอกไว้ {formatSatang(impact.sale.costSatang)} บาท)</>}
+          </li>
+        )}
+        {impact.machines.total > 0 && (
+          <li>
+            เครื่องที่ลงทะเบียนจากใบนี้ {impact.machines.total} เครื่องจะถูกลบ
+            {impact.machines.withHistory > 0 && <> — ยกเว้น {impact.machines.withHistory} เครื่องที่มีประวัติบริการแล้ว (เก็บไว้)</>}
+          </li>
+        )}
+        <li>
+          {impact.isLatestNumber
+            ? "เป็นใบล่าสุดของเดือน — ใบถัดไปจะได้เลขนี้แทน (ลำดับไม่ขาด)"
+            : "ไม่ใช่ใบล่าสุด — เลขนี้จะขาดหายจากลำดับ"}
+        </li>
+      </ul>
+      <p className="text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
+        ถ้าส่งเอกสารนี้ให้ลูกค้าไปแล้ว ไม่ควรลบ — จะหายจากรายงานภาษีขาย ให้ยกเลิกหรือทำใบลดหนี้แทน
+      </p>
+    </PasswordConfirmDialog>
+  );
+}
