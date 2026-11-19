@@ -283,3 +283,50 @@ describe("dashboard sales table — a leaderboard row", () => {
     await waitFor(() => expect(listedDates()).toEqual(["5 ต.ค. 2569", "15 ต.ค. 2569", "10 ก.ย. 2569"]));
   });
 });
+
+// The sales list is cut at its limit — the table says so, but only where it could be missing sales.
+describe("dashboard sales table — a list cut at its limit", () => {
+  /** The list answers with RECORDS and says there are `total` in all. */
+  function cutAt(total: number) {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.pathname === "/api/admin/dashboard") return json(DASHBOARD);
+      if (url.pathname === "/api/admin/sales") return { ok: true, status: 200, headers: { get: (name: string) => (name === "X-Total-Count" ? String(total) : null) }, json: async () => RECORDS };
+      return json([]);
+    }));
+  }
+
+  it("says nothing for a period the list holds whole — the current year is after its oldest sale", async () => {
+    cutAt(1500);
+    await renderLoaded();
+    expect(screen.queryByTestId("sales-cut-off")).toBeNull();
+  });
+
+  it("says it for every period, and for an earlier year that reaches back past the oldest sale it holds", async () => {
+    cutAt(1500);
+    await renderLoaded();
+    fireEvent.click(screen.getByRole("button", { name: "ช่วงก่อนหน้า" }));
+    const note = await screen.findByTestId("sales-cut-off");
+    expect(note.getAttribute("role")).toBe("note");
+    expect(note.textContent).toContain("เฉพาะ 4 รายการล่าสุดจากทั้งหมด 1,500 รายการ");
+    expect(note.textContent).toContain("ตัวเลขด้านบนนับครบทุกรายการ");
+  });
+
+  it("says it for ทุกช่วงเวลา, and the Excel it writes says it is not whole", async () => {
+    cutAt(1500);
+    await renderLoaded();
+    fireEvent.click(table().getByRole("button", { name: "ตามช่วงด้านบน" }));
+    fireEvent.click(screen.getByRole("button", { name: "ทุกช่วงเวลา" }));
+    expect(await screen.findByTestId("sales-cut-off")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Excel" }));
+    expect(await screen.findByText(/ไม่ครบ — ตารางมีเฉพาะ 4 รายการล่าสุดจากทั้งหมด 1,500/)).toBeTruthy();
+  });
+
+  it("says nothing when the list is whole — or when the server did not say how many there are", async () => {
+    cutAt(4);
+    await renderLoaded();
+    fireEvent.click(screen.getByRole("button", { name: "ช่วงก่อนหน้า" }));
+    await waitFor(() => expect(listedDates()).toEqual(["20 ธ.ค. 2568"]));
+    expect(screen.queryByTestId("sales-cut-off")).toBeNull();
+  });
+});

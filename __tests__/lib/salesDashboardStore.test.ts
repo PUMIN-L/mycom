@@ -30,6 +30,8 @@ import {
   deleteCostItem,
   createSaleWithLineItems,
   insertCreditSaleTx,
+  countSalesRecords,
+  SALES_LIST_LIMIT,
   syncCostItems,
   ProductCostIsPerLineError,
   ProductCostNotAttributableError,
@@ -2478,5 +2480,29 @@ describe('a credit note sale on the dashboard form', () => {
       message: 'รายการนี้มาจากใบลดหนี้ — แก้ไขหรือยกเลิกที่ระบบบัญชี (ใบลดหนี้) แทน',
     });
     expect(conn.query).not.toHaveBeenCalled();
+  });
+});
+
+// The sales list is cut at its limit — countSalesRecords says how many there really are.
+describe('countSalesRecords / SALES_LIST_LIMIT', () => {
+  it('the list is cut at 1000, newest first', async () => {
+    expect(SALES_LIST_LIMIT).toBe(1000);
+    vi.mocked(query).mockResolvedValueOnce([[]] as never);
+    await listSalesRecords();
+    expect(String(vi.mocked(query).mock.calls[0][0])).toContain('ORDER BY sr.saleDate DESC LIMIT 1000');
+  });
+
+  it('counts the sales the SAME filters match — the DECIMAL-style string answer read as a number', async () => {
+    vi.mocked(query).mockResolvedValueOnce([[{ n: '1500' }]] as never);
+    expect(await countSalesRecords({ salespersonId: 'sp-1', dateFrom: '2026-01-01' })).toBe(1500);
+    const [sql, params] = vi.mocked(query).mock.calls[0];
+    expect(String(sql)).toBe('SELECT COUNT(*) AS n FROM sales_records sr WHERE sr.salespersonId = ? AND sr.saleDate >= ?');
+    expect(params).toEqual(['sp-1', '2026-01-01']);
+  });
+
+  it('counts every sale when nothing narrows it', async () => {
+    vi.mocked(query).mockResolvedValueOnce([[{ n: 7 }]] as never);
+    expect(await countSalesRecords()).toBe(7);
+    expect(String(vi.mocked(query).mock.calls[0][0])).toBe('SELECT COUNT(*) AS n FROM sales_records sr');
   });
 });

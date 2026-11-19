@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import type { RowDataPacket } from "mysql2";
 import { withRoute, requireAuth } from "../../../lib/apiHelpers";
 import {
+  SALES_LIST_LIMIT,
+  countSalesRecords,
   createSaleWithLineItems,
   listSalesRecords,
   normalizeSaleType,
@@ -177,7 +179,10 @@ export const GET = withRoute(
       dateTo: url.searchParams.get("dateTo") || undefined,
     };
     const records = await listSalesRecords(filters);
-    return NextResponse.json(records);
+    // The list is cut at its limit (newest first). Say how many there really
+    // are, so the page can tell the admin the older ones are not in it.
+    const total = records.length >= SALES_LIST_LIMIT ? await countSalesRecords(filters) : records.length;
+    return NextResponse.json(records, { headers: { "X-Total-Count": String(Math.max(total, records.length)) } });
   }
 );
 

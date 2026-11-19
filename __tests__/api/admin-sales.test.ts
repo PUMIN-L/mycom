@@ -11,6 +11,8 @@ vi.mock('@/app/lib/salesDashboardStore', async () => {
   );
   return {
     listSalesRecords: vi.fn(),
+    countSalesRecords: vi.fn(),
+    SALES_LIST_LIMIT: 1000,
     addSalesRecord: vi.fn(),
     createSaleWithLineItems: vi.fn(),
     getSalesRecord: vi.fn(),
@@ -26,6 +28,7 @@ vi.mock('@/app/lib/salesDashboardStore', async () => {
 });
 import {
   listSalesRecords,
+  countSalesRecords,
   createSaleWithLineItems,
   getSalesRecord,
   updateSalesRecord,
@@ -104,6 +107,20 @@ describe('Admin Sales API', () => {
       const res = await listSales(new NextRequest('http://localhost:3000/api/admin/sales'));
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual(records);
+      // Not cut: the total is what came, and nothing is counted.
+      expect(res.headers.get('X-Total-Count')).toBe('1');
+      expect(countSalesRecords).not.toHaveBeenCalled();
+    });
+
+    it('says how many sales there really are when the list was cut at its limit', async () => {
+      vi.mocked(getSession).mockResolvedValue(admin);
+      vi.mocked(listSalesRecords).mockResolvedValue(Array.from({ length: 1000 }, (_, i) => ({ id: String(i) })) as never);
+      vi.mocked(countSalesRecords).mockResolvedValue(1500);
+
+      const res = await listSales(new NextRequest('http://localhost:3000/api/admin/sales?salespersonId=sp-1'));
+      expect(res.headers.get('X-Total-Count')).toBe('1500');
+      expect(countSalesRecords).toHaveBeenCalledWith(expect.objectContaining({ salespersonId: 'sp-1' }));
+      expect((await res.json()).length).toBe(1000);
     });
   });
 

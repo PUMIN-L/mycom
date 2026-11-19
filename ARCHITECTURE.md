@@ -1295,6 +1295,14 @@ the product forms that link suppliers said ผู้ผลิต.
   badge and a red profit; the table can no longer be hidden. The view window
   (`ViewRecordModal`) is a real dialog over the admin bell (`z-[100]`) that
   Esc closes.
+- **A list cut at its limit says so**: `GET /api/admin/sales` answers at most
+  `SALES_LIST_LIMIT` (1,000) sales, newest first, and sends `X-Total-Count`
+  (`countSalesRecords` — a COUNT only when the list was cut). When that total
+  is more than was loaded AND what is on screen reaches back past the oldest
+  sale loaded (an older period, or ทุกช่วงเวลา), an amber note above the table
+  says how many there are, and the Excel's success toast says it is not whole.
+  The current period, after the oldest loaded sale, is complete and says
+  nothing. The cards count in SQL, so they are always whole.
 
 ### 8g. Accounting module (`/accounting`, schema v50–54) — sales side
 The in-house accounting module that replaces `/billing` for issuing

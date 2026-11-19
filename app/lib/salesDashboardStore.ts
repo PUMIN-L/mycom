@@ -873,13 +873,25 @@ export async function insertCreditSaleTx(
   return id;
 }
 
-export async function listSalesRecords(filters?: {
+/** The most sales one list answers with, newest first — past it the list is CUT, and says so (X-Total-Count). */
+export const SALES_LIST_LIMIT = 1000;
+
+interface SalesListFilters {
   salespersonId?: string;
   customerId?: string;
   categoryId?: number;
   dateFrom?: string;
   dateTo?: string;
-}): Promise<SalesRecord[]> {
+}
+
+/** How many sales match `filters` — what the list would hold without its limit. */
+export async function countSalesRecords(filters?: SalesListFilters): Promise<number> {
+  const { clause, params } = salesListWhere(filters);
+  const [rows] = await query<RowDataPacket[]>(`SELECT COUNT(*) AS n FROM sales_records sr${clause}`, params);
+  return Number(rows[0]?.n) || 0;
+}
+
+function salesListWhere(filters?: SalesListFilters): { clause: string; params: unknown[] } {
   const where: string[] = [];
   const params: unknown[] = [];
   if (filters?.salespersonId) {
@@ -904,9 +916,13 @@ export async function listSalesRecords(filters?: {
     where.push("sr.saleDate <= ?");
     params.push(dateTo);
   }
-  const clause = where.length > 0 ? ` WHERE ${where.join(" AND ")}` : "";
+  return { clause: where.length > 0 ? ` WHERE ${where.join(" AND ")}` : "", params };
+}
+
+export async function listSalesRecords(filters?: SalesListFilters): Promise<SalesRecord[]> {
+  const { clause, params } = salesListWhere(filters);
   const [rows] = await query<RowDataPacket[]>(
-    `${LIST_SELECT}${clause} ORDER BY sr.saleDate DESC LIMIT 1000`,
+    `${LIST_SELECT}${clause} ORDER BY sr.saleDate DESC LIMIT ${SALES_LIST_LIMIT}`,
     params
   );
   const records = rows as SalesRecord[];

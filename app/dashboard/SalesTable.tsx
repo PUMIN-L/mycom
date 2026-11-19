@@ -270,6 +270,8 @@ function SaleDetailPanel({
 }
 
 interface SalesTableProps {
+  /** The list was cut at its limit and what is on screen may be missing older sales — said above the table. */
+  cutOff?: { shown: number; total: number } | null;
   /** The sale being fetched to view or edit — its row says so, and no other opens meanwhile. */
   openingId?: string | null;
   /** Where the list's own load stands — a failure is said, never "ยังไม่มีรายการขาย". */
@@ -293,6 +295,7 @@ interface SalesTableProps {
 }
 
 export default function SalesTable({
+  cutOff = null,
   openingId = null,
   load = { status: "ok" },
   onRetry,
@@ -470,6 +473,11 @@ export default function SalesTable({
             </button>
           </span>
         </div>
+      )}
+      {cutOff && (
+        <p role="note" data-testid="sales-cut-off" className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          ตารางนี้มีเฉพาะ {cutOff.shown.toLocaleString("th-TH")} รายการล่าสุดจากทั้งหมด {cutOff.total.toLocaleString("th-TH")} รายการ — ยอดขายที่เก่ากว่านั้นไม่อยู่ในตาราง (และไม่อยู่ในไฟล์ Excel ที่ส่งออกจากตารางนี้) ส่วนตัวเลขด้านบนนับครบทุกรายการ
+        </p>
       )}
       {load.status === "loading" ? (
         <div className="py-8 text-center text-sm text-gray-400" role="status">กำลังโหลดรายการขาย…</div>

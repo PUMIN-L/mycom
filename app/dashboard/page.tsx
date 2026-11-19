@@ -305,6 +305,8 @@ export default function DashboardPage() {
   // The sales list's own load: a failure is said in the table (with ลองใหม่),
   // never "ยังไม่มีรายการขาย" — and Export will not write an empty file from it.
   const [recordsLoad, setRecordsLoad] = useState<{ status: "loading" | "ok" } | { status: "error"; message: string }>({ status: "loading" });
+  // How many sales there are in all — the list is cut at its limit (newest first).
+  const [recordsTotal, setRecordsTotal] = useState(0);
   const fetchRecords = useCallback(async () => {
     try {
       const res = await fetch("/api/admin/sales?t=" + Date.now());
@@ -318,6 +320,8 @@ export default function DashboardPage() {
         return;
       }
       setSalesRecords(list as SalesRecord[]);
+      const total = Number(res.headers?.get?.("X-Total-Count"));
+      setRecordsTotal(Number.isFinite(total) ? total : list.length);
       setRecordsLoad({ status: "ok" });
     } catch {
       setRecordsLoad({ status: "error", message: "โหลดรายการขายไม่สำเร็จ ตรวจสอบการเชื่อมต่อแล้วลองใหม่" });
@@ -419,6 +423,15 @@ export default function DashboardPage() {
   // what Export writes. Both memoized: a new array on every render would
   // reset the table's page and fold its open rows each time anything changed.
   const periodRange = useMemo(() => periodDateRange(periodType, periodValue, bangkokNow()), [periodType, periodValue]);
+  // The table can be missing sales only for days older than the oldest one it
+  // holds: a period after that (the current year, usually) is complete however
+  // many sales there are — so say it is cut only when what is on screen could be.
+  const cutOff = useMemo(() => {
+    if (recordsTotal <= salesRecords.length) return null;
+    const oldest = salesRecords.reduce((min, r) => (String(r.saleDate).slice(0, 10) < min ? String(r.saleDate).slice(0, 10) : min), "9999-99-99");
+    const reaches = recordScope === "all" || periodRange.start <= oldest;
+    return reaches ? { shown: salesRecords.length, total: recordsTotal } : null;
+  }, [recordsTotal, salesRecords, recordScope, periodRange]);
   const visibleRecords = useMemo(
     () =>
       filterSalesRecords(salesRecords, {
@@ -1090,7 +1103,10 @@ export default function DashboardPage() {
       const sheetLabel = periodScoped ? shownPeriodLabel : "ทุกช่วงเวลา";
       const filename = salesExportFileName(periodScoped ? periodValue : null);
       await downloadExcel(filename, [{ name: `Sales ${sheetLabel}`, rows }]);
-      showToast(`ส่งออก ${rows.length} รายการเป็นไฟล์ ${filename} เรียบร้อยแล้ว`, "success");
+      showToast(
+        `ส่งออก ${rows.length} รายการเป็นไฟล์ ${filename} เรียบร้อยแล้ว${cutOff ? ` (ไม่ครบ — ตารางมีเฉพาะ ${cutOff.shown.toLocaleString("th-TH")} รายการล่าสุดจากทั้งหมด ${cutOff.total.toLocaleString("th-TH")})` : ""}`,
+        "success"
+      );
     } catch {
       showToast("ไม่สามารถส่งออกไฟล์ Excel ได้", "error");
     } finally {
@@ -1633,6 +1649,7 @@ export default function DashboardPage() {
 
         {/* ── Sales Records Table ──────────────────────────────────────────── */}
         <SalesTable
+            cutOff={cutOff}
             openingId={opening?.id ?? null}
             load={recordsLoad}
             onRetry={() => {
