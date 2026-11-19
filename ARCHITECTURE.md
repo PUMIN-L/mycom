@@ -1597,6 +1597,30 @@ documents (plan: 10 steps; this section grows with each). Files:
     delivery's quantities go back to its PO; printed, it says ยกเลิก across
     it. Deleting a CN locks its invoice first and gives the value back too.
     Locks: the invoice, then its credit notes / payments.
+- **The accountant's Excel (step 9, no schema change)** — page
+  [`app/accounting/export/`](./app/accounting/export/page.tsx) (tab "Excel
+  นักบัญชี"), `POST /api/accounting/export` { month, password }; the rows are
+  built by [`exportRules.ts`](./app/lib/accounting/exportRules.ts) (pure) from
+  what [`exportData.ts`](./app/lib/accounting/exportData.ts) reads; the
+  browser writes the .xlsx (`downloadExcel`, its `title` lines and
+  `moneyColumns` formatted #,##0.00). **Nothing is stored** — computed on
+  click, as the owner asked.
+  - **One workbook per month, six sheets**: ภาษีขาย (the sales-tax report:
+    every tax document dated in the month — INV / RE / CN that are tax
+    documents, plus a services invoice's receipt issued ELSEWHERE, one row per
+    receipt; a voided one stays at 0 marked ยกเลิก so the numbers run complete;
+    a credit note negative; headed with our name, tax ID, branch and the tax
+    month in Thai), ทะเบียนเอกสาร (every document dated in the month, voided
+    and external too), รับชำระ (a voided payment at 0 with what it was; a
+    refund negative), หัก ณ ที่จ่าย (and whether each 50 ทวิ came in),
+    ลูกหนี้คงค้าง and มัดจำคงเหลือ **as at the month's last day** (only what
+    was dated before the next month — credit notes, live payments, deductions).
+  - **Money is NUMBERS in baht**, summed in satang first so a total row is
+    exact; dates as printed (`formatDisplayDate`). Every string goes through
+    the formula-injection guard, headings too.
+  - **The whole month's tax data in one file**: the month is checked first
+    (no password try spent on a slip), then the password again, and the
+    download is a line in the audit log (`data.export`).
 
 ### 9. Email (contact form) + lead persistence
 [`app/lib/mailer.ts`](./app/lib/mailer.ts) sends via SMTP (`nodemailer`, Gmail by

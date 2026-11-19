@@ -15,6 +15,7 @@ export const ACCOUNTING_TABS = [
   { key: "receipts", href: "/accounting/receipts", label: "ใบเสร็จรับเงิน" },
   { key: "credits", href: "/accounting/credit-notes", label: "ใบลดหนี้" },
   { key: "receivables", href: "/accounting/receivables", label: "ลูกหนี้คงค้าง" },
+  { key: "export", href: "/accounting/export", label: "Excel นักบัญชี" },
   { key: "settings", href: "/accounting/settings", label: "ตั้งค่าบัญชี" },
 ] as const;
 export type AccountingTabKey = (typeof ACCOUNTING_TABS)[number]["key"];

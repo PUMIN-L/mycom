@@ -108,3 +108,53 @@ describe('downloadExcel', () => {
     expect(ws['!cols']).toEqual([{ wch: 'a very long value here'.length + 2 }]);
   });
 });
+
+// Step 9 — a report's heading above its table, and money shown as money but kept a number.
+describe('downloadExcel — headings and money (with the real xlsx)', () => {
+  it('puts the heading lines above the table, a blank row between, and formats the money columns', async () => {
+    vi.resetModules();
+    const writeFile = vi.fn();
+    vi.doMock('xlsx', async (importOriginal) => ({ ...(await importOriginal<typeof import('xlsx')>()), writeFile }));
+    const { downloadExcel: freshDownloadExcel } = await import('@/app/lib/xlsxExport');
+    await freshDownloadExcel('accounting-2026-11.xlsx', [
+      {
+        name: 'ภาษีขาย',
+        title: ['รายงานภาษีขาย', 'เดือนภาษี พฤศจิกายน 2569', '=HYPERLINK("x")'],
+        rows: [
+          { 'เลขที่': 'INV2026110001', 'มูลค่า': 1070, 'หมายเหตุ': '' },
+          { 'เลขที่': '', 'มูลค่า': 1070.5, 'หมายเหตุ': 'รวม' },
+        ],
+        moneyColumns: ['มูลค่า', 'ไม่มีคอลัมน์นี้'],
+      },
+    ]);
+    const [wb, filename] = writeFile.mock.calls[0];
+    expect(filename).toBe('accounting-2026-11.xlsx');
+    const ws = wb.Sheets['ภาษีขาย'];
+    expect(ws.A1.v).toBe('รายงานภาษีขาย');
+    expect(ws.A2.v).toBe('เดือนภาษี พฤศจิกายน 2569');
+    // A heading is admin-entered text too — never a formula.
+    expect(ws.A3.v).toBe('\'=HYPERLINK("x")');
+    expect(ws.A4).toBeUndefined();
+    expect([ws.A5.v, ws.B5.v, ws.C5.v]).toEqual(['เลขที่', 'มูลค่า', 'หมายเหตุ']);
+    expect(ws.B6).toMatchObject({ t: 'n', v: 1070, z: '#,##0.00' });
+    expect(ws.B7).toMatchObject({ t: 'n', v: 1070.5, z: '#,##0.00' });
+    // The header and the text columns are left alone.
+    expect(ws.B5.z).toBeUndefined();
+    expect(ws.A6.z).toBeUndefined();
+    vi.doUnmock('xlsx');
+  });
+
+  it('formats money without a heading too — the table from the first row', async () => {
+    vi.resetModules();
+    const writeFile = vi.fn();
+    vi.doMock('xlsx', async (importOriginal) => ({ ...(await importOriginal<typeof import('xlsx')>()), writeFile }));
+    const { downloadExcel: freshDownloadExcel } = await import('@/app/lib/xlsxExport');
+    await freshDownloadExcel('plain.xlsx', [{ name: 'S', rows: [{ 'ยอด': 5, 'ข้อความ': 'x' }, { 'ยอด': '', 'ข้อความ': 'y' }], moneyColumns: ['ยอด'] }]);
+    const ws = writeFile.mock.calls[0][0].Sheets.S;
+    expect(ws.A1.v).toBe('ยอด');
+    expect(ws.A2).toMatchObject({ v: 5, z: '#,##0.00' });
+    // An empty cell in a money column is not a number — nothing to format.
+    expect(ws.A3?.z).toBeUndefined();
+    vi.doUnmock('xlsx');
+  });
+});

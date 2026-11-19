@@ -24,7 +24,9 @@ export type AuditAction =
   | "doc.void"
   | "payment.create"
   | "payment.update"
-  | "payment.void";
+  | "payment.void"
+  /** The accountant's workbook downloaded (step 9) — everything declared, in one file. */
+  | "data.export";
 
 export const AUDIT_DETAIL_MAX = 1000;
 

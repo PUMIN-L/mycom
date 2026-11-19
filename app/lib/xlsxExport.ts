@@ -35,6 +35,10 @@ export interface ExcelSheet {
   columnWidths?: number[];
   /** Compute each column's width from its header + longest cell instead. */
   autoSizeColumns?: boolean;
+  /** Lines above the table (a report's heading), one per row, then a blank row. */
+  title?: string[];
+  /** Columns (by header) holding money as numbers — shown #,##0.00, still numbers to add up. */
+  moneyColumns?: string[];
 }
 
 /** Build and download a .xlsx workbook from one or more sheets of row objects. */
@@ -44,7 +48,26 @@ export async function downloadExcel(filename: string, sheets: ExcelSheet[]): Pro
 
   for (const sheet of sheets) {
     const rows = sheet.rows.length > 0 ? sheet.rows : [{ "ไม่มีข้อมูล": "" }];
-    const ws = XLSX.utils.json_to_sheet(sanitizeRowsForExcel(rows));
+    const title = sheet.title ?? [];
+    let ws;
+    if (title.length > 0) {
+      ws = XLSX.utils.aoa_to_sheet(title.map((line) => [sanitizeExcelCell(line)]));
+      XLSX.utils.sheet_add_json(ws, sanitizeRowsForExcel(rows), { origin: title.length + 1 });
+    } else {
+      ws = XLSX.utils.json_to_sheet(sanitizeRowsForExcel(rows));
+    }
+    if (sheet.moneyColumns && sheet.rows.length > 0) {
+      const keys = Object.keys(rows[0]);
+      const headerRow = title.length > 0 ? title.length + 1 : 0;
+      for (const column of sheet.moneyColumns) {
+        const c = keys.indexOf(column);
+        if (c < 0) continue;
+        for (let r = 1; r <= rows.length; r += 1) {
+          const cell = ws[XLSX.utils.encode_cell({ r: headerRow + r, c })];
+          if (cell && cell.t === "n") cell.z = "#,##0.00";
+        }
+      }
+    }
 
     if (sheet.columnWidths) {
       ws["!cols"] = sheet.columnWidths.map((wch) => ({ wch }));
