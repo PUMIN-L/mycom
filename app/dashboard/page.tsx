@@ -1675,6 +1675,18 @@ export default function DashboardPage() {
           busy={isSaving || checkingSerials}
           onClose={closeSaleForm}
           interceptEscape={interceptFormEscape}
+          summary={
+            billRevenue > 0 || billCost > 0 ? (
+              <div role="group" aria-label="ยอดของบิลนี้" className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm tabular-nums" data-testid="sale-form-summary">
+                <span>ยอดขาย <span className="font-semibold text-gray-800">฿{fmtDec(billRevenue)}</span></span>
+                <span>ต้นทุน <span className="font-semibold text-gray-800">฿{fmtDec(billCost)}</span></span>
+                <span>กำไร <span className={`font-bold ${formProfit >= 0 ? "text-emerald-700" : "text-red-600"}`}>฿{fmtDec(formProfit)}</span></span>
+                <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${formMargin >= 20 ? "bg-emerald-100 text-emerald-700" : formMargin >= 10 ? "bg-amber-100 text-amber-700" : formMargin >= 0 ? "bg-red-100 text-red-700" : "bg-red-600 text-white"}`}>
+                  Margin {formMargin}%
+                </span>
+              </div>
+            ) : null
+          }
           notice={
             liveProblems && liveProblems.missing.length > 0 ? (
               <p role="alert" data-testid="sale-form-missing" className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
@@ -1683,11 +1695,14 @@ export default function DashboardPage() {
             ) : null
           }
           actions={
-            <button onClick={handleSave} disabled={isSaving || checkingSerials} className="px-5 py-2.5 bg-indigo-600 text-white rounded-xl font-semibold hover:bg-indigo-700 transition-all text-sm disabled:opacity-50">
+            <button onClick={handleSave} disabled={isSaving || checkingSerials} className="px-5 py-2.5 bg-[#065f46] text-white rounded-xl font-semibold hover:bg-[#047857] transition-all text-sm disabled:opacity-50">
               {isSaving ? "กำลังบันทึก..." : checkingSerials ? "กำลังตรวจสอบ Serial..." : editingId ? "บันทึกการแก้ไข" : "บันทึกยอดขาย"}
             </button>
           }
         >
+              {/* Item 9: the form in sections — what was sold, to whom, what it
+                  cost, its documents, its warranty — headings over the fields. */}
+              <h3 className="text-xs font-bold uppercase tracking-wide text-gray-500">ข้อมูลการขาย</h3>
               <div className="flex items-center gap-6 pb-2">
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input type="radio" name="saleType" value="equipment" checked={form.saleType === "equipment"} onChange={(e) => { const v = e.target.value; setForm(prev => ({ ...prev, saleType: v })); }} className="w-4 h-4 text-indigo-600 focus:ring-indigo-500" />
@@ -1713,6 +1728,7 @@ export default function DashboardPage() {
                 </div>
               </div>
 
+              <h3 className="pt-3 border-t border-gray-100 text-xs font-bold uppercase tracking-wide text-gray-500">สินค้าและลูกค้า</h3>
               {/* ── Quotation picker (tasks 10-11) ─────────────────────────
                   Replaces the old plain "อ้างอิงใบเสนอราคา" text input, which
                   it still contains and keeps editable when no quotation is
@@ -1883,6 +1899,7 @@ export default function DashboardPage() {
               </fieldset>
               )}
 
+              <h3 className="pt-3 border-t border-gray-100 text-xs font-bold uppercase tracking-wide text-gray-500">ต้นทุน</h3>
               {/* ── Cost Calculator ──────────────────────────────────── */}
               <div className="border border-dashed border-emerald-300 rounded-xl bg-emerald-50/50 p-4">
                 <div className="flex justify-between items-center mb-3">
@@ -1893,14 +1910,7 @@ export default function DashboardPage() {
                   >
                     💰 {showCostCalc ? "ซ่อน" : "เปิด"} ตัวช่วยคำนวณต้นทุน
                   </button>
-                  {(billRevenue > 0 || billCost > 0) && (
-                    <div className="flex items-center gap-3 text-sm">
-                      <span className="text-gray-500">กำไร: <span className={`font-bold ${formProfit >= 0 ? "text-emerald-700" : "text-red-600"}`}>฿{fmtDec(formProfit)}</span></span>
-                      <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${formMargin >= 20 ? "bg-emerald-100 text-emerald-700" : formMargin >= 10 ? "bg-amber-100 text-amber-700" : formMargin >= 0 ? "bg-red-100 text-red-700" : "bg-red-200 text-red-800"}`}>
-                        Margin {formMargin}%
-                      </span>
-                    </div>
-                  )}
+                  {/* The profit and margin are in the footer now — always in sight (item 9). */}
                 </div>
 
                 {/* On a line-item bill the product cost is entered per line, so
@@ -1975,6 +1985,7 @@ export default function DashboardPage() {
                 )}
               </div>
 
+              <h3 className="pt-3 border-t border-gray-100 text-xs font-bold uppercase tracking-wide text-gray-500">เอกสารอ้างอิง</h3>
               <div className={`grid gap-4 ${quotationEnabled ? "grid-cols-1" : "grid-cols-2"}`}>
                 {/* When the picker is on screen it owns this field (it keeps the
                     same free-text input, always editable — task 10.3). */}
@@ -2012,6 +2023,9 @@ export default function DashboardPage() {
 
               {/* Bill-level warranty + serials: replaced by the per-machine rows
                   of the line editor whenever a quotation line is in play. */}
+              {!linesActive && form.saleType === "equipment" && (
+                <h3 className="pt-3 border-t border-gray-100 text-xs font-bold uppercase tracking-wide text-gray-500">การรับประกัน</h3>
+              )}
               {!linesActive && form.saleType === "equipment" && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
@@ -2118,6 +2132,7 @@ export default function DashboardPage() {
 
 
 
+              <h3 className="pt-3 border-t border-gray-100 text-xs font-bold uppercase tracking-wide text-gray-500">หมายเหตุ</h3>
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-1.5">หมายเหตุ</label>
                 <textarea value={form.note} onChange={(e) => { const v = e.target.value; setForm(prev => ({ ...prev, note: v })); }} rows={2} placeholder="หมายเหตุ (ถ้ามี)"

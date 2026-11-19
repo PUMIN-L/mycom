@@ -26,6 +26,7 @@ export default function SaleFormShell({
   interceptEscape,
   actions,
   notice,
+  summary,
   children,
 }: {
   title: string;
@@ -41,6 +42,8 @@ export default function SaleFormShell({
   actions: ReactNode;
   /** Said above the footer's buttons — what still stops the save (item 4). */
   notice?: ReactNode;
+  /** Beside the footer's buttons — the bill's money as it stands (item 9). */
+  summary?: ReactNode;
   children: ReactNode;
 }) {
   const [confirmDiscard, setConfirmDiscard] = useState(false);
@@ -115,7 +118,8 @@ export default function SaleFormShell({
 
           <div className="p-6 border-t border-gray-100 space-y-3 shrink-0">
             {notice}
-            <div className="flex justify-end gap-3">
+            <div className="flex flex-wrap items-center justify-end gap-3">
+              {summary && <div className="mr-auto min-w-0">{summary}</div>}
               <button
                 type="button"
                 onClick={requestClose}

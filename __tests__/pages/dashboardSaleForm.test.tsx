@@ -259,3 +259,34 @@ describe("dashboard — บันทึกยอดขาย with the accounting
     expect(screen.queryByRole("button", { name: "บันทึกยอดขาย" })).toBeNull();
   });
 });
+
+// Item 9 — the form in sections, the bill's money always in sight, one green for "save".
+describe("dashboard sale form — sections and the bill's money", () => {
+  it("heads its parts: what was sold, to whom, what it cost, its documents, a note", async () => {
+    const dialog = await openNewSale();
+    const headings = within(dialog).getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
+    expect(headings).toEqual(expect.arrayContaining(["ข้อมูลการขาย", "สินค้าและลูกค้า", "ต้นทุน", "เอกสารอ้างอิง", "หมายเหตุ"]));
+    // A machine sale has its warranty under its own heading; a service sale has none.
+    expect(headings).toContain("การรับประกัน");
+    fireEvent.click(within(dialog).getByLabelText(/ขายงาน Service/));
+    expect(within(dialog).queryByRole("heading", { name: "การรับประกัน" })).toBeNull();
+  });
+
+  it("shows sales, cost, profit and margin by the save button — as they are typed", async () => {
+    const dialog = await openNewSale();
+    expect(within(dialog).queryByTestId("sale-form-summary")).toBeNull();
+    fireEvent.click(within(dialog).getByLabelText(/ขายงาน Service/));
+    const priceBox = within(dialog).getByText(/ราคาต่อหน่วย/).parentElement!.querySelector("input")!;
+    fireEvent.change(priceBox, { target: { value: "1000" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: /เปิด ตัวช่วยคำนวณต้นทุน/ }));
+    const costRow = within(dialog).getByPlaceholderText("รายละเอียด (เช่น ค่ารถไปส่ง)").parentElement!;
+    fireEvent.change(within(costRow).getByPlaceholderText("0"), { target: { value: "1200" } });
+    const summary = within(dialog).getByTestId("sale-form-summary");
+    expect(summary.textContent).toMatch(/ยอดขาย ฿1,000\.00/);
+    expect(summary.textContent).toMatch(/ต้นทุน ฿1,200\.00/);
+    expect(summary.textContent).toMatch(/กำไร ฿-200\.00/);
+    expect(within(summary).getByText("Margin -20%").className).toContain("bg-red-600");
+    // The save button is the header's green, not a second colour for the same action.
+    expect(within(dialog).getByRole("button", { name: "บันทึกยอดขาย" }).className).toContain("bg-[#065f46]");
+  });
+});

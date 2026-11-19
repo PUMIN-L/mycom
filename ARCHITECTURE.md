@@ -1241,6 +1241,12 @@ the product forms that link suppliers said ผู้ผลิต.
   form runs it LIVE (`liveProblems`), so the footer's `role="alert"` list
   (SaleFormShell `notice`) and the red borders lose each thing as it is filled
   — it used to be a toast gone in 3 seconds.
+- **The form is in sections** — ข้อมูลการขาย, สินค้าและลูกค้า, ต้นทุน,
+  เอกสารอ้างอิง, การรับประกัน (a machine sold without quotation lines),
+  หมายเหตุ — and the bill's ยอดขาย / ต้นทุน / กำไร / Margin sit by the save
+  button (SaleFormShell `summary`), live as they are typed, a loss in its own
+  red. Its save button is the header's green (#065f46), one colour for one
+  action.
 - **The table keeps to the period picked at the top** (or "ทุกช่วงเวลา"): its
   days are `periodDateRange` ([`lib/dashboardPeriod.ts`](./app/lib/dashboardPeriod.ts)),
   the same function `getPeriodDateRange` uses for the figures, so the two never
