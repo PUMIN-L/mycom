@@ -6,6 +6,7 @@ import { useSearchParams } from "next/navigation";
 import DatePicker from "../components/DatePicker";
 import { toLocalDateString } from "../lib/dateFormat";
 import { downloadExcel } from "../lib/xlsxExport";
+import { errorMessageOf } from "../lib/apiErrorMessage";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine,
   Legend,
@@ -122,11 +123,19 @@ function PeriodTick({ x, y, payload, current }: {
   );
 }
 
+/** A section whose figures did not load — never "ยังไม่มีข้อมูล" (the error box above says why). */
+function LoadFailed({ tall = false }: { tall?: boolean }) {
+  return <div className={`${tall ? "h-64 flex items-center justify-center" : "py-8 text-center"} text-sm text-red-600`}>โหลดไม่สำเร็จ</div>;
+}
+
 // ── Main Component ───────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
+  // Why the figures did not load — said on the page until a retry lands, so
+  // a failure never reads as a period with no sales (item 3).
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [periodType, setPeriodType] = useState<PeriodType>("year");
   const [periodValue, setPeriodValue] = useState<string>(() => currentPeriodValue("year", bangkokNow()));
   const [chartMode, setChartMode] = useState<"monthly" | "quarterly">("monthly");
@@ -260,19 +269,26 @@ export default function DashboardPage() {
       const res = await fetch(
         `/api/admin/dashboard?periodType=${encodeURIComponent(periodType)}&periodValue=${encodeURIComponent(periodValue)}`
       );
-      const body = res.ok ? await res.json() : null;
-      if (request !== dashboardRequestRef.current) return;
-      if (!body) throw new Error(`dashboard ${res.status}`);
-      setData(body);
+      if (!res.ok) {
+        const message = await errorMessageOf(res, "โหลดข้อมูล Dashboard ไม่สำเร็จ");
+        if (request !== dashboardRequestRef.current) return;
+        // No figures rather than the PREVIOUS period's under the new period's
+        // name — the badge already shows the period that was asked for.
+        setData(null);
+        setLoadError(message);
+      } else {
+        const body = await res.json();
+        if (request !== dashboardRequestRef.current) return;
+        setData(body);
+        setLoadError(null);
+      }
     } catch {
       if (request !== dashboardRequestRef.current) return;
-      // No figures rather than the PREVIOUS period's under the new period's
-      // name — the badge already shows the period that was asked for.
       setData(null);
-      showToast("โหลดข้อมูล Dashboard ไม่สำเร็จ กรุณาลองใหม่", "error");
+      setLoadError("โหลดข้อมูล Dashboard ไม่สำเร็จ ตรวจสอบการเชื่อมต่อแล้วลองใหม่");
     }
     if (request === dashboardRequestRef.current) setLoading(false);
-  }, [periodType, periodValue, showToast]);
+  }, [periodType, periodValue]);
 
   // Fetch lookups
   const fetchLookups = useCallback(async () => {
@@ -287,11 +303,26 @@ export default function DashboardPage() {
     } catch { /* ignore */ }
   }, []);
 
+  // The sales list's own load: a failure is said in the table (with ลองใหม่),
+  // never "ยังไม่มีรายการขาย" — and Export will not write an empty file from it.
+  const [recordsLoad, setRecordsLoad] = useState<{ status: "loading" | "ok" } | { status: "error"; message: string }>({ status: "loading" });
   const fetchRecords = useCallback(async () => {
     try {
       const res = await fetch("/api/admin/sales?t=" + Date.now());
-      if (res.ok) setSalesRecords(await res.json());
-    } catch { /* ignore */ }
+      if (!res.ok) {
+        setRecordsLoad({ status: "error", message: await errorMessageOf(res, "โหลดรายการขายไม่สำเร็จ") });
+        return;
+      }
+      const list: unknown = await res.json();
+      if (!Array.isArray(list)) {
+        setRecordsLoad({ status: "error", message: "โหลดรายการขายไม่สำเร็จ" });
+        return;
+      }
+      setSalesRecords(list as SalesRecord[]);
+      setRecordsLoad({ status: "ok" });
+    } catch {
+      setRecordsLoad({ status: "error", message: "โหลดรายการขายไม่สำเร็จ ตรวจสอบการเชื่อมต่อแล้วลองใหม่" });
+    }
   }, []);
 
   useEffect(() => { fetchDashboard(); }, [fetchDashboard]);
@@ -1038,6 +1069,10 @@ export default function DashboardPage() {
   const [isExporting, setIsExporting] = useState(false);
   const handleExport = async () => {
     if (isExporting) return;
+    if (recordsLoad.status !== "ok") {
+      showToast(recordsLoad.status === "error" ? "โหลดรายการขายไม่สำเร็จ — กดลองใหม่ที่ตารางก่อนส่งออก" : "กำลังโหลดรายการขาย รอสักครู่", "error");
+      return;
+    }
     const targetRecords = visibleRecords;
     if (targetRecords.length === 0) {
       showToast("ไม่มีข้อมูลยอดขายสำหรับส่งออก", "error");
@@ -1280,6 +1315,17 @@ export default function DashboardPage() {
           </div>
         </div>
 
+        {/* A failed load says so — and offers to try again — instead of an empty period. */}
+        {!loading && loadError && (
+          <div role="alert" data-testid="dashboard-load-error" className="mb-8 bg-white rounded-2xl border border-red-100 p-6 text-center space-y-3">
+            <p className="text-red-700 font-semibold">{loadError}</p>
+            <p className="text-sm text-gray-500">ตัวเลขของ{shownPeriodLabel}ยังไม่ได้โหลด — ไม่ได้แปลว่าไม่มียอดขาย</p>
+            <button type="button" onClick={() => void fetchDashboard()} className="px-5 py-2.5 rounded-xl border border-gray-300 font-semibold text-gray-700 hover:bg-gray-50">
+              ลองใหม่
+            </button>
+          </div>
+        )}
+
         {/* ── Overview Cards ──────────────────────────────────────────────── */}
         {loading ? (
           <div className="space-y-4 mb-8">
@@ -1353,6 +1399,8 @@ export default function DashboardPage() {
             </div>
             {loading ? (
               <div className="h-64 bg-gray-100 rounded-xl animate-pulse" />
+            ) : loadError ? (
+              <LoadFailed tall />
             ) : (
               <div className="flex flex-col gap-8">
                 {/* Chart 1: Revenue vs Cost of goods sold (task 17.1).
@@ -1435,6 +1483,8 @@ export default function DashboardPage() {
             <h2 className="text-lg font-bold text-gray-800 mb-4">สัดส่วนตามหมวดหมู่</h2>
             {loading ? (
               <div className="h-64 bg-gray-100 rounded-xl animate-pulse" />
+            ) : loadError ? (
+              <LoadFailed tall />
             ) : (
               <CategoryShareChart items={data?.revenueByCategory ?? []} />
             )}
@@ -1475,7 +1525,7 @@ export default function DashboardPage() {
                 ))}
               </div>
             ) : (
-              <div className="text-center text-gray-400 py-8 text-sm">ยังไม่มีข้อมูล</div>
+              loadError ? <LoadFailed /> : <div className="text-center text-gray-400 py-8 text-sm">ยังไม่มีข้อมูล</div>
             )}
           </div>
 
@@ -1508,7 +1558,7 @@ export default function DashboardPage() {
                 ))}
               </div>
             ) : (
-              <div className="text-center text-gray-400 py-8 text-sm">ยังไม่มีข้อมูล</div>
+              loadError ? <LoadFailed /> : <div className="text-center text-gray-400 py-8 text-sm">ยังไม่มีข้อมูล</div>
             )}
           </div>
         </div>
@@ -1581,13 +1631,18 @@ export default function DashboardPage() {
               </table>
             </div>
           ) : (
-            <div className="text-center text-gray-400 py-8 text-sm">ยังไม่มีข้อมูล</div>
+            loadError ? <LoadFailed /> : <div className="text-center text-gray-400 py-8 text-sm">ยังไม่มีข้อมูล</div>
           )}
         </div>
 
         {/* ── Sales Records Table ──────────────────────────────────────────── */}
         {showRecords && (
           <SalesTable
+            load={recordsLoad}
+            onRetry={() => {
+              setRecordsLoad({ status: "loading" });
+              void fetchRecords();
+            }}
             records={visibleRecords}
             periodLabel={shownPeriodLabel}
             scope={recordScope}

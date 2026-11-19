@@ -269,6 +269,9 @@ function SaleDetailPanel({
 }
 
 interface SalesTableProps {
+  /** Where the list's own load stands — a failure is said, never "ยังไม่มีรายการขาย". */
+  load?: { status: "loading" | "ok" } | { status: "error"; message: string };
+  onRetry?: () => void;
   /** The sales to list — already kept to the scope, the focus and the search
    * (dashboard/salesFilters.ts), the same list the page exports. */
   records: SalesRecord[];
@@ -288,6 +291,8 @@ interface SalesTableProps {
 }
 
 export default function SalesTable({
+  load = { status: "ok" },
+  onRetry,
   records,
   periodLabel,
   scope,
@@ -474,7 +479,18 @@ export default function SalesTable({
           </span>
         </div>
       )}
-      {filtered.length > 0 ? (
+      {load.status === "loading" ? (
+        <div className="py-8 text-center text-sm text-gray-400" role="status">กำลังโหลดรายการขาย…</div>
+      ) : load.status === "error" ? (
+        <div role="alert" data-testid="sales-load-error" className="py-8 text-center space-y-3">
+          <p className="text-sm text-red-700 font-semibold">{load.message}</p>
+          {onRetry && (
+            <button type="button" onClick={onRetry} className="px-4 py-2 rounded-xl border border-gray-300 text-sm font-semibold text-gray-700 hover:bg-gray-50">
+              ลองใหม่
+            </button>
+          )}
+        </div>
+      ) : filtered.length > 0 ? (
         <>
           <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
           <table className="w-full">

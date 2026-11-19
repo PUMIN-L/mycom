@@ -1245,6 +1245,13 @@ the product forms that link suppliers said ผู้ผลิต.
   `lineItems` for this — a company by `companyId`; a row with one bill in the
   period opens it. Export writes exactly the table's list, money as numbers
   (mysql2 sends DECIMAL as strings, which Excel kept as text).
+- **A failed load is said, never read as "no sales"**: the figures' load
+  keeps its error (`loadError`, the route's own message — a 401 reads as the
+  session) in a `role="alert"` box with ลองใหม่ until a retry lands; every
+  list says "โหลดไม่สำเร็จ" instead of "ยังไม่มีข้อมูล", and the permanent cost
+  note under the charts stays. The sales list has its own load state
+  (loading / ok / error in `SalesTable`, ลองใหม่), and Export refuses to write
+  a file while the list is not loaded.
 
 ### 8g. Accounting module (`/accounting`, schema v50–54) — sales side
 The in-house accounting module that replaces `/billing` for issuing

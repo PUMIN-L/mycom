@@ -200,9 +200,62 @@ describe("dashboard — while loading and on failure", () => {
     await renderLoaded();
     vi.mocked(fetch).mockImplementation(async () => ({ ok: false, status: 500, json: async () => ({}) }) as Response);
     fireEvent.click(screen.getByRole("button", { name: "ช่วงก่อนหน้า" }));
-    expect(await screen.findByText("โหลดข้อมูล Dashboard ไม่สำเร็จ กรุณาลองใหม่")).toBeTruthy();
+    expect(within(await screen.findByTestId("dashboard-load-error")).getByText("โหลดข้อมูล Dashboard ไม่สำเร็จ")).toBeTruthy();
     expect(document.querySelector("[data-overview-cards]")).toBeNull();
     expect(screen.queryByText("฿150,000")).toBeNull();
+  });
+
+  // Item 3: a failure is said on the page until it is fixed — never "ยังไม่มีข้อมูล".
+  it("says the period did not load — not that it had no sales — and loads it again on ลองใหม่", async () => {
+    const working = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) =>
+      new URL(String(input), "http://localhost").pathname === "/api/admin/dashboard"
+        ? ({ ok: false, status: 503, json: async () => ({ error: "ฐานข้อมูลไม่ตอบสนอง" }) } as Response)
+        : working(input, init)
+    );
+    render(<DashboardPage />);
+    const box = await screen.findByTestId("dashboard-load-error");
+    expect(box.getAttribute("role")).toBe("alert");
+    expect(within(box).getByText("ฐานข้อมูลไม่ตอบสนอง")).toBeTruthy();
+    expect(within(box).getByText(/ยังไม่ได้โหลด — ไม่ได้แปลว่าไม่มียอดขาย/)).toBeTruthy();
+    // Every list says it did not load; none says there is nothing.
+    expect(screen.getAllByText("โหลดไม่สำเร็จ").length).toBeGreaterThanOrEqual(5);
+    expect(screen.queryByText("ยังไม่มีข้อมูล")).toBeNull();
+    // The permanent note under the charts stays.
+    expect(screen.getByText(/ตัวเลขสองกราฟจึงไม่เท่ากันเป็นปกติ/)).toBeTruthy();
+
+    vi.mocked(fetch).mockImplementation(working);
+    fireEvent.click(within(box).getByRole("button", { name: "ลองใหม่" }));
+    await waitFor(() => expect(document.querySelector("[data-overview-cards]")).toBeTruthy());
+    expect(screen.queryByTestId("dashboard-load-error")).toBeNull();
+    expect(screen.queryByText("โหลดไม่สำเร็จ")).toBeNull();
+  });
+
+  it("says a session that ran out, in the box", async () => {
+    vi.mocked(fetch).mockImplementation(async () => ({ ok: false, status: 401, json: async () => ({}) }) as Response);
+    render(<DashboardPage />);
+    expect(within(await screen.findByTestId("dashboard-load-error")).getByText(/เซสชัน/)).toBeTruthy();
+  });
+
+  it("says the sales list did not load — with ลองใหม่ — and will not export an empty file from it", async () => {
+    const working = vi.mocked(fetch).getMockImplementation()!;
+    let salesFail = true;
+    vi.mocked(fetch).mockImplementation(async (input, init) =>
+      new URL(String(input), "http://localhost").pathname === "/api/admin/sales" && salesFail
+        ? ({ ok: false, status: 500, json: async () => ({}) } as Response)
+        : working(input, init)
+    );
+    await renderLoaded();
+    const box = await screen.findByTestId("sales-load-error");
+    expect(within(box).getByText("โหลดรายการขายไม่สำเร็จ")).toBeTruthy();
+    expect(screen.queryByText(/ยังไม่มีรายการขาย/)).toBeNull();
+    fireEvent.click(screen.getByTitle("Export Excel"));
+    expect(await screen.findByText("โหลดรายการขายไม่สำเร็จ — กดลองใหม่ที่ตารางก่อนส่งออก")).toBeTruthy();
+
+    salesFail = false;
+    fireEvent.click(within(box).getByRole("button", { name: "ลองใหม่" }));
+    await waitFor(() => expect(screen.queryByTestId("sales-load-error")).toBeNull());
+    expect(await screen.findByText(/ยังไม่มีรายการขาย/)).toBeTruthy();
   });
 });
 
