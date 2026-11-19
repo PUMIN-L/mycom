@@ -25,6 +25,7 @@ export default function SaleFormShell({
   onClose,
   interceptEscape,
   actions,
+  notice,
   children,
 }: {
   title: string;
@@ -38,6 +39,8 @@ export default function SaleFormShell({
   interceptEscape?: () => boolean;
   /** The footer's buttons after ยกเลิก (the save button). */
   actions: ReactNode;
+  /** Said above the footer's buttons — what still stops the save (item 4). */
+  notice?: ReactNode;
   children: ReactNode;
 }) {
   const [confirmDiscard, setConfirmDiscard] = useState(false);
@@ -110,16 +113,19 @@ export default function SaleFormShell({
 
           <div className="flex-1 overflow-y-auto p-6 space-y-4">{children}</div>
 
-          <div className="p-6 border-t border-gray-100 flex justify-end gap-3 shrink-0">
-            <button
-              type="button"
-              onClick={requestClose}
-              disabled={busy}
-              className="px-5 py-2.5 bg-gray-100 text-gray-700 rounded-xl font-semibold hover:bg-gray-200 transition-all text-sm disabled:opacity-50"
-            >
-              ยกเลิก
-            </button>
-            {actions}
+          <div className="p-6 border-t border-gray-100 space-y-3 shrink-0">
+            {notice}
+            <div className="flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={requestClose}
+                disabled={busy}
+                className="px-5 py-2.5 bg-gray-100 text-gray-700 rounded-xl font-semibold hover:bg-gray-200 transition-all text-sm disabled:opacity-50"
+              >
+                ยกเลิก
+              </button>
+              {actions}
+            </div>
           </div>
         </div>
       </div>

@@ -32,13 +32,13 @@ import {
   summarizeBillLevelCosts,
   validateLineDrafts,
 } from "../lib/quotationToSale";
-import type { MissingCostLocation, SaleLineDraft } from "../lib/quotationToSale";
+import type { SaleLineDraft } from "../lib/quotationToSale";
 import ViewRecordModal from "./ViewRecordModal";
 import SalesTable from "./SalesTable";
 import SaleFormShell from "./SaleFormShell";
 import { isAccountingEnabled } from "../lib/accounting/flags";
 import BacklogSection from "./BacklogSection";
-import { saleFormSnapshot } from "./saleFormHelpers";
+import { saleFormProblems, saleFormSnapshot } from "./saleFormHelpers";
 import { filterSalesRecords, salesExportFileName, type SalesFocus } from "./salesFilters";
 import type { RecordScope } from "./SalesTable";
 import {
@@ -616,6 +616,21 @@ export default function DashboardPage() {
     return warnings;
   };
 
+  /** What stops the save right now — `saleFormProblems` over the form as it stands. */
+  const currentProblems = () =>
+    saleFormProblems({
+      form,
+      useLines: linesActive,
+      lineErrors: linesActive ? (lineReport ? lineReport.errors : validateLineDrafts(lines)) : [],
+      missingCosts: linesActive ? (lineReport ? lineReport.missingCosts : findMissingCosts(lines)) : [],
+      costItems,
+      showCostCalc,
+    });
+  // After a save that failed on them: the form keeps saying what is missing —
+  // and painting it red — until each is filled (item 4).
+  const liveProblems = showForm && submitAttempted ? currentProblems() : null;
+  const fieldErrors: Partial<Record<string, boolean>> = liveProblems ? liveProblems.errors : formErrors;
+
   // Save sales record
   const handleSave = () => { void runSave(false); };
 
@@ -629,28 +644,13 @@ export default function DashboardPage() {
     const useLines = linesActive;
     setSubmitAttempted(true);
 
-    const errors: Record<string, boolean> = {};
-    if (!form.saleDate) errors.saleDate = true;
-    if (!form.poRef.trim()) errors.poRef = true;
-    if (form.deliveryRef && !form.invoiceRef) errors.invoiceRef = true;
-
     // The product / quantity / price / warranty / serial rules live on the
     // LINES when a quotation is driving the bill, and on the flat fields when
     // it is not. `validateLineDrafts` is the only hard blocker on that side —
-    // everything else in Phase 2 is a confirmable warning.
-    let lineErrors: string[] = [];
-    if (useLines) {
-      lineErrors = lineReport ? lineReport.errors : validateLineDrafts(lines);
-      if (lineErrors.length > 0) errors.lines = true;
-    } else {
-      if (!form.productName.trim()) errors.productName = true;
-      if (!form.qty || form.qty <= 0) errors.qty = true;
-      if (!form.unitPrice || form.unitPrice <= 0) errors.unitPrice = true;
-      if (form.saleType === "equipment") {
-        if (!form.warrantyStartDate) errors.warrantyStartDate = true;
-        if (!form.warrantyEndDate) errors.warrantyEndDate = true;
-      }
-    }
+    // everything else in Phase 2 is a confirmable warning. The checks
+    // themselves are `saleFormProblems` — the same the form shows live after
+    // a failed save (item 4); here only what they open and point at.
+    const { errors, missing } = currentProblems();
 
     const billCostTotal = costItems.reduce((acc, curr) => acc + curr.amount, 0);
     // Report 6 — ticked lines whose ต้นทุนสินค้า is still empty/0. A required
@@ -659,73 +659,33 @@ export default function DashboardPage() {
     // asked to approve a bill that cannot be saved anyway. `submitAttempted`,
     // set at the top of this function, is what makes the editor paint those
     // ต้นทุนสินค้า inputs red; this list only names them in the Thai summary.
-    let missingCosts: MissingCostLocation[] = [];
     if (useLines) {
       // Product cost is per line here, so the cost calculator is optional and
       // must NOT carry a bill-level ต้นทุนสินค้า: `syncCostItems` cannot split
       // one number across several lines and would answer 400. Caught in the
-      // form instead, in Thai, before anything is posted.
-      if (costItems.some(ci => ci.costType === "product_cost")) {
+      // form instead, in Thai, before anything is posted. (A line missing its
+      // cost is NOT `setCostSubmitError`: those inputs are in the line editor,
+      // and reddening the calculator would point at the wrong box.)
+      if (errors.productCostOnBill) {
         setCostSubmitError(true);
         setShowCostCalc(true);
-        errors.productCostOnBill = true;
       }
-      missingCosts = lineReport ? lineReport.missingCosts : findMissingCosts(lines);
-      if (missingCosts.length > 0) {
-        // NOT `setCostSubmitError`: the offending inputs are in the line editor,
-        // not in the cost calculator, and reddening the calculator would point
-        // the admin at the wrong box.
-        errors.lineCost = true;
-      }
-      if (showCostCalc && costItems.some(ci => !ci.amount || ci.amount <= 0)) {
-        setCostSubmitError(true);
-        errors.costItems = true;
-      }
+      if (errors.costItems) setCostSubmitError(true);
     } else if (!showCostCalc || costItems.length === 0 || billCostTotal <= 0) {
       setCostSubmitError(true);
       setShowCostCalc(true);
       if (costItems.length === 0) {
         setCostItems([{ costType: "product_cost", label: "", amount: 0, note: "" }]);
       }
-      errors.costItems = true;
-    } else {
-      const hasEmptyCost = costItems.some(ci => !ci.amount || ci.amount <= 0);
-      if (hasEmptyCost) {
-        setCostSubmitError(true);
-        errors.costItems = true;
-      }
+    } else if (errors.costItems) {
+      setCostSubmitError(true);
     }
 
-    if (Object.keys(errors).length > 0) {
+    if (missing.length > 0) {
       setFormErrors(errors);
-      // Build specific error message
-      const missing: string[] = [];
-      if (errors.saleDate) missing.push("วันที่ขาย");
-      if (errors.productName) missing.push("ชื่อสินค้า");
-      if (errors.qty) missing.push("จำนวน");
-      if (errors.unitPrice) missing.push("ราคา");
-      if (errors.poRef) missing.push("อ้างอิง PO");
-      if (errors.warrantyStartDate) missing.push("วันเริ่มรับประกัน");
-      if (errors.warrantyEndDate) missing.push("วันสิ้นสุดรับประกัน");
-      if (errors.invoiceRef) missing.push("อ้างอิง Invoice");
-      if (errors.lineCost) {
-        // Report 6 — name the exact lines, the way the serial blocker names the
-        // exact machine, so the admin knows which red box to go and fill in.
-        const where = missingCosts
-          .map((m) => `รายการที่ ${m.lineIndex + 1}${m.productName ? ` (${m.productName})` : ""}`)
-          .join(", ");
-        missing.push(`ต้นทุนสินค้าของ${where} (กรอกที่ช่อง «ต้นทุนสินค้า» ของแต่ละรายการ)`);
-      }
-      if (errors.productCostOnBill) missing.push("ย้ายรายการ «ต้นทุนสินค้า» ในตัวช่วยคำนวณต้นทุนไปกรอกที่แต่ละรายการสินค้า");
-      if (errors.costItems) missing.push("ต้นทุน (กรุณาเปิดเครื่องคิดต้นทุน แล้วกรอกยอดต้นทุน)");
-      if (errors.lines) {
-        // `validateLineDrafts` lists the missing costs too; skip those here so
-        // the toast does not say the same thing twice.
-        const firstOther = lineErrors.find((e) => !e.endsWith("กรุณาระบุต้นทุนสินค้า"));
-        if (firstOther) missing.push(firstOther);
-        else if (!errors.lineCost) missing.push("รายการสินค้า");
-      }
-      showToast(`กรุณากรอก: ${missing.join(", ")}`, "error");
+      // What is missing now stays in the form's footer (`liveProblems`) until
+      // it is filled — the 3-second toast it used to be was gone before the
+      // admin had found the first red box.
       setTimeout(() => {
         const firstErrorElement = document.querySelector('.error-border');
         if (firstErrorElement) {
@@ -1676,6 +1636,13 @@ export default function DashboardPage() {
           busy={isSaving || checkingSerials}
           onClose={closeSaleForm}
           interceptEscape={interceptFormEscape}
+          notice={
+            liveProblems && liveProblems.missing.length > 0 ? (
+              <p role="alert" data-testid="sale-form-missing" className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                {`กรุณากรอก: ${liveProblems.missing.join(", ")}`}
+              </p>
+            ) : null
+          }
           actions={
             <button onClick={handleSave} disabled={isSaving || checkingSerials} className="px-5 py-2.5 bg-indigo-600 text-white rounded-xl font-semibold hover:bg-indigo-700 transition-all text-sm disabled:opacity-50">
               {isSaving ? "กำลังบันทึก..." : checkingSerials ? "กำลังตรวจสอบ Serial..." : editingId ? "บันทึกการแก้ไข" : "บันทึกยอดขาย"}
@@ -1698,7 +1665,7 @@ export default function DashboardPage() {
                   <DatePicker
                       selected={form.saleDate ? new Date(form.saleDate) : null}
                       onChange={(date) => { const v = date ? toLocalDateString(date) : ""; setForm(prev => ({ ...prev, saleDate: v })); }}
-                      className={`w-full px-4 py-2.5 border rounded-xl text-sm focus:outline-none focus:ring-2 transition-all ${formErrors.saleDate ? "border-red-500 bg-red-50 focus:border-red-500 focus:ring-red-200 error-border" : "bg-gray-50 border-gray-200 focus:ring-indigo-500/20 focus:border-indigo-500"}`}
+                      className={`w-full px-4 py-2.5 border rounded-xl text-sm focus:outline-none focus:ring-2 transition-all ${fieldErrors.saleDate ? "border-red-500 bg-red-50 focus:border-red-500 focus:ring-red-200 error-border" : "bg-gray-50 border-gray-200 focus:ring-indigo-500/20 focus:border-indigo-500"}`}
                     />
                 </div>
                 <div>
@@ -1803,7 +1770,7 @@ export default function DashboardPage() {
                   value={form.productName}
                   onChange={(e) => { const v = e.target.value; setForm(prev => ({ ...prev, productName: v })); }}
                   placeholder="ชื่อเครื่อง / สินค้า / บริการ"
-                  className={`w-full px-3 py-2.5 border rounded-xl text-sm focus:ring-2 outline-none disabled:bg-gray-100 disabled:text-gray-500 ${formErrors.productName ? "border-red-500 bg-red-50 focus:border-red-500 focus:ring-red-200 error-border" : "border-gray-200 focus:ring-indigo-200 focus:border-indigo-400"}`}
+                  className={`w-full px-3 py-2.5 border rounded-xl text-sm focus:ring-2 outline-none disabled:bg-gray-100 disabled:text-gray-500 ${fieldErrors.productName ? "border-red-500 bg-red-50 focus:border-red-500 focus:ring-red-200 error-border" : "border-gray-200 focus:ring-indigo-200 focus:border-indigo-400"}`}
                 />
               </div>
               </fieldset>
@@ -1847,7 +1814,7 @@ export default function DashboardPage() {
                     }}
                     onWheel={(e) => e.currentTarget.blur()}
                     placeholder="1"
-                    className={`w-full px-3 py-2.5 border rounded-xl text-sm focus:ring-2 outline-none disabled:bg-gray-100 disabled:text-gray-500 ${formErrors.qty ? "border-red-500 bg-red-50 focus:border-red-500 focus:ring-red-200 error-border" : "border-gray-200 focus:ring-indigo-200 focus:border-indigo-400"}`}
+                    className={`w-full px-3 py-2.5 border rounded-xl text-sm focus:ring-2 outline-none disabled:bg-gray-100 disabled:text-gray-500 ${fieldErrors.qty ? "border-red-500 bg-red-50 focus:border-red-500 focus:ring-red-200 error-border" : "border-gray-200 focus:ring-indigo-200 focus:border-indigo-400"}`}
                   />
                 </div>
                 <div>
@@ -1859,7 +1826,7 @@ export default function DashboardPage() {
                       setForm(prev => ({ ...prev, unitPrice: p, totalAmount: (prev.qty || 1) * p }));
                     }}
                     placeholder="0"
-                    className={`w-full px-3 py-2.5 border rounded-xl text-sm focus:ring-2 outline-none font-medium text-gray-800 disabled:bg-gray-100 disabled:text-gray-500 ${formErrors.unitPrice ? "border-red-500 bg-red-50 focus:border-red-500 focus:ring-red-200 error-border" : "border-gray-200 focus:ring-indigo-200 focus:border-indigo-400"}`}
+                    className={`w-full px-3 py-2.5 border rounded-xl text-sm focus:ring-2 outline-none font-medium text-gray-800 disabled:bg-gray-100 disabled:text-gray-500 ${fieldErrors.unitPrice ? "border-red-500 bg-red-50 focus:border-red-500 focus:ring-red-200 error-border" : "border-gray-200 focus:ring-indigo-200 focus:border-indigo-400"}`}
                   />
                 </div>
                 <div>
@@ -1982,7 +1949,7 @@ export default function DashboardPage() {
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1.5">อ้างอิงใบ PO <span className="text-red-500">*</span></label>
                   <input type="text" value={form.poRef} onChange={(e) => { const v = e.target.value; setForm(prev => ({ ...prev, poRef: v })); }} placeholder="เลขที่ใบ PO"
-                    className={`w-full px-3 py-2.5 border rounded-xl text-sm focus:ring-2 outline-none ${formErrors.poRef ? "border-red-500 bg-red-50 focus:border-red-500 focus:ring-red-200 error-border" : "border-gray-200 focus:ring-indigo-200 focus:border-indigo-400"}`} />
+                    className={`w-full px-3 py-2.5 border rounded-xl text-sm focus:ring-2 outline-none ${fieldErrors.poRef ? "border-red-500 bg-red-50 focus:border-red-500 focus:ring-red-200 error-border" : "border-gray-200 focus:ring-indigo-200 focus:border-indigo-400"}`} />
                 </div>
               </div>
 
@@ -1995,7 +1962,7 @@ export default function DashboardPage() {
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1.5">อ้างอิงใบ Invoice</label>
                   <input type="text" value={form.invoiceRef} onChange={(e) => { const v = e.target.value; setForm(prev => ({ ...prev, invoiceRef: v })); }} placeholder="เลขที่ใบ Invoice"
-                    className={`w-full px-3 py-2.5 border rounded-xl text-sm focus:ring-2 outline-none ${formErrors.invoiceRef ? "border-red-500 bg-red-50 focus:border-red-500 focus:ring-red-200 error-border" : "border-gray-200 focus:ring-indigo-200 focus:border-indigo-400"}`} />
+                    className={`w-full px-3 py-2.5 border rounded-xl text-sm focus:ring-2 outline-none ${fieldErrors.invoiceRef ? "border-red-500 bg-red-50 focus:border-red-500 focus:ring-red-200 error-border" : "border-gray-200 focus:ring-indigo-200 focus:border-indigo-400"}`} />
                 </div>
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1.5">อ้างอิงใบเสร็จ</label>
@@ -2015,7 +1982,7 @@ export default function DashboardPage() {
                       onChange={(date) => { const v = date ? toLocalDateString(date) : ""; setForm(prev => ({ ...prev, warrantyStartDate: v })); }}
                       placeholderText="ไม่ระบุ"
                       isClearable
-                      className={`w-full px-4 py-2.5 border rounded-xl text-sm focus:outline-none focus:ring-2 transition-all ${formErrors.warrantyStartDate ? "border-red-500 bg-red-50 focus:border-red-500 focus:ring-red-200 error-border" : "bg-gray-50 border-gray-200 focus:ring-indigo-500/20 focus:border-indigo-500"}`}
+                      className={`w-full px-4 py-2.5 border rounded-xl text-sm focus:outline-none focus:ring-2 transition-all ${fieldErrors.warrantyStartDate ? "border-red-500 bg-red-50 focus:border-red-500 focus:ring-red-200 error-border" : "bg-gray-50 border-gray-200 focus:ring-indigo-500/20 focus:border-indigo-500"}`}
                     />
                   </div>
                   <div>
@@ -2025,7 +1992,7 @@ export default function DashboardPage() {
                       onChange={(date) => { const v = date ? toLocalDateString(date) : ""; setForm(prev => ({ ...prev, warrantyEndDate: v })); }}
                       placeholderText="ไม่ระบุ"
                       isClearable
-                      className={`w-full px-4 py-2.5 border rounded-xl text-sm focus:outline-none focus:ring-2 transition-all ${formErrors.warrantyEndDate ? "border-red-500 bg-red-50 focus:border-red-500 focus:ring-red-200 error-border" : "bg-gray-50 border-gray-200 focus:ring-indigo-500/20 focus:border-indigo-500"}`}
+                      className={`w-full px-4 py-2.5 border rounded-xl text-sm focus:outline-none focus:ring-2 transition-all ${fieldErrors.warrantyEndDate ? "border-red-500 bg-red-50 focus:border-red-500 focus:ring-red-200 error-border" : "bg-gray-50 border-gray-200 focus:ring-indigo-500/20 focus:border-indigo-500"}`}
                     />
                   </div>
                 </div>

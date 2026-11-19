@@ -231,12 +231,22 @@ describe("dashboard sale form — a fresh start", () => {
     expect(document.querySelectorAll(".error-border").length).toBe(0);
   });
 
-  it("draws the toast over the form", async () => {
+  // Item 4 — the list of what is missing stays in the form, by the save button, until it is all filled.
+  it("keeps what is missing in the form — each thing drops off, and its red border goes, as it is filled", async () => {
     const dialog = await openNewSale();
     fireEvent.click(within(dialog).getByRole("button", { name: "บันทึกยอดขาย" }));
-    const toast = await screen.findByText(/^กรุณากรอก:/);
-    // Same z-layer or above, and later in the page: painted on top.
-    expect(dialog.compareDocumentPosition(toast) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const notice = await within(dialog).findByTestId("sale-form-missing");
+    expect(notice.getAttribute("role")).toBe("alert");
+    expect(notice.textContent).toMatch(/^กรุณากรอก:/);
+    expect(notice.textContent).toContain("อ้างอิง PO");
+    const po = within(dialog).getByPlaceholderText("เลขที่ใบ PO");
+    expect(po.className).toContain("error-border");
+
+    fireEvent.change(po, { target: { value: "PO-2569-01" } });
+    expect(within(dialog).getByTestId("sale-form-missing").textContent).not.toContain("อ้างอิง PO");
+    expect(po.className).not.toContain("error-border");
+    // The rest is still said — nothing vanished on a timer.
+    expect(within(dialog).getByTestId("sale-form-missing").textContent).toContain("ชื่อสินค้า");
   });
 });
 

@@ -1235,6 +1235,12 @@ the product forms that link suppliers said ผู้ผลิต.
   layer: an open dropdown list, then the page's own questions over the form
   (`interceptEscape`), then the form. The page's confirm dialogs and the toast
   are rendered AFTER the form so they are drawn over it.
+- **What stops a save stays in the form**: the checks are one pure function,
+  `saleFormProblems` (saleFormHelpers.ts) — the fields to paint red and the
+  same in words. The save runs it once; after a save that failed on them the
+  form runs it LIVE (`liveProblems`), so the footer's `role="alert"` list
+  (SaleFormShell `notice`) and the red borders lose each thing as it is filled
+  — it used to be a toast gone in 3 seconds.
 - **The table keeps to the period picked at the top** (or "ทุกช่วงเวลา"): its
   days are `periodDateRange` ([`lib/dashboardPeriod.ts`](./app/lib/dashboardPeriod.ts)),
   the same function `getPeriodDateRange` uses for the figures, so the two never
