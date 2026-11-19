@@ -56,6 +56,9 @@ const moneyOf = (text: string, emptyIs: number) => (text.trim() === "" ? emptyIs
  * still owed, the customer's usual withholding worked out on the invoice's
  * services (goods are not withheld), and says which receipt it will issue
  * (and its number) or takes the number of one issued elsewhere.
+ *
+ * kind "deposit" — รับเงินมัดจำ against a customer PO (step 6): the ceiling is
+ * what the PO still holds, the receipt is always our ใบเสร็จรับเงิน/ใบกำกับภาษี.
  */
 export default function PaymentDialog({
   invoice,
@@ -63,13 +66,20 @@ export default function PaymentDialog({
   bankAccounts,
   onCancel,
   onRecorded,
+  kind = "payment",
+  initialAmountSatang = null,
 }: {
+  /** What is paid: the invoice — or, for a deposit, the PO ("PO …" as its docNo). */
   invoice: { id: string; docNo: string | null; issueDate: string; totalSatang: number };
   context: PaymentDialogContext;
   bankAccounts: BankAccount[];
   onCancel: () => void;
   onRecorded: (result: RecordedPaymentView) => void;
+  kind?: "payment" | "deposit";
+  /** The amount to open with (an item of the payment plan); null = what is owed (a deposit: nothing). */
+  initialAmountSatang?: number | null;
 }) {
+  const deposit = kind === "deposit";
   const today = bangkokDateString(new Date());
   const activeAccounts = useMemo(() => bankAccounts.filter((b) => b.isActive), [bankAccounts]);
   const hasServices = context.serviceBaseSatang > 0;
@@ -80,7 +90,9 @@ export default function PaymentDialog({
   }, [context.defaultWhtPercent]);
 
   const [paidDate, setPaidDate] = useState(today);
-  const [amount, setAmount] = useState(formatSatang(context.outstandingSatang));
+  const [amount, setAmount] = useState(
+    initialAmountSatang !== null ? formatSatang(Math.min(initialAmountSatang, context.outstandingSatang)) : deposit ? "" : formatSatang(context.outstandingSatang)
+  );
   const [method, setMethod] = useState<PaymentMethod>("transfer");
   const [bankAccountId, setBankAccountId] = useState(activeAccounts[0]?.id ?? "");
   const [whtPercent, setWhtPercent] = useState(hasServices ? String(context.defaultWhtPercent || 0) : "0");
@@ -106,7 +118,7 @@ export default function PaymentDialog({
   const whtSatang = whtText === null ? suggested : moneyOf(whtText, 0);
   const feeSatang = moneyOf(fee, 0);
   const netSatang = amountSatang - whtSatang - feeSatang;
-  const issuing = receiptMode === "system";
+  const issuing = deposit || receiptMode === "system";
   const title = receiptTitle(context.receiptIsTaxInvoice);
 
   // The number the receipt would get on this date — a preview; the real one is handed out on save.
@@ -143,7 +155,7 @@ export default function PaymentDialog({
       note,
     });
   const checks = (): PaymentProblems => {
-    const p = paymentProblems(input(), { outstandingSatang: context.outstandingSatang, today });
+    const p = paymentProblems(input(), { outstandingSatang: context.outstandingSatang, today, deposit });
     if (!issuing && !externalReceiptNo.trim()) p.externalReceiptNo = "กรุณากรอกเลขที่ใบเสร็จที่ออกจากที่อื่น";
     if (method !== "cash" && activeAccounts.length > 0 && !bankAccountId) p.bankAccountId = "กรุณาเลือกบัญชีที่รับเงิน";
     return p;
@@ -162,18 +174,21 @@ export default function PaymentDialog({
     }
     setBusy(true);
     try {
-      const res = await fetch(`/api/accounting/documents/${encodeURIComponent(invoice.id)}/payments`, {
+      const url = deposit
+        ? `/api/accounting/sales-orders/${encodeURIComponent(invoice.id)}/deposits`
+        : `/api/accounting/documents/${encodeURIComponent(invoice.id)}/payments`;
+      const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(input()),
       });
       if (!res.ok) {
-        setServerError(await errorMessageOf(res, "บันทึกรับชำระไม่สำเร็จ"));
+        setServerError(await errorMessageOf(res, deposit ? "บันทึกเงินมัดจำไม่สำเร็จ" : "บันทึกรับชำระไม่สำเร็จ"));
         return;
       }
       onRecorded(await res.json());
     } catch {
-      setServerError("บันทึกรับชำระไม่สำเร็จ ตรวจสอบการเชื่อมต่อแล้วลองใหม่");
+      setServerError(`${deposit ? "บันทึกเงินมัดจำไม่สำเร็จ" : "บันทึกรับชำระไม่สำเร็จ"} ตรวจสอบการเชื่อมต่อแล้วลองใหม่`);
     } finally {
       setBusy(false);
     }
@@ -192,9 +207,10 @@ export default function PaymentDialog({
         className="relative bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[92vh] flex flex-col"
       >
         <div className="px-6 pt-6 pb-3 border-b border-gray-100">
-          <h2 id="payment-title" className="text-lg font-bold text-gray-900">รับชำระเงิน</h2>
+          <h2 id="payment-title" className="text-lg font-bold text-gray-900">{deposit ? "รับเงินมัดจำ" : "รับชำระเงิน"}</h2>
           <p className="text-sm text-gray-600 tabular-nums">
-            {invoice.docNo} · ค้างชำระ <span className="font-semibold text-gray-900">{formatSatang(context.outstandingSatang)}</span> บาท
+            {invoice.docNo} · {deposit ? "รับมัดจำได้ไม่เกิน" : "ค้างชำระ"} <span className="font-semibold text-gray-900">{formatSatang(context.outstandingSatang)}</span> บาท
+            {deposit && " (รวม VAT)"}
           </p>
         </div>
 
@@ -206,7 +222,7 @@ export default function PaymentDialog({
                 value={paidDate} onChange={(e) => setPaidDate(e.target.value)} />
               <Problem id="pay-date-error">{shown.paidDate}</Problem>
               {!shown.paidDate && paidDate && paidDate < invoice.issueDate && (
-                <p className="mt-1 text-xs text-amber-700">ก่อนวันที่ของใบแจ้งหนี้ ({formatDisplayDate(invoice.issueDate)})</p>
+                <p className="mt-1 text-xs text-amber-700">ก่อนวันที่ของ{deposit ? " PO" : "ใบแจ้งหนี้"} ({formatDisplayDate(invoice.issueDate)})</p>
               )}
             </div>
             <div>
@@ -315,16 +331,23 @@ export default function PaymentDialog({
           <fieldset className="space-y-2">
             <legend className="text-sm font-semibold text-gray-700 mb-1">ใบเสร็จ</legend>
             <label className="flex items-start gap-2 text-sm text-gray-800">
-              <input type="radio" name="receipt-mode" className="mt-0.5 h-4 w-4 accent-sky-600" checked={issuing} onChange={() => setReceiptMode("system")} />
+              {/* A deposit has one way only — no choice to offer. */}
+              {!deposit && (
+                <input type="radio" name="receipt-mode" className="mt-0.5 h-4 w-4 accent-sky-600" checked={issuing} onChange={() => setReceiptMode("system")} />
+              )}
               <span>
                 ออก{title}จากระบบ
                 {nextNo && <span className="text-gray-500 tabular-nums"> — จะได้เลขที่ {nextNo}</span>}
               </span>
             </label>
-            <label className="flex items-start gap-2 text-sm text-gray-800">
-              <input type="radio" name="receipt-mode" className="mt-0.5 h-4 w-4 accent-sky-600" checked={!issuing} onChange={() => setReceiptMode("external")} />
-              <span>ออกใบเสร็จจากที่อื่นแล้ว (เช่น เล่มเขียนมือ)</span>
-            </label>
+            {deposit ? (
+              <p className="text-xs text-gray-500">เงินมัดจำก่อนส่งของถึงกำหนดเสีย VAT ตอนรับเงิน — ออกใบกำกับภาษีให้ทุกครั้ง และหักออกจากใบแจ้งหนี้ตอนส่งของ (ก่อน VAT)</p>
+            ) : (
+              <label className="flex items-start gap-2 text-sm text-gray-800">
+                <input type="radio" name="receipt-mode" className="mt-0.5 h-4 w-4 accent-sky-600" checked={!issuing} onChange={() => setReceiptMode("external")} />
+                <span>ออกใบเสร็จจากที่อื่นแล้ว (เช่น เล่มเขียนมือ)</span>
+              </label>
+            )}
             {!issuing && (
               <div>
                 <label htmlFor="pay-externalNo" className={LABEL}>เลขที่ใบเสร็จตามเอกสารจริง</label>
@@ -350,7 +373,7 @@ export default function PaymentDialog({
             ยกเลิก
           </button>
           <button type="button" onClick={() => void save()} disabled={busy} className="flex-1 px-4 py-2.5 rounded-xl bg-green-600 text-white font-semibold hover:bg-green-700 disabled:opacity-60">
-            {busy ? "กำลังบันทึก…" : "บันทึกรับชำระ"}
+            {busy ? "กำลังบันทึก…" : deposit ? "บันทึกรับมัดจำ" : "บันทึกรับชำระ"}
           </button>
         </div>
       </div>

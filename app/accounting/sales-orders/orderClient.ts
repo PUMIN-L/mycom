@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { errorMessageOf } from "../../lib/apiErrorMessage";
 import type { OrderStatus } from "../../lib/accounting/orderRules";
+import type { PlanItemStatus, PlanStage } from "../../lib/accounting/depositRules";
 import type { DocLineInput } from "../../lib/accounting/invoiceRules";
 import type { PriceMode } from "../../lib/accounting/money";
 import type { DeliveryOrder } from "../invoices/InvoiceEditor";
@@ -42,10 +43,25 @@ export interface OrderDetailView {
   };
   orderStatus: OrderStatus;
   backlogSatang: number;
-  deliveries: { id: string; docNo: string | null; status: string; source: string; issueDate: string; totalSatang: number }[];
+  deliveries: { id: string; docNo: string | null; status: string; source: string; issueDate: string; totalSatang: number; paidSatang?: number; depositSatang?: number }[];
   invoicedLineDiscounts: Record<string, number>;
   invoicedBillDiscountSatang: number;
+  /** Its deposits (step 6) — absent from an older answer. */
+  deposits?: { receivedSatang: number; receivedExVatSatang: number; deductedSatang: number; leftSatang: number };
+  /** Its payment plan, each item with where it stands. */
+  plan?: PlanItemView[];
   impact: DeletionImpactView;
+}
+
+export interface PlanItemView {
+  id: string;
+  label: string;
+  stage: PlanStage;
+  amountSatang: number;
+  dueDate: string;
+  receivedSatang: number;
+  status: PlanItemStatus;
+  late: boolean;
 }
 
 /** What a delivery invoice needs of the PO: its header to open with, what is left of each line. */
@@ -56,6 +72,7 @@ export function deliveryOrderOf(detail: OrderDetailView): DeliveryOrder {
     customerPoNo: o.customerPoNo,
     discountSatang: o.discountSatang,
     invoicedDiscountSatang: detail.invoicedBillDiscountSatang,
+    depositLeftSatang: detail.deposits?.leftSatang ?? 0,
     lines: o.lines.map((l) => ({ ...l, invoicedDiscountSatang: detail.invoicedLineDiscounts[l.id] ?? 0 })),
     companyId: o.companyId,
     customerId: o.customerId,

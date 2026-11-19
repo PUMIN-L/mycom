@@ -1246,7 +1246,7 @@ the product forms that link suppliers said ผู้ผลิต.
   period opens it. Export writes exactly the table's list, money as numbers
   (mysql2 sends DECIMAL as strings, which Excel kept as text).
 
-### 8g. Accounting module (`/accounting`, schema v50–51) — sales side
+### 8g. Accounting module (`/accounting`, schema v50–52) — sales side
 The in-house accounting module that is replacing `/billing` for issuing
 documents (plan: 10 steps; this section grows with each). Files:
 [`lib/accounting/`](./app/lib/accounting/), routes under
@@ -1457,6 +1457,53 @@ documents (plan: 10 steps; this section grows with each). Files:
     section then hides; a bad answer shows an error in the section — it never
     takes the dashboard down (nor does any side panel of this module: they
     check the answer's shape first).
+- **Deposits and the payment plan (step 6, schema v52)** —
+  [`deposits.ts`](./app/lib/accounting/deposits.ts) (context, record), the
+  ledger in [`depositLedger.ts`](./app/lib/accounting/depositLedger.ts) (db
+  only — documents, payments and orderDelivery all use it without an import
+  cycle), rules in [`depositRules.ts`](./app/lib/accounting/depositRules.ts);
+  routes `sales-orders/[id]/deposits` (GET context, POST record) and
+  `sales-orders/[id]/plan` (PUT); UI on the PO page (the payment dialog and
+  panel reused: `PaymentDialog kind="deposit"`, `useOrderDeposits`).
+  - **A deposit (มัดจำ) is money received against a customer PO before
+    delivery**: one `acc_payments` row whose `documentId` is the PO, and its
+    receipt — an RE with `relatedDocId` = the PO, **always a
+    ใบเสร็จรับเงิน/ใบกำกับภาษี** (VAT falls due when money comes in before
+    delivery), its VAT taken out of the amount paid (`vatInsideSatang`). No
+    outside receipt. The PO's `paidSatang` is the deposits received (the same
+    one-writer re-sum). Never more than the PO still holds before VAT, counting
+    the deposits not yet deducted (`depositRoomSatang`) — checked again under
+    the PO's lock. Withholding works as on an invoice (the PO's services).
+  - **A delivery invoice deducts its share BEFORE VAT** (`depositSatang`,
+    deducted by `computeTotals`): what is left of the deposits in proportion to
+    what it sends of what the PO still holds, the delivery that empties the PO
+    taking the rest (`deliveryDepositSatang`), never more than its own value —
+    until the admin types one. VAT on the invoice is on the remainder only, so
+    VAT is charged once. Checked on save and, for real, when issued (PO
+    locked, locking reads — `depositDeductionProblem`). A delivery paid in full
+    by its deposit comes to 0 and may still be issued (it is the delivery
+    note). **The dashboard sale keeps the full value** (`vatBase + deposit`) —
+    the deposit paid ahead for those same goods. The paper prints "หักเงินมัดจำ"
+    (with its VAT on inclusive prices, so the rows add up).
+  - **The ledger is sums of what is there** (`depositLedgerOf`): live deposits
+    (before VAT from their receipts) less what ISSUED invoices deducted —
+    nothing kept as a running figure. So a deposit the invoices lean on cannot
+    be voided nor its receipt deleted (`assertDepositNotDeductedTx`); a PO with
+    live deposits (or their receipts) cannot be deleted; a PO's lines cannot be
+    edited below its deposits; deleting a delivery gives its deduction back by
+    itself. Cancelling a PO keeps an undeducted deposit on record (the history
+    says so — a refund is a credit note, step 8); a PO delivered in full with
+    some left says the customer paid too much. The 50 ทวิ list includes a
+    deposit's withholding (named by its PO).
+  - **The payment plan (แผนเก็บเงิน)** — `acc_plan_items` (label, stage
+    `deposit` | `invoice`, amount with VAT, due date), saved whole, never more
+    than the PO. **Its status is not stored**: `planProgress` applies the
+    deposits to the deposit items and the payments on the PO's invoices to the
+    others, in order (paid / partial / open, late past its date), so a voided
+    payment puts its item back. Each open item says what to do next — take the
+    deposit (the dialog opens with what is left of the item), collect on the
+    oldest invoice still owing, or deliver. The dashboard's backlog shows the
+    deposits received and not yet deducted (ex VAT, as the backlog).
 
 ### 9. Email (contact form) + lead persistence
 [`app/lib/mailer.ts`](./app/lib/mailer.ts) sends via SMTP (`nodemailer`, Gmail by

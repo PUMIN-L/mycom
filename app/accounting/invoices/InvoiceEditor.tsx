@@ -36,6 +36,7 @@ import {
   remainingQty,
   type OrderForDelivery,
 } from "../../lib/accounting/orderRules";
+import { deliveryDepositSatang } from "../../lib/accounting/depositRules";
 import type { SellerProfile } from "../../lib/accounting/types";
 import type { AccountingLookups, LookupCompany } from "../useAccountingLookups";
 import InvoicePaper from "./InvoicePaper";
@@ -68,6 +69,20 @@ export interface DeliveryOrder extends OrderForDelivery {
   priceMode: PriceMode;
   creditDays: number;
   projectName: string;
+  /** Its deposits not yet deducted, before VAT (step 6). */
+  depositLeftSatang: number;
+}
+
+/**
+ * What a delivery deducts of the PO's deposit: its share (the last delivery
+ * the rest), never more than its own value before VAT.
+ */
+function depositFor(order: DeliveryOrder, lines: DocLineInput[], discountSatang: number, priceMode: PriceMode, vatRate: number): number {
+  if (order.depositLeftSatang <= 0) return 0;
+  const usable = lines.filter((l) => Number.isFinite(l.qty) && l.qty > 0 && l.unitPriceSatang >= 0 && l.discountSatang >= 0);
+  const cap = computeTotals({ lines: usable, discountSatang: Math.max(0, discountSatang), priceMode, vatRate });
+  const capExVat = cap.vatBaseSatang;
+  return deliveryDepositSatang(order, usable, deliveryCompletesOrder(order, usable), capExVat);
 }
 
 interface LineDraft {
@@ -116,6 +131,9 @@ interface Draft {
   salesOrderId: string;
   /** The bill discount of a delivery follows what is delivered until the admin types one. */
   discountTouched: boolean;
+  /** A delivery: the PO's deposit it deducts, before VAT — following what is delivered until the admin types one. */
+  deposit: string;
+  depositTouched: boolean;
   /** A customer PO (order mode): when the goods are due, where its paper is kept. */
   expectedDeliveryDate: string;
   storageNote: string;
@@ -161,7 +179,13 @@ function lineDraftOf(l: DocLineInput): LineDraft {
   };
 }
 
-function draftOf(doc: EditorDocument | null, creditDays: number, order: DeliveryOrder | null, seed: Partial<InvoiceInput> | null = null): Draft {
+function draftOf(
+  doc: EditorDocument | null,
+  creditDays: number,
+  order: DeliveryOrder | null,
+  seed: Partial<InvoiceInput> | null = null,
+  vatRate = 7
+): Draft {
   if (!doc && seed) {
     // A new document opened with what is known already (a quotation's lines and customer).
     const blank = draftOf(null, creditDays, null);
@@ -178,8 +202,9 @@ function draftOf(doc: EditorDocument | null, creditDays: number, order: Delivery
     };
   }
   if (!doc && order) {
-    // A new delivery: everything the PO still holds, its header as ordered.
+    // A new delivery: everything the PO still holds, its header as ordered, its share of the deposit.
     const lines = deliveryLinesOf(order);
+    const discount = deliveryBillDiscount(order, lines, deliveryCompletesOrder(order, lines));
     return {
       ...draftOf(null, order.creditDays, null),
       companyId: order.companyId,
@@ -190,7 +215,8 @@ function draftOf(doc: EditorDocument | null, creditDays: number, order: Delivery
       buyerTaxId: order.buyerTaxId,
       buyerBranch: branchDraftOf(order.buyerBranch),
       priceMode: order.priceMode,
-      discount: moneyText(deliveryBillDiscount(order, lines, deliveryCompletesOrder(order, lines))),
+      discount: moneyText(discount),
+      deposit: moneyText(depositFor(order, lines, discount, order.priceMode, vatRate)),
       customerPoNo: order.customerPoNo,
       projectName: order.projectName,
       isTaxInvoice: defaultIsTaxInvoice(lines),
@@ -222,6 +248,8 @@ function draftOf(doc: EditorDocument | null, creditDays: number, order: Delivery
       vatOverride: "",
       salesOrderId: "",
       discountTouched: false,
+      deposit: "",
+      depositTouched: false,
       expectedDeliveryDate: "",
       storageNote: "",
     };
@@ -250,6 +278,8 @@ function draftOf(doc: EditorDocument | null, creditDays: number, order: Delivery
     vatOverride: "",
     salesOrderId: doc.salesOrderId ?? "",
     discountTouched: true,
+    deposit: moneyText(doc.depositSatang ?? 0),
+    depositTouched: true,
     expectedDeliveryDate: doc.expectedDeliveryDate ?? "",
     storageNote: doc.externalNote ?? "",
   };
@@ -288,6 +318,7 @@ function inputOf(d: Draft): InvoiceInput {
       sourceLineId: d.salesOrderId ? l.sourceLineId : "",
     })),
     salesOrderId: d.salesOrderId,
+    depositSatang: d.salesOrderId ? money(d.deposit, 0) : 0,
   };
 }
 
@@ -351,9 +382,9 @@ export default function InvoiceEditor({
 }) {
   const external = mode === "external";
   const ordering = mode === "order";
-  const [opened] = useState<Draft>(() => draftOf(initial, defaultCreditDays, ordering ? null : order, seed));
+  const [opened] = useState<Draft>(() => draftOf(initial, defaultCreditDays, ordering ? null : order, seed, vatRate));
   // Opened from a seed, the form already holds work worth warning about before leaving.
-  const [blankSnapshot] = useState(() => JSON.stringify(draftOf(initial, defaultCreditDays, ordering ? null : order)));
+  const [blankSnapshot] = useState(() => JSON.stringify(draftOf(initial, defaultCreditDays, ordering ? null : order, null, vatRate)));
   const [draft, setDraft] = useState<Draft>(opened);
   const [savedSnapshot, setSavedSnapshot] = useState(() => (seed ? blankSnapshot : JSON.stringify(opened)));
   const [current, setCurrent] = useState<EditorDocument | null>(initial);
@@ -374,7 +405,14 @@ export default function InvoiceEditor({
 
   const input = useMemo(() => inputOf(draft), [draft]);
   const computedTotals = useMemo(
-    () => computeTotals({ lines: forTotals(input.lines), discountSatang: Math.max(0, input.discountSatang), priceMode: input.priceMode, vatRate }),
+    () =>
+      computeTotals({
+        lines: forTotals(input.lines),
+        discountSatang: Math.max(0, input.discountSatang),
+        depositSatang: Math.max(0, input.depositSatang ?? 0),
+        priceMode: input.priceMode,
+        vatRate,
+      }),
     [input, vatRate]
   );
   /** Outside documents: the number, the storage note and the VAT as printed. */
@@ -407,6 +445,12 @@ export default function InvoiceEditor({
         p.lines[Number(i)] = { ...p.lines[Number(i)], qty: p.lines[Number(i)]?.qty ?? message };
         p.first = p.first ?? message;
       }
+      // Never more of the deposit than is left of it.
+      if (!p.fields.depositSatang && (input.depositSatang ?? 0) > order.depositLeftSatang) {
+        const message = order.depositLeftSatang > 0 ? `หักมัดจำเกินมัดจำที่เหลือ (เหลือ ${formatSatang(order.depositLeftSatang)} บาท)` : "PO นี้ไม่มีมัดจำเหลือให้หัก";
+        p.fields.depositSatang = message;
+        p.first = p.first ?? message;
+      }
     }
     if (draft.buyerBranch.trim() && normalizeBranchCode(draft.buyerBranch) === null) {
       const branch = "สาขาต้องเป็น สำนักงานใหญ่ หรือเลขสาขา 5 หลัก เช่น 00001";
@@ -432,10 +476,12 @@ export default function InvoiceEditor({
       const qty = Number(l.qty.replace(/,/g, ""));
       return { ...l, discount: moneyText(deliveryLineDiscount(ol, qty)) };
     });
-    if (next.discountTouched) return { ...next, lines };
     const asInput = inputOf({ ...next, lines });
     const usable = asInput.lines.filter((l) => Number.isFinite(l.qty) && l.qty > 0 && l.unitPriceSatang >= 0 && l.discountSatang >= 0);
-    return { ...next, lines, discount: moneyText(deliveryBillDiscount(order, usable, deliveryCompletesOrder(order, usable))) };
+    const discount = next.discountTouched ? next.discount : moneyText(deliveryBillDiscount(order, usable, deliveryCompletesOrder(order, usable)));
+    const discountSatang = discount.trim() === "" ? 0 : parseBahtToSatang(discount) ?? 0;
+    const deposit = next.depositTouched ? next.deposit : moneyText(depositFor(order, usable, discountSatang, next.priceMode, vatRate));
+    return { ...next, lines, discount, deposit };
   };
 
   const set = (patch: Partial<Draft>) => {
@@ -533,7 +579,8 @@ export default function InvoiceEditor({
       setTimeout(() => document.querySelector<HTMLElement>("[aria-invalid='true']")?.focus(), 0);
       return;
     }
-    if (totals.totalSatang <= 0) return showError("ยอดรวมต้องมากกว่า 0 บาท");
+    // A delivery paid in full by its deposit comes to nothing — and is still recorded.
+    if (totals.totalSatang < 0 || (totals.totalSatang === 0 && !(totals.depositSatang > 0))) return showError("ยอดรวมต้องมากกว่า 0 บาท");
     if (input.lines.some((l) => l.isMachine) && !input.customerId) {
       return showError("มีเครื่องที่ต้องลงทะเบียน — กรุณาเลือกผู้ติดต่อของลูกค้าที่จะผูกเครื่องไว้");
     }
@@ -944,6 +991,20 @@ export default function InvoiceEditor({
                 aria-invalid={!!shown.fields.discountSatang || undefined} value={draft.discount} onChange={(e) => set({ discount: e.target.value, discountTouched: true })} />
             </dd>
             {shown.fields.discountSatang && <dd className="col-span-2 text-sm text-red-600 text-right">{shown.fields.discountSatang}</dd>}
+            {!ordering && order && draft.salesOrderId && (order.depositLeftSatang > 0 || draft.deposit.trim() !== "") && (
+              <>
+                <dt className="text-gray-600 self-center"><label htmlFor="inv-deposit">หักเงินมัดจำ (ก่อน VAT)</label></dt>
+                <dd>
+                  <input id="inv-deposit" inputMode="decimal" className={`${inputClass(!!shown.fields.depositSatang)} text-right w-36 ml-auto block py-1`}
+                    aria-invalid={!!shown.fields.depositSatang || undefined} value={draft.deposit}
+                    onChange={(e) => set({ deposit: e.target.value, depositTouched: true })} />
+                </dd>
+                <dd className="col-span-2 text-xs text-gray-500 text-right" data-testid="deposit-hint">
+                  มัดจำของ PO นี้ที่ยังไม่ได้หัก {formatSatang(order.depositLeftSatang)} บาท
+                </dd>
+                {shown.fields.depositSatang && <dd className="col-span-2 text-sm text-red-600 text-right">{shown.fields.depositSatang}</dd>}
+              </>
+            )}
             <dt className="text-gray-600">มูลค่าก่อนภาษี</dt>
             <dd className="text-right">{formatSatang(totals.vatBaseSatang)}</dd>
             {external ? (

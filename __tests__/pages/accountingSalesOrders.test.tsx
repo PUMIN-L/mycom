@@ -30,6 +30,8 @@ import NewSalesOrderPage from "@/app/accounting/sales-orders/new/page";
 import SalesOrderPage from "@/app/accounting/sales-orders/[id]/page";
 import NewInvoicePage from "@/app/accounting/invoices/new/page";
 import RecordExternalInvoicePage from "@/app/accounting/invoices/record-external/page";
+import ReceiptDocumentPage from "@/app/accounting/receipts/[id]/page";
+import InvoicePaper from "@/app/accounting/invoices/InvoicePaper";
 import BacklogSection from "@/app/dashboard/BacklogSection";
 
 const SELLER = { name: "บริษัท โปรฟิน แล็บ จำกัด", address: "93 นนทบุรี", taxId: "0107537000114", branchCode: "00000", phone: "", email: "" };
@@ -392,6 +394,253 @@ describe("a delivery from a customer PO", () => {
     expect(await screen.findByTestId("delivery-banner")).toHaveTextContent("PO-6611");
     expect(screen.getAllByLabelText("จำนวนที่ส่งรอบนี้")[0]).toHaveValue("2");
     expect(screen.getByLabelText(/เลขที่ตามเอกสารจริง/)).toBeInTheDocument();
+  });
+});
+
+// ── Step 6: deposits and the payment plan ────────────────────────────────────
+
+/** 500.00 deposited (467.29 before VAT), nothing deducted yet; a plan of 30% deposit and the rest on the invoices. */
+const DEPOSITED = {
+  ...DETAIL,
+  deposits: { receivedSatang: 50000, receivedExVatSatang: 46729, deductedSatang: 0, leftSatang: 46729 },
+  plan: [
+    { id: "i1", label: "มัดจำ 30%", stage: "deposit", amountSatang: 92448, dueDate: "2026-11-15", receivedSatang: 50000, status: "partial", late: true },
+    { id: "i2", label: "ส่วนที่เหลือ 70%", stage: "invoice", amountSatang: 215712, dueDate: "", receivedSatang: 0, status: "open", late: false },
+  ],
+};
+const DEPOSIT_ROW = {
+  id: "p1", receiptId: "re1", receiptNo: "RE2026110006", receiptStatus: "issued", paidDate: "2026-11-12", method: "transfer", bankLabel: "",
+  amountSatang: 50000, whtPercent: 0, whtSatang: 0, feeSatang: 0, netSatang: 50000, cert50Received: false, cert50Note: "", externalReceiptNo: "", note: "",
+  voidedAt: null, voidReason: null,
+};
+const DEPOSIT_CONTEXT = {
+  payments: [DEPOSIT_ROW], outstandingSatang: 200000, serviceBaseSatang: 0, defaultWhtPercent: 0, receiptIsTaxInvoice: true,
+  receivedSatang: 50000, receivedExVatSatang: 46729, deductedSatang: 0, leftSatang: 46729,
+};
+
+describe("deposits on a customer PO", () => {
+  beforeEach(() => {
+    params = { id: "so1" };
+    override = (path, init) => {
+      if (path === "/api/accounting/sales-orders/so1" && !init?.method) return json(DEPOSITED);
+      if (path === "/api/accounting/sales-orders/so1/deposits" && !init?.method) return json(DEPOSIT_CONTEXT);
+      if (path === "/api/accounting/sales-orders/so1/deposits" && init?.method === "POST") {
+        return json({ payment: { id: "p2" }, receipt: { id: "re7", docNo: "RE2026110007", title: "ใบเสร็จรับเงิน/ใบกำกับภาษี" }, paidSatang: 100000 }, 201);
+      }
+      if (path === "/api/accounting/documents/next-number") return json({ docNo: "RE2026110007" });
+      if (path === "/api/accounting/sales-orders/so1/plan" && init?.method === "PUT") return json({ plan: [] });
+      return undefined;
+    };
+  });
+  async function loaded() {
+    render(<SalesOrderPage />);
+    await screen.findByTestId("order-lines");
+    await screen.findByTestId("deposit-summary");
+  }
+
+  it("shows what was deposited, deducted and is left, and the deposits with their receipts", async () => {
+    await loaded();
+    const summary = within(screen.getByTestId("deposit-summary"));
+    expect(summary.getByText("500.00")).toBeInTheDocument();
+    expect(summary.getByText("467.29")).toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: "ใบเสร็จ RE2026110006" })).toHaveAttribute("href", "/accounting/receipts/re1");
+  });
+
+  it("takes a deposit: always our receipt/tax invoice, no outside one — posted to the PO, its receipt then linked", async () => {
+    await loaded();
+    fireEvent.click(await screen.findByRole("button", { name: "รับเงินมัดจำ" }));
+    const dialog = screen.getByRole("dialog", { name: "รับเงินมัดจำ" });
+    expect(within(dialog).getByText(/รับมัดจำได้ไม่เกิน/)).toHaveTextContent("2,000.00");
+    expect(within(dialog).queryByText(/ออกใบเสร็จจากที่อื่นแล้ว/)).not.toBeInTheDocument();
+    expect(within(dialog).getByText(/ออกใบเสร็จรับเงิน\/ใบกำกับภาษีจากระบบ/)).toBeInTheDocument();
+    expect(within(dialog).getByLabelText("ยอดที่ลูกค้าชำระ (บาท)")).toHaveValue("");
+    fireEvent.change(within(dialog).getByLabelText("ยอดที่ลูกค้าชำระ (บาท)"), { target: { value: "2500" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "บันทึกรับมัดจำ" }));
+    expect(await within(dialog).findByText("มัดจำเกินมูลค่าที่ยังไม่ได้ส่ง (รวมมัดจำที่ยังไม่ได้หัก)")).toBeInTheDocument();
+    expect(calls("/api/accounting/sales-orders/so1/deposits", "POST")).toHaveLength(0);
+
+    fireEvent.change(within(dialog).getByLabelText("ยอดที่ลูกค้าชำระ (บาท)"), { target: { value: "500" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "บันทึกรับมัดจำ" }));
+    expect(await screen.findByRole("link", { name: "ใบเสร็จรับเงิน/ใบกำกับภาษี RE2026110007" })).toHaveAttribute("href", "/accounting/receipts/re7");
+    expect(bodyOf("/api/accounting/sales-orders/so1/deposits", "POST")).toMatchObject({ amountSatang: 50000, externalReceiptNo: "" });
+  });
+
+  it("shows the plan, each item where the money puts it, with what to do next", async () => {
+    await loaded();
+    const plan = within(screen.getByTestId("order-plan"));
+    const first = plan.getByText("มัดจำ 30%").closest("li")!;
+    expect(within(first).getByText(/เลยกำหนด/)).toHaveTextContent("รับแล้ว 500.00");
+    const second = plan.getByText("ส่วนที่เหลือ 70%").closest("li")!;
+    expect(within(second).getByRole("link", { name: "รับเงินที่ INV2026110001" })).toHaveAttribute("href", "/accounting/invoices/inv1");
+
+    // Taking the rest of the deposit item opens the dialog with what is left of it.
+    fireEvent.click(within(first).getByRole("button", { name: "รับมัดจำงวดนี้" }));
+    expect(within(screen.getByRole("dialog", { name: "รับเงินมัดจำ" })).getByLabelText("ยอดที่ลูกค้าชำระ (บาท)")).toHaveValue("424.48");
+  });
+
+  it("edits the plan — a deposit percent and the rest on the invoices — never more than the PO", async () => {
+    await loaded();
+    fireEvent.click(screen.getByRole("button", { name: "แก้แผน" }));
+    const dialog = screen.getByRole("dialog", { name: "แผนเก็บเงิน" });
+    fireEvent.change(within(dialog).getByLabelText("มัดจำ (%)"), { target: { value: "40" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: /สร้างแผน/ }));
+    expect(within(dialog).getByLabelText("ชื่องวดที่ 1")).toHaveValue("มัดจำ 40%");
+    expect(within(dialog).getByLabelText("ยอดงวดที่ 1 (บาท รวม VAT)")).toHaveValue("1,232.64");
+    expect(within(dialog).getByLabelText("ยอดงวดที่ 2 (บาท รวม VAT)")).toHaveValue("1,848.96");
+
+    fireEvent.change(within(dialog).getByLabelText("ยอดงวดที่ 2 (บาท รวม VAT)"), { target: { value: "2000" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "บันทึกแผน" }));
+    expect(within(dialog).getByRole("alert")).toHaveTextContent("ยอดรวมทุกงวดเกินยอด PO (รวม VAT)");
+    expect(calls("/api/accounting/sales-orders/so1/plan", "PUT")).toHaveLength(0);
+
+    fireEvent.change(within(dialog).getByLabelText("ยอดงวดที่ 2 (บาท รวม VAT)"), { target: { value: "1848.96" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "บันทึกแผน" }));
+    await waitFor(() => expect(calls("/api/accounting/sales-orders/so1/plan", "PUT")).toHaveLength(1));
+    expect(bodyOf("/api/accounting/sales-orders/so1/plan", "PUT")).toEqual({
+      items: [
+        { label: "มัดจำ 40%", stage: "deposit", amountSatang: 123264, dueDate: "" },
+        { label: "ส่วนที่เหลือ 60%", stage: "invoice", amountSatang: 184896, dueDate: "" },
+      ],
+    });
+  });
+
+  it("says when everything went but some deposit was never deducted — the customer paid too much", async () => {
+    override = (path, init) => {
+      if (path === "/api/accounting/sales-orders/so1" && !init?.method) {
+        return json({ ...DEPOSITED, order: { ...ORDER, lines: ORDER.lines.map((l) => ({ ...l, deliveredQty: l.qty })) }, orderStatus: "complete", backlogSatang: 0 });
+      }
+      if (path === "/api/accounting/sales-orders/so1/deposits") return json({ ...DEPOSIT_CONTEXT, outstandingSatang: 0 });
+      return undefined;
+    };
+    await loaded();
+    expect(screen.getByTestId("deposit-left-over")).toHaveTextContent("467.29");
+    expect(screen.queryByRole("button", { name: "รับเงินมัดจำ" })).not.toBeInTheDocument();
+  });
+
+  it("warns, when cancelling, that a deposit not yet deducted stays on record", async () => {
+    await loaded();
+    fireEvent.click(screen.getByRole("button", { name: "ยกเลิกส่วนที่เหลือ" }));
+    expect(within(screen.getByRole("dialog", { name: "ยกเลิกส่วนที่ยังไม่ได้ส่ง?" })).getByText(/มีเงินมัดจำที่ยังไม่ได้หัก 467.29 บาท/)).toBeInTheDocument();
+  });
+});
+
+describe("a delivery deducting the deposit", () => {
+  beforeEach(() => {
+    search = new URLSearchParams("fromOrder=so1");
+    override = (path, init) => {
+      if (path === "/api/accounting/sales-orders/so1") return json({ ...DETAIL, deposits: { receivedSatang: 32100, receivedExVatSatang: 30000, deductedSatang: 0, leftSatang: 30000 } });
+      if (path === "/api/accounting/documents" && init?.method === "POST") return json({ ...ORDER, id: "inv-new", docType: "INV", status: "draft" }, 201);
+      return undefined;
+    };
+  });
+  async function loaded() {
+    render(<NewInvoicePage />);
+    await screen.findByTestId("delivery-banner");
+  }
+  const deposit = () => screen.getByLabelText("หักเงินมัดจำ (ก่อน VAT)");
+
+  it("deducts what is left of the deposit on the delivery that empties the PO — VAT on the rest only", async () => {
+    await loaded();
+    expect(deposit()).toHaveValue("300.00");
+    expect(screen.getByTestId("deposit-hint")).toHaveTextContent("300.00");
+    // 2,300 − 230 bill discount − 300 deposit = 1,770 + VAT 123.90
+    expect(within(screen.getByTestId("invoice-totals")).getByText("1,893.90")).toBeInTheDocument();
+  });
+
+  it("deducts a share of it when only part is sent, and keeps one typed by hand", async () => {
+    await loaded();
+    fireEvent.change(screen.getAllByLabelText("จำนวนที่ส่งรอบนี้")[0], { target: { value: "1" } });
+    // 900 + 500 of the 2,300 still held → 300 × 14/23 = 182.61
+    expect(deposit()).toHaveValue("182.61");
+    fireEvent.change(deposit(), { target: { value: "100" } });
+    fireEvent.change(screen.getAllByLabelText("จำนวนที่ส่งรอบนี้")[0], { target: { value: "2" } });
+    expect(deposit()).toHaveValue("100");
+  });
+
+  it("deducts no more than is left of the deposit", async () => {
+    await loaded();
+    fireEvent.change(deposit(), { target: { value: "400" } });
+    fireEvent.click(screen.getByRole("button", { name: "บันทึกร่าง" }));
+    expect(await screen.findByText("ยังบันทึกไม่ได้: หักมัดจำเกินมัดจำที่เหลือ (เหลือ 300.00 บาท)")).toBeInTheDocument();
+    expect(calls("/api/accounting/documents", "POST")).toHaveLength(0);
+  });
+
+  it("saves the deduction with the draft", async () => {
+    await loaded();
+    fireEvent.click(screen.getByRole("button", { name: "บันทึกร่าง" }));
+    await waitFor(() => expect(router.replace).toHaveBeenCalledWith("/accounting/invoices/inv-new"));
+    expect(bodyOf("/api/accounting/documents", "POST")).toMatchObject({ salesOrderId: "so1", depositSatang: 30000 });
+  });
+
+  it("records an outside invoice paid in full by the deposit — it comes to nothing, and is still recorded", async () => {
+    override = (path, init) => {
+      // 2,070.00 still to deliver before VAT, all of it deposited ahead.
+      if (path === "/api/accounting/sales-orders/so1") return json({ ...DETAIL, deposits: { receivedSatang: 221490, receivedExVatSatang: 207000, deductedSatang: 0, leftSatang: 207000 } });
+      if (path === "/api/accounting/documents/external" && init?.method === "POST") return json({ ...ORDER, id: "inv-x", docType: "INV", status: "issued" }, 201);
+      return undefined;
+    };
+    render(<RecordExternalInvoicePage />);
+    await screen.findByTestId("delivery-banner");
+    expect(deposit()).toHaveValue("2,070.00");
+    fireEvent.change(screen.getByLabelText(/เลขที่ตามเอกสารจริง/), { target: { value: "IV-9" } });
+    fireEvent.change(screen.getByLabelText(/เก็บต้นฉบับไว้ที่/), { target: { value: "แฟ้มใบกำกับ 2569" } });
+    fireEvent.click(screen.getByRole("button", { name: "บันทึกเอกสาร" }));
+    await waitFor(() => expect(router.replace).toHaveBeenCalledWith("/accounting/invoices/inv-x"));
+    expect(bodyOf("/api/accounting/documents/external", "POST")).toMatchObject({ depositSatang: 207000, salesOrderId: "so1" });
+  });
+});
+
+describe("the invoice paper with a deposit", () => {
+  it("prints the deposit with its VAT on a bill whose prices include VAT — so its rows add up", () => {
+    // 1,070.00 with VAT, less a deposit of 300.00 before VAT (321.00 with it) → 749.00
+    render(
+      <InvoicePaper
+        seller={SELLER}
+        copyLabel={null}
+        doc={{
+          docNo: "INV2026110009", isTaxInvoice: true, issueDate: "2026-11-19", dueDate: null, creditDays: 0,
+          buyerName: "บริษัท เอ จำกัด", buyerAddress: "1 ถนนงามวงศ์วาน", buyerTaxId: "0107537000114", buyerBranch: "00000",
+          customerPoNo: "PO-6611", projectName: "", note: "", priceMode: "inclusive", vatRate: 7,
+          subtotalSatang: 107000, discountSatang: 0, depositSatang: 30000, vatBaseSatang: 70000, vatSatang: 4900, totalSatang: 74900,
+          lines: [{ lineType: "goods", productId: "", name: "ปั๊มน้ำ", qty: 1, unit: "ชิ้น", unitPriceSatang: 107000, discountSatang: 0, isMachine: false, serials: "", warrantyMonths: null, amountSatang: 107000 }],
+        }}
+      />
+    );
+    expect(screen.getByText("หักเงินมัดจำ (รวม VAT)").nextElementSibling).toHaveTextContent("321.00");
+  });
+});
+
+describe("a deposit's receipt", () => {
+  it("prints as a deposit on the customer PO and leads back to it", async () => {
+    params = { id: "re1" };
+    override = (path) =>
+      path === "/api/accounting/documents/re1"
+        ? json({
+            document: {
+              id: "re1", docType: "RE", docNo: "RE2026110006", status: "issued", isTaxInvoice: true, issueDate: "2026-11-12", relatedDocId: "so1", voidReason: null,
+              buyerName: "บริษัท เอ จำกัด", buyerAddress: "1 ถนนงามวงศ์วาน", buyerTaxId: "0107537000114", buyerBranch: "00000", customerPoNo: "PO-6611", projectName: "",
+              vatRate: 7, vatBaseSatang: 46729, vatSatang: 3271, totalSatang: 50000,
+            },
+            seller: SELLER,
+            impact: { status: "issued", docNo: "RE2026110006", isLatestNumber: true, livePayments: 0, dependentDocs: 0, sale: null, machines: { total: 0, withHistory: 0 } },
+            receipt: { payment: { ...DEPOSIT_ROW }, invoice: { id: "so1", docType: "SO", docNo: null, issueDate: "2026-11-10", totalSatang: 308160, paidSatang: 50000, lines: [] } },
+          })
+        : undefined;
+    render(<ReceiptDocumentPage />);
+    expect(await screen.findByText(/รับเงินมัดจำ ตาม PO ลูกค้า เลขที่ PO-6611/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /มัดจำของ PO ลูกค้า PO-6611/ })).toHaveAttribute("href", "/accounting/sales-orders/so1");
+  });
+});
+
+describe("the dashboard's ยอดรอส่งของ", () => {
+  it("shows the deposits received and not yet deducted", async () => {
+    override = (path) =>
+      path === "/api/accounting/sales-orders/backlog"
+        ? json({ ...BACKLOG, rows: [{ ...ROWS[0], depositLeftSatang: 46729 }], totals: { ...BACKLOG.totals, depositLeftSatang: 46729 } })
+        : undefined;
+    render(<BacklogSection />);
+    expect(await within(await screen.findByTestId("backlog-totals")).findByText("฿467.29")).toBeInTheDocument();
+    expect(within(screen.getByTestId("backlog-table")).getByText("467.29")).toBeInTheDocument();
   });
 });
 

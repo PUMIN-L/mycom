@@ -170,3 +170,33 @@ describe("externalProblems / cleanExternalFields", () => {
     expect(cleanExternalFields({ vatSatangOverride: "abc" }).vatSatangOverride).toBe(-1);
   });
 });
+
+// Step 6 — a delivery deducting the PO's deposit, before VAT.
+describe("a deposit deducted on the invoice", () => {
+  const withDeposit = (depositSatang: number, over: Partial<InvoiceInput> = {}) => invoice({ salesOrderId: "so1", depositSatang, ...over });
+  const totalsWith = (input: InvoiceInput) =>
+    computeTotals({ lines: input.lines, discountSatang: input.discountSatang, depositSatang: input.depositSatang, priceMode: input.priceMode, vatRate: 7 });
+
+  it("is read from the browser as whole satang", () => {
+    expect(cleanInvoiceInput({ depositSatang: "1000000.4" }).depositSatang).toBe(1000000);
+    expect(cleanInvoiceInput({}).depositSatang).toBe(0);
+  });
+
+  it("comes off before VAT — never below nothing, never more than the invoice", () => {
+    expect(invoiceProblems(withDeposit(5800000), 7).first).toBeNull();
+    expect(invoiceProblems(withDeposit(5800001), 7).fields.depositSatang).toBe("หักมัดจำมากกว่ายอดของใบนี้");
+    expect(invoiceProblems(withDeposit(-1), 7).fields.depositSatang).toBe("หักมัดจำติดลบไม่ได้");
+    // With prices that include VAT, the deposit comes off with its VAT: 62,060.00 holds 58,000.00 before VAT.
+    const inclusive = { priceMode: "inclusive" as const, lines: [goods({ unitPriceSatang: 6206000 })] };
+    expect(invoiceProblems(withDeposit(5800000, inclusive), 7).first).toBeNull();
+    expect(invoiceProblems(withDeposit(5800100, inclusive), 7).fields.depositSatang).toBe("หักมัดจำมากกว่ายอดของใบนี้");
+  });
+
+  it("lets a delivery paid in full by its deposit be issued at nothing — a zero bill without one still may not", () => {
+    const paidAhead = withDeposit(5800000);
+    expect(totalsWith(paidAhead).totalSatang).toBe(0);
+    expect(issueProblems(paidAhead, totalsWith(paidAhead))).toEqual([]);
+    const free = invoice({ lines: [goods({ unitPriceSatang: 0 })] });
+    expect(issueProblems(free, totalsOf(free))).toContain("ยอดรวมต้องมากกว่า 0 บาท");
+  });
+});

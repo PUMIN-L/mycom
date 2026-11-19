@@ -31,6 +31,8 @@ interface GroupView {
 interface MissingCert50View {
   paymentId: string;
   invoiceId: string;
+  /** A deposit's withholding — paid against a customer PO. */
+  deposit?: boolean;
   invoiceNo: string | null;
   buyerName: string;
   paidDate: string;
@@ -226,7 +228,10 @@ function Receivables() {
                     <td className="py-2.5 px-4 whitespace-nowrap">{formatDisplayDate(m.paidDate)}</td>
                     <td className="py-2.5 px-4">{m.buyerName}</td>
                     <td className="py-2.5 px-4">
-                      <Link href={`/accounting/invoices/${m.invoiceId}`} className="text-sky-700 hover:text-sky-800">{m.invoiceNo}</Link>
+                      <Link href={m.deposit ? `/accounting/sales-orders/${m.invoiceId}` : `/accounting/invoices/${m.invoiceId}`} className="text-sky-700 hover:text-sky-800">
+                        {m.invoiceNo}
+                        {m.deposit && " (มัดจำ)"}
+                      </Link>
                       {m.receiptNo && <span className="text-gray-500"> / {m.receiptNo}</span>}
                     </td>
                     <td className="py-2.5 px-4 text-right">

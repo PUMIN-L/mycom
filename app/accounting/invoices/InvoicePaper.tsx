@@ -25,6 +25,8 @@ export interface PaperDocument {
   vatRate: number;
   subtotalSatang: number;
   discountSatang: number;
+  /** A delivery's share of the PO's deposit, before VAT (its VAT was on the deposit's receipt). */
+  depositSatang?: number;
   vatBaseSatang: number;
   vatSatang: number;
   totalSatang: number;
@@ -183,6 +185,19 @@ export default function InvoicePaper({
             <>
               <dt>หักส่วนลด</dt>
               <dd className="text-right">{formatSatang(doc.discountSatang)}</dd>
+            </>
+          )}
+          {(doc.depositSatang ?? 0) > 0 && (
+            <>
+              {/* With prices that include VAT, the deposit comes off with its VAT — so the rows add up. */}
+              <dt>หักเงินมัดจำ{doc.priceMode === "inclusive" && " (รวม VAT)"}</dt>
+              <dd className="text-right">
+                {formatSatang(
+                  doc.priceMode === "inclusive"
+                    ? Math.round(((doc.depositSatang ?? 0) * (10000 + Math.round(doc.vatRate * 100))) / 10000)
+                    : doc.depositSatang ?? 0
+                )}
+              </dd>
             </>
           )}
           <dt>มูลค่าก่อนภาษีมูลค่าเพิ่ม</dt>

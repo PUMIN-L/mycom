@@ -34,7 +34,7 @@ const sent = (sourceLineId: string, qty: number, name = "ปั๊ม"): DocLine
 /** PO so1: line a (pump, 5 ชิ้น) and b (hose, 2); issued invoice inv1 sent 2 pumps, inv2 sent 1 pump + 2 hoses. */
 function orderDb(order: Record<string, unknown> | null = { docType: "SO", status: "issued" }) {
   return router([
-    [/SELECT docType, status FROM acc_documents WHERE id = \?/, () => (order ? [order] : [])],
+    [/SELECT docType, status, vatRate FROM acc_documents WHERE id = \?/, () => (order ? [order] : [])],
     [/SELECT id, name, unit, qty FROM acc_document_lines WHERE documentId = \?/, () => [
       { id: "a", name: "ปั๊ม", unit: "ชิ้น", qty: "5.00" },
       { id: "b", name: "สายยาง", unit: "เส้น", qty: "2.00" },
@@ -106,7 +106,7 @@ describe("checkDeliveryTx — inside the issuing transaction", () => {
     conn.query.mockImplementation(orderDb());
     await checkDeliveryTx(conn, "so1", [sent("a", 2)], "inv9");
     const sqls = connStatements();
-    expect(sqls[0]).toBe("SELECT docType, status FROM acc_documents WHERE id = ? FOR UPDATE");
+    expect(sqls[0]).toBe("SELECT docType, status, vatRate FROM acc_documents WHERE id = ? FOR UPDATE");
     expect(sqls.filter((s) => s.startsWith("SELECT")).every((s) => s.endsWith("FOR UPDATE"))).toBe(true);
   });
 

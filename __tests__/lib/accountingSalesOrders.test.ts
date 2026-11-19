@@ -30,6 +30,7 @@ import {
   createSalesOrder,
   listSalesOrders,
   orderBacklog,
+  saveSalesOrderPlan,
   salesOrderDetail,
   updateSalesOrder,
   updateSalesOrderSchedule,
@@ -141,7 +142,7 @@ describe("createSalesOrder", () => {
 describe("updateSalesOrder", () => {
   const lockedDb = (over: Partial<typeof LOCKED> = {}, invoices = 0) =>
     conn.query.mockImplementation(router([
-      [/SELECT id, docType, status, updatedAt, customerPoNo, issueDate, expectedDeliveryDate FROM acc_documents WHERE id = \? FOR UPDATE/, () => [{ ...LOCKED, ...over }]],
+      [/SELECT id, docType, status, updatedAt, customerPoNo, issueDate, expectedDeliveryDate, totalSatang, vatRate FROM acc_documents WHERE id = \? FOR UPDATE/, () => [{ ...LOCKED, ...over }]],
       [/SELECT COUNT\(\*\) AS n FROM acc_documents WHERE salesOrderId = \? FOR UPDATE/, () => [{ n: invoices }]],
     ]));
 
@@ -161,6 +162,21 @@ describe("updateSalesOrder", () => {
     await expect(updateSalesOrder("so1", INPUT, actor)).rejects.toMatchObject({
       status: 409,
       message: "PO นี้มีใบแจ้งหนี้แล้ว — แก้รายการไม่ได้ แก้ได้เฉพาะกำหนดส่งและหมายเหตุ",
+    });
+    expect(statements().some((s) => s.startsWith("UPDATE"))).toBe(false);
+  });
+
+  it("refuses to make it worth less than the deposits already taken on it", async () => {
+    conn.query.mockImplementation(router([
+      [/SELECT id, docType, status, updatedAt, customerPoNo/, () => [{ ...LOCKED, vatRate: "7.00" }]],
+      [/SELECT COUNT\(\*\) AS n FROM acc_documents WHERE salesOrderId = \? FOR UPDATE/, () => [{ n: 0 }]],
+      [/SELECT id, amountSatang, receiptId FROM acc_payments WHERE documentId = \? AND voidedAt IS NULL FOR UPDATE/, () => [{ id: "p1", amountSatang: 10700000, receiptId: "re1" }]],
+      [/SELECT id, vatBaseSatang FROM acc_documents WHERE id IN/, () => [{ id: "re1", vatBaseSatang: 10000000 }]],
+    ]));
+    // 100,000.00 deposited before VAT; one scale less would leave the PO at 50,000.00
+    await expect(updateSalesOrder("so1", { ...INPUT, lines: [{ ...INPUT.lines[0], qty: 1 }] }, actor)).rejects.toMatchObject({
+      status: 409,
+      message: "PO นี้รับมัดจำแล้ว 100,000.00 บาท (ก่อน VAT) — ยอด PO ต้องไม่น้อยกว่านั้น",
     });
     expect(statements().some((s) => s.startsWith("UPDATE"))).toBe(false);
   });
@@ -247,6 +263,18 @@ describe("cancelSalesOrder", () => {
     }));
   });
 
+  it("keeps a deposit not yet deducted on record, and the history says so", async () => {
+    conn.query.mockImplementation(router([
+      [/SELECT id, docType, status, updatedAt/, () => [{ ...LOCKED, vatRate: "7.00" }]],
+      [/SELECT qty, deliveredQty FROM acc_document_lines/, () => [{ qty: "2.00", deliveredQty: "0.00" }]],
+      [/SELECT id, amountSatang, receiptId FROM acc_payments WHERE documentId = \? AND voidedAt IS NULL FOR UPDATE/, () => [{ id: "p1", amountSatang: 3210000, receiptId: "re1" }]],
+      [/SELECT id, vatBaseSatang FROM acc_documents WHERE id IN/, () => [{ id: "re1", vatBaseSatang: 3000000 }]],
+    ]));
+    vi.mocked(query).mockImplementation(router(stored()) as never);
+    await cancelSalesOrder("so1", "ลูกค้ายกเลิก", actor);
+    expect(writeAudit).toHaveBeenCalledWith(conn, expect.objectContaining({ detail: "ยกเลิก PO ลูกค้า · มีมัดจำที่ยังไม่ได้หัก 30,000.00 บาท (ก่อน VAT) · เหตุผล: ลูกค้ายกเลิก" }));
+  });
+
   it("refuses one delivered in full — there is nothing left to cancel", async () => {
     cancelDb([{ qty: "2.00", deliveredQty: "2.00" }]);
     await expect(cancelSalesOrder("so1", "เหตุผล", actor)).rejects.toMatchObject({ status: 409, message: "PO นี้ส่งครบแล้ว — ไม่มีส่วนที่เหลือให้ยกเลิก" });
@@ -290,7 +318,7 @@ describe("orderBacklog", () => {
     ]) as never);
     const backlog = await orderBacklog("2026-11-19");
     expect(backlog.rows.map((r) => r.id)).toEqual(["late", "soon", "later", "open"]);
-    expect(backlog.totals).toEqual({ backlogSatang: 35000000, count: 4, lateSatang: 5000000, lateCount: 1 });
+    expect(backlog.totals).toEqual({ backlogSatang: 35000000, count: 4, lateSatang: 5000000, lateCount: 1, depositLeftSatang: 0 });
     expect(backlog.today).toBe("2026-11-19");
   });
 });
@@ -316,5 +344,83 @@ describe("salesOrderDetail", () => {
     expect(detail.invoicedLineDiscounts).toEqual({ a: 15000 });
     expect(detail.invoicedBillDiscountSatang).toBe(2000);
     expect(detail.backlogSatang).toBe(5000000);
+  });
+
+  // Step 6 — its deposits, and where each item of its payment plan stands.
+  it("brings its deposits — received, deducted, left — and its plan, each item placed by the money that came in", async () => {
+    vi.mocked(query).mockImplementation(router([
+      ...stored(),
+      [/COALESCE\(SUM\(depositSatang\), 0\) AS d/, () => [{ d: 3000000 }]],
+      [/FROM acc_documents WHERE salesOrderId = \? AND docType = 'INV'/, () => [
+        { id: "inv1", docNo: "INV2026110001", status: "issued", source: "internal", issueDate: "2026-11-12", totalSatang: 7490000, paidSatang: 5000000, discountSatang: 0, depositSatang: 3000000 },
+      ]],
+      [/SELECT id, amountSatang, receiptId FROM acc_payments WHERE documentId = \? AND voidedAt IS NULL/, () => [{ id: "p1", amountSatang: 3210000, receiptId: "re1" }]],
+      [/SELECT id, vatBaseSatang FROM acc_documents WHERE id IN/, () => [{ id: "re1", vatBaseSatang: 3000000 }]],
+      [/FROM acc_plan_items WHERE salesOrderId = \?/, () => [
+        { id: "i1", label: "มัดจำ 30%", stage: "deposit", amountSatang: 3210000, dueDate: "2026-11-10" },
+        { id: "i2", label: "ส่งของ 70%", stage: "invoice", amountSatang: 7490000, dueDate: "2026-11-15" },
+      ]],
+    ]) as never);
+    const detail = (await salesOrderDetail("so1", "2026-11-19"))!;
+    expect(detail.deposits).toEqual({ receivedSatang: 3210000, receivedExVatSatang: 3000000, deductedSatang: 3000000, leftSatang: 0 });
+    expect(detail.deliveries[0]).toMatchObject({ paidSatang: 5000000, depositSatang: 3000000 });
+    expect(detail.plan).toEqual([
+      { id: "i1", label: "มัดจำ 30%", stage: "deposit", amountSatang: 3210000, dueDate: "2026-11-10", receivedSatang: 3210000, status: "paid", late: false },
+      { id: "i2", label: "ส่งของ 70%", stage: "invoice", amountSatang: 7490000, dueDate: "2026-11-15", receivedSatang: 5000000, status: "partial", late: true },
+    ]);
+  });
+});
+
+describe("saveSalesOrderPlan", () => {
+  const PLAN = [
+    { label: "มัดจำ 30%", stage: "deposit" as const, amountSatang: 3210000, dueDate: "2026-11-20" },
+    { label: "ส่งของ 70%", stage: "invoice" as const, amountSatang: 7490000, dueDate: "" },
+  ];
+  const lockedDb = (over: Record<string, unknown> = {}) =>
+    conn.query.mockImplementation(router([[/SELECT id, docType, status, updatedAt, customerPoNo/, () => [{ ...LOCKED, totalSatang: 10700000, vatRate: "7.00", ...over }]]]));
+
+  it("saves the plan over the old one, in order, and the history says how many items for how much", async () => {
+    lockedDb();
+    vi.mocked(query).mockImplementation(router(stored()) as never);
+    await saveSalesOrderPlan("so1", PLAN, actor);
+    expect(conn.query).toHaveBeenCalledWith("DELETE FROM acc_plan_items WHERE salesOrderId = ?", ["so1"]);
+    const insert = conn.query.mock.calls.find(([sql]) => String(sql).startsWith("INSERT INTO acc_plan_items"))!;
+    expect(insert[1]).toEqual([expect.any(String), "so1", 0, "มัดจำ 30%", "deposit", 3210000, "2026-11-20", expect.any(String), "so1", 1, "ส่งของ 70%", "invoice", 7490000, null]);
+    expect(writeAudit).toHaveBeenCalledWith(conn, expect.objectContaining({ action: "doc.update", detail: "แผนเก็บเงิน 2 งวด · รวม 107,000.00 บาท" }));
+  });
+
+  it("refuses a plan of more than the PO, or with a problem — and a cancelled PO", async () => {
+    lockedDb();
+    await expect(saveSalesOrderPlan("so1", [...PLAN, { ...PLAN[1], amountSatang: 1 }], actor)).rejects.toMatchObject({ status: 400, message: "ยอดรวมทุกงวดเกินยอด PO (รวม VAT)" });
+    await expect(saveSalesOrderPlan("so1", [{ ...PLAN[0], label: "" }], actor)).rejects.toMatchObject({ status: 400 });
+    expect(statements().some((s) => s.startsWith("DELETE"))).toBe(false);
+    lockedDb({ status: "void" });
+    await expect(saveSalesOrderPlan("so1", PLAN, actor)).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("clears the plan when given none", async () => {
+    lockedDb();
+    vi.mocked(query).mockImplementation(router(stored()) as never);
+    await saveSalesOrderPlan("so1", [], actor);
+    expect(statements().some((s) => s.startsWith("INSERT"))).toBe(false);
+    expect(writeAudit).toHaveBeenCalledWith(conn, expect.objectContaining({ detail: "ล้างแผนเก็บเงิน" }));
+  });
+});
+
+describe("deposits in the lists", () => {
+  it("shows each PO's deposit not yet deducted, and the backlog's total of them", async () => {
+    vi.mocked(query).mockImplementation(router([
+      [/FROM acc_documents WHERE docType = 'SO' AND status = 'issued'/, () => [{ ...SO_ROW }]],
+      [/FROM acc_document_lines WHERE documentId IN/, () => [{ documentId: "so1", qty: "2.00", deliveredQty: "0.00", amountSatang: 10000000 }]],
+      [/FROM acc_payments p LEFT JOIN acc_documents r/, () => [
+        { documentId: "so1", amountSatang: 3210000, vatBaseSatang: 3000000 },
+        { documentId: "so1", amountSatang: 1070, vatBaseSatang: null },
+      ]],
+      [/SUM\(depositSatang\), 0\) AS d FROM acc_documents/, () => [{ salesOrderId: "so1", d: 1000000 }]],
+    ]) as never);
+    const backlog = await orderBacklog("2026-11-19");
+    // 30,000.00 + 10.00 (no receipt: VAT taken out) − 10,000.00 deducted
+    expect(backlog.rows[0].depositLeftSatang).toBe(2001000);
+    expect(backlog.totals.depositLeftSatang).toBe(2001000);
   });
 });

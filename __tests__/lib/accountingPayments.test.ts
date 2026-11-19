@@ -227,7 +227,7 @@ describe("voidPayment", () => {
   function recorded(over: { voidedAt?: string | null; receiptStatus?: string } = {}) {
     conn.query.mockImplementation(router([
       [/SELECT documentId FROM acc_payments WHERE id = \?$/, () => [{ documentId: "inv1" }]],
-      [/SELECT docNo, salesRecordId FROM acc_documents WHERE id = \? FOR UPDATE/, () => [{ docNo: "INV2026110001", salesRecordId: "sale-1" }]],
+      [/SELECT docType, docNo, salesRecordId, customerPoNo, vatRate FROM acc_documents WHERE id = \? FOR UPDATE/, () => [{ docNo: "INV2026110001", salesRecordId: "sale-1" }]],
       [/SELECT id, receiptId, amountSatang, voidedAt FROM acc_payments WHERE id = \? FOR UPDATE/, () => [{ id: "p1", receiptId: "re1", amountSatang: 2033000, voidedAt: over.voidedAt ?? null }]],
       [/SELECT docNo, status FROM acc_documents WHERE id = \? FOR UPDATE/, () => [{ docNo: "RE2026110001", status: over.receiptStatus ?? "issued" }]],
       [/COALESCE\(SUM/, () => [{ paid: 0 }]],
@@ -260,7 +260,7 @@ describe("voidPayment", () => {
     recorded();
     await voidPayment("p1", "ผิด", actor);
     const order = statements();
-    expect(order.findIndex((s) => s.startsWith("SELECT docNo, salesRecordId FROM acc_documents"))).toBeLessThan(
+    expect(order.findIndex((s) => s.startsWith("SELECT docType, docNo, salesRecordId, customerPoNo, vatRate FROM acc_documents"))).toBeLessThan(
       order.findIndex((s) => s.startsWith("SELECT id, receiptId, amountSatang, voidedAt FROM acc_payments"))
     );
   });
@@ -270,6 +270,36 @@ describe("voidPayment", () => {
     await expect(voidPayment("p1", "ผิด", actor)).rejects.toMatchObject({ status: 409 });
     conn.query.mockImplementation(router([]));
     await expect(voidPayment("p1", "ผิด", actor)).rejects.toMatchObject({ status: 404 });
+  });
+
+  // Step 6 — a deposit on a customer PO.
+  describe("a deposit", () => {
+    function deposit(deducted: number) {
+      conn.query.mockImplementation(router([
+        [/SELECT documentId FROM acc_payments WHERE id = \?$/, () => [{ documentId: "so1" }]],
+        [/SELECT docType, docNo, salesRecordId, customerPoNo, vatRate FROM acc_documents WHERE id = \? FOR UPDATE/, () => [{ docType: "SO", docNo: null, salesRecordId: null, customerPoNo: "PO-6611", vatRate: "7.00" }]],
+        [/SELECT id, receiptId, amountSatang, voidedAt FROM acc_payments WHERE id = \? FOR UPDATE/, () => [{ id: "p1", receiptId: "re1", amountSatang: 3210000, voidedAt: null }]],
+        [/SELECT vatBaseSatang FROM acc_documents WHERE id = \? FOR UPDATE/, () => [{ vatBaseSatang: 3000000 }]],
+        [/SELECT id, amountSatang, receiptId FROM acc_payments WHERE documentId = \? AND voidedAt IS NULL/, () => [{ id: "p1", amountSatang: 3210000, receiptId: "re1" }]],
+        [/SELECT id, vatBaseSatang FROM acc_documents WHERE id IN/, () => [{ id: "re1", vatBaseSatang: 3000000 }]],
+        [/COALESCE\(SUM\(depositSatang\), 0\) AS d/, () => [{ d: deducted }]],
+        [/SELECT docNo, status FROM acc_documents WHERE id = \? FOR UPDATE/, () => [{ docNo: "RE2026110007", status: "issued" }]],
+        [/COALESCE\(SUM\(amountSatang\), 0\) AS paid/, () => [{ paid: 0 }]],
+      ]));
+    }
+
+    it("cannot be voided while a delivery invoice has deducted it", async () => {
+      deposit(1000000);
+      await expect(voidPayment("p1", "ลูกค้าขอคืน", actor)).rejects.toMatchObject({ status: 409, message: expect.stringContaining("ลบใบแจ้งหนี้ที่หักมัดจำก่อน") });
+      expect(statements().some((s) => s.startsWith("UPDATE"))).toBe(false);
+    });
+
+    it("is voided with its receipt otherwise — the PO's deposits re-summed, its history says so", async () => {
+      deposit(0);
+      await voidPayment("p1", "ลูกค้าขอคืน", actor);
+      expect(vi.mocked(conn.query).mock.calls).toContainEqual(["UPDATE acc_documents SET paidSatang = ? WHERE id = ?", [0, "so1"]]);
+      expect(writeAudit).toHaveBeenCalledWith(conn, expect.objectContaining({ action: "payment.void", documentId: "so1", docNo: "PO-6611", detail: expect.stringMatching(/^ยกเลิกเงินมัดจำ 32,100.00 บาท/) }));
+    });
   });
 });
 
@@ -316,16 +346,21 @@ describe("receivables", () => {
         { id: "inv1", docNo: "INV2026110001", source: "internal", issueDate: "2026-09-01", dueDate: "2026-10-01", companyId: "co1", buyerName: "บริษัท เอ", totalSatang: 2033000, paidSatang: 1000000 },
       ]],
       [/FROM acc_payments p\s+JOIN acc_documents d/, () => [
-        { id: "p1", documentId: "inv1", paidDate: "2026-10-05", whtPercent: "3.00", whtSatang: 30000, externalReceiptNo: "", invoiceNo: "INV2026110001", buyerName: "บริษัท เอ", receiptNo: "RE2026100001" },
+        { id: "p1", documentId: "inv1", paidDate: "2026-10-05", whtPercent: "3.00", whtSatang: 30000, externalReceiptNo: "", invoiceNo: "INV2026110001", docType: "INV", buyerName: "บริษัท เอ", receiptNo: "RE2026100001" },
+        // Step 6 — withholding on a deposit: it pays a customer PO, named by the PO.
+        { id: "p2", documentId: "so1", paidDate: "2026-10-01", whtPercent: "3.00", whtSatang: 9000, externalReceiptNo: "", invoiceNo: "PO PO-6611", docType: "SO", buyerName: "บริษัท เอ", receiptNo: "RE2026100002" },
       ]],
     ]) as never);
     const r = await receivables("2026-11-18");
     expect(r.totals).toMatchObject({ all: 1033000, d31_60: 1033000 });
     expect(r.groups[0]).toMatchObject({ name: "บริษัท เอ", outstandingSatang: 1033000 });
     expect(r.missingCert50).toEqual([
-      { paymentId: "p1", invoiceId: "inv1", invoiceNo: "INV2026110001", buyerName: "บริษัท เอ", paidDate: "2026-10-05", receiptNo: "RE2026100001", whtPercent: 3, whtSatang: 30000 },
+      { paymentId: "p1", invoiceId: "inv1", invoiceNo: "INV2026110001", deposit: false, buyerName: "บริษัท เอ", paidDate: "2026-10-05", receiptNo: "RE2026100001", whtPercent: 3, whtSatang: 30000 },
+      { paymentId: "p2", invoiceId: "so1", invoiceNo: "PO PO-6611", deposit: true, buyerName: "บริษัท เอ", paidDate: "2026-10-01", receiptNo: "RE2026100002", whtPercent: 3, whtSatang: 9000 },
     ]);
-    expect(r.missingCert50Satang).toBe(30000);
+    expect(r.missingCert50Satang).toBe(39000);
+    const certSql = vi.mocked(query).mock.calls.map(([sql]) => String(sql)).find((s) => s.includes("cert50Received = 0"))!;
+    expect(certSql).toContain("COALESCE(d.docNo, CONCAT('PO ', d.customerPoNo)) AS invoiceNo");
   });
 });
 

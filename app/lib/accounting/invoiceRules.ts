@@ -51,6 +51,8 @@ export interface InvoiceInput {
   lines: DocLineInput[];
   /** The customer PO (SO) this invoice delivers from ("" / absent: none). */
   salesOrderId?: string;
+  /** A delivery's share of the PO's deposit, deducted BEFORE VAT (satang; 0 / absent: none). */
+  depositSatang?: number;
 }
 
 export const INVOICE_LIMITS = {
@@ -144,6 +146,7 @@ export function cleanInvoiceInput(raw: unknown): InvoiceInput {
     note: text(body.note, INVOICE_LIMITS.note),
     lines,
     salesOrderId: text(body.salesOrderId, 36),
+    depositSatang: int(body.depositSatang, 0),
   };
 }
 
@@ -203,6 +206,12 @@ export function invoiceProblems(input: InvoiceInput, vatRate: number, opts: { ma
       if (input.discountSatang > totals.subtotalSatang) fields.discountSatang = "ส่วนลดท้ายบิลมากกว่ายอดรวม";
     }
   }
+  const deposit = input.depositSatang ?? 0;
+  if (deposit < 0) fields.depositSatang = "หักมัดจำติดลบไม่ได้";
+  else if (deposit > 0 && lineProblemsFree && !fields.discountSatang) {
+    const totals = computeTotals({ lines: input.lines, discountSatang: input.discountSatang, depositSatang: deposit, priceMode: input.priceMode, vatRate });
+    if (totals.vatBaseSatang < 0) fields.depositSatang = "หักมัดจำมากกว่ายอดของใบนี้";
+  }
 
   const machines = input.lines.filter((l) => l.isMachine).reduce((s, l) => s + (Number.isInteger(l.qty) ? l.qty : 0), 0);
   if (opts.machinesCap !== false && machines > INVOICE_LIMITS.machinesMax) {
@@ -222,7 +231,9 @@ export function invoiceProblems(input: InvoiceInput, vatRate: number, opts: { ma
  */
 export function issueProblems(input: InvoiceInput, totals: DocTotals): string[] {
   const problems: string[] = [];
-  if (totals.totalSatang <= 0) problems.push("ยอดรวมต้องมากกว่า 0 บาท");
+  // A delivery paid in full by its deposit comes to nothing — and is still the delivery note.
+  const coveredByDeposit = totals.totalSatang === 0 && totals.depositSatang > 0;
+  if (totals.totalSatang <= 0 && !coveredByDeposit) problems.push("ยอดรวมต้องมากกว่า 0 บาท");
   if (input.isTaxInvoice && !input.buyerAddress) problems.push("ใบกำกับภาษีต้องมีที่อยู่ของลูกค้า");
   if (input.lines.some((l) => l.isMachine) && !input.customerId) {
     problems.push("มีเครื่องที่ต้องลงทะเบียน — กรุณาเลือกผู้ติดต่อของลูกค้าที่จะผูกเครื่องไว้");

@@ -83,7 +83,10 @@ export type PaymentProblems = Partial<Record<keyof PaymentInput, string>>;
  * the invoice still owes; `today`: Bangkok's date (money cannot arrive
  * tomorrow).
  */
-export function paymentProblems(p: PaymentInput, ctx: { outstandingSatang: number; today: string }): PaymentProblems {
+export function paymentProblems(
+  p: PaymentInput,
+  ctx: { outstandingSatang: number; today: string; deposit?: boolean }
+): PaymentProblems {
   const problems: PaymentProblems = {};
   if (!isValidDateString(p.paidDate)) problems.paidDate = "กรุณาเลือกวันที่รับเงิน";
   else if (p.paidDate > ctx.today) problems.paidDate = "วันที่รับเงินต้องไม่เกินวันนี้";
@@ -91,7 +94,14 @@ export function paymentProblems(p: PaymentInput, ctx: { outstandingSatang: numbe
   if (!Number.isSafeInteger(p.amountSatang) || p.amountSatang <= 0) problems.amountSatang = "กรุณากรอกยอดที่ลูกค้าชำระ";
   else if (p.amountSatang > MAX_AMOUNT_SATANG) problems.amountSatang = "ยอดเงินสูงเกินไป";
   else if (p.amountSatang > ctx.outstandingSatang) {
-    problems.amountSatang = ctx.outstandingSatang > 0 ? "ยอดเกินยอดค้างชำระของใบนี้" : "ใบนี้ไม่มียอดค้างชำระแล้ว";
+    // A deposit's ceiling is what is still to deliver, not what an invoice owes.
+    problems.amountSatang = ctx.deposit
+      ? ctx.outstandingSatang > 0
+        ? "มัดจำเกินมูลค่าที่ยังไม่ได้ส่ง (รวมมัดจำที่ยังไม่ได้หัก)"
+        : "PO นี้ไม่มีมูลค่าที่ยังไม่ได้ส่งให้รับมัดจำแล้ว"
+      : ctx.outstandingSatang > 0
+        ? "ยอดเกินยอดค้างชำระของใบนี้"
+        : "ใบนี้ไม่มียอดค้างชำระแล้ว";
   }
 
   if (p.whtSatang < 0) problems.whtSatang = "ยอดหัก ณ ที่จ่ายติดลบไม่ได้";

@@ -24,7 +24,13 @@ interface Row {
   totalSatang: number;
   relatedDocId: string | null;
   relatedDocNo: string | null;
+  /** "SO": a deposit's receipt — it pays a customer PO, not an invoice. */
+  relatedDocType?: string | null;
 }
+
+/** Where what a receipt pays lives: the invoice — or the customer PO, for a deposit. */
+const relatedHref = (r: Pick<Row, "relatedDocId" | "relatedDocType">) =>
+  r.relatedDocType === "SO" ? `/accounting/sales-orders/${r.relatedDocId}` : `/accounting/invoices/${r.relatedDocId}`;
 
 export default function ReceiptListPage() {
   return (
@@ -159,7 +165,7 @@ function ReceiptList() {
                   </td>
                   <td className="py-3 px-4 tabular-nums">
                     {r.relatedDocId ? (
-                      <Link href={`/accounting/invoices/${r.relatedDocId}`} onClick={(e) => e.stopPropagation()} className="text-sky-700 hover:text-sky-800">
+                      <Link href={relatedHref(r)} onClick={(e) => e.stopPropagation()} className="text-sky-700 hover:text-sky-800">
                         {r.relatedDocNo ?? "—"}
                       </Link>
                     ) : (

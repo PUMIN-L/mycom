@@ -52,6 +52,10 @@ describe("cleanOrderInput", () => {
     expect(cleaned.storageNote).toBe("แฟ้ม PO ลูกค้า 2569");
   });
 
+  it("deducts no deposit — its delivery invoices do", () => {
+    expect(cleanOrderInput({ ...ORDER, depositSatang: 500000 }).depositSatang).toBe(0);
+  });
+
   it("keeps a storage note one character too long, so the rules can say so", () => {
     expect(cleanOrderInput({ ...ORDER, storageNote: "x".repeat(400) }).storageNote).toHaveLength(256);
   });

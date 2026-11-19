@@ -70,9 +70,13 @@ function InvoiceDocument({ id, onTitle }: { id: string; onTitle: (title: string)
         }
         const body: Loaded = await res.json();
         if (cancelled) return;
-        // A receipt's link opened here by hand — its own page prints it.
+        // A receipt's link opened here by hand — its own page prints it; a customer PO has its own page too.
         if (body.document.docType === "RE") {
           router.replace(`/accounting/receipts/${encodeURIComponent(id)}`);
+          return;
+        }
+        if (body.document.docType === "SO") {
+          router.replace(`/accounting/sales-orders/${encodeURIComponent(id)}`);
           return;
         }
         setState({ status: "ok", ...body });

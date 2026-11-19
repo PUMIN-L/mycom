@@ -34,6 +34,8 @@ export function cleanOrderInput(raw: unknown): OrderInput {
     ...base,
     isTaxInvoice: false,
     salesOrderId: "",
+    // A PO deducts nothing — its deposits are deducted by the delivery invoices.
+    depositSatang: 0,
     lines: base.lines.map((l) => ({ ...l, serials: "", sourceLineId: "" })),
     expectedDeliveryDate: text(body.expectedDeliveryDate, 10),
     storageNote: text(body.storageNote, ORDER_LIMITS.storageNote + 1),

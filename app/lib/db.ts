@@ -13,7 +13,7 @@ import { repairTruncatedRichText } from "./sanitizeHtml";
 // did not lower the 33 already written to `settings`, so the next change to
 // reuse 33 was skipped entirely and its tables were never created in
 // production. Reverting a migration means moving FORWARD to a new number.
-const SCHEMA_VERSION = 51;
+const SCHEMA_VERSION = 52;
 
 type DbPool = ReturnType<typeof mysql.createPool>;
 
@@ -1880,6 +1880,28 @@ async function bootstrapSchemaOnce(): Promise<void> {
       } catch (error) {
         if (!isBenignSchemaError(error)) throw error;
       }
+    }
+
+    // ── v52: a customer PO's payment plan (แผนเก็บเงิน — §8g step 6) ───────
+    // What the customer is to pay and when: a deposit before delivery, or
+    // collected on the invoices. Its status is worked out from the money
+    // actually received, so nothing here goes stale. Deleted with its PO.
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS acc_plan_items (
+        id VARCHAR(36) PRIMARY KEY,
+        salesOrderId VARCHAR(36) NOT NULL,
+        sortOrder INT NOT NULL DEFAULT 0,
+        label VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+        stage VARCHAR(10) NOT NULL,
+        amountSatang BIGINT NOT NULL,
+        dueDate VARCHAR(10) DEFAULT NULL,
+        INDEX idx_api_so (salesOrderId)
+      )
+    `);
+    try {
+      await connection.query("CREATE INDEX idx_api_so ON acc_plan_items (salesOrderId)");
+    } catch (error) {
+      if (!isBenignSchemaError(error)) throw error;
     }
 
     // ── Seed default admin user ────────────────────────────────────────────

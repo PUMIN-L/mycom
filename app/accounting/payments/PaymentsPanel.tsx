@@ -40,13 +40,22 @@ export type PaymentsState =
 
 /** The invoice's payments and what the payment dialog needs; `reload` after any change. */
 export function useInvoicePayments(invoiceId: string): { state: PaymentsState; reload: () => void } {
+  return usePaymentsAt(`/api/accounting/documents/${encodeURIComponent(invoiceId)}/payments`);
+}
+
+/** A customer PO's deposits and what the deposit dialog needs (step 6). */
+export function useOrderDeposits(salesOrderId: string): { state: PaymentsState; reload: () => void } {
+  return usePaymentsAt(`/api/accounting/sales-orders/${encodeURIComponent(salesOrderId)}/deposits`);
+}
+
+function usePaymentsAt(url: string): { state: PaymentsState; reload: () => void } {
   const [state, setState] = useState<PaymentsState>({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(`/api/accounting/documents/${encodeURIComponent(invoiceId)}/payments`, { cache: "no-store" });
+        const res = await fetch(url, { cache: "no-store" });
         if (!res.ok) {
           const message = await errorMessageOf(res, "โหลดรายการรับชำระไม่สำเร็จ");
           if (!cancelled) setState({ status: "error", message });
@@ -68,7 +77,7 @@ export function useInvoicePayments(invoiceId: string): { state: PaymentsState; r
     return () => {
       cancelled = true;
     };
-  }, [invoiceId, attempt]);
+  }, [url, attempt]);
   const reload = useCallback(() => setAttempt((n) => n + 1), []);
   return { state, reload };
 }
@@ -78,13 +87,25 @@ export function useInvoicePayments(invoiceId: string): { state: PaymentsState; r
  * withholding and whether its 50 ทวิ came in, what actually arrived; a voided
  * one struck through with its reason.
  */
-export default function PaymentsPanel({ state, onChanged, onRetry }: { state: PaymentsState; onChanged: () => void; onRetry: () => void }) {
+export default function PaymentsPanel({
+  state,
+  onChanged,
+  onRetry,
+  title = "การรับชำระ",
+  emptyText = "ยังไม่มีการรับชำระ",
+}: {
+  state: PaymentsState;
+  onChanged: () => void;
+  onRetry: () => void;
+  title?: string;
+  emptyText?: string;
+}) {
   const [voiding, setVoiding] = useState<PaymentView | null>(null);
   const [cert50, setCert50] = useState<PaymentView | null>(null);
 
   return (
     <div className="bg-white rounded-2xl border border-gray-200 p-5" data-testid="payments-panel">
-      <h2 className="text-sm font-bold text-gray-900 mb-2">การรับชำระ</h2>
+      <h2 className="text-sm font-bold text-gray-900 mb-2">{title}</h2>
       {state.status === "loading" && <Spinner className="h-4 w-4 text-sky-600" />}
       {state.status === "error" && (
         <div role="alert" className="text-sm space-y-2">
@@ -92,7 +113,7 @@ export default function PaymentsPanel({ state, onChanged, onRetry }: { state: Pa
           <button type="button" onClick={onRetry} className="font-semibold text-sky-700 hover:text-sky-800">ลองใหม่</button>
         </div>
       )}
-      {state.status === "ok" && state.payments.length === 0 && <p className="text-sm text-gray-500">ยังไม่มีการรับชำระ</p>}
+      {state.status === "ok" && state.payments.length === 0 && <p className="text-sm text-gray-500">{emptyText}</p>}
       {state.status === "ok" && state.payments.length > 0 && (
         <ul className="divide-y divide-gray-100 text-sm">
           {state.payments.map((p) => {

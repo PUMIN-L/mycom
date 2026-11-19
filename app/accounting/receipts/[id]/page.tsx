@@ -143,11 +143,15 @@ function ReceiptDocument({ id, onTitle }: { id: string; onTitle: (title: string)
               </>
             )}
           </dl>
-          {invoice && (
+          {invoice && invoice.docType === "SO" ? (
+            <Link href={`/accounting/sales-orders/${invoice.id}`} className="block text-sm font-semibold text-sky-700 hover:text-sky-800">
+              ← มัดจำของ PO ลูกค้า {doc.customerPoNo} ({formatDisplayDate(invoice.issueDate)})
+            </Link>
+          ) : invoice ? (
             <Link href={`/accounting/invoices/${invoice.id}`} className="block text-sm font-semibold text-sky-700 hover:text-sky-800">
               ← ใบแจ้งหนี้ {invoice.docNo} ({formatDisplayDate(invoice.issueDate)})
             </Link>
-          )}
+          ) : null}
           <div className="grid grid-cols-2 gap-2 pt-1">
             <button type="button" onClick={() => printAs("ต้นฉบับ")} className="px-3 py-2.5 rounded-xl bg-sky-600 text-white font-semibold hover:bg-sky-700">
               พิมพ์ต้นฉบับ
@@ -203,7 +207,9 @@ function ReceiptDocument({ id, onTitle }: { id: string; onTitle: (title: string)
           label={doc.docNo ?? "ใบเสร็จ"}
           impact={impact}
           onCancel={() => setDeleting(false)}
-          onDeleted={() => router.push(invoice ? `/accounting/invoices/${invoice.id}` : "/accounting/receipts")}
+          onDeleted={() =>
+            router.push(invoice ? (invoice.docType === "SO" ? `/accounting/sales-orders/${invoice.id}` : `/accounting/invoices/${invoice.id}`) : "/accounting/receipts")
+          }
         />
       )}
     </div>

@@ -35,6 +35,8 @@ export interface ReceiptPaperPayment {
 }
 
 export interface ReceiptPaperInvoice {
+  /** "SO": the receipt is for a deposit on a customer PO (step 6). */
+  docType?: string;
   docNo: string | null;
   issueDate: string;
   totalSatang: number;
@@ -61,7 +63,8 @@ export default function ReceiptPaper({
   copyLabel: string | null;
 }) {
   const voided = doc.status === "void";
-  const partial = invoice !== null && doc.totalSatang < invoice.totalSatang;
+  const deposit = invoice?.docType === "SO";
+  const partial = invoice !== null && !deposit && doc.totalSatang < invoice.totalSatang;
   return (
     <div
       data-print-root=""
@@ -152,7 +155,14 @@ export default function ReceiptPaper({
             <td className="py-2 pr-2">
               {invoice ? (
                 <>
-                  ชำระตามใบแจ้งหนี้ เลขที่ {invoice.docNo} ลงวันที่ {formatDisplayDate(invoice.issueDate)}
+                  {deposit ? (
+                    <>
+                      รับเงินมัดจำ ตาม PO ลูกค้า เลขที่ {doc.customerPoNo} ลงวันที่ {formatDisplayDate(invoice.issueDate)}
+                      <span className="text-gray-600"> (มูลค่า PO {formatSatang(invoice.totalSatang)} บาท)</span>
+                    </>
+                  ) : (
+                    <>ชำระตามใบแจ้งหนี้ เลขที่ {invoice.docNo} ลงวันที่ {formatDisplayDate(invoice.issueDate)}</>
+                  )}
                   {partial && <span className="text-gray-600"> (ชำระบางส่วน จากยอด {formatSatang(invoice.totalSatang)} บาท)</span>}
                   {invoice.lines.length > 0 && (
                     <ul className="text-xs text-gray-600 mt-1 space-y-0.5">

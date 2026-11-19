@@ -7,14 +7,18 @@ import AccountingFrame from "../../AccountingFrame";
 import InvoiceEditor from "../../invoices/InvoiceEditor";
 import DocumentDeleteDialog from "../../DocumentDeleteDialog";
 import OrderStatusBadge from "../OrderStatusBadge";
-import { useOrderDetail, type OrderDetailView } from "../orderClient";
+import { useOrderDetail, type OrderDetailView, type PlanItemView } from "../orderClient";
+import PaymentDialog from "../../payments/PaymentDialog";
+import PaymentsPanel, { useOrderDeposits } from "../../payments/PaymentsPanel";
+import SearchableDropdown from "../../../components/SearchableDropdown";
 import DatePicker from "../../../components/DatePicker";
 import Spinner from "../../../components/Spinner";
 import { useModalEscape } from "../../../components/useModalEscape";
 import { errorMessageOf } from "../../../lib/apiErrorMessage";
 import { bangkokDateString, formatDisplayDate, formatDisplayDateTime, toLocalDateString } from "../../../lib/dateFormat";
-import { formatSatang } from "../../../lib/accounting/money";
+import { formatSatang, parseBahtToSatang } from "../../../lib/accounting/money";
 import { ORDER_LIMITS, isOrderLate, remainingQty } from "../../../lib/accounting/orderRules";
+import { PLAN_LIMITS, PLAN_STAGES, PLAN_STATUS_LABELS, planProblems, type PlanStage } from "../../../lib/accounting/depositRules";
 import type { AuditEntry } from "../../../lib/accounting/types";
 import { useAccountingLookups } from "../../useAccountingLookups";
 import { useAccountingSettings } from "../../useAccountingSettings";
@@ -38,9 +42,17 @@ function SalesOrder({ id, onTitle }: { id: string; onTitle: (title: string) => v
   const lookups = useAccountingLookups();
   const settings = useAccountingSettings();
   const [editing, setEditing] = useState(false);
-  const [dialog, setDialog] = useState<"schedule" | "cancel" | "delete" | null>(null);
+  const [dialog, setDialog] = useState<"schedule" | "cancel" | "delete" | "plan" | null>(null);
+  const deposits = useOrderDeposits(id);
+  // A deposit dialog open, with the amount of a plan item (null: typed by hand).
+  const [depositFor, setDepositFor] = useState<{ amountSatang: number | null } | null>(null);
+  const [recorded, setRecorded] = useState<{ id: string; docNo: string } | null>(null);
   const [audit, setAudit] = useState<AuditEntry[] | null>(null);
   const reload = () => setReloadKey((n) => n + 1);
+  const reloadAll = () => {
+    reload();
+    deposits.reload();
+  };
 
   const customerPoNo = load.status === "ok" ? load.detail.order.customerPoNo : null;
   useEffect(() => {
@@ -89,6 +101,8 @@ function SalesOrder({ id, onTitle }: { id: string; onTitle: (title: string) => v
   const today = bangkokDateString(new Date());
   const late = isOrderLate(o, detail.backlogSatang, today);
   const canEditLines = !cancelled && detail.deliveries.length === 0;
+  const depositCtx = deposits.state.status === "ok" ? deposits.state.context : null;
+  const canTakeDeposit = !cancelled && detail.orderStatus !== "complete" && !!depositCtx && depositCtx.outstandingSatang > 0;
 
   if (editing) {
     return (
@@ -200,6 +214,13 @@ function SalesOrder({ id, onTitle }: { id: string; onTitle: (title: string) => v
           </div>
         </section>
 
+        {recorded && (
+          <div role="status" className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-900">
+            บันทึกเงินมัดจำแล้ว — ออก{" "}
+            <Link href={`/accounting/receipts/${recorded.id}`} className="font-semibold underline">ใบเสร็จรับเงิน/ใบกำกับภาษี {recorded.docNo}</Link>
+          </div>
+        )}
+
         <section className="bg-white rounded-2xl border border-gray-200 p-5" aria-labelledby="order-deliveries">
           <h2 id="order-deliveries" className="font-bold text-gray-900 mb-2">การส่งของ (ใบแจ้งหนี้จาก PO นี้)</h2>
           {detail.deliveries.length === 0 ? (
@@ -220,6 +241,36 @@ function SalesOrder({ id, onTitle }: { id: string; onTitle: (title: string) => v
             </ul>
           )}
         </section>
+
+        <PlanSection
+          detail={detail}
+          cancelled={cancelled}
+          canTakeDeposit={canTakeDeposit}
+          onEdit={() => setDialog("plan")}
+          onTakeDeposit={(amountSatang) => setDepositFor({ amountSatang })}
+        />
+
+        {detail.deposits && (detail.deposits.receivedSatang > 0 || canTakeDeposit || deposits.state.status !== "ok" || deposits.state.payments.length > 0) && (
+          <div className="space-y-3">
+            {detail.deposits.receivedSatang > 0 && (
+              <dl className="bg-white rounded-2xl border border-gray-200 p-5 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm tabular-nums" data-testid="deposit-summary">
+                <dt className="text-gray-500">รับมัดจำแล้ว (รวม VAT)</dt>
+                <dd className="text-right font-semibold">{formatSatang(detail.deposits.receivedSatang)}</dd>
+                <dt className="text-gray-500">หักในใบแจ้งหนี้แล้ว (ก่อน VAT)</dt>
+                <dd className="text-right">{formatSatang(detail.deposits.deductedSatang)}</dd>
+                <dt className="text-gray-500">เหลือให้หัก (ก่อน VAT)</dt>
+                <dd className="text-right font-semibold text-orange-600">{formatSatang(detail.deposits.leftSatang)}</dd>
+              </dl>
+            )}
+            {detail.orderStatus === "complete" && detail.deposits.leftSatang > 0 && (
+              <p role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900" data-testid="deposit-left-over">
+                ส่งของครบแล้ว แต่ยังมีมัดจำที่ไม่ได้หักในใบแจ้งหนี้ {formatSatang(detail.deposits.leftSatang)} บาท (ก่อน VAT) — ลูกค้าจ่ายเกิน
+                ต้องคืนเงินหรือทำใบลดหนี้
+              </p>
+            )}
+            <PaymentsPanel state={deposits.state} onChanged={reloadAll} onRetry={deposits.reload} title="เงินมัดจำ" emptyText="ยังไม่ได้รับมัดจำ" />
+          </div>
+        )}
       </div>
 
       <aside className="space-y-4 xl:sticky xl:top-6" aria-label="การทำรายการกับ PO">
@@ -234,6 +285,12 @@ function SalesOrder({ id, onTitle }: { id: string; onTitle: (title: string) => v
             <dt className="text-gray-500">รอส่ง (ก่อน VAT)</dt>
             <dd className="text-right font-semibold" data-testid="order-backlog">{formatSatang(detail.backlogSatang)}</dd>
           </dl>
+          {canTakeDeposit && (
+            <button type="button" onClick={() => setDepositFor({ amountSatang: null })}
+              className="w-full px-3 py-2.5 rounded-xl border border-green-300 text-green-800 font-semibold hover:bg-green-50">
+              รับเงินมัดจำ
+            </button>
+          )}
           {!cancelled && detail.orderStatus !== "complete" && (
             <>
               <Link href={`/accounting/invoices/new?fromOrder=${encodeURIComponent(o.id)}`}
@@ -290,6 +347,22 @@ function SalesOrder({ id, onTitle }: { id: string; onTitle: (title: string) => v
       </aside>
 
       {dialog === "schedule" && <ScheduleDialog detail={detail} onCancel={() => setDialog(null)} onSaved={() => { setDialog(null); reload(); }} />}
+      {dialog === "plan" && <PlanDialog detail={detail} onCancel={() => setDialog(null)} onSaved={() => { setDialog(null); reload(); }} />}
+      {depositFor && depositCtx && (
+        <PaymentDialog
+          kind="deposit"
+          invoice={{ id: o.id, docNo: `PO ${o.customerPoNo}`, issueDate: o.issueDate, totalSatang: o.totalSatang }}
+          context={depositCtx}
+          bankAccounts={accSettings.bankAccounts}
+          initialAmountSatang={depositFor.amountSatang}
+          onCancel={() => setDepositFor(null)}
+          onRecorded={(result) => {
+            setDepositFor(null);
+            setRecorded(result.receipt ? { id: result.receipt.id, docNo: result.receipt.docNo } : null);
+            reloadAll();
+          }}
+        />
+      )}
       {dialog === "cancel" && <CancelOrderDialog detail={detail} onCancel={() => setDialog(null)} onDone={() => { setDialog(null); reload(); }} />}
       {dialog === "delete" && (
         <DocumentDeleteDialog
@@ -305,7 +378,19 @@ function SalesOrder({ id, onTitle }: { id: string; onTitle: (title: string) => v
   );
 }
 
-function DialogShell({ title, busy, onCancel, children }: { title: string; busy: boolean; onCancel: () => void; children: React.ReactNode }) {
+function DialogShell({
+  title,
+  busy,
+  onCancel,
+  children,
+  wide = false,
+}: {
+  title: string;
+  busy: boolean;
+  onCancel: () => void;
+  children: React.ReactNode;
+  wide?: boolean;
+}) {
   const ref = useRef<HTMLDivElement>(null);
   useModalEscape(ref, () => {
     if (!busy) onCancel();
@@ -313,7 +398,13 @@ function DialogShell({ title, busy, onCancel, children }: { title: string; busy:
   return (
     <div className="fixed inset-0 z-110 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => !busy && onCancel()}></div>
-      <div ref={ref} role="dialog" aria-modal="true" aria-label={title} className="relative bg-white rounded-2xl shadow-2xl p-6 w-full max-w-md space-y-3">
+      <div
+        ref={ref}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        className={`relative bg-white rounded-2xl shadow-2xl p-6 w-full ${wide ? "max-w-2xl" : "max-w-md"} max-h-[92vh] overflow-y-auto space-y-3`}
+      >
         <h2 className="text-lg font-bold text-gray-900">{title}</h2>
         {children}
       </div>
@@ -415,6 +506,12 @@ function CancelOrderDialog({ detail, onCancel, onDone }: { detail: OrderDetailVi
         <li>ยอดที่ยังไม่ได้ส่ง {formatSatang(detail.backlogSatang)} บาท (ก่อน VAT) จะออกจากยอดรอส่งของ</li>
         {delivered && <li>ใบแจ้งหนี้ที่ส่งของไปแล้วยังอยู่ตามเดิม</li>}
         {drafts > 0 && <li>ร่างใบแจ้งหนี้จาก PO นี้ {drafts} ใบ จะออกเป็นเอกสารไม่ได้</li>}
+        {(detail.deposits?.leftSatang ?? 0) > 0 && (
+          <li className="text-amber-800">
+            มีเงินมัดจำที่ยังไม่ได้หัก {formatSatang(detail.deposits?.leftSatang ?? 0)} บาท (ก่อน VAT) — ใบเสร็จมัดจำยังอยู่ตามเดิม
+            ถ้าต้องคืนเงินลูกค้าให้ทำใบลดหนี้ภายหลัง
+          </li>
+        )}
       </ul>
       <div>
         <label htmlFor="cancel-reason" className="block text-sm font-semibold text-gray-700 mb-1">เหตุผล <span className="text-red-500">*</span></label>
@@ -425,6 +522,283 @@ function CancelOrderDialog({ detail, onCancel, onDone }: { detail: OrderDetailVi
         <button type="button" onClick={onCancel} disabled={busy} className="flex-1 px-4 py-2.5 rounded-xl border border-gray-300 font-semibold hover:bg-gray-50 disabled:opacity-60">กลับ</button>
         <button type="button" onClick={() => void go()} disabled={busy} className="flex-1 px-4 py-2.5 rounded-xl bg-amber-600 text-white font-semibold hover:bg-amber-700 disabled:opacity-60">
           {busy ? "กำลังยกเลิก…" : "ยืนยันยกเลิก"}
+        </button>
+      </div>
+    </DialogShell>
+  );
+}
+
+const PLAN_BADGE: Record<PlanItemView["status"], string> = {
+  paid: "bg-green-50 text-green-700",
+  partial: "bg-sky-50 text-sky-700",
+  open: "bg-gray-100 text-gray-600",
+};
+
+/**
+ * แผนเก็บเงิน — what the customer is to pay and when, each item placed by the
+ * money that actually came in; an item not yet paid says what to do next.
+ */
+function PlanSection({
+  detail,
+  cancelled,
+  canTakeDeposit,
+  onEdit,
+  onTakeDeposit,
+}: {
+  detail: OrderDetailView;
+  cancelled: boolean;
+  canTakeDeposit: boolean;
+  onEdit: () => void;
+  onTakeDeposit: (amountSatang: number) => void;
+}) {
+  const plan = detail.plan ?? [];
+  const planned = plan.reduce((s, p) => s + p.amountSatang, 0);
+  // The oldest delivery still owing — where an item collected on the invoices is received.
+  const owing = detail.deliveries.find((d) => d.status === "issued" && (d.paidSatang ?? 0) < d.totalSatang);
+  return (
+    <section className="bg-white rounded-2xl border border-gray-200 p-5" aria-labelledby="order-plan">
+      <div className="flex items-center justify-between gap-3 mb-2">
+        <h2 id="order-plan" className="font-bold text-gray-900">แผนเก็บเงิน</h2>
+        {!cancelled && (
+          <button type="button" onClick={onEdit} className="text-sm font-semibold text-sky-700 hover:text-sky-800">
+            {plan.length > 0 ? "แก้แผน" : "+ ตั้งแผนเก็บเงิน"}
+          </button>
+        )}
+      </div>
+      {plan.length === 0 ? (
+        <p className="text-sm text-gray-500">ยังไม่ได้ตั้งแผน — เช่น มัดจำ 30% ก่อนส่งของ ที่เหลือเก็บตามใบแจ้งหนี้</p>
+      ) : (
+        <>
+          <ul className="divide-y divide-gray-100 text-sm" data-testid="order-plan">
+            {plan.map((p) => (
+              <li key={p.id} className="py-2.5 flex flex-wrap items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="font-semibold text-gray-900">{p.label}</p>
+                  <p className="text-xs text-gray-500">
+                    {p.stage === "deposit" ? "มัดจำ (ก่อนส่งของ)" : "เก็บตามใบแจ้งหนี้"}
+                    {p.dueDate && ` · กำหนด ${formatDisplayDate(p.dueDate)}`}
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center justify-end gap-2 tabular-nums">
+                  <span className="font-semibold">{formatSatang(p.amountSatang)}</span>
+                  <span className={`px-2 py-0.5 rounded-md text-xs font-semibold ${p.late ? "bg-red-50 text-red-600" : PLAN_BADGE[p.status]}`}>
+                    {p.late ? "เลยกำหนด" : PLAN_STATUS_LABELS[p.status]}
+                    {p.status === "partial" && ` · รับแล้ว ${formatSatang(p.receivedSatang)}`}
+                  </span>
+                  {!cancelled && p.status !== "paid" && p.stage === "deposit" && canTakeDeposit && (
+                    <button
+                      type="button"
+                      onClick={() => onTakeDeposit(p.amountSatang - p.receivedSatang)}
+                      className="px-2.5 py-1 rounded-lg border border-green-300 text-green-800 text-xs font-semibold hover:bg-green-50"
+                    >
+                      รับมัดจำงวดนี้
+                    </button>
+                  )}
+                  {!cancelled && p.status !== "paid" && p.stage === "invoice" && owing && (
+                    <Link
+                      href={`/accounting/invoices/${owing.id}`}
+                      className="px-2.5 py-1 rounded-lg border border-sky-200 text-sky-700 text-xs font-semibold hover:bg-sky-50"
+                    >
+                      รับเงินที่ {owing.docNo}
+                    </Link>
+                  )}
+                  {!cancelled && p.status !== "paid" && p.stage === "invoice" && !owing && detail.orderStatus !== "complete" && (
+                    <Link
+                      href={`/accounting/invoices/new?fromOrder=${encodeURIComponent(detail.order.id)}`}
+                      className="px-2.5 py-1 rounded-lg border border-sky-200 text-sky-700 text-xs font-semibold hover:bg-sky-50"
+                    >
+                      ส่งของ ▸
+                    </Link>
+                  )}
+                </div>
+              </li>
+            ))}
+          </ul>
+          {planned !== detail.order.totalSatang && (
+            <p className="text-xs text-amber-700 mt-2 tabular-nums">
+              ตามแผน {formatSatang(planned)} จากยอด PO {formatSatang(detail.order.totalSatang)} บาท (รวม VAT)
+            </p>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
+interface PlanRow {
+  key: string;
+  label: string;
+  stage: PlanStage;
+  amount: string;
+  dueDate: string;
+}
+
+let planKey = 0;
+const newPlanRow = (over: Partial<PlanRow> = {}): PlanRow => ({ key: `plan-${++planKey}`, label: "", stage: "invoice", amount: "", dueDate: "", ...over });
+
+/** The payment plan, edited as a whole — with a helper for the usual "deposit N%, the rest on the invoices". */
+function PlanDialog({ detail, onCancel, onSaved }: { detail: OrderDetailView; onCancel: () => void; onSaved: () => void }) {
+  const total = detail.order.totalSatang;
+  const [rows, setRows] = useState<PlanRow[]>(() =>
+    (detail.plan ?? []).map((p) => newPlanRow({ label: p.label, stage: p.stage, amount: formatSatang(p.amountSatang), dueDate: p.dueDate }))
+  );
+  const [percent, setPercent] = useState("30");
+  const [attempted, setAttempted] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const items = rows.map((r) => ({
+    label: r.label.trim(),
+    stage: r.stage,
+    amountSatang: r.amount.trim() === "" ? -1 : parseBahtToSatang(r.amount) ?? -1,
+    dueDate: r.dueDate,
+  }));
+  const problems = planProblems(items, total);
+  const shown = attempted ? problems : { items: {} as typeof problems.items, total: null, first: null };
+  const sum = items.reduce((s, it) => s + Math.max(0, it.amountSatang), 0);
+  const setRow = (key: string, patch: Partial<PlanRow>) => setRows((rs) => rs.map((r) => (r.key === key ? { ...r, ...patch } : r)));
+
+  const fillFromPercent = () => {
+    const pct = Number(percent);
+    if (!(pct > 0 && pct < 100)) {
+      setError("ใส่เปอร์เซ็นต์มัดจำระหว่าง 1–99");
+      return;
+    }
+    const deposit = Math.round((total * pct) / 100);
+    setError(null);
+    setRows([
+      newPlanRow({ label: `มัดจำ ${pct}%`, stage: "deposit", amount: formatSatang(deposit) }),
+      newPlanRow({ label: `ส่วนที่เหลือ ${100 - pct}%`, stage: "invoice", amount: formatSatang(total - deposit) }),
+    ]);
+  };
+
+  const save = async () => {
+    if (busy) return;
+    setAttempted(true);
+    if (problems.first) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/accounting/sales-orders/${encodeURIComponent(detail.order.id)}/plan`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items }),
+      });
+      if (!res.ok) {
+        setError(await errorMessageOf(res, "บันทึกแผนเก็บเงินไม่สำเร็จ"));
+        return;
+      }
+      onSaved();
+    } catch {
+      setError("บันทึกแผนเก็บเงินไม่สำเร็จ ตรวจสอบการเชื่อมต่อแล้วลองใหม่");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <DialogShell title="แผนเก็บเงิน" busy={busy} onCancel={onCancel} wide>
+      <p className="text-sm text-gray-600 tabular-nums">
+        PO {detail.order.customerPoNo} · ยอดรวม VAT {formatSatang(total)} บาท — มัดจำรับที่หน้า PO (ออกใบกำกับภาษีให้) งวดอื่นเก็บตามใบแจ้งหนี้
+      </p>
+      <div className="flex flex-wrap items-end gap-2 rounded-xl bg-gray-50 border border-gray-100 p-3">
+        <div>
+          <label htmlFor="plan-percent" className="block text-xs font-semibold text-gray-600 mb-1">มัดจำ (%)</label>
+          <input id="plan-percent" inputMode="decimal" className={`${FIELD} w-24`} value={percent} onChange={(e) => setPercent(e.target.value)} />
+        </div>
+        <button type="button" onClick={fillFromPercent} className="px-3 py-2 rounded-xl border border-sky-200 text-sky-700 text-sm font-semibold hover:bg-sky-50">
+          สร้างแผน: มัดจำ + ที่เหลือตามใบแจ้งหนี้
+        </button>
+      </div>
+
+      <ol className="space-y-3">
+        {rows.map((r, i) => {
+          const p = shown.items[i] ?? {};
+          return (
+            <li key={r.key} className="rounded-xl border border-gray-200 p-3 grid grid-cols-1 sm:grid-cols-[1fr_11rem] gap-2" data-testid="plan-row">
+              <div>
+                <label htmlFor={`plan-label-${i}`} className="sr-only">ชื่องวดที่ {i + 1}</label>
+                <input
+                  id={`plan-label-${i}`}
+                  placeholder="ชื่องวด เช่น มัดจำ 30%"
+                  maxLength={PLAN_LIMITS.label}
+                  className={`${FIELD} ${p.label ? "border-red-500 bg-red-50" : ""}`}
+                  aria-invalid={!!p.label || undefined}
+                  value={r.label}
+                  onChange={(e) => setRow(r.key, { label: e.target.value })}
+                />
+                {p.label && <p className="mt-1 text-sm text-red-600">{p.label}</p>}
+              </div>
+              <div>
+                <label htmlFor={`plan-stage-${i}`} className="sr-only">ประเภทงวดที่ {i + 1}</label>
+                <SearchableDropdown
+                  id={`plan-stage-${i}`}
+                  value={r.stage}
+                  onChange={(v) => setRow(r.key, { stage: v === "deposit" ? "deposit" : "invoice" })}
+                  options={PLAN_STAGES}
+                  searchable={false}
+                  buttonClassName="h-[42px] rounded-xl !border-gray-200"
+                />
+              </div>
+              <div>
+                <label htmlFor={`plan-amount-${i}`} className="block text-xs font-semibold text-gray-600 mb-1">ยอดงวดที่ {i + 1} (บาท รวม VAT)</label>
+                <input
+                  id={`plan-amount-${i}`}
+                  inputMode="decimal"
+                  className={`${FIELD} text-right tabular-nums ${p.amountSatang ? "border-red-500 bg-red-50" : ""}`}
+                  aria-invalid={!!p.amountSatang || undefined}
+                  value={r.amount}
+                  onChange={(e) => setRow(r.key, { amount: e.target.value })}
+                />
+                {p.amountSatang && <p className="mt-1 text-sm text-red-600">{p.amountSatang}</p>}
+              </div>
+              <div className="flex items-end gap-2">
+                <div className="flex-1">
+                  <label htmlFor={`plan-due-${i}`} className="block text-xs font-semibold text-gray-600 mb-1">กำหนดรับ</label>
+                  <DatePicker
+                    id={`plan-due-${i}`}
+                    selected={r.dueDate ? new Date(`${r.dueDate}T00:00:00`) : null}
+                    onChange={(d) => setRow(r.key, { dueDate: d ? toLocalDateString(d) : "" })}
+                    className={FIELD}
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setRows((rs) => rs.filter((x) => x.key !== r.key))}
+                  aria-label={`ลบงวดที่ ${i + 1}`}
+                  className="px-3 py-2 rounded-xl border border-red-200 text-red-600 text-sm hover:bg-red-50"
+                >
+                  ลบ
+                </button>
+              </div>
+            </li>
+          );
+        })}
+      </ol>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <button
+          type="button"
+          disabled={rows.length >= PLAN_LIMITS.items}
+          onClick={() => setRows((rs) => [...rs, newPlanRow()])}
+          className="px-3 py-2 rounded-xl border border-sky-200 text-sky-700 text-sm font-semibold hover:bg-sky-50 disabled:opacity-50"
+        >
+          + เพิ่มงวด
+        </button>
+        <p className={`text-sm tabular-nums ${sum > total ? "text-red-600 font-semibold" : "text-gray-600"}`} data-testid="plan-sum">
+          รวม {formatSatang(sum)} จาก {formatSatang(total)} บาท
+        </p>
+      </div>
+      {(error || shown.total) && (
+        <p role="alert" className="text-sm text-red-600">
+          {error ?? shown.total}
+        </p>
+      )}
+      <div className="flex gap-3 pt-2">
+        <button type="button" onClick={onCancel} disabled={busy} className="flex-1 px-4 py-2.5 rounded-xl border border-gray-300 font-semibold hover:bg-gray-50 disabled:opacity-60">
+          ยกเลิก
+        </button>
+        <button type="button" onClick={() => void save()} disabled={busy} className="flex-1 px-4 py-2.5 rounded-xl bg-sky-600 text-white font-semibold hover:bg-sky-700 disabled:opacity-60">
+          {busy ? "กำลังบันทึก…" : "บันทึกแผน"}
         </button>
       </div>
     </DialogShell>

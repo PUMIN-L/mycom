@@ -8,8 +8,10 @@ import { allocateDocNo } from "./numbering";
 import { writeAudit } from "./audit";
 import { getSellerProfile } from "./settings";
 import { formatSatang } from "./money";
-import { getAccDocument } from "./documents";
+import { getAccDocument, type AccDocument } from "./documents";
 import { recomputePaidSatang, syncSaleReceiptRef } from "./paymentLedger";
+import { assertDepositNotDeductedTx } from "./depositLedger";
+import { vatInsideSatang } from "./depositRules";
 import {
   PAYMENT_LIMITS,
   firstPaymentProblem,
@@ -188,6 +190,101 @@ export interface RecordedPayment {
   paidSatang: number;
 }
 
+/** The document a receipt pays — its buyer is copied onto the receipt as printed. */
+type ReceiptFor = Pick<
+  AccDocument,
+  "companyId" | "customerId" | "salespersonId" | "buyerName" | "buyerAddress" | "buyerTaxId" | "buyerBranch" | "vatRate" | "customerPoNo" | "projectName"
+>;
+
+/**
+ * Issues a receipt (RE, our next number in the month of `paidDate`) for money
+ * received against `relatedDocId` — an invoice, or a customer PO for a
+ * deposit — inside the caller's transaction. No lines: the paper prints what it
+ * pays for from the document it points at.
+ */
+export async function insertReceiptTx(
+  conn: PoolConnection,
+  r: { pays: ReceiptFor; relatedDocId: string; paidDate: string; amountSatang: number; vatSatang: number; isTaxInvoice: boolean; versionId: string; actor: Actor; now: string }
+): Promise<{ id: string; docNo: string }> {
+  const docNo = await allocateDocNo(conn, "RE", r.paidDate);
+  const id = crypto.randomUUID();
+  const row: Record<string, unknown> = {
+    id,
+    docType: "RE",
+    docNo,
+    status: "issued",
+    source: "internal",
+    isTaxInvoice: r.isTaxInvoice ? 1 : 0,
+    issueDate: r.paidDate,
+    creditDays: 0,
+    companyId: r.pays.companyId || null,
+    customerId: r.pays.customerId || null,
+    salespersonId: r.pays.salespersonId || null,
+    buyerName: r.pays.buyerName,
+    buyerAddress: r.pays.buyerAddress,
+    buyerTaxId: r.pays.buyerTaxId,
+    buyerBranch: r.pays.buyerBranch,
+    sellerVersionId: r.versionId,
+    priceMode: "exclusive",
+    vatRate: r.pays.vatRate,
+    subtotalSatang: r.amountSatang - r.vatSatang,
+    vatBaseSatang: r.amountSatang - r.vatSatang,
+    vatSatang: r.vatSatang,
+    totalSatang: r.amountSatang,
+    // A receipt is money already received.
+    paidSatang: r.amountSatang,
+    customerPoNo: r.pays.customerPoNo,
+    projectName: r.pays.projectName,
+    relatedDocId: r.relatedDocId,
+    issuedAt: r.now,
+    issuedBy: r.actor.username,
+    createdAt: r.now,
+    createdBy: r.actor.username,
+    updatedAt: r.now,
+  };
+  const keys = Object.keys(row);
+  await conn.query(`INSERT INTO acc_documents (${keys.join(", ")}) VALUES (${keys.map(() => "?").join(", ")})`, Object.values(row));
+  return { id, docNo };
+}
+
+/** Writes the payment row — against an invoice, or a customer PO for a deposit — inside the caller's transaction. */
+export async function insertPaymentTx(
+  conn: PoolConnection,
+  p: { documentId: string; receiptId: string | null; input: PaymentInput; actor: Actor; now: string }
+): Promise<string> {
+  const { input } = p;
+  const paymentId = crypto.randomUUID();
+  const payment: Record<string, unknown> = {
+    id: paymentId,
+    documentId: p.documentId,
+    receiptId: p.receiptId,
+    paidDate: input.paidDate,
+    method: input.method,
+    bankAccountId: input.bankAccountId || null,
+    amountSatang: input.amountSatang,
+    whtPercent: input.whtSatang > 0 ? input.whtPercent : 0,
+    whtSatang: input.whtSatang,
+    feeSatang: input.feeSatang,
+    cert50Received: input.whtSatang > 0 && input.cert50Received ? 1 : 0,
+    cert50Note: input.whtSatang > 0 ? input.cert50Note : "",
+    externalReceiptNo: input.externalReceiptNo,
+    note: input.note,
+    createdAt: p.now,
+    createdBy: p.actor.username,
+  };
+  const keys = Object.keys(payment);
+  await conn.query(`INSERT INTO acc_payments (${keys.join(", ")}) VALUES (${keys.map(() => "?").join(", ")})`, Object.values(payment));
+  return paymentId;
+}
+
+/** Refuses (400) a bank account that is not there or was closed. */
+export async function assertBankAccountUsable(bankAccountId: string): Promise<void> {
+  if (!bankAccountId) return;
+  const [bank] = await run(null, "SELECT isActive FROM acc_bank_accounts WHERE id = ?", [bankAccountId]);
+  if (!bank) throw new ApiError(400, "ไม่พบบัญชีธนาคารที่เลือก — เลือกใหม่อีกครั้ง");
+  if (Number(bank.isActive) !== 1) throw new ApiError(400, "บัญชีธนาคารนี้ปิดใช้แล้ว — เลือกบัญชีอื่น");
+}
+
 /**
  * Records money received against an ISSUED invoice — and issues its receipt
  * (unless `externalReceiptNo` says one was issued elsewhere). Refused for more
@@ -202,11 +299,7 @@ export async function recordPayment(invoiceId: string, input: PaymentInput, acto
     paymentProblems(input, { outstandingSatang: doc.totalSatang - doc.paidSatang, today: bangkokDateString(new Date()) })
   );
   if (problem) throw new ApiError(400, problem);
-  if (input.bankAccountId) {
-    const [bank] = await run(null, "SELECT isActive FROM acc_bank_accounts WHERE id = ?", [input.bankAccountId]);
-    if (!bank) throw new ApiError(400, "ไม่พบบัญชีธนาคารที่เลือก — เลือกใหม่อีกครั้ง");
-    if (Number(bank.isActive) !== 1) throw new ApiError(400, "บัญชีธนาคารนี้ปิดใช้แล้ว — เลือกบัญชีอื่น");
-  }
+  await assertBankAccountUsable(input.bankAccountId);
   const issuing = !input.externalReceiptNo;
   const versionId = issuing ? (await getSellerProfile()).versionId : null;
   if (issuing && !versionId) throw new ApiError(409, "ยังไม่ได้ตั้งข้อมูลบริษัทสำหรับพิมพ์บนใบเสร็จ — ไปที่ ตั้งค่าบัญชี ก่อน");
@@ -228,44 +321,17 @@ export async function recordPayment(invoiceId: string, input: PaymentInput, acto
     if (issuing) {
       const vatBefore = await vatOnLivePayments(conn, live, invoice);
       const vat = receiptVatSatang(input.amountSatang, invoice, { paidSatang: paidBefore, vatSatang: vatBefore });
-      const docNo = await allocateDocNo(conn, "RE", input.paidDate);
-      const id = crypto.randomUUID();
-      const row: Record<string, unknown> = {
-        id,
-        docType: "RE",
-        docNo,
-        status: "issued",
-        source: "internal",
-        isTaxInvoice: receiptIsTaxInvoice ? 1 : 0,
-        issueDate: input.paidDate,
-        creditDays: 0,
-        companyId: doc.companyId || null,
-        customerId: doc.customerId || null,
-        salespersonId: doc.salespersonId || null,
-        buyerName: doc.buyerName,
-        buyerAddress: doc.buyerAddress,
-        buyerTaxId: doc.buyerTaxId,
-        buyerBranch: doc.buyerBranch,
-        sellerVersionId: versionId,
-        priceMode: "exclusive",
-        vatRate: doc.vatRate,
-        subtotalSatang: input.amountSatang - vat,
-        vatBaseSatang: input.amountSatang - vat,
-        vatSatang: vat,
-        totalSatang: input.amountSatang,
-        // A receipt is money already received.
-        paidSatang: input.amountSatang,
-        customerPoNo: doc.customerPoNo,
-        projectName: doc.projectName,
+      const { id, docNo } = await insertReceiptTx(conn, {
+        pays: doc,
         relatedDocId: invoiceId,
-        issuedAt: now,
-        issuedBy: actor.username,
-        createdAt: now,
-        createdBy: actor.username,
-        updatedAt: now,
-      };
-      const keys = Object.keys(row);
-      await conn.query(`INSERT INTO acc_documents (${keys.join(", ")}) VALUES (${keys.map(() => "?").join(", ")})`, Object.values(row));
+        paidDate: input.paidDate,
+        amountSatang: input.amountSatang,
+        vatSatang: vat,
+        isTaxInvoice: receiptIsTaxInvoice,
+        versionId: versionId!,
+        actor,
+        now,
+      });
       const title = receiptTitle(receiptIsTaxInvoice);
       receipt = { id, docNo, title };
       await writeAudit(conn, {
@@ -277,27 +343,7 @@ export async function recordPayment(invoiceId: string, input: PaymentInput, acto
       });
     }
 
-    const paymentId = crypto.randomUUID();
-    const payment: Record<string, unknown> = {
-      id: paymentId,
-      documentId: invoiceId,
-      receiptId: receipt?.id ?? null,
-      paidDate: input.paidDate,
-      method: input.method,
-      bankAccountId: input.bankAccountId || null,
-      amountSatang: input.amountSatang,
-      whtPercent: input.whtSatang > 0 ? input.whtPercent : 0,
-      whtSatang: input.whtSatang,
-      feeSatang: input.feeSatang,
-      cert50Received: input.whtSatang > 0 && input.cert50Received ? 1 : 0,
-      cert50Note: input.whtSatang > 0 ? input.cert50Note : "",
-      externalReceiptNo: input.externalReceiptNo,
-      note: input.note,
-      createdAt: now,
-      createdBy: actor.username,
-    };
-    const keys = Object.keys(payment);
-    await conn.query(`INSERT INTO acc_payments (${keys.join(", ")}) VALUES (${keys.map(() => "?").join(", ")})`, Object.values(payment));
+    const paymentId = await insertPaymentTx(conn, { documentId: invoiceId, receiptId: receipt?.id ?? null, input, actor, now });
     const paid = await recomputePaidSatang(conn, invoiceId);
     await syncSaleReceiptRef(conn, doc.salesRecordId, invoiceId);
 
@@ -328,11 +374,20 @@ export async function voidPayment(paymentId: string, reasonText: string, actor: 
     const [peek] = await run(conn, "SELECT documentId FROM acc_payments WHERE id = ?", [paymentId]);
     if (!peek) throw new ApiError(404, "ไม่พบรายการรับชำระนี้");
     const invoiceId = String(peek.documentId);
-    // Invoice first, then the payment — the order every payment change takes.
-    const [inv] = await run(conn, "SELECT docNo, salesRecordId FROM acc_documents WHERE id = ? FOR UPDATE", [invoiceId]);
+    // Invoice (or, for a deposit, the customer PO) first, then the payment —
+    // the order every payment change takes.
+    const [inv] = await run(conn, "SELECT docType, docNo, salesRecordId, customerPoNo, vatRate FROM acc_documents WHERE id = ? FOR UPDATE", [invoiceId]);
     const [p] = await run(conn, "SELECT id, receiptId, amountSatang, voidedAt FROM acc_payments WHERE id = ? FOR UPDATE", [paymentId]);
     if (!p) throw new ApiError(404, "ไม่พบรายการรับชำระนี้");
     if (p.voidedAt) throw new ApiError(409, "รายการนี้ถูกยกเลิกไปแล้ว");
+    const deposit = inv?.docType === "SO";
+    if (deposit) {
+      // A deposit the delivery invoices have deducted cannot go from under them.
+      const [re] = p.receiptId ? await run(conn, "SELECT vatBaseSatang FROM acc_documents WHERE id = ? FOR UPDATE", [p.receiptId]) : [];
+      const vatRate = num(inv.vatRate);
+      const exVat = re ? num(re.vatBaseSatang) : num(p.amountSatang) - vatInsideSatang(num(p.amountSatang), vatRate);
+      await assertDepositNotDeductedTx(conn, invoiceId, vatRate, exVat);
+    }
     const now = new Date().toISOString();
     await conn.query("UPDATE acc_payments SET voidedAt = ?, voidedBy = ?, voidReason = ? WHERE id = ?", [now, actor.username, reason, paymentId]);
 
@@ -356,8 +411,8 @@ export async function voidPayment(paymentId: string, reasonText: string, actor: 
       ...actor,
       action: "payment.void",
       documentId: invoiceId,
-      docNo: inv ? strOrNull(inv.docNo) : null,
-      detail: `ยกเลิกรายการรับชำระ ${formatSatang(num(p.amountSatang))} บาท${receiptNo ? ` (ใบเสร็จ ${receiptNo})` : ""} · เหตุผล: ${reason}`,
+      docNo: inv ? strOrNull(deposit ? inv.customerPoNo : inv.docNo) : null,
+      detail: `ยกเลิก${deposit ? "เงินมัดจำ" : "รายการรับชำระ"} ${formatSatang(num(p.amountSatang))} บาท${receiptNo ? ` (ใบเสร็จ ${receiptNo})` : ""} · เหตุผล: ${reason}`,
     });
   });
   return (await getPayment(paymentId))!;
@@ -389,6 +444,8 @@ export async function updateCert50(paymentId: string, change: { received: boolea
 
 export interface ReceiptInvoiceRef {
   id: string;
+  /** "INV" — or "SO": a deposit's receipt pays a customer PO. */
+  docType: string;
   docNo: string | null;
   issueDate: string;
   totalSatang: number;
@@ -405,6 +462,7 @@ export async function receiptDetail(receiptId: string, relatedDocId: string | nu
     invoice: invoice
       ? {
           id: invoice.id,
+          docType: invoice.docType,
           docNo: invoice.docNo,
           issueDate: invoice.issueDate,
           totalSatang: invoice.totalSatang,
@@ -419,8 +477,10 @@ export async function receiptDetail(receiptId: string, relatedDocId: string | nu
 
 export interface MissingCert50 {
   paymentId: string;
+  /** What it was paid against: an invoice — or, for a deposit, the customer PO (`deposit`). */
   invoiceId: string;
   invoiceNo: string | null;
+  deposit: boolean;
   buyerName: string;
   paidDate: string;
   receiptNo: string;
@@ -462,7 +522,9 @@ export async function receivables(today: string): Promise<Receivables> {
   );
   const certRows = await run(
     null,
-    `SELECT p.id, p.documentId, p.paidDate, p.whtPercent, p.whtSatang, p.externalReceiptNo, d.docNo AS invoiceNo, d.buyerName, r.docNo AS receiptNo
+    // A deposit's withholding counts too — named by its customer PO (it has no invoice number).
+    `SELECT p.id, p.documentId, p.paidDate, p.whtPercent, p.whtSatang, p.externalReceiptNo,
+            COALESCE(d.docNo, CONCAT('PO ', d.customerPoNo)) AS invoiceNo, d.docType, d.buyerName, r.docNo AS receiptNo
        FROM acc_payments p
        JOIN acc_documents d ON d.id = p.documentId
        LEFT JOIN acc_documents r ON r.id = p.receiptId
@@ -474,6 +536,7 @@ export async function receivables(today: string): Promise<Receivables> {
     paymentId: String(r.id),
     invoiceId: String(r.documentId),
     invoiceNo: strOrNull(r.invoiceNo),
+    deposit: r.docType === "SO",
     buyerName: str(r.buyerName),
     paidDate: str(r.paidDate),
     receiptNo: str(r.receiptNo) || str(r.externalReceiptNo),

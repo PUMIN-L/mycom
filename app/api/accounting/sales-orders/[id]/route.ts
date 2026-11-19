@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { withRoute, jsonError } from "../../../../lib/apiHelpers";
+import { bangkokDateString } from "../../../../lib/dateFormat";
 import { noStoreJson, requireAccountingUser } from "../../../../lib/accounting/guard";
 import { salesOrderDetail, updateSalesOrder, updateSalesOrderSchedule } from "../../../../lib/accounting/salesOrders";
 import { deletionImpact } from "../../../../lib/accounting/documents";
@@ -8,11 +9,12 @@ import { cleanOrderInput } from "../../../../lib/accounting/orderRules";
 type Ctx = { params: Promise<{ id: string }> };
 
 // GET /api/accounting/sales-orders/[id] — the PO, its delivery progress, its
-// invoices, the discounts they already carry, and what deleting it would do.
+// invoices, the discounts they already carry, its deposits and payment plan
+// (where each item stands as of today in Bangkok), and what deleting it would do.
 export const GET = withRoute("โหลด PO ลูกค้าไม่สำเร็จ", async (_request: NextRequest, { params }: Ctx) => {
   await requireAccountingUser();
   const { id } = await params;
-  const detail = await salesOrderDetail(id);
+  const detail = await salesOrderDetail(id, bangkokDateString(new Date()));
   if (!detail) return jsonError("ไม่พบ PO ลูกค้านี้", 404);
   return noStoreJson({ ...detail, impact: await deletionImpact(id) });
 });

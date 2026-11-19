@@ -4,6 +4,7 @@ import type { PoolConnection } from "mysql2/promise";
 import { query } from "../db";
 import { ApiError } from "../apiHelpers";
 import { qtyHundredths } from "./money";
+import { depositDeductionProblem } from "./depositLedger";
 import type { DocLineInput } from "./invoiceRules";
 
 // Deliveries against a customer PO (step 5): what an invoice may take from it,
@@ -68,45 +69,59 @@ async function orderLines(conn: Exec, salesOrderId: string): Promise<OrderLineRo
 }
 
 /**
- * What is wrong with an invoice taking `lines` from PO `salesOrderId`, in
- * Thai — or null. With `conn` (the issuing transaction) the PO is LOCKED
- * first and its deliveries read with locks; without, a plain check for a draft
- * being saved (the issue checks again, for real).
+ * What is wrong with an invoice taking `lines` from PO `salesOrderId` — and
+ * deducting `depositSatang` of its deposits — in Thai, or null. With `conn`
+ * (the issuing transaction) the PO is LOCKED first and its deliveries and
+ * deposits read with locks; without, a plain check for a draft being saved
+ * (the issue checks again, for real).
  */
-async function deliveryProblem(conn: Exec, salesOrderId: string, lines: readonly DocLineInput[], invoiceId: string | null): Promise<string | null> {
-  const [order] = await run(conn, `SELECT docType, status FROM acc_documents WHERE id = ?${conn ? " FOR UPDATE" : ""}`, [salesOrderId]);
+async function deliveryProblem(
+  conn: Exec,
+  salesOrderId: string,
+  lines: readonly DocLineInput[],
+  invoiceId: string | null,
+  depositSatang: number
+): Promise<string | null> {
+  const [order] = await run(conn, `SELECT docType, status, vatRate FROM acc_documents WHERE id = ?${conn ? " FOR UPDATE" : ""}`, [salesOrderId]);
   if (!order || order.docType !== "SO") return "ไม่พบ PO ลูกค้าที่ใบนี้ส่งของ — อาจถูกลบไปแล้ว";
   if (order.status === "void") return "PO ลูกค้านี้ถูกยกเลิกแล้ว — ส่งของจาก PO นี้ไม่ได้";
   const sourced = lines.filter((l) => l.sourceLineId);
-  if (sourced.length === 0) return null;
-  const byId = new Map((await orderLines(conn, salesOrderId)).map((l) => [l.id, l]));
-  const delivered = await deliveredByLine(conn, salesOrderId, invoiceId);
-  const sending = new Map<string, number>();
-  for (const l of sourced) {
-    const ol = byId.get(String(l.sourceLineId));
-    if (!ol) return `รายการ "${l.name}" ไม่อยู่ใน PO นี้แล้ว (PO ถูกแก้ไข) — สร้างใบแจ้งหนี้จาก PO ใหม่`;
-    sending.set(ol.id, (sending.get(ol.id) ?? 0) + qtyHundredths(l.qty));
-  }
-  for (const [lineId, sent] of sending) {
-    const ol = byId.get(lineId)!;
-    const left = Math.max(0, ol.qtyHundredths - (delivered.get(lineId) ?? 0));
-    if (sent > left) {
-      return left > 0
-        ? `ส่ง "${ol.name}" เกินจำนวนที่เหลือใน PO — เหลือ ${qtyText(left)}${ol.unit ? ` ${ol.unit}` : ""}`
-        : `"${ol.name}" ใน PO นี้ส่งครบแล้ว`;
+  if (sourced.length > 0) {
+    const byId = new Map((await orderLines(conn, salesOrderId)).map((l) => [l.id, l]));
+    const delivered = await deliveredByLine(conn, salesOrderId, invoiceId);
+    const sending = new Map<string, number>();
+    for (const l of sourced) {
+      const ol = byId.get(String(l.sourceLineId));
+      if (!ol) return `รายการ "${l.name}" ไม่อยู่ใน PO นี้แล้ว (PO ถูกแก้ไข) — สร้างใบแจ้งหนี้จาก PO ใหม่`;
+      sending.set(ol.id, (sending.get(ol.id) ?? 0) + qtyHundredths(l.qty));
+    }
+    for (const [lineId, sent] of sending) {
+      const ol = byId.get(lineId)!;
+      const left = Math.max(0, ol.qtyHundredths - (delivered.get(lineId) ?? 0));
+      if (sent > left) {
+        return left > 0
+          ? `ส่ง "${ol.name}" เกินจำนวนที่เหลือใน PO — เหลือ ${qtyText(left)}${ol.unit ? ` ${ol.unit}` : ""}`
+          : `"${ol.name}" ใน PO นี้ส่งครบแล้ว`;
+      }
     }
   }
-  return null;
+  return depositDeductionProblem(conn, salesOrderId, Number(order.vatRate) || 0, depositSatang, invoiceId);
 }
 
 /** For a draft being saved: plain reads, nothing locked. */
-export function draftDeliveryProblem(salesOrderId: string, lines: readonly DocLineInput[], invoiceId: string | null): Promise<string | null> {
-  return deliveryProblem(null, salesOrderId, lines, invoiceId);
+export function draftDeliveryProblem(salesOrderId: string, lines: readonly DocLineInput[], invoiceId: string | null, depositSatang = 0): Promise<string | null> {
+  return deliveryProblem(null, salesOrderId, lines, invoiceId, depositSatang);
 }
 
 /** Inside the transaction that issues the invoice: locks the PO, refuses (409) what it cannot take. */
-export async function checkDeliveryTx(conn: Conn, salesOrderId: string, lines: readonly DocLineInput[], invoiceId: string | null): Promise<void> {
-  const problem = await deliveryProblem(conn, salesOrderId, lines, invoiceId);
+export async function checkDeliveryTx(
+  conn: Conn,
+  salesOrderId: string,
+  lines: readonly DocLineInput[],
+  invoiceId: string | null,
+  depositSatang = 0
+): Promise<void> {
+  const problem = await deliveryProblem(conn, salesOrderId, lines, invoiceId, depositSatang);
   if (problem) throw new ApiError(409, problem);
 }
 

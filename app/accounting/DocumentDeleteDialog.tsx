@@ -16,7 +16,7 @@ export interface DeletionImpactView {
   sale: { id: string; costSatang: number; sharedWithOtherDocs: boolean } | null;
   machines: { total: number; withHistory: number };
   /** A receipt: the payment that goes with it. */
-  receiptPayment?: { amountSatang: number; voided: boolean; invoiceId: string; invoiceNo: string | null } | null;
+  receiptPayment?: { amountSatang: number; voided: boolean; invoiceId: string; invoiceNo: string | null; deposit?: boolean } | null;
   /** Why it cannot be deleted, in the server's words — null when it can. */
   blockedReason?: string | null;
   /** An issued delivery from a customer PO: its quantities go back to that PO. */
@@ -107,8 +107,14 @@ export default function DocumentDeleteDialog({
       <ul className="list-disc pl-5 space-y-1">
         {impact.receiptPayment && !impact.receiptPayment.voided && (
           <li className="tabular-nums">
-            รายการรับชำระ {formatSatang(impact.receiptPayment.amountSatang)} บาท ของ {impact.receiptPayment.invoiceNo ?? "ใบแจ้งหนี้"} จะถูกลบด้วย —
-            ยอดนี้กลับเป็นยอดค้างชำระ
+            {impact.receiptPayment.deposit ? (
+              <>เงินมัดจำ {formatSatang(impact.receiptPayment.amountSatang)} บาท ของ {impact.receiptPayment.invoiceNo} จะถูกลบด้วย — มัดจำของ PO ลดลงเท่านี้</>
+            ) : (
+              <>
+                รายการรับชำระ {formatSatang(impact.receiptPayment.amountSatang)} บาท ของ {impact.receiptPayment.invoiceNo ?? "ใบแจ้งหนี้"} จะถูกลบด้วย —
+                ยอดนี้กลับเป็นยอดค้างชำระ
+              </>
+            )}
           </li>
         )}
         {impact.sale && !impact.sale.sharedWithOtherDocs && (

@@ -40,14 +40,14 @@ process.env.DB_USER = 'tester';
 process.env.DB_PASSWORD = 'pw';
 process.env.DB_NAME = 'testdb';
 
-// A version SELECT result that MATCHES SCHEMA_VERSION (51) → bootstrap fast-path,
+// A version SELECT result that MATCHES SCHEMA_VERSION (52) → bootstrap fast-path,
 // skipping DDL. Value is a string because settings stores VARCHAR values.
 //
 // ⚠️ This constant only ever goes UP, in step with db.ts. The bootstrap's fast
 // path is `stored >= SCHEMA_VERSION`, so a number the live database has already
 // recorded can never trigger a migration again — reusing one silently skips the
 // entire migration in production (that is how v33 was burned).
-const SCHEMA_VERSION = '51';
+const SCHEMA_VERSION = '52';
 const SCHEMA_MATCH: [Array<{ value: string }>, unknown[]] = [[{ value: SCHEMA_VERSION }], []];
 // An empty result → no schema_version row / no admin row → full bootstrap.
 const EMPTY: [unknown[], unknown[]] = [[], []];
@@ -902,6 +902,22 @@ describe('db.ts', () => {
       expect(backupDdl).toMatch(/codeHash CHAR\(64\) NOT NULL/);
       expect(backupDdl).toMatch(/UNIQUE KEY uq_user_backup_code \(userId, codeHash\)/);
       expect(backupDdl).not.toMatch(/REFERENCES|FOREIGN KEY/i);
+    });
+
+    it('v51–52: a sale knows the customer PO it delivers (dealId), and a PO has its payment plan', async () => {
+      const db = await freshImport();
+      mockConnection.query.mockResolvedValue(EMPTY);
+
+      await db.getDbConnection();
+      const sql = bootstrapSql();
+      const hasSql = (re: RegExp) => sql.some((s) => re.test(s));
+      expect(hasSql(/ALTER TABLE sales_records ADD COLUMN IF NOT EXISTS dealId VARCHAR\(36\) DEFAULT NULL/)).toBe(true);
+      expect(hasSql(/CREATE INDEX idx_sr_deal ON sales_records \(dealId\)/)).toBe(true);
+      const planDdl = sql.find((s) => /CREATE TABLE IF NOT EXISTS acc_plan_items/.test(s))!;
+      expect(planDdl).toMatch(/salesOrderId VARCHAR\(36\) NOT NULL/);
+      expect(planDdl).toMatch(/amountSatang BIGINT NOT NULL/);
+      expect(planDdl).not.toMatch(/REFERENCES|FOREIGN KEY/i);
+      expect(hasSql(/CREATE INDEX idx_api_so ON acc_plan_items \(salesOrderId\)/)).toBe(true);
     });
 
     it('issues the whole v35 DDL: three tables, every standalone index, the composite PK — and NOT ONE foreign key', async () => {

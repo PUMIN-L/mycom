@@ -13,11 +13,13 @@ interface BacklogRow {
   projectName: string;
   expectedDeliveryDate: string | null;
   backlogSatang: number;
+  /** Deposits received against it, not yet deducted — ex VAT (absent from an older answer). */
+  depositLeftSatang?: number;
   late: boolean;
 }
 interface Backlog {
   rows: BacklogRow[];
-  totals: { backlogSatang: number; count: number; lateSatang: number; lateCount: number };
+  totals: { backlogSatang: number; count: number; lateSatang: number; lateCount: number; depositLeftSatang?: number };
 }
 
 /** Rows shown here; the rest are a click away on /accounting/sales-orders. */
@@ -101,7 +103,7 @@ function BacklogBody({ data }: { data: Backlog }) {
   const { totals } = data;
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4" data-testid="backlog-totals">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4" data-testid="backlog-totals">
         <div className="rounded-xl bg-amber-50/60 border border-amber-100 px-4 py-3">
           <p className="text-sm text-gray-600">รอส่งทั้งหมด (ก่อน VAT)</p>
           <p className="text-2xl font-bold tabular-nums text-gray-900">฿{formatSatang(totals.backlogSatang)}</p>
@@ -111,6 +113,11 @@ function BacklogBody({ data }: { data: Backlog }) {
           <p className="text-sm text-gray-600">เกินกำหนดส่ง</p>
           <p className={`text-2xl font-bold tabular-nums ${totals.lateCount > 0 ? "text-red-600" : "text-gray-900"}`}>฿{formatSatang(totals.lateSatang)}</p>
           <p className="text-xs text-gray-500">{totals.lateCount} PO</p>
+        </div>
+        <div className="rounded-xl bg-green-50/60 border border-green-100 px-4 py-3">
+          <p className="text-sm text-gray-600">รับมัดจำแล้ว (ยังไม่หัก · ก่อน VAT)</p>
+          <p className="text-2xl font-bold tabular-nums text-gray-900">฿{formatSatang(totals.depositLeftSatang ?? 0)}</p>
+          <p className="text-xs text-gray-500">หักในใบแจ้งหนี้ตอนส่งของ</p>
         </div>
       </div>
 
@@ -124,6 +131,7 @@ function BacklogBody({ data }: { data: Backlog }) {
                 <th className="pb-2 pr-4 font-semibold">PO ลูกค้า</th>
                 <th className="pb-2 pr-4 font-semibold">ลูกค้า</th>
                 <th className="pb-2 pr-4 font-semibold text-right">รอส่ง (ก่อน VAT)</th>
+                <th className="pb-2 pr-4 font-semibold text-right">มัดจำรับแล้ว</th>
                 <th className="pb-2 pr-4 font-semibold">กำหนดส่ง</th>
                 <th className="pb-2"><span className="sr-only">ส่งของ</span></th>
               </tr>
@@ -139,6 +147,7 @@ function BacklogBody({ data }: { data: Backlog }) {
                     {r.projectName && <div className="text-xs text-gray-500">{r.projectName}</div>}
                   </td>
                   <td className="py-2.5 pr-4 text-right tabular-nums font-semibold">{formatSatang(r.backlogSatang)}</td>
+                  <td className="py-2.5 pr-4 text-right tabular-nums text-gray-600">{r.depositLeftSatang ? formatSatang(r.depositLeftSatang) : "—"}</td>
                   <td className={`py-2.5 pr-4 tabular-nums whitespace-nowrap ${r.late ? "text-red-600 font-semibold" : "text-gray-700"}`}>
                     {r.expectedDeliveryDate ? formatDisplayDate(r.expectedDeliveryDate) : "—"}
                     {r.late && " (เลยแล้ว)"}

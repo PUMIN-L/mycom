@@ -24,6 +24,7 @@ vi.mock("@/app/lib/accounting/salesOrders", () => ({
   updateSalesOrder: vi.fn(async () => ({ id: "so1" })),
   updateSalesOrderSchedule: vi.fn(async () => ({ id: "so1" })),
   cancelSalesOrder: vi.fn(async () => ({ id: "so1", status: "void" })),
+  saveSalesOrderPlan: vi.fn(async () => []),
 }));
 import * as orders from "@/app/lib/accounting/salesOrders";
 vi.mock("@/app/lib/accounting/documents", () => ({ deletionImpact: vi.fn(async () => ({ status: "issued", blockedReason: null })) }));
@@ -33,6 +34,13 @@ import { GET as list, POST as create } from "@/app/api/accounting/sales-orders/r
 import { GET as backlog } from "@/app/api/accounting/sales-orders/backlog/route";
 import { GET as getOne, PUT as put, PATCH as patch } from "@/app/api/accounting/sales-orders/[id]/route";
 import { POST as cancel } from "@/app/api/accounting/sales-orders/[id]/cancel/route";
+import { GET as deposits, POST as deposit } from "@/app/api/accounting/sales-orders/[id]/deposits/route";
+import { PUT as plan } from "@/app/api/accounting/sales-orders/[id]/plan/route";
+vi.mock("@/app/lib/accounting/deposits", () => ({
+  depositContext: vi.fn(),
+  recordDeposit: vi.fn(async () => ({ payment: { id: "p1" }, receipt: { id: "re1", docNo: "RE2026110007", title: "ใบเสร็จรับเงิน/ใบกำกับภาษี" }, paidSatang: 3210000 })),
+}));
+import * as depositStore from "@/app/lib/accounting/deposits";
 
 const admin = { userId: "admin-001", username: "admin", expiresAt: new Date() } as never;
 const user = { id: "admin-001", username: "admin", passwordHash: "x", totpEnabled: true };
@@ -172,5 +180,56 @@ describe("/api/accounting/sales-orders/[id]/cancel", () => {
   it("passes no reason on when the body is not JSON — the store asks for one", async () => {
     await cancel(req("/api/accounting/sales-orders/so1/cancel", { method: "POST", raw: "not json" }), ctx("so1"));
     expect(orders.cancelSalesOrder).toHaveBeenCalledWith("so1", "", actor);
+  });
+});
+
+// Step 6 — deposits and the payment plan.
+describe("/api/accounting/sales-orders/[id]/deposits", () => {
+  it("is behind the gate", async () => {
+    vi.mocked(getTwoFactorUser).mockResolvedValue({ ...user, totpEnabled: false });
+    expect((await deposits(req("/api/accounting/sales-orders/so1/deposits"), ctx("so1"))).status).toBe(403);
+    expect((await deposit(req("/api/accounting/sales-orders/so1/deposits", { method: "POST", body: {} }), ctx("so1"))).status).toBe(403);
+    expect(depositStore.recordDeposit).not.toHaveBeenCalled();
+  });
+
+  it("answers the PO's deposits and what the dialog needs, never cached — 404 for no such PO", async () => {
+    vi.mocked(depositStore.depositContext).mockResolvedValueOnce({ payments: [], outstandingSatang: 7490000 } as never);
+    const res = await deposits(req("/api/accounting/sales-orders/so1/deposits"), ctx("so1"));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Cache-Control")).toBe("no-store");
+    expect(await res.json()).toMatchObject({ outstandingSatang: 7490000 });
+    vi.mocked(depositStore.depositContext).mockResolvedValueOnce(null);
+    expect((await deposits(req("/api/accounting/sales-orders/zzz/deposits"), ctx("zzz"))).status).toBe(404);
+  });
+
+  it("records a deposit from a cleaned body — 201", async () => {
+    const res = await deposit(
+      req("/api/accounting/sales-orders/so1/deposits", { method: "POST", body: { paidDate: "2026-11-18", method: "cash", bankAccountId: "b1", amountSatang: "3210000", note: " มัดจำ " } }),
+      ctx("so1")
+    );
+    expect(res.status).toBe(201);
+    const [id, input, who] = vi.mocked(depositStore.recordDeposit).mock.calls[0];
+    expect(id).toBe("so1");
+    expect(input).toMatchObject({ amountSatang: 3210000, method: "cash", bankAccountId: "", note: "มัดจำ" });
+    expect(who).toEqual(actor);
+  });
+});
+
+describe("/api/accounting/sales-orders/[id]/plan", () => {
+  it("saves the plan from a cleaned body and answers it", async () => {
+    const res = await plan(
+      req("/api/accounting/sales-orders/so1/plan", { method: "PUT", body: { items: [{ label: " มัดจำ ", stage: "deposit", amountSatang: 3210000, dueDate: "2026-11-20" }] } }),
+      ctx("so1")
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ plan: [] });
+    expect(orders.saveSalesOrderPlan).toHaveBeenCalledWith("so1", [{ label: "มัดจำ", stage: "deposit", amountSatang: 3210000, dueDate: "2026-11-20" }], actor);
+  });
+
+  it("takes a body that is not JSON as no plan at all, and is behind the gate", async () => {
+    await plan(req("/api/accounting/sales-orders/so1/plan", { method: "PUT", raw: "nope" }), ctx("so1"));
+    expect(orders.saveSalesOrderPlan).toHaveBeenCalledWith("so1", [], actor);
+    vi.mocked(getSession).mockResolvedValue(null);
+    expect((await plan(req("/api/accounting/sales-orders/so1/plan", { method: "PUT", body: { items: [] } }), ctx("so1"))).status).toBe(401);
   });
 });
