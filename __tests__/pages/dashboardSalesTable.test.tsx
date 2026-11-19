@@ -170,7 +170,7 @@ describe("dashboard sales table — a Top 10 row", () => {
 });
 
 describe("dashboard sales table — Export", () => {
-  const exportButton = () => screen.getByRole("button", { name: "Export Excel" });
+  const exportButton = () => screen.getByRole("button", { name: "Excel" });
 
   it("writes the period's sales, named after it, money as numbers", async () => {
     await renderLoaded();

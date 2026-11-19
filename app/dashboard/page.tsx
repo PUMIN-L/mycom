@@ -1118,27 +1118,37 @@ export default function DashboardPage() {
           <div className="flex flex-wrap lg:flex-nowrap items-center gap-3 w-full lg:w-auto">
             {/* ปุ่มกลับไประบบจัดการ — มุมขวาบน สไตล์เดียวกับหน้า admin อื่นๆ */}
             <AdminHomeButton />
-            {/* Navigation Tabs (Segmented Control style) */}
-            <div className="flex items-center bg-gray-50/80 rounded-full p-1 border border-gray-200/60 w-full sm:w-auto overflow-x-auto no-scrollbar">
+            {/* Other pages: plain links — this page has no tabs, and nothing
+                here should look like one that is selected (item 6). */}
+            <nav aria-label="หน้าที่เกี่ยวข้อง" className="flex items-center gap-1 text-sm">
+              <Link href="/customers?tab=equipment" className="px-3 py-1.5 text-gray-600 font-medium rounded-full hover:text-gray-900 hover:bg-white/60 transition-all whitespace-nowrap">
+                อุปกรณ์ที่ขาย
+              </Link>
+              <Link href="/expenses" className="px-3 py-1.5 text-gray-600 font-medium rounded-full hover:text-gray-900 hover:bg-white/60 transition-all whitespace-nowrap">
+                บันทึกรายจ่าย
+              </Link>
+            </nav>
+            {/* What this page does with its list: go down to it, or write it to Excel. */}
+            <div className="flex items-center gap-2">
               <button
+                type="button"
                 onClick={handleScrollToRecords}
-                className="px-4 py-1.5 text-gray-900 bg-white shadow-sm border border-gray-200/50 font-semibold rounded-full text-sm transition-all flex items-center gap-2 whitespace-nowrap shrink-0"
+                className="h-[40px] px-4 rounded-full border border-gray-200 bg-white text-sm font-semibold text-gray-700 hover:bg-gray-50 transition-all flex items-center gap-2 whitespace-nowrap shrink-0"
               >
                 {/* The table's own count — every year's sales here said 120
                     beside a table that listed this year's 35. */}
                 รายการขาย {visibleRecords.length > 0 && <span className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full font-bold text-xs" data-records-count>{visibleRecords.length}</span>}
+                <svg aria-hidden="true" className="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" /></svg>
               </button>
-              <Link href="/customers?tab=equipment" className="px-4 py-1.5 text-gray-500 font-medium rounded-full hover:text-gray-900 hover:bg-white/60 transition-all text-sm whitespace-nowrap shrink-0 ml-1">
-                อุปกรณ์ที่ขาย
-              </Link>
-              <Link href="/expenses" className="px-4 py-1.5 text-gray-500 font-medium rounded-full hover:text-gray-900 hover:bg-white/60 transition-all text-sm whitespace-nowrap shrink-0 ml-1">
-                บันทึกรายจ่าย
-              </Link>
-              
-              <div className="h-4 w-px bg-gray-300 mx-2 shrink-0"></div>
-              
-              <button onClick={handleExport} className="p-1.5 text-gray-400 hover:text-gray-900 rounded-full hover:bg-white/60 transition-all shrink-0" title="Export Excel">
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+              <button
+                type="button"
+                onClick={handleExport}
+                disabled={isExporting}
+                title="ส่งออกรายการขายที่ตารางแสดงเป็นไฟล์ Excel"
+                className="h-[40px] px-4 rounded-full border border-gray-200 bg-white text-sm font-semibold text-gray-700 hover:bg-gray-50 transition-all flex items-center gap-2 whitespace-nowrap shrink-0 disabled:opacity-60"
+              >
+                <svg aria-hidden="true" className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                {isExporting ? "กำลังส่งออก…" : "Excel"}
               </button>
             </div>
             

@@ -249,7 +249,7 @@ describe("dashboard — while loading and on failure", () => {
     const box = await screen.findByTestId("sales-load-error");
     expect(within(box).getByText("โหลดรายการขายไม่สำเร็จ")).toBeTruthy();
     expect(screen.queryByText(/ยังไม่มีรายการขาย/)).toBeNull();
-    fireEvent.click(screen.getByTitle("Export Excel"));
+    fireEvent.click(screen.getByRole("button", { name: "Excel" }));
     expect(await screen.findByText("โหลดรายการขายไม่สำเร็จ — กดลองใหม่ที่ตารางก่อนส่งออก")).toBeTruthy();
 
     salesFail = false;
@@ -349,5 +349,19 @@ describe("dashboard — lists and chart", () => {
     await waitFor(() => expect(screen.getAllByText("วันนี้").length).toBeGreaterThan(0));
     expect(screen.queryByRole("group", { name: "แบ่งแท่งกราฟ" })).toBeNull();
     expect(screen.queryByText("ไตรมาสนี้")).toBeNull();
+  });
+});
+
+// Item 6 — the header: links to other pages apart from what this page does.
+describe("dashboard — the header", () => {
+  it("keeps links to other pages apart from this page's actions, and names the export Excel", async () => {
+    await renderLoaded();
+    const nav = screen.getByRole("navigation", { name: "หน้าที่เกี่ยวข้อง" });
+    expect(within(nav).getByRole("link", { name: "อุปกรณ์ที่ขาย" })).toHaveAttribute("href", "/customers?tab=equipment");
+    expect(within(nav).getByRole("link", { name: "บันทึกรายจ่าย" })).toHaveAttribute("href", "/expenses");
+    // Nothing among the links looks like a selected tab — the list and the export are actions beside them.
+    expect(within(nav).queryByRole("button")).toBeNull();
+    expect(screen.getByRole("button", { name: "Excel" }).textContent).toBe("Excel");
+    expect(screen.getByRole("button", { name: /^รายการขาย/ })).toBeTruthy();
   });
 });
