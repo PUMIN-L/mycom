@@ -116,6 +116,18 @@ export function withVatOverride(totals: DocTotals, vatSatang: number | null, pri
 }
 
 /**
+ * round(a × b × … ÷ divisor), half up, EXACTLY: products of satang pass 2^53
+ * on large bills, where a float would round a tax figure the wrong way at a
+ * half. Non-negative integers only (each factor is rounded first).
+ */
+export function mulDivRound(factors: readonly number[], divisor: number): number {
+  const n = factors.reduce((p, f) => p * BigInt(Math.round(f)), BigInt(1));
+  const d = BigInt(Math.round(divisor));
+  const q = n / d;
+  return Number((n % d) * BigInt(2) >= d ? q + BigInt(1) : q);
+}
+
+/**
  * `total` shared out over `weights` in proportion, in whole satang that add
  * up to `total` exactly (largest remainder). Used to put a bill-level discount
  * — and VAT taken out of inclusive prices — onto each line for the dashboard,

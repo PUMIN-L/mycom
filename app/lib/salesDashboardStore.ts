@@ -880,6 +880,12 @@ export function getPeriodDateRange(periodType?: string, periodValue?: string) {
   };
 }
 
+/**
+ * DEALS, here and in every figure below: COUNT(DISTINCT COALESCE(dealId, id)).
+ * A sale is one deal — except that each delivery of one customer PO is its own
+ * sale (its date, machines and costs) carrying the PO as `dealId` (v51,
+ * lib/accounting), and they count once: "1 PO = 1 ดีล".
+ */
 export async function getDashboardOverview(
   curStart: string,
   curEnd: string,
@@ -889,7 +895,7 @@ export async function getDashboardOverview(
 
   // Current month
   const [curRows] = await query<RowDataPacket[]>(
-    `SELECT COALESCE(SUM(totalAmount), 0) AS revenue, COUNT(*) AS deals,
+    `SELECT COALESCE(SUM(totalAmount), 0) AS revenue, COUNT(DISTINCT COALESCE(dealId, id)) AS deals,
             COALESCE(SUM(costAmount), 0) AS cost
      FROM sales_records WHERE saleDate >= ? AND saleDate < ?`,
     [curStart, curEnd]
@@ -902,7 +908,7 @@ export async function getDashboardOverview(
 
   // Previous period
   const [prevRows] = await query<RowDataPacket[]>(
-    `SELECT COALESCE(SUM(totalAmount), 0) AS revenue, COUNT(*) AS deals,
+    `SELECT COALESCE(SUM(totalAmount), 0) AS revenue, COUNT(DISTINCT COALESCE(dealId, id)) AS deals,
             COALESCE(SUM(costAmount), 0) AS cost
      FROM sales_records WHERE saleDate >= ? AND saleDate < ?`,
     [prevStart, prevEnd]
@@ -1047,7 +1053,7 @@ async function getRevenueByPeriod(
     `SELECT ${periodSql.sales} AS period,
             COALESCE(SUM(totalAmount), 0) AS revenue,
             COALESCE(SUM(costAmount), 0) AS cost,
-            COUNT(*) AS deals
+            COUNT(DISTINCT COALESCE(dealId, id)) AS deals
      FROM sales_records
      WHERE saleDate >= ? AND saleDate < ?
      GROUP BY period ORDER BY period`,
@@ -1155,7 +1161,7 @@ export async function getRevenueByCategory(
             COALESCE(pc.name_th, 'ไม่ระบุหมวด') AS name,
             COALESCE(SUM(sri.totalAmount), 0) AS revenue,
             COALESCE(SUM(sri.qty), 0) AS qty,
-            COUNT(DISTINCT sri.salesRecordId) AS deals
+            COUNT(DISTINCT COALESCE(sr.dealId, sri.salesRecordId)) AS deals
      FROM sales_record_items sri
      LEFT JOIN sales_records sr ON sri.salesRecordId = sr.id
      LEFT JOIN product_categories pc ON sri.categoryId = pc.id
@@ -1180,8 +1186,9 @@ export async function getRevenueByCategory(
  * bucket/date-filter/backfill reasoning — the bucket fallbacks here are the
  * untouched `id` "unspecified" / `name` "ไม่ระบุสินค้า").
  *
- * `deals` is COUNT(DISTINCT salesRecordId): one bill is one deal for that
- * product, never one deal per line.
+ * `deals` is COUNT(DISTINCT COALESCE(dealId, salesRecordId)): one bill is one
+ * deal for that product, never one deal per line — and every delivery of one
+ * customer PO (`sales_records.dealId`, v51) is still that one deal.
  */
 export async function getTopProducts(
   limit = 10,
@@ -1194,7 +1201,7 @@ export async function getTopProducts(
     `SELECT sri.productId AS id, sri.productName AS name,
             COALESCE(SUM(sri.totalAmount), 0) AS revenue,
             COALESCE(SUM(sri.qty), 0) AS qty,
-            COUNT(DISTINCT sri.salesRecordId) AS deals
+            COUNT(DISTINCT COALESCE(sr.dealId, sri.salesRecordId)) AS deals
      FROM sales_record_items sri
      LEFT JOIN sales_records sr ON sri.salesRecordId = sr.id
      ${clause}
@@ -1225,7 +1232,7 @@ export async function getTopCustomers(
             COALESCE(co.name, 'ไม่ระบุ') AS name,
             COALESCE(SUM(sr.totalAmount), 0) AS revenue,
             COALESCE(SUM(sr.qty), 0) AS qty,
-            COUNT(*) AS deals
+            COUNT(DISTINCT COALESCE(sr.dealId, sr.id)) AS deals
      FROM sales_records sr
      LEFT JOIN companies co ON sr.companyId = co.id
      ${clause}
@@ -1254,7 +1261,7 @@ export async function getSalespersonLeaderboard(
             COALESCE(sp.name, sr.salespersonId) AS name,
             COALESCE(SUM(sr.totalAmount), 0) AS revenue,
             COALESCE(SUM(sr.costAmount), 0) AS cost,
-            COUNT(*) AS deals
+            COUNT(DISTINCT COALESCE(sr.dealId, sr.id)) AS deals
      FROM sales_records sr
      LEFT JOIN salespeople sp ON sr.salespersonId = sp.id
      ${clause}
@@ -1360,13 +1367,14 @@ export async function getSmartInsights(
     });
   }
 
-  // 4. Repeat customers rate (exclude unlinked empty companies)
+  // 4. Repeat customers rate (exclude unlinked empty companies). Counted in
+  // DEALS: one customer PO delivered in two parts is one purchase, not a repeat.
   const [repeatData] = await query<RowDataPacket[]>(
     `SELECT
        COUNT(DISTINCT companyId) AS total,
        SUM(CASE WHEN cnt >= 2 THEN 1 ELSE 0 END) AS repeaters
      FROM (
-       SELECT companyId, COUNT(*) AS cnt FROM sales_records
+       SELECT companyId, COUNT(DISTINCT COALESCE(dealId, id)) AS cnt FROM sales_records
        WHERE companyId IS NOT NULL AND companyId != ''
        GROUP BY companyId
      ) sub`

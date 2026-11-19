@@ -270,7 +270,8 @@ describe("deleteAccDocument", () => {
     ]));
     await expect(deleteAccDocument("d1", actor, { passwordChecked: true })).rejects.toMatchObject({ status: 409 });
     expect(statements()).toContain("SELECT COUNT(*) AS n FROM acc_payments WHERE documentId = ? AND voidedAt IS NULL FOR UPDATE");
-    expect(statements()).toContain("SELECT COUNT(*) AS n FROM acc_documents WHERE relatedDocId = ? FOR UPDATE");
+    // Receipts / credit notes pointing at it, and — for a customer PO — the invoices delivered from it.
+    expect(statements()).toContain("SELECT COUNT(*) AS n FROM acc_documents WHERE relatedDocId = ? OR salesOrderId = ? FOR UPDATE");
   });
 
   it("takes the sale and the history-free machines along, keeps the others, gives the number back", async () => {
@@ -316,7 +317,7 @@ describe("deleteAccDocument", () => {
       conn.query.mockImplementation(router([
         [/SELECT docType, relatedDocId FROM acc_documents WHERE id = \?$/, () => [{ docType: "RE", relatedDocId: "inv1" }]],
         [/SELECT id, docNo, salesRecordId FROM acc_documents WHERE id = \? FOR UPDATE/, () => [{ id: "inv1", docNo: "INV2026110001", salesRecordId: "sale-1" }]],
-        [/SELECT id, docType, status, docNo, salesRecordId, relatedDocId, buyerName, totalSatang FROM acc_documents WHERE id = \? FOR UPDATE/, () => [receiptRow]],
+        [/SELECT id, docType, status, docNo, salesRecordId, relatedDocId, .*FROM acc_documents WHERE id = \? FOR UPDATE/, () => [receiptRow]],
         [/SELECT amountSatang, voidedAt, documentId FROM acc_payments WHERE receiptId/, () => [{ amountSatang: 2033000, voidedAt: null, documentId: "inv1" }]],
         [/SELECT docNo FROM acc_documents WHERE id = \?/, () => [{ docNo: "INV2026110001" }]],
         [/COUNT\(\*\) AS n FROM acc_payments/, () => [{ n: 0 }]],
@@ -347,7 +348,7 @@ describe("deleteAccDocument", () => {
 
     it("says what goes with it before anything is deleted", async () => {
       vi.mocked(query).mockImplementation(router([
-        [/SELECT id, docType, status, docNo, salesRecordId, relatedDocId FROM acc_documents WHERE id = \?/, () => [receiptRow]],
+        [/SELECT id, docType, status, docNo, salesRecordId, relatedDocId, salesOrderId FROM acc_documents WHERE id = \?/, () => [receiptRow]],
         [/SELECT amountSatang, voidedAt, documentId FROM acc_payments WHERE receiptId/, () => [{ amountSatang: 2033000, voidedAt: null, documentId: "inv1" }]],
         [/SELECT docNo FROM acc_documents WHERE id = \?/, () => [{ docNo: "INV2026110001" }]],
         [/COUNT\(\*\) AS n/, () => [{ n: 0 }]],
@@ -458,5 +459,185 @@ describe("updateExternalReference", () => {
     await expect(updateExternalReference("d1", { docNo: "IV-1", externalNote: "แฟ้ม", reason: " " }, actor)).rejects.toMatchObject({ status: 400 });
     conn.query.mockImplementation(router([[/FOR UPDATE/, () => [{ source: "internal", docNo: "INV2026110001", externalNote: "", salesRecordId: null }]]]));
     await expect(updateExternalReference("d1", { docNo: "IV-1", externalNote: "แฟ้ม", reason: "ผิด" }, actor)).rejects.toMatchObject({ status: 409 });
+  });
+});
+
+// Step 5 — an invoice that delivers (part of) a customer PO.
+describe("delivering from a customer PO", () => {
+  const FROM_PO: InvoiceInput = { ...INPUT, salesOrderId: "so1", lines: [{ ...INPUT.lines[0], sourceLineId: "a" }] };
+  const PO_LINES = [{ id: "a", name: "เครื่องชั่ง AND GR-200", unit: "เครื่อง", qty: "2.00" }];
+  /**
+   * PO so1: line a, 2 scales. `earlier`: what issued invoice inv0 already
+   * delivered of it. `d1` — the invoice at hand — sends 1 and counts once it
+   * is issued (not while it is the invoice being checked).
+   */
+  const poDb = (earlier: string | null, order: Record<string, unknown> = { docType: "SO", status: "issued" }): Handler[] => [
+    [/SELECT docType, status FROM acc_documents WHERE id = \?/, () => [order]],
+    [/SELECT id, name, unit, qty FROM acc_document_lines WHERE documentId = \?/, () => PO_LINES],
+    [/WHERE salesOrderId = \? AND docType = 'INV' AND status = 'issued'/, (params) => [
+      ...(earlier ? [{ id: "inv0" }] : []),
+      ...(params.length === 1 ? [{ id: "d1" }] : []),
+    ]],
+    [/SELECT sourceLineId, qty FROM acc_document_lines WHERE documentId IN/, (params) => [
+      ...(earlier && params.includes("inv0") ? [{ sourceLineId: "a", qty: earlier }] : []),
+      ...(params.includes("d1") ? [{ sourceLineId: "a", qty: "1.00" }] : []),
+    ]],
+  ];
+  const insertOf = (table: string) => {
+    const call = vi.mocked(conn.query).mock.calls.find(([sql]) => String(sql).startsWith(`INSERT INTO ${table}`))!;
+    const cols = String(call[0]).match(/\(([^)]+)\) VALUES/)![1].split(", ");
+    return (col: string) => (call[1] as unknown[])[cols.indexOf(col)];
+  };
+
+  it("a draft keeps its PO and the PO line each of its lines delivers", async () => {
+    vi.mocked(query).mockImplementation(router([...poDb(null), [/FROM acc_documents WHERE id/, () => [DOC_ROW]], [/FROM acc_document_lines/, () => [LINE_ROW]]]) as never);
+    conn.query.mockResolvedValue([{}, []]);
+    await createInvoiceDraft(FROM_PO, actor);
+    expect(insertOf("acc_documents")("salesOrderId")).toBe("so1");
+    expect(insertOf("acc_document_lines")("sourceLineId")).toBe("a");
+  });
+
+  it("an invoice not from a PO drops any PO pointer it was sent", async () => {
+    vi.mocked(query).mockImplementation(router([[/FROM acc_documents WHERE id/, () => [DOC_ROW]], [/FROM acc_document_lines/, () => [LINE_ROW]]]) as never);
+    conn.query.mockResolvedValue([{}, []]);
+    await createInvoiceDraft({ ...FROM_PO, salesOrderId: "" }, actor);
+    expect(insertOf("acc_documents")("salesOrderId")).toBeNull();
+    expect(insertOf("acc_document_lines")("sourceLineId")).toBeNull();
+  });
+
+  it("a draft that takes more than the PO still holds is refused before anything is written", async () => {
+    vi.mocked(query).mockImplementation(router(poDb("2.00")) as never);
+    await expect(createInvoiceDraft(FROM_PO, actor)).rejects.toMatchObject({ status: 409, message: '"เครื่องชั่ง AND GR-200" ใน PO นี้ส่งครบแล้ว' });
+    expect(withTransaction).not.toHaveBeenCalled();
+  });
+
+  const loadDelivery = () =>
+    vi.mocked(query).mockImplementation(router([
+      [/FROM acc_documents WHERE id/, () => [{ ...DOC_ROW, salesOrderId: "so1" }]],
+      [/FROM acc_document_lines/, () => [{ ...LINE_ROW, sourceLineId: "a" }]],
+      [/FROM products WHERE id IN/, () => [{ id: "p1", categoryId: 4 }]],
+    ]) as never);
+  const draftLock: Handler = [/SELECT status, updatedAt FROM acc_documents WHERE id = \? FOR UPDATE/, () => [{ status: "draft", updatedAt: DOC_ROW.updatedAt }]];
+
+  it("issuing locks the invoice, then the PO, checks it BEFORE the number is spent — then ties the sale to the PO's deal and re-sums what was delivered", async () => {
+    loadDelivery();
+    conn.query.mockImplementation(router([draftLock, ...poDb("0.50")]));
+    await issueInvoice("d1", actor, DOC_ROW.updatedAt);
+
+    const order = statements();
+    const invoiceLock = order.indexOf("SELECT status, updatedAt FROM acc_documents WHERE id = ? FOR UPDATE");
+    const orderLock = order.indexOf("SELECT docType, status FROM acc_documents WHERE id = ? FOR UPDATE");
+    expect(invoiceLock).toBeGreaterThan(-1);
+    expect(orderLock).toBeGreaterThan(invoiceLock);
+    expect(vi.mocked(conn.query).mock.invocationCallOrder[orderLock]).toBeLessThan(vi.mocked(allocateDocNo).mock.invocationCallOrder[0]);
+
+    const calls = vi.mocked(conn.query).mock.calls;
+    expect(calls).toContainEqual(["UPDATE sales_records SET dealId = ? WHERE id = ?", ["so1", "sale-1"]]);
+    // 0.50 earlier + 1 now — a re-sum over the issued invoices, never `+ ?`.
+    expect(calls).toContainEqual(["UPDATE acc_document_lines SET deliveredQty = ? WHERE id = ?", [1.5, "a"]]);
+    expect(order.findIndex((s) => s.startsWith("UPDATE acc_document_lines SET deliveredQty"))).toBeGreaterThan(
+      order.findIndex((s) => s.startsWith("UPDATE acc_documents SET status = 'issued'"))
+    );
+  });
+
+  it("issuing more than the PO still holds is refused — no number spent, no sale", async () => {
+    loadDelivery();
+    conn.query.mockImplementation(router([draftLock, ...poDb("1.50")]));
+    await expect(issueInvoice("d1", actor)).rejects.toMatchObject({ status: 409, message: 'ส่ง "เครื่องชั่ง AND GR-200" เกินจำนวนที่เหลือใน PO — เหลือ 0.5 เครื่อง' });
+    expect(allocateDocNo).not.toHaveBeenCalled();
+    expect(insertPreparedSaleTx).not.toHaveBeenCalled();
+  });
+
+  it("issuing from a PO cancelled since the draft was saved is refused", async () => {
+    loadDelivery();
+    conn.query.mockImplementation(router([draftLock, ...poDb(null, { docType: "SO", status: "void" })]));
+    await expect(issueInvoice("d1", actor)).rejects.toMatchObject({ status: 409, message: "PO ลูกค้านี้ถูกยกเลิกแล้ว — ส่งของจาก PO นี้ไม่ได้" });
+    expect(allocateDocNo).not.toHaveBeenCalled();
+  });
+
+  it("an invoice from elsewhere, recorded against a PO: checked without counting itself, tied to the deal", async () => {
+    vi.mocked(query).mockImplementation(router([
+      ...poDb(null),
+      [/WHERE docType = 'INV' AND docNo = \? LIMIT 1/, () => []],
+      [/FROM products WHERE id IN/, () => []],
+      [/FROM acc_documents WHERE id/, () => [{ ...DOC_ROW, status: "issued", source: "external", docNo: "IV-1", salesOrderId: "so1" }]],
+      [/FROM acc_document_lines/, () => [LINE_ROW]],
+    ]) as never);
+    conn.query.mockImplementation(router(poDb(null)));
+    await recordExternalInvoice(FROM_PO, { docNo: "IV-1", externalNote: "แฟ้ม", vatSatangOverride: null }, actor);
+    const newId = insertOf("acc_documents")("id");
+    const check = vi.mocked(conn.query).mock.calls.find(([sql]) => String(sql).includes("status = 'issued' AND id <> ?"))!;
+    expect(check[1]).toEqual(["so1", newId]);
+    expect(vi.mocked(conn.query).mock.calls).toContainEqual(["UPDATE sales_records SET dealId = ? WHERE id = ?", ["so1", "sale-1"]]);
+  });
+
+  it("deleting a delivery locks the PO after the invoice and gives the quantity back", async () => {
+    conn.query.mockImplementation(router([
+      [/SELECT docType, relatedDocId FROM acc_documents WHERE id = \?$/, () => [{ docType: "INV", relatedDocId: null }]],
+      [/SELECT id, docType, status, docNo, salesRecordId, relatedDocId, .*FROM acc_documents WHERE id = \? FOR UPDATE/, () => [{
+        id: "d1", docType: "INV", status: "issued", docNo: "INV2026110005", salesRecordId: null, relatedDocId: null,
+        salesOrderId: "so1", customerPoNo: "PO-1", buyerName: "บริษัท เอ", totalSatang: 6206000,
+      }]],
+      [/COUNT\(\*\) AS n/, () => [{ n: 0 }]],
+      [/SELECT id FROM acc_documents WHERE id = \? FOR UPDATE/, () => [{ id: "so1" }]],
+      [/FROM acc_counters/, () => [{ lastNo: 9 }]],
+      [/SELECT id, name, unit, qty FROM acc_document_lines/, () => PO_LINES],
+    ]));
+    await deleteAccDocument("d1", actor, { passwordChecked: true });
+    const order = statements();
+    const invoiceLock = order.findIndex((s) => s.startsWith("SELECT id, docType, status"));
+    const orderLock = order.indexOf("SELECT id FROM acc_documents WHERE id = ? FOR UPDATE");
+    const deleted = order.indexOf("DELETE FROM acc_documents WHERE id = ?");
+    expect(orderLock).toBeGreaterThan(invoiceLock);
+    expect(orderLock).toBeLessThan(deleted);
+    expect(vi.mocked(conn.query).mock.calls).toContainEqual(["UPDATE acc_document_lines SET deliveredQty = ? WHERE id = ?", [0, "a"]]);
+    expect(order.findIndex((s) => s.startsWith("UPDATE acc_document_lines SET deliveredQty"))).toBeGreaterThan(deleted);
+    expect(writeAudit).toHaveBeenCalledWith(conn, expect.objectContaining({ action: "doc.delete", detail: expect.stringContaining("คืนจำนวนที่ส่งให้ PO ลูกค้า") }));
+  });
+
+  it("before deleting a delivery, says which PO its quantities go back to — a draft took nothing, so gives nothing back", async () => {
+    const delivery = { id: "d1", docType: "INV", status: "issued", docNo: "INV2026110005", salesRecordId: null, relatedDocId: null, salesOrderId: "so1" };
+    const impactDb = (row: Record<string, unknown>) =>
+      vi.mocked(query).mockImplementation(router([
+        [/SELECT id, docType, status, docNo, salesRecordId, relatedDocId, salesOrderId FROM acc_documents WHERE id = \?/, () => [row]],
+        [/SELECT customerPoNo FROM acc_documents WHERE id = \?/, () => [{ customerPoNo: "PO-6611" }]],
+        [/COUNT\(\*\) AS n/, () => [{ n: 0 }]],
+      ]) as never);
+    impactDb(delivery);
+    expect(await deletionImpact("d1")).toMatchObject({ fromOrder: { id: "so1", customerPoNo: "PO-6611" } });
+    impactDb({ ...delivery, status: "draft", docNo: null });
+    expect(await deletionImpact("d1")).toMatchObject({ fromOrder: null });
+  });
+
+  describe("the customer PO itself", () => {
+    const soRow = {
+      id: "so1", docType: "SO", status: "issued", docNo: null, salesRecordId: null, relatedDocId: null, salesOrderId: null,
+      customerPoNo: "PO-6611", buyerName: "บริษัท เอ", totalSatang: 10700000,
+    };
+    const soDb = (invoices: number) =>
+      conn.query.mockImplementation(router([
+        [/SELECT docType, relatedDocId FROM acc_documents WHERE id = \?$/, () => [{ docType: "SO", relatedDocId: null }]],
+        [/SELECT id, docType, status, docNo, salesRecordId, relatedDocId, .*FROM acc_documents WHERE id = \? FOR UPDATE/, () => [soRow]],
+        [/COUNT\(\*\) AS n FROM acc_payments/, () => [{ n: 0 }]],
+        [/WHERE relatedDocId = \? OR salesOrderId = \?/, () => [{ n: invoices }]],
+      ]));
+
+    it("cannot be deleted while an invoice delivers from it — cancelling is the way", async () => {
+      soDb(1);
+      await expect(deleteAccDocument("so1", actor, { passwordChecked: true })).rejects.toMatchObject({
+        status: 409,
+        message: "มีใบแจ้งหนี้ที่ส่งของจาก PO นี้แล้ว — ลบใบแจ้งหนี้นั้นก่อน หรือกด ยกเลิก PO แทน",
+      });
+      expect(statements()).not.toContain("DELETE FROM acc_documents WHERE id = ?");
+    });
+
+    it("goes with its lines otherwise, named by the customer's PO number — no number of ours to give back", async () => {
+      soDb(0);
+      const result = await deleteAccDocument("so1", actor, { passwordChecked: true });
+      expect(result).toMatchObject({ releasedNumber: false, saleDeleted: false });
+      expect(statements()).toContain("DELETE FROM acc_document_lines WHERE documentId = ?");
+      expect(releaseDocNoIfLatest).not.toHaveBeenCalled();
+      expect(writeAudit).toHaveBeenCalledWith(conn, expect.objectContaining({ action: "doc.delete", docNo: "PO-6611", detail: expect.stringMatching(/^ลบ · PO ลูกค้า PO-6611 · /) }));
+    });
   });
 });

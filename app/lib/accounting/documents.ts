@@ -10,6 +10,7 @@ import { allocateDocNo, docPeriod, formatDocNo, parseDocNo, releaseDocNoIfLatest
 import type { NumberedDocType } from "./types";
 import { writeAudit } from "./audit";
 import { recomputePaidSatang, syncSaleReceiptRef } from "./paymentLedger";
+import { checkDeliveryTx, draftDeliveryProblem, lockOrderTx, recomputeDeliveredTx } from "./orderDelivery";
 import { getSellerProfile, getVatRate } from "./settings";
 import { allocateProportionally, computeTotals, formatSatang, lineAmountSatang, satangToBaht, withVatOverride, type DocTotals } from "./money";
 import {
@@ -39,6 +40,9 @@ export interface AccDocumentLine extends DocLineInput {
   id: string;
   sortOrder: number;
   amountSatang: number;
+  /** A customer PO's line: how much of it issued invoices have delivered (a cache — orderDelivery.ts). */
+  deliveredQty: number;
+  sourceLineId: string;
 }
 
 export interface AccDocument {
@@ -76,6 +80,8 @@ export interface AccDocument {
   salesOrderId: string | null;
   relatedDocId: string | null;
   salesRecordId: string | null;
+  /** A customer PO: when the customer expects the goods. */
+  expectedDeliveryDate: string | null;
   issuedAt: string | null;
   issuedBy: string | null;
   voidedAt: string | null;
@@ -125,6 +131,8 @@ function rowToLine(r: RowDataPacket): AccDocumentLine {
     isMachine: Number(r.isMachine) === 1,
     serials: str(r.serials),
     warrantyMonths: r.warrantyMonths === null || r.warrantyMonths === undefined ? null : num(r.warrantyMonths),
+    deliveredQty: num(r.deliveredQty),
+    sourceLineId: str(r.sourceLineId),
   };
 }
 
@@ -164,6 +172,7 @@ function rowToDoc(r: RowDataPacket, lines: AccDocumentLine[]): AccDocument {
     salesOrderId: strOrNull(r.salesOrderId),
     relatedDocId: strOrNull(r.relatedDocId),
     salesRecordId: strOrNull(r.salesRecordId),
+    expectedDeliveryDate: strOrNull(r.expectedDeliveryDate),
     issuedAt: strOrNull(r.issuedAt),
     issuedBy: strOrNull(r.issuedBy),
     voidedAt: strOrNull(r.voidedAt),
@@ -188,7 +197,7 @@ export async function getAccDocument(id: string): Promise<AccDocument | null> {
 const LIST_LIMIT = 1000;
 
 /** `%`, `_` and the escape itself, made literal for LIKE … ESCAPE '!'. */
-const likeEscape = (s: string) => s.replace(/[!%_]/g, (c) => `!${c}`);
+export const likeEscape = (s: string) => s.replace(/[!%_]/g, (c) => `!${c}`);
 
 /** A document type's list, newest first: in [from, to) when given, matching `q` (number, customer, PO, project). */
 export async function listAccDocuments(opts: { type: AccDocType; from?: string; to?: string; q?: string }): Promise<AccListRow[]> {
@@ -283,17 +292,31 @@ export async function peekNextDocNo(type: NumberedDocType, issueDate: string): P
 
 // ── Draft: create / update ──────────────────────────────────────────────────
 
+/**
+ * A line points at a customer-PO line only on an invoice that delivers from
+ * that PO — anywhere else the pointer is dropped.
+ */
+function withOrderLink(input: InvoiceInput): InvoiceInput {
+  if (input.salesOrderId) return input;
+  return { ...input, salesOrderId: "", lines: input.lines.map((l) => ({ ...l, sourceLineId: "" })) };
+}
+
 /** The columns a draft save writes, with values — totals computed HERE, never taken from the browser. */
-async function draftColumns(input: InvoiceInput) {
+async function draftColumns(rawInput: InvoiceInput, invoiceId: string | null) {
+  const input = withOrderLink(rawInput);
   const vatRate = await getVatRate();
   const problems = invoiceProblems(input, vatRate);
   if (problems.first) throw new ApiError(400, problems.first);
+  if (input.salesOrderId) {
+    const problem = await draftDeliveryProblem(input.salesOrderId, input.lines, invoiceId);
+    if (problem) throw new ApiError(409, problem);
+  }
   const totals = computeTotals({ lines: input.lines, discountSatang: input.discountSatang, priceMode: input.priceMode, vatRate });
   return { columns: columnsOf(input, totals, vatRate), lines: input.lines };
 }
 
 /** A document's header columns for `input` with these totals. */
-function columnsOf(input: InvoiceInput, totals: DocTotals, vatRate: number) {
+export function columnsOf(input: InvoiceInput, totals: DocTotals, vatRate: number) {
   return {
       isTaxInvoice: input.isTaxInvoice ? 1 : 0,
       issueDate: input.issueDate,
@@ -317,20 +340,22 @@ function columnsOf(input: InvoiceInput, totals: DocTotals, vatRate: number) {
       customerPoNo: input.customerPoNo,
       projectName: input.projectName,
       note: input.note,
+      salesOrderId: input.salesOrderId || null,
   };
 }
 
-async function replaceLines(conn: PoolConnection, documentId: string, lines: readonly DocLineInput[]): Promise<void> {
+/** Writes a document's lines over whatever it had (a draft's, a PO's before any delivery). */
+export async function replaceLines(conn: PoolConnection, documentId: string, lines: readonly DocLineInput[]): Promise<void> {
   await conn.query("DELETE FROM acc_document_lines WHERE documentId = ?", [documentId]);
   if (lines.length === 0) return;
   const cols = [
     "id", "documentId", "sortOrder", "lineType", "productId", "name", "qty", "unit",
-    "unitPriceSatang", "discountSatang", "amountSatang", "isMachine", "serials", "warrantyMonths",
+    "unitPriceSatang", "discountSatang", "amountSatang", "isMachine", "serials", "warrantyMonths", "sourceLineId",
   ];
   const values = lines.flatMap((l, i) => [
     crypto.randomUUID(), documentId, i, l.lineType, l.productId, l.name, l.qty, l.unit,
     l.unitPriceSatang, l.discountSatang, lineAmountSatang(l), l.isMachine ? 1 : 0,
-    l.isMachine ? l.serials : "", l.isMachine ? l.warrantyMonths : null,
+    l.isMachine ? l.serials : "", l.isMachine ? l.warrantyMonths : null, l.sourceLineId || null,
   ]);
   await conn.query(
     `INSERT INTO acc_document_lines (${cols.join(", ")}) VALUES ${lines.map(() => `(${cols.map(() => "?").join(", ")})`).join(", ")}`,
@@ -339,7 +364,7 @@ async function replaceLines(conn: PoolConnection, documentId: string, lines: rea
 }
 
 export async function createInvoiceDraft(input: InvoiceInput, actor: Actor): Promise<AccDocument> {
-  const { columns, lines } = await draftColumns(input);
+  const { columns, lines } = await draftColumns(input, null);
   const id = await withTransaction(async (conn) => {
     const docId = crypto.randomUUID();
     const now = new Date().toISOString();
@@ -368,7 +393,7 @@ export async function createInvoiceDraft(input: InvoiceInput, actor: Actor): Pro
  * silently undoing it.
  */
 export async function updateInvoiceDraft(id: string, input: InvoiceInput, actor: Actor, expectedUpdatedAt?: string): Promise<AccDocument> {
-  const { columns, lines } = await draftColumns(input);
+  const { columns, lines } = await draftColumns(input, id);
   await withTransaction(async (conn) => {
     const [rows] = await conn.query<RowDataPacket[]>("SELECT status, updatedAt FROM acc_documents WHERE id = ? FOR UPDATE", [id]);
     if (!rows[0]) throw new ApiError(404, "ไม่พบเอกสารนี้");
@@ -474,14 +499,38 @@ function inputOf(doc: AccDocument): InvoiceInput {
     projectName: doc.projectName,
     note: doc.note,
     lines: doc.lines,
+    salesOrderId: doc.salesOrderId ?? "",
   };
+}
+
+/**
+ * A delivery from a customer PO, inside the transaction that issues the
+ * invoice: the PO locked and checked (nothing more than it still holds), the
+ * sale marked as that PO's deal (one PO = one deal on the dashboard, however
+ * many deliveries), the PO's delivered quantities re-summed — or nothing, for
+ * an invoice that is not from a PO.
+ */
+async function deliverFromOrderTx(
+  conn: PoolConnection,
+  order: { salesOrderId: string | null | undefined; lines: readonly DocLineInput[]; invoiceId: string | null },
+  saleId: string,
+  phase: "check" | "after"
+): Promise<void> {
+  if (!order.salesOrderId) return;
+  if (phase === "check") {
+    await checkDeliveryTx(conn, order.salesOrderId, order.lines, order.invoiceId);
+    return;
+  }
+  await conn.query("UPDATE sales_records SET dealId = ? WHERE id = ?", [order.salesOrderId, saleId]);
+  await recomputeDeliveredTx(conn, order.salesOrderId);
 }
 
 /**
  * Issues a draft: gives it its number, locks it, points it at our company's
  * current version, and creates its /dashboard sale and machines — all in ONE
  * transaction, so there is never an issued invoice without its sale, or a
- * number spent on a document that did not land.
+ * number spent on a document that did not land. A delivery from a customer
+ * PO takes its quantities off the PO in the same transaction.
  */
 export async function issueInvoice(id: string, actor: Actor, expectedUpdatedAt?: string): Promise<AccDocument> {
   const doc = await getAccDocument(id);
@@ -513,6 +562,8 @@ export async function issueInvoice(id: string, actor: Actor, expectedUpdatedAt?:
     if (String(rows[0].updatedAt) !== doc.updatedAt || (expectedUpdatedAt && expectedUpdatedAt !== doc.updatedAt)) {
       throw new ApiError(409, "ร่างนี้ถูกแก้หลังจากเปิดหน้านี้ — กรุณาเปิดใหม่แล้วตรวจอีกครั้งก่อนออกเอกสาร");
     }
+    const delivery = { salesOrderId: doc.salesOrderId, lines: doc.lines, invoiceId: id };
+    await deliverFromOrderTx(conn, delivery, "", "check");
     const docNo = await allocateDocNo(conn, "INV", doc.issueDate);
     prepared.v.invoiceRef = docNo;
     prepared.v.note = `สร้างอัตโนมัติจากใบแจ้งหนี้ ${docNo}`;
@@ -522,6 +573,7 @@ export async function issueInvoice(id: string, actor: Actor, expectedUpdatedAt?:
       "UPDATE acc_documents SET status = 'issued', docNo = ?, sellerVersionId = ?, salesRecordId = ?, issuedAt = ?, issuedBy = ?, updatedAt = ? WHERE id = ?",
       [docNo, versionId, saleId, now, actor.username, now, id]
     );
+    await deliverFromOrderTx(conn, delivery, saleId, "after");
     await writeAudit(conn, {
       ...actor,
       action: "doc.issue",
@@ -541,13 +593,17 @@ export interface DeletionImpact {
   /** Its number goes back to the counter (the next document takes it). */
   isLatestNumber: boolean;
   livePayments: number;
-  /** Receipts / credit notes that point at it. */
+  /** Receipts / credit notes that point at it — or, for a customer PO, the invoices delivered from it. */
   dependentDocs: number;
+  /** Why it cannot be deleted, in Thai — null when it can. */
+  blockedReason: string | null;
   /** The /dashboard sale it created, and what deleting would take with it. */
   sale: { id: string; costSatang: number; sharedWithOtherDocs: boolean } | null;
   machines: { total: number; withHistory: number };
   /** A receipt: the payment it records, which goes with it, and the invoice that then owes it again. */
   receiptPayment: { amountSatang: number; voided: boolean; invoiceId: string; invoiceNo: string | null } | null;
+  /** An issued delivery from a customer PO: the PO its quantities go back to. */
+  fromOrder: { id: string; customerPoNo: string } | null;
 }
 
 type Exec = { query: PoolConnection["query"] } | null;
@@ -558,7 +614,15 @@ async function run(conn: Exec, sql: string, params: unknown[]): Promise<RowDataP
 
 async function impactOf(
   conn: Exec,
-  doc: { id: string; docType: string; status: AccDocStatus; docNo: string | null; salesRecordId: string | null; relatedDocId: string | null }
+  doc: {
+    id: string;
+    docType: string;
+    status: AccDocStatus;
+    docNo: string | null;
+    salesRecordId: string | null;
+    relatedDocId: string | null;
+    salesOrderId: string | null;
+  }
 ): Promise<DeletionImpact> {
   // Inside the delete's transaction these are LOCKING reads: a plain SELECT
   // reads the snapshot the transaction began with (TiDB), which misses a
@@ -575,7 +639,17 @@ async function impactOf(
     }
   }
   const [payments] = await run(conn, `SELECT COUNT(*) AS n FROM acc_payments WHERE documentId = ? AND voidedAt IS NULL${current}`, [doc.id]);
-  const [dependents] = await run(conn, `SELECT COUNT(*) AS n FROM acc_documents WHERE relatedDocId = ?${current}`, [doc.id]);
+  const [dependents] = await run(conn, `SELECT COUNT(*) AS n FROM acc_documents WHERE relatedDocId = ? OR salesOrderId = ?${current}`, [doc.id, doc.id]);
+  const livePayments = num(payments?.n);
+  const dependentDocs = num(dependents?.n);
+  const blockedReason =
+    livePayments > 0
+      ? "ใบนี้มีรายการรับชำระแล้ว — ยกเลิกรายการรับชำระก่อนจึงจะลบได้"
+      : dependentDocs > 0
+        ? doc.docType === "SO"
+          ? "มีใบแจ้งหนี้ที่ส่งของจาก PO นี้แล้ว — ลบใบแจ้งหนี้นั้นก่อน หรือกด ยกเลิก PO แทน"
+          : "มีเอกสารอื่นอ้างถึงใบนี้ (ใบเสร็จ / ใบลดหนี้) — ลบเอกสารนั้นก่อน"
+        : null;
   let isLatestNumber = false;
   const parsed = parseDocNo(doc.docNo);
   if (doc.status !== "draft" && parsed) {
@@ -594,7 +668,13 @@ async function impactOf(
       machines.withHistory = units.filter((u) => u.hasHistory).length;
     }
   }
-  return { status: doc.status, docNo: doc.docNo, isLatestNumber, livePayments: num(payments?.n), dependentDocs: num(dependents?.n), sale, machines, receiptPayment };
+  let fromOrder: DeletionImpact["fromOrder"] = null;
+  if (doc.docType === "INV" && doc.status !== "draft" && doc.salesOrderId) {
+    // A label only — the delete itself locks the PO before giving anything back.
+    const [order] = await run(conn, "SELECT customerPoNo FROM acc_documents WHERE id = ?", [doc.salesOrderId]);
+    if (order) fromOrder = { id: doc.salesOrderId, customerPoNo: String(order.customerPoNo ?? "") };
+  }
+  return { status: doc.status, docNo: doc.docNo, isLatestNumber, livePayments, dependentDocs, blockedReason, sale, machines, receiptPayment, fromOrder };
 }
 
 /** The sale's machines, and whether anything has been recorded against each (a schedule, a service log, a job sheet). */
@@ -613,7 +693,7 @@ async function machinesOf(conn: Exec, salesRecordId: string): Promise<{ id: stri
 
 /** What deleting would do — for the dialog, before anything is deleted. Null when there is no such document. */
 export async function deletionImpact(id: string): Promise<DeletionImpact | null> {
-  const [row] = await run(null, "SELECT id, docType, status, docNo, salesRecordId, relatedDocId FROM acc_documents WHERE id = ?", [id]);
+  const [row] = await run(null, "SELECT id, docType, status, docNo, salesRecordId, relatedDocId, salesOrderId FROM acc_documents WHERE id = ?", [id]);
   if (!row) return null;
   return impactOf(null, {
     id: String(row.id),
@@ -622,6 +702,7 @@ export async function deletionImpact(id: string): Promise<DeletionImpact | null>
     docNo: strOrNull(row.docNo),
     salesRecordId: strOrNull(row.salesRecordId),
     relatedDocId: strOrNull(row.relatedDocId),
+    salesOrderId: strOrNull(row.salesOrderId),
   });
 }
 
@@ -654,7 +735,7 @@ export async function deleteAccDocument(id: string, actor: Actor, opts: { passwo
       : [];
     const [row] = await run(
       conn,
-      "SELECT id, docType, status, docNo, salesRecordId, relatedDocId, buyerName, totalSatang FROM acc_documents WHERE id = ? FOR UPDATE",
+      "SELECT id, docType, status, docNo, salesRecordId, relatedDocId, salesOrderId, customerPoNo, buyerName, totalSatang FROM acc_documents WHERE id = ? FOR UPDATE",
       [id]
     );
     if (!row) throw new ApiError(404, "ไม่พบเอกสารนี้");
@@ -665,6 +746,7 @@ export async function deleteAccDocument(id: string, actor: Actor, opts: { passwo
       docNo: strOrNull(row.docNo),
       salesRecordId: strOrNull(row.salesRecordId),
       relatedDocId: strOrNull(row.relatedDocId),
+      salesOrderId: strOrNull(row.salesOrderId),
     };
     // Checked again under the lock: a draft issued in another tab since the
     // route looked must not be deleted without the password an issued one needs.
@@ -672,8 +754,11 @@ export async function deleteAccDocument(id: string, actor: Actor, opts: { passwo
       throw new ApiError(409, "เอกสารนี้เพิ่งถูกออกเป็นเอกสารจริง — กดลบอีกครั้ง (ต้องยืนยันรหัสผ่าน)");
     }
     const impact = await impactOf(conn, doc);
-    if (impact.livePayments > 0) throw new ApiError(409, "ใบนี้มีรายการรับชำระแล้ว — ยกเลิกรายการรับชำระก่อนจึงจะลบได้");
-    if (impact.dependentDocs > 0) throw new ApiError(409, "มีเอกสารอื่นอ้างถึงใบนี้ (ใบเสร็จ / ใบลดหนี้) — ลบเอกสารนั้นก่อน");
+    if (impact.blockedReason) throw new ApiError(409, impact.blockedReason);
+    // A delivery from a customer PO: the PO locked now (after the invoice —
+    // the order issuing takes), its quantities given back below.
+    const deliveredFrom = doc.docType === "INV" ? strOrNull(row.salesOrderId) : null;
+    const orderLocked = deliveredFrom ? await lockOrderTx(conn, deliveredFrom) : false;
 
     if (doc.docType === "RE") {
       await conn.query("DELETE FROM acc_payments WHERE receiptId = ?", [id]);
@@ -707,6 +792,7 @@ export async function deleteAccDocument(id: string, actor: Actor, opts: { passwo
     const releasedNumber = doc.docNo && doc.status !== "draft" ? await releaseDocNoIfLatest(conn, doc.docNo) : false;
     await conn.query("DELETE FROM acc_document_lines WHERE documentId = ?", [id]);
     await conn.query("DELETE FROM acc_documents WHERE id = ?", [id]);
+    if (deliveredFrom && orderLocked) await recomputeDeliveredTx(conn, deliveredFrom);
 
     const livePayment = impact.receiptPayment && !impact.receiptPayment.voided ? impact.receiptPayment : null;
     if (paidInvoice) {
@@ -722,8 +808,11 @@ export async function deleteAccDocument(id: string, actor: Actor, opts: { passwo
       });
     }
 
+    // A customer PO has no number of ours — the customer's names it.
+    const isOrder = doc.docType === "SO";
+    const label = isOrder ? `PO ลูกค้า ${String(row.customerPoNo ?? "")}` : doc.docNo ?? "ร่าง";
     const parts = [
-      doc.docNo ?? "ร่าง",
+      label,
       String(row.buyerName ?? ""),
       `${formatSatang(num(row.totalSatang))} บาท`,
       livePayment ? `ลบรายการรับชำระของ ${livePayment.invoiceNo ?? "ใบแจ้งหนี้"}` : null,
@@ -731,8 +820,15 @@ export async function deleteAccDocument(id: string, actor: Actor, opts: { passwo
       machinesDeleted ? `ลบเครื่อง ${machinesDeleted} เครื่อง` : null,
       machinesKept ? `เก็บเครื่องที่มีประวัติไว้ ${machinesKept} เครื่อง` : null,
       releasedNumber ? "คืนเลขเอกสาร" : null,
+      deliveredFrom && orderLocked && doc.status !== "draft" ? "คืนจำนวนที่ส่งให้ PO ลูกค้า" : null,
     ].filter(Boolean);
-    await writeAudit(conn, { ...actor, action: "doc.delete", documentId: id, docNo: doc.docNo, detail: `ลบ · ${parts.join(" · ")}` });
+    await writeAudit(conn, {
+      ...actor,
+      action: "doc.delete",
+      documentId: id,
+      docNo: isOrder ? strOrNull(row.customerPoNo) : doc.docNo,
+      detail: `ลบ · ${parts.join(" · ")}`,
+    });
     return { docNo: doc.docNo, releasedNumber, machinesDeleted, machinesKept, saleDeleted };
   });
 }
@@ -750,10 +846,15 @@ const isDuplicateKey = (error: unknown) => (error as { code?: string } | null)?.
  * machines in the same transaction. It never takes one of our numbers, and a
  * number shaped like ours is refused (the two series could collide).
  */
-export async function recordExternalInvoice(input: InvoiceInput, fields: ExternalFields, actor: Actor): Promise<AccDocument> {
+export async function recordExternalInvoice(rawInput: InvoiceInput, fields: ExternalFields, actor: Actor): Promise<AccDocument> {
+  const input = withOrderLink(rawInput);
   const vatRate = await getVatRate();
   const problems = invoiceProblems(input, vatRate);
   if (problems.first) throw new ApiError(400, problems.first);
+  if (input.salesOrderId) {
+    const problem = await draftDeliveryProblem(input.salesOrderId, input.lines, null);
+    if (problem) throw new ApiError(409, problem);
+  }
   const computed = computeTotals({ lines: input.lines, discountSatang: input.discountSatang, priceMode: input.priceMode, vatRate });
   const external = Object.values(externalProblems(fields, computed.vatSatang)).find(Boolean);
   if (external) throw new ApiError(400, external);
@@ -766,7 +867,7 @@ export async function recordExternalInvoice(input: InvoiceInput, fields: Externa
   if (taken) throw new ApiError(409, `เลขที่ ${fields.docNo} บันทึกไว้แล้ว`);
 
   const columns = columnsOf(input, totals, vatRate);
-  const lines = input.lines.map((l, i) => ({ ...l, id: "", sortOrder: i, amountSatang: lineAmountSatang(l) }));
+  const lines = input.lines.map((l, i) => ({ ...l, id: "", sortOrder: i, amountSatang: lineAmountSatang(l), deliveredQty: 0, sourceLineId: l.sourceLineId ?? "" }));
   const asIssued = { ...(columns as unknown as AccDocument), ...input, vatBaseSatang: totals.vatBaseSatang, quotationId: null, lines };
   const prepared = await prepareSaleWithLineItems(saleInputFromInvoice(asIssued, await categoriesOf(input.lines.map((l) => l.productId))));
   const { versionId } = await getSellerProfile();
@@ -794,10 +895,13 @@ export async function recordExternalInvoice(input: InvoiceInput, fields: Externa
       const keys = Object.keys(row);
       await conn.query(`INSERT INTO acc_documents (${keys.join(", ")}) VALUES (${keys.map(() => "?").join(", ")})`, Object.values(row));
       await replaceLines(conn, docId, input.lines);
+      const delivery = { salesOrderId: input.salesOrderId, lines: input.lines, invoiceId: docId };
+      await deliverFromOrderTx(conn, delivery, "", "check");
       prepared.v.invoiceRef = fields.docNo;
       prepared.v.note = `บันทึกจากเอกสารภายนอก ${fields.docNo}`;
       const saleId = await insertPreparedSaleTx(conn, prepared);
       await conn.query("UPDATE acc_documents SET salesRecordId = ? WHERE id = ?", [saleId, docId]);
+      await deliverFromOrderTx(conn, delivery, saleId, "after");
       await writeAudit(conn, {
         ...actor,
         action: "doc.issue",

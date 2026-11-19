@@ -491,6 +491,14 @@ describe('salesDashboardStore', () => {
       expect(result.expiringWarranties).toBe(2);
     });
 
+    it('counts DEALS — every delivery of one customer PO (dealId, v51) is one deal, in both periods', async () => {
+      mockAllQueries();
+      await getDashboardOverview('2026-08-01', '2026-09-01', '2026-07-01', '2026-08-01');
+      const dealCalls = vi.mocked(query).mock.calls.filter(([sql]) => String(sql).includes(' AS deals'));
+      expect(dealCalls).toHaveLength(2);
+      for (const [sql] of dealCalls) expect(sql).toContain('COUNT(DISTINCT COALESCE(dealId, id)) AS deals');
+    });
+
     it('counts ONLY quotation docNos (QT prefix), not invoices/billing notes/receipts sharing the same ledger', async () => {
       mockAllQueries();
 
@@ -895,6 +903,9 @@ describe('salesDashboardStore', () => {
       expect(insights.some((i) => i.title.includes('เครื่องชั่ง'))).toBe(true);
       expect(insights.some((i) => i.title.includes('Repeat Customer Rate: 40%'))).toBe(true);
       expect(insights.some((i) => i.title.includes('2 เครื่องประกันจะหมด'))).toBe(true);
+      // A customer PO delivered in parts is one purchase, not a repeat.
+      const repeatSql = vi.mocked(query).mock.calls.map(([sql]) => String(sql)).find((s) => s.includes('repeaters'))!;
+      expect(repeatSql).toContain('COUNT(DISTINCT COALESCE(dealId, id)) AS cnt');
     });
 
     it('uses the Bangkok calendar month for the dormant-customer 6-month cutoff, not the server-local one', async () => {
@@ -1478,7 +1489,7 @@ describe('salesDashboardStore — schema v33 line items', () => {
       expect(categories.reduce((s, c) => s + c.percentage, 0)).toBe(100);
 
       const sql = String(vi.mocked(query).mock.calls[0][0]);
-      expect(sql).toContain('COUNT(DISTINCT sri.salesRecordId) AS deals');
+      expect(sql).toContain('COUNT(DISTINCT COALESCE(sr.dealId, sri.salesRecordId)) AS deals');
       expect(sql).toContain('GROUP BY sri.categoryId');
     });
 
@@ -1495,7 +1506,7 @@ describe('salesDashboardStore — schema v33 line items', () => {
       expect(products.reduce((s, p) => s + p.revenue, 0)).toBe(BILL_TOTAL);
 
       const sql = String(vi.mocked(query).mock.calls[0][0]);
-      expect(sql).toContain('COUNT(DISTINCT sri.salesRecordId) AS deals');
+      expect(sql).toContain('COUNT(DISTINCT COALESCE(sr.dealId, sri.salesRecordId)) AS deals');
       expect(sql).toContain('GROUP BY sri.productId, sri.productName');
     });
   });

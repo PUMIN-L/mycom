@@ -13,7 +13,7 @@ import { repairTruncatedRichText } from "./sanitizeHtml";
 // did not lower the 33 already written to `settings`, so the next change to
 // reuse 33 was skipped entirely and its tables were never created in
 // production. Reverting a migration means moving FORWARD to a new number.
-const SCHEMA_VERSION = 50;
+const SCHEMA_VERSION = 51;
 
 type DbPool = ReturnType<typeof mysql.createPool>;
 
@@ -1866,6 +1866,21 @@ async function bootstrapSchemaOnce(): Promise<void> {
 
     // ── v50: accounting module (lib/accounting/*, ARCHITECTURE.md §8g) ─────
     await createAccountingTables(connection);
+
+    // ── v51: a sale knows its DEAL (the customer PO it was delivered from) ──
+    // Every delivery of one PO is its own sale (its own date, machines and
+    // costs), and the dashboard counts them as ONE deal:
+    // COUNT(DISTINCT COALESCE(dealId, id)). NULL for every other sale.
+    for (const statement of [
+      "ALTER TABLE sales_records ADD COLUMN IF NOT EXISTS dealId VARCHAR(36) DEFAULT NULL",
+      "CREATE INDEX idx_sr_deal ON sales_records (dealId)",
+    ]) {
+      try {
+        await connection.query(statement);
+      } catch (error) {
+        if (!isBenignSchemaError(error)) throw error;
+      }
+    }
 
     // ── Seed default admin user ────────────────────────────────────────────
     // Credentials come from the environment, never from source. If

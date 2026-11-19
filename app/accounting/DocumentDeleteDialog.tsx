@@ -17,6 +17,10 @@ export interface DeletionImpactView {
   machines: { total: number; withHistory: number };
   /** A receipt: the payment that goes with it. */
   receiptPayment?: { amountSatang: number; voided: boolean; invoiceId: string; invoiceNo: string | null } | null;
+  /** Why it cannot be deleted, in the server's words — null when it can. */
+  blockedReason?: string | null;
+  /** An issued delivery from a customer PO: its quantities go back to that PO. */
+  fromOrder?: { id: string; customerPoNo: string } | null;
 }
 
 /**
@@ -32,6 +36,7 @@ export default function DocumentDeleteDialog({
   impact,
   onCancel,
   onDeleted,
+  docType = "INV",
 }: {
   documentId: string;
   /** "INV2026110034" or "ร่างใบแจ้งหนี้". */
@@ -39,7 +44,10 @@ export default function DocumentDeleteDialog({
   impact: DeletionImpactView;
   onCancel: () => void;
   onDeleted: () => void;
+  /** "SO": a customer PO — no number of ours, not a tax document. */
+  docType?: string;
 }) {
+  const isOrder = docType === "SO";
   const [draftBusy, setDraftBusy] = useState(false);
   const [draftError, setDraftError] = useState<string | null>(null);
   const send = async (password?: string): Promise<string | null> => {
@@ -51,14 +59,16 @@ export default function DocumentDeleteDialog({
     return res.ok ? null : errorMessageOf(res, "ลบเอกสารไม่สำเร็จ");
   };
 
-  if (impact.livePayments > 0 || impact.dependentDocs > 0) {
+  if (impact.blockedReason || impact.livePayments > 0 || impact.dependentDocs > 0) {
     return (
       <ConfirmDialog
         title="ลบเอกสารนี้ไม่ได้"
         message={
-          impact.livePayments > 0
-            ? `${label} มีรายการรับชำระแล้ว — ยกเลิกรายการรับชำระก่อนจึงจะลบได้`
-            : `มีเอกสารอื่นอ้างถึง ${label} (ใบเสร็จ / ใบลดหนี้) — ลบเอกสารนั้นก่อน`
+          impact.blockedReason
+            ? `${label}: ${impact.blockedReason}`
+            : impact.livePayments > 0
+              ? `${label} มีรายการรับชำระแล้ว — ยกเลิกรายการรับชำระก่อนจึงจะลบได้`
+              : `มีเอกสารอื่นอ้างถึง ${label} (ใบเสร็จ / ใบลดหนี้) — ลบเอกสารนั้นก่อน`
         }
         confirmText="ตกลง"
         cancelText="ปิด"
@@ -113,19 +123,28 @@ export default function DocumentDeleteDialog({
             {impact.machines.withHistory > 0 && <> — ยกเว้น {impact.machines.withHistory} เครื่องที่มีประวัติบริการแล้ว (เก็บไว้)</>}
           </li>
         )}
-        <li>
-          {impact.isLatestNumber
-            ? "เป็นใบล่าสุดของเดือน — ใบถัดไปจะได้เลขนี้แทน (ลำดับไม่ขาด)"
-            : "ไม่ใช่ใบล่าสุด — เลขนี้จะขาดหายจากลำดับ"}
-        </li>
+        {impact.fromOrder && (
+          <li>จำนวนที่ส่งในใบนี้จะกลับไปค้างใน PO ลูกค้า {impact.fromOrder.customerPoNo} (ยอดรอส่งของเพิ่มขึ้น)</li>
+        )}
+        {isOrder ? (
+          <li>PO นี้จะหายจากยอดรอส่งของ — ถ้าลูกค้ายกเลิกจริง ให้กด ยกเลิก PO แทน (เก็บประวัติและเหตุผลไว้)</li>
+        ) : (
+          <li>
+            {impact.isLatestNumber
+              ? "เป็นใบล่าสุดของเดือน — ใบถัดไปจะได้เลขนี้แทน (ลำดับไม่ขาด)"
+              : "ไม่ใช่ใบล่าสุด — เลขนี้จะขาดหายจากลำดับ"}
+          </li>
+        )}
       </ul>
-      <p className="text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
-        {!impact.receiptPayment
-          ? "ถ้าส่งเอกสารนี้ให้ลูกค้าไปแล้ว ไม่ควรลบ — จะหายจากรายงานภาษีขาย ให้ยกเลิกหรือทำใบลดหนี้แทน"
-          : impact.receiptPayment.voided
-            ? "ใบเสร็จนี้ยกเลิกแล้ว — ถ้าเคยส่งให้ลูกค้า ควรเก็บไว้ในทะเบียน ไม่ควรลบ (ลบได้เมื่อเป็นข้อมูลทดสอบ)"
-            : "ถ้าส่งใบเสร็จนี้ให้ลูกค้าไปแล้ว ไม่ควรลบ — ให้กด ยกเลิกใบเสร็จ แทน (เลขที่ยังอยู่ในทะเบียน พร้อมเหตุผล)"}
-      </p>
+      {!isOrder && (
+        <p className="text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
+          {!impact.receiptPayment
+            ? "ถ้าส่งเอกสารนี้ให้ลูกค้าไปแล้ว ไม่ควรลบ — จะหายจากรายงานภาษีขาย ให้ยกเลิกหรือทำใบลดหนี้แทน"
+            : impact.receiptPayment.voided
+              ? "ใบเสร็จนี้ยกเลิกแล้ว — ถ้าเคยส่งให้ลูกค้า ควรเก็บไว้ในทะเบียน ไม่ควรลบ (ลบได้เมื่อเป็นข้อมูลทดสอบ)"
+              : "ถ้าส่งใบเสร็จนี้ให้ลูกค้าไปแล้ว ไม่ควรลบ — ให้กด ยกเลิกใบเสร็จ แทน (เลขที่ยังอยู่ในทะเบียน พร้อมเหตุผล)"}
+        </p>
+      )}
     </PasswordConfirmDialog>
   );
 }

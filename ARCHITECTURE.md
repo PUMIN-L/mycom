@@ -946,7 +946,9 @@ one category, so "สินค้าขายดี" and "รายได้ต�
 multi-machine sale. `getTopProducts` / `getRevenueByCategory` now group by the
 line items (`LEFT JOIN` + `COALESCE` so lines with no product/category still land
 in the existing `"ไม่ระบุสินค้า"` / `"ไม่ระบุหมวด"` buckets rather than
-disappearing; `deals = COUNT(DISTINCT salesRecordId)`, one bill = one deal).
+disappearing; `deals = COUNT(DISTINCT COALESCE(sr.dealId, salesRecordId))`, one
+bill = one deal — and since v51 every delivery of one customer PO is still that
+one deal, §8g step 5).
 
 - The scalar columns on `sales_records` are still filled, because the overview
   cards and exports read them: `qty`/`totalAmount`/`costAmount` = the **sums**
@@ -1244,7 +1246,7 @@ the product forms that link suppliers said ผู้ผลิต.
   period opens it. Export writes exactly the table's list, money as numbers
   (mysql2 sends DECIMAL as strings, which Excel kept as text).
 
-### 8g. Accounting module (`/accounting`, schema v50) — sales side
+### 8g. Accounting module (`/accounting`, schema v50–51) — sales side
 The in-house accounting module that is replacing `/billing` for issuing
 documents (plan: 10 steps; this section grows with each). Files:
 [`lib/accounting/`](./app/lib/accounting/), routes under
@@ -1399,6 +1401,62 @@ documents (plan: 10 steps; this section grows with each). Files:
     customer (the record when linked, else the printed name; named as on the
     latest invoice) in ageing buckets from the due date as of today in Bangkok
     (`ยังไม่ถึงกำหนด`, 1–30, 31–60, 61–90, 90+).
+- **Customer POs and the dashboard's backlog (step 5, schema v51)** —
+  [`salesOrders.ts`](./app/lib/accounting/salesOrders.ts), rules in
+  [`orderRules.ts`](./app/lib/accounting/orderRules.ts), the delivery check and
+  cache in [`orderDelivery.ts`](./app/lib/accounting/orderDelivery.ts); routes
+  under [`api/accounting/sales-orders/`](./app/api/accounting/sales-orders/);
+  pages under [`app/accounting/sales-orders/`](./app/accounting/sales-orders/)
+  (tab "PO ลูกค้า"); the dashboard's
+  [`BacklogSection.tsx`](./app/dashboard/BacklogSection.tsx).
+  - **A customer PO ("PO ลูกค้า") is NOT a sale and never "ใบสั่งซื้อ"** (that is
+    OUR order to a supplier — /purchase-order). It is an `acc_documents` row
+    with `docType = 'SO'`: no number of ours (`docNo` NULL — the customer's is
+    `customerPoNo`, required, and the same number of the same customer cannot
+    be recorded twice unless cancelled), `status` `issued` (open) or `void`
+    (cancelled, with a reason), never a tax invoice, nothing due;
+    `expectedDeliveryDate` and where the paper is kept (`externalNote` — no file).
+    It can be filled from the quotation the customer accepted
+    ([`quotationSeed.ts`](./app/accounting/sales-orders/quotationSeed.ts),
+    `buildLineDrafts`' arithmetic — a catalog product becomes goods/a machine,
+    anything else a service, for the admin to check). Machines are only MARKED
+    on it (the 50-per-document cap is the delivery invoice's, not the PO's);
+    serials come at delivery.
+  - **Its state is derived, not stored**: รอส่งของ → ส่งบางส่วน → ส่งครบ by
+    the lines' `deliveredQty` against `qty` (by QUANTITY — a free item still to
+    send keeps it open), ยกเลิก when void (`orderStatusOf`). A PO delivered in
+    full cannot be cancelled. Its lines can be edited only while no invoice
+    (drafts too) points at it; its date and notes any time before it is
+    cancelled. Deleting it is refused while an invoice delivers from it.
+  - **A delivery is an ordinary invoice** with `salesOrderId` = the PO and each
+    line's `sourceLineId` = the PO line it sends (`/accounting/invoices/new?fromOrder=`
+    or `record-external?fromOrder=` for one issued elsewhere). It opens with
+    everything left; each line's discount follows the quantity sent and the
+    delivery that empties a line takes the rest of its discount (the bill
+    discount likewise, over the PO's own lines only) — until the admin types
+    one. Nothing beyond what a line still holds: said under the field, checked
+    on save (plain reads), and checked for real when issued — **the PO locked
+    AFTER the invoice** (the lock order everywhere: invoice → PO) with locking
+    reads, BEFORE the number is spent.
+  - **`deliveredQty` is a cache with one writer** (`recomputeDeliveredTx`): a
+    full re-sum of the ISSUED invoices' lines that point at each PO line, in the
+    transaction that issued, recorded or deleted one — never `+ qty`. Deleting
+    a delivery gives its quantities back (the dialog says so — `fromOrder`).
+  - **One PO = one deal on the dashboard.** Each delivery is its own sale (its
+    own month, machines and costs) with `sales_records.dealId` = the PO (v51);
+    every deal count is `COUNT(DISTINCT COALESCE(dealId, id))` — overview,
+    charts, top products/customers, leaderboard and the repeat-customer
+    insight — so revenue lands month by month as delivered while a PO in three
+    deliveries is still one deal.
+  - **"ยอดรอส่งของ · ณ วันนี้"** on /dashboard (`GET /api/accounting/sales-orders/backlog`):
+    every open PO still holding something, as of today in Bangkok whatever
+    period the page shows, **ex VAT** (`backlogSatang` — the undelivered share
+    of each line, then of the VAT base, so the bill discount and VAT out of
+    inclusive prices come off too), late ones first in red. Kept OUT of the
+    sales cards and charts. The route 404s while the module is off, and the
+    section then hides; a bad answer shows an error in the section — it never
+    takes the dashboard down (nor does any side panel of this module: they
+    check the answer's shape first).
 
 ### 9. Email (contact form) + lead persistence
 [`app/lib/mailer.ts`](./app/lib/mailer.ts) sends via SMTP (`nodemailer`, Gmail by

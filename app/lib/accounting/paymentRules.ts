@@ -7,7 +7,7 @@
 //   fee      kept by the bank
 //   net      what actually arrived = amount − wht − fee
 import { daysBetweenDateStrings, isValidDateString } from "../dateFormat";
-import { MAX_AMOUNT_SATANG, allocateProportionally } from "./money";
+import { MAX_AMOUNT_SATANG, allocateProportionally, mulDivRound } from "./money";
 
 export type PaymentMethod = "transfer" | "cash" | "cheque";
 export const PAYMENT_METHODS: { value: PaymentMethod; label: string }[] = [
@@ -142,18 +142,6 @@ export function serviceBaseSatang(doc: {
   if (doc.lines.length === 0) return 0;
   const shares = allocateProportionally(doc.lines.map((l) => l.amountSatang), doc.vatBaseSatang);
   return doc.lines.reduce((sum, l, i) => sum + (l.lineType === "service" ? shares[i] : 0), 0);
-}
-
-/**
- * round(a × b × … ÷ divisor), half up, EXACTLY: the products of satang here
- * pass 2^53 on large bills, where a float would round a tax figure the wrong
- * way at a half. Non-negative integers only.
- */
-function mulDivRound(factors: number[], divisor: number): number {
-  const n = factors.reduce((p, f) => p * BigInt(Math.round(f)), BigInt(1));
-  const d = BigInt(Math.round(divisor));
-  const q = n / d;
-  return Number((n % d) * BigInt(2) >= d ? q + BigInt(1) : q);
 }
 
 /**

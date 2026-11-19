@@ -1,7 +1,9 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
+import OrderClosedNotice from "../../sales-orders/OrderClosedNotice";
+import { deliveryOrderOf, orderClosedReason, useOrderDetail } from "../../sales-orders/orderClient";
 import AccountingFrame from "../../AccountingFrame";
 import InvoiceEditor from "../InvoiceEditor";
 import Spinner from "../../../components/Spinner";
@@ -15,13 +17,19 @@ import { useAccountingSettings } from "../../useAccountingSettings";
 export default function RecordExternalInvoicePage() {
   return (
     <AccountingFrame tab="invoices" title="บันทึกเอกสารที่ออกจากที่อื่น">
-      <RecordExternal />
+      {/* useSearchParams (?fromOrder=) needs a Suspense boundary. */}
+      <Suspense>
+        <RecordExternal />
+      </Suspense>
     </AccountingFrame>
   );
 }
 
 function RecordExternal() {
   const router = useRouter();
+  // An outside invoice that delivered a customer PO recorded here: it takes its quantities off the PO.
+  const fromOrder = useSearchParams().get("fromOrder");
+  const order = useOrderDetail(fromOrder);
   const lookups = useAccountingLookups();
   const { state, retry } = useAccountingSettings();
   const [notes, setNotes] = useState<string[]>([]);
@@ -42,24 +50,32 @@ function RecordExternal() {
     };
   }, []);
 
-  if (state.status === "loading") {
+  if (state.status === "loading" || order.status === "loading") {
     return (
       <div className="flex justify-center py-16">
         <Spinner className="h-6 w-6 text-sky-600" />
       </div>
     );
   }
-  if (state.status === "error") {
+  if (state.status === "error" || order.status === "error") {
     return (
       <div role="alert" className="bg-white rounded-2xl border border-red-100 p-6 text-center space-y-3">
-        <p className="text-red-700">{state.message}</p>
-        <button type="button" onClick={retry} className="px-5 py-2.5 rounded-xl border border-gray-300 font-semibold hover:bg-gray-50">ลองใหม่</button>
+        <p className="text-red-700">{state.status === "error" ? state.message : order.status === "error" ? order.message : ""}</p>
+        {state.status === "error" && (
+          <button type="button" onClick={retry} className="px-5 py-2.5 rounded-xl border border-gray-300 font-semibold hover:bg-gray-50">ลองใหม่</button>
+        )}
       </div>
     );
+  }
+  const closed = order.status === "ok" ? orderClosedReason(order.detail) : null;
+  if (order.status === "ok" && closed) {
+    return <OrderClosedNotice reason={closed} orderId={order.detail.order.id} customerPoNo={order.detail.order.customerPoNo} />;
   }
   const { settings } = state;
   return (
     <InvoiceEditor
+      key={order.status === "ok" ? order.detail.order.id : "blank"}
+      order={order.status === "ok" ? deliveryOrderOf(order.detail) : null}
       mode="external"
       noteSuggestions={notes}
       initial={null}

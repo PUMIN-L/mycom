@@ -36,6 +36,7 @@ import ViewRecordModal from "./ViewRecordModal";
 import SalesTable from "./SalesTable";
 import SaleFormShell from "./SaleFormShell";
 import { isAccountingEnabled } from "../lib/accounting/flags";
+import BacklogSection from "./BacklogSection";
 import { saleFormSnapshot } from "./saleFormHelpers";
 import { filterSalesRecords, salesExportFileName, type SalesFocus } from "./salesFilters";
 import type { RecordScope } from "./SalesTable";
@@ -1327,6 +1328,11 @@ export default function DashboardPage() {
             </div>
           );
         })()}
+
+        {/* ── Backlog: customer POs not delivered yet (§8g, step 5) ─────────
+            As of today, whatever the period above, and never in its figures —
+            a PO becomes sales delivery by delivery, when each is invoiced. */}
+        {isAccountingEnabled() && <BacklogSection />}
 
         {/* ── Charts Row ─────────────────────────────────────────────────── */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">

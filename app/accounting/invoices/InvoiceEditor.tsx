@@ -25,16 +25,49 @@ import {
   type InvoiceInput,
   type LineType,
 } from "../../lib/accounting/invoiceRules";
+import {
+  ORDER_LIMITS,
+  deliveryBillDiscount,
+  deliveryCompletesOrder,
+  deliveryLineDiscount,
+  deliveryLinesOf,
+  orderProblems,
+  overDeliveryProblems,
+  remainingQty,
+  type OrderForDelivery,
+} from "../../lib/accounting/orderRules";
 import type { SellerProfile } from "../../lib/accounting/types";
 import type { AccountingLookups, LookupCompany } from "../useAccountingLookups";
 import InvoicePaper from "./InvoicePaper";
 
 /** A document as the API answers it — what the editor opens and gets back. */
-export interface EditorDocument extends InvoiceInput {
+export interface EditorDocument extends Omit<InvoiceInput, "salesOrderId"> {
   id: string;
   updatedAt: string;
   status: string;
   docNo: string | null;
+  salesOrderId?: string | null;
+  /** A customer PO's: when the goods are due, and where its paper is kept. */
+  expectedDeliveryDate?: string | null;
+  externalNote?: string;
+}
+
+/**
+ * The customer PO a delivery invoice sends from: how much of each line is
+ * left (and the discounts already used), plus the header the invoice opens
+ * with. Built by the page from GET /api/accounting/sales-orders/[id].
+ */
+export interface DeliveryOrder extends OrderForDelivery {
+  companyId: string;
+  customerId: string;
+  salespersonId: string;
+  buyerName: string;
+  buyerAddress: string;
+  buyerTaxId: string;
+  buyerBranch: string;
+  priceMode: PriceMode;
+  creditDays: number;
+  projectName: string;
 }
 
 interface LineDraft {
@@ -49,6 +82,10 @@ interface LineDraft {
   isMachine: boolean;
   serials: string;
   warrantyMonths: string;
+  /** The customer-PO line it delivers ("" = not from the PO). */
+  sourceLineId: string;
+  /** A delivery line's discount follows its quantity until the admin types one. */
+  discountTouched: boolean;
 }
 
 interface Draft {
@@ -75,6 +112,13 @@ interface Draft {
   docNo: string;
   externalNote: string;
   vatOverride: string;
+  /** A delivery: the customer PO it sends from (""). */
+  salesOrderId: string;
+  /** The bill discount of a delivery follows what is delivered until the admin types one. */
+  discountTouched: boolean;
+  /** A customer PO (order mode): when the goods are due, where its paper is kept. */
+  expectedDeliveryDate: string;
+  storageNote: string;
 }
 
 let keySeq = 0;
@@ -93,9 +137,67 @@ const emptyLine = (): LineDraft => ({
   isMachine: false,
   serials: "",
   warrantyMonths: "",
+  sourceLineId: "",
+  discountTouched: false,
 });
 
-function draftOf(doc: EditorDocument | null, creditDays: number): Draft {
+const qtyString = (qty: number) => String(Math.round(qty * 100) / 100);
+
+function lineDraftOf(l: DocLineInput): LineDraft {
+  return {
+    key: newKey(),
+    lineType: l.lineType,
+    productId: l.productId,
+    name: l.name,
+    qty: qtyString(l.qty),
+    unit: l.unit,
+    unitPrice: formatSatang(l.unitPriceSatang),
+    discount: moneyText(l.discountSatang),
+    isMachine: l.isMachine,
+    serials: l.serials,
+    warrantyMonths: l.warrantyMonths === null ? "" : String(l.warrantyMonths),
+    sourceLineId: l.sourceLineId ?? "",
+    discountTouched: false,
+  };
+}
+
+function draftOf(doc: EditorDocument | null, creditDays: number, order: DeliveryOrder | null, seed: Partial<InvoiceInput> | null = null): Draft {
+  if (!doc && seed) {
+    // A new document opened with what is known already (a quotation's lines and customer).
+    const blank = draftOf(null, creditDays, null);
+    return {
+      ...blank,
+      companyId: seed.companyId ?? blank.companyId,
+      customerId: seed.customerId ?? blank.customerId,
+      buyerName: seed.buyerName ?? blank.buyerName,
+      buyerAddress: seed.buyerAddress ?? blank.buyerAddress,
+      buyerTaxId: seed.buyerTaxId ?? blank.buyerTaxId,
+      buyerBranch: seed.buyerBranch !== undefined ? branchDraftOf(seed.buyerBranch) : blank.buyerBranch,
+      note: seed.note ?? blank.note,
+      lines: seed.lines && seed.lines.length > 0 ? seed.lines.map(lineDraftOf) : blank.lines,
+    };
+  }
+  if (!doc && order) {
+    // A new delivery: everything the PO still holds, its header as ordered.
+    const lines = deliveryLinesOf(order);
+    return {
+      ...draftOf(null, order.creditDays, null),
+      companyId: order.companyId,
+      customerId: order.customerId,
+      salespersonId: order.salespersonId,
+      buyerName: order.buyerName,
+      buyerAddress: order.buyerAddress,
+      buyerTaxId: order.buyerTaxId,
+      buyerBranch: branchDraftOf(order.buyerBranch),
+      priceMode: order.priceMode,
+      discount: moneyText(deliveryBillDiscount(order, lines, deliveryCompletesOrder(order, lines))),
+      customerPoNo: order.customerPoNo,
+      projectName: order.projectName,
+      isTaxInvoice: defaultIsTaxInvoice(lines),
+      lines: lines.length > 0 ? lines.map(lineDraftOf) : [emptyLine()],
+      salesOrderId: order.id,
+    };
+  }
   if (!doc) {
     return {
       issueDate: bangkokDateString(new Date()),
@@ -118,6 +220,10 @@ function draftOf(doc: EditorDocument | null, creditDays: number): Draft {
       docNo: "",
       externalNote: "",
       vatOverride: "",
+      salesOrderId: "",
+      discountTouched: false,
+      expectedDeliveryDate: "",
+      storageNote: "",
     };
   }
   return {
@@ -137,22 +243,15 @@ function draftOf(doc: EditorDocument | null, creditDays: number): Draft {
     customerPoNo: doc.customerPoNo,
     projectName: doc.projectName,
     note: doc.note,
-    lines: doc.lines.map((l) => ({
-      key: newKey(),
-      lineType: l.lineType,
-      productId: l.productId,
-      name: l.name,
-      qty: String(l.qty),
-      unit: l.unit,
-      unitPrice: formatSatang(l.unitPriceSatang),
-      discount: moneyText(l.discountSatang),
-      isMachine: l.isMachine,
-      serials: l.serials,
-      warrantyMonths: l.warrantyMonths === null ? "" : String(l.warrantyMonths),
-    })),
+    // A saved draft keeps the discounts it was saved with — nothing moves on its own.
+    lines: doc.lines.map((l) => ({ ...lineDraftOf(l), discountTouched: true })),
     docNo: "",
     externalNote: "",
     vatOverride: "",
+    salesOrderId: doc.salesOrderId ?? "",
+    discountTouched: true,
+    expectedDeliveryDate: doc.expectedDeliveryDate ?? "",
+    storageNote: doc.externalNote ?? "",
   };
 }
 
@@ -186,7 +285,9 @@ function inputOf(d: Draft): InvoiceInput {
       isMachine: l.lineType === "goods" && l.isMachine,
       serials: l.lineType === "goods" && l.isMachine ? l.serials : "",
       warrantyMonths: l.lineType === "goods" && l.isMachine && l.warrantyMonths.trim() !== "" ? Number(l.warrantyMonths) : null,
+      sourceLineId: d.salesOrderId ? l.sourceLineId : "",
     })),
+    salesOrderId: d.salesOrderId,
   };
 }
 
@@ -224,6 +325,8 @@ export default function InvoiceEditor({
   onDeleteDraft,
   mode = "internal",
   noteSuggestions = [],
+  order = null,
+  seed = null,
 }: {
   initial: EditorDocument | null;
   vatRate: number;
@@ -234,15 +337,25 @@ export default function InvoiceEditor({
   onSaved: (doc: EditorDocument) => void;
   onIssued: (doc: EditorDocument) => void;
   onDeleteDraft?: () => void;
-  /** "external": recording an invoice issued elsewhere — its own number, where the paper is kept, saved as issued at once. */
-  mode?: "internal" | "external";
+  /**
+   * "external": recording an invoice issued elsewhere — its own number, where the paper is kept, saved as issued at once.
+   * "order": a customer PO received — not a sale, no tax invoice, saved as is (no draft, no issue).
+   */
+  mode?: "internal" | "external" | "order";
   /** Where outside papers were kept lately (external mode). */
   noteSuggestions?: string[];
+  /** A delivery invoice: the customer PO it sends from — what is left of each line bounds it. */
+  order?: DeliveryOrder | null;
+  /** A NEW document opened with these fields already filled (a customer PO from a quotation). */
+  seed?: Partial<InvoiceInput> | null;
 }) {
   const external = mode === "external";
-  const [opened] = useState<Draft>(() => draftOf(initial, defaultCreditDays));
+  const ordering = mode === "order";
+  const [opened] = useState<Draft>(() => draftOf(initial, defaultCreditDays, ordering ? null : order, seed));
+  // Opened from a seed, the form already holds work worth warning about before leaving.
+  const [blankSnapshot] = useState(() => JSON.stringify(draftOf(initial, defaultCreditDays, ordering ? null : order)));
   const [draft, setDraft] = useState<Draft>(opened);
-  const [savedSnapshot, setSavedSnapshot] = useState(() => JSON.stringify(opened));
+  const [savedSnapshot, setSavedSnapshot] = useState(() => (seed ? blankSnapshot : JSON.stringify(opened)));
   const [current, setCurrent] = useState<EditorDocument | null>(initial);
   const [attempted, setAttempted] = useState(false);
   const [busy, setBusy] = useState<"save" | "issue" | null>(null);
@@ -281,29 +394,60 @@ export default function InvoiceEditor({
   // A branch typed as something that is not one would otherwise be dropped
   // without a word on its way to the API (inputOf sends ""), so it is a
   // problem of its own, said under the field.
+  const orderInput = useMemo(
+    () => ({ ...input, isTaxInvoice: false, salesOrderId: "", expectedDeliveryDate: draft.expectedDeliveryDate, storageNote: draft.storageNote.trim() }),
+    [input, draft.expectedDeliveryDate, draft.storageNote]
+  );
   const problems = useMemo(() => {
-    const p = invoiceProblems(input, vatRate);
+    const p: ReturnType<typeof orderProblems> = ordering ? orderProblems(orderInput, vatRate) : invoiceProblems(input, vatRate);
+    // A delivery never sends more of a PO line than is left on it.
+    if (order && input.salesOrderId) {
+      const over = overDeliveryProblems(order, input.lines);
+      for (const [i, message] of Object.entries(over)) {
+        p.lines[Number(i)] = { ...p.lines[Number(i)], qty: p.lines[Number(i)]?.qty ?? message };
+        p.first = p.first ?? message;
+      }
+    }
     if (draft.buyerBranch.trim() && normalizeBranchCode(draft.buyerBranch) === null) {
       const branch = "สาขาต้องเป็น สำนักงานใหญ่ หรือเลขสาขา 5 หลัก เช่น 00001";
       return { ...p, fields: { ...p.fields, buyerBranch: branch }, first: p.first ?? branch };
     }
     return p;
-  }, [input, vatRate, draft.buyerBranch]);
+  }, [input, orderInput, ordering, order, vatRate, draft.buyerBranch]);
   const firstExternal = Object.values(externalIssues).find(Boolean) ?? null;
   const shown = attempted ? problems : { fields: {}, lines: {}, first: null };
   const shownExternal = attempted ? externalIssues : {};
   const dueDate = dueDateOf(input.issueDate, Math.max(0, input.creditDays));
 
+  const orderLines = useMemo(() => new Map((order?.lines ?? []).map((l) => [l.id, l])), [order]);
+  /**
+   * A delivery's discounts follow what is delivered, until the admin types
+   * one: each PO line's by its quantity, the bill's by the amount delivered.
+   */
+  const withDeliveryDiscounts = (next: Draft): Draft => {
+    if (!order || !next.salesOrderId) return next;
+    const lines = next.lines.map((l) => {
+      const ol = l.sourceLineId ? orderLines.get(l.sourceLineId) : undefined;
+      if (!ol || l.discountTouched) return l;
+      const qty = Number(l.qty.replace(/,/g, ""));
+      return { ...l, discount: moneyText(deliveryLineDiscount(ol, qty)) };
+    });
+    if (next.discountTouched) return { ...next, lines };
+    const asInput = inputOf({ ...next, lines });
+    const usable = asInput.lines.filter((l) => Number.isFinite(l.qty) && l.qty > 0 && l.unitPriceSatang >= 0 && l.discountSatang >= 0);
+    return { ...next, lines, discount: moneyText(deliveryBillDiscount(order, usable, deliveryCompletesOrder(order, usable))) };
+  };
+
   const set = (patch: Partial<Draft>) => {
     setDraft((d) => {
-      const next = { ...d, ...patch };
+      const next = withDeliveryDiscounts({ ...d, ...patch });
       if (next.taxInvoiceAuto) next.isTaxInvoice = defaultIsTaxInvoice(next.lines);
       return next;
     });
     setError(null);
   };
   const setLine = (key: string, patch: Partial<LineDraft>) =>
-    set({ lines: draft.lines.map((l) => (l.key === key ? { ...l, ...patch } : l)) });
+    set({ lines: draft.lines.map((l) => (l.key === key ? { ...l, ...patch, ...("discount" in patch ? { discountTouched: true } : {}) } : l)) });
 
   const contacts = lookups.customers.filter((c) => c.companyId === draft.companyId);
   const pickCompany = (id: string) => {
@@ -340,20 +484,26 @@ export default function InvoiceEditor({
     setTimeout(() => errorRef.current?.scrollIntoView?.({ block: "nearest" }), 0);
   };
 
-  /** Saves the draft (new or over itself); the saved document, or null when it did not land. */
+  /** Saves the draft (new or over itself) — or, in order mode, the customer PO; the saved document, or null when it did not land. */
   const save = async (): Promise<EditorDocument | null> => {
     setAttempted(true);
     if (problems.first) {
       setTimeout(() => document.querySelector<HTMLElement>("[aria-invalid='true']")?.focus(), 0);
       return null;
     }
-    const res = await fetch(current ? `/api/accounting/documents/${encodeURIComponent(current.id)}` : "/api/accounting/documents", {
+    if (ordering && totals.totalSatang <= 0) {
+      showError("ยอดรวมต้องมากกว่า 0 บาท");
+      return null;
+    }
+    const base = ordering ? "/api/accounting/sales-orders" : "/api/accounting/documents";
+    const body = ordering ? orderInput : input;
+    const res = await fetch(current ? `${base}/${encodeURIComponent(current.id)}` : base, {
       method: current ? "PUT" : "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(current ? { ...input, expectedUpdatedAt: current.updatedAt } : input),
+      body: JSON.stringify(current ? { ...body, expectedUpdatedAt: current.updatedAt } : body),
     });
     if (!res.ok) {
-      showError(await errorMessageOf(res, "บันทึกร่างไม่สำเร็จ"));
+      showError(await errorMessageOf(res, ordering ? "บันทึก PO ลูกค้าไม่สำเร็จ" : "บันทึกร่างไม่สำเร็จ"));
       return null;
     }
     const doc: EditorDocument = await res.json();
@@ -369,7 +519,7 @@ export default function InvoiceEditor({
       const doc = await save();
       if (doc) onSaved(doc);
     } catch {
-      showError("บันทึกร่างไม่สำเร็จ ตรวจสอบการเชื่อมต่อแล้วลองใหม่");
+      showError(`${ordering ? "บันทึก PO ลูกค้าไม่สำเร็จ" : "บันทึกร่างไม่สำเร็จ"} ตรวจสอบการเชื่อมต่อแล้วลองใหม่`);
     } finally {
       setBusy(null);
     }
@@ -461,6 +611,17 @@ export default function InvoiceEditor({
       {attempted && (firstExternal || problems.first) && (
         <p role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
           ยังบันทึกไม่ได้: {firstExternal ?? problems.first}
+        </p>
+      )}
+
+      {ordering && (
+        <p className="rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900" data-testid="order-banner">
+          PO ลูกค้ายังไม่นับเป็นยอดขาย — จะเป็นยอดขายเมื่อส่งของและออกใบแจ้งหนี้ (ส่งทีละส่วนได้) ระหว่างนี้แสดงในส่วน «ยอดรอส่งของ» บน dashboard
+        </p>
+      )}
+      {!ordering && order && draft.salesOrderId && (
+        <p className="rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900" data-testid="delivery-banner">
+          ส่งของจาก PO ลูกค้า <span className="font-semibold">{order.customerPoNo}</span> — ส่งไม่ครบแก้จำนวนลงได้ ที่เหลือยังค้างใน PO
         </p>
       )}
 
@@ -557,10 +718,12 @@ export default function InvoiceEditor({
       </section>
 
       <section className="bg-white rounded-2xl border border-gray-200 p-5 space-y-4" aria-labelledby="inv-doc">
-        <h2 id="inv-doc" className="text-base font-bold text-gray-900">เอกสาร</h2>
+        <h2 id="inv-doc" className="text-base font-bold text-gray-900">{ordering ? "PO ของลูกค้า" : "เอกสาร"}</h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div>
-            <label htmlFor="inv-issueDate" className={LABEL}>{external ? "วันที่ตามเอกสารจริง" : "วันที่ออกเอกสาร"} <span className="text-red-500">*</span></label>
+            <label htmlFor="inv-issueDate" className={LABEL}>
+              {external ? "วันที่ตามเอกสารจริง" : ordering ? "วันที่ของ PO" : "วันที่ออกเอกสาร"} <span className="text-red-500">*</span>
+            </label>
             <DatePicker
               id="inv-issueDate"
               selected={draft.issueDate ? new Date(`${draft.issueDate}T00:00:00`) : null}
@@ -570,16 +733,18 @@ export default function InvoiceEditor({
             <Problem id="inv-issueDate-error">{shown.fields.issueDate}</Problem>
           </div>
           <div>
-            <label htmlFor="inv-creditDays" className={LABEL}>เครดิต (วัน)</label>
+            <label htmlFor="inv-creditDays" className={LABEL}>{ordering ? "เครดิตตาม PO (วัน)" : "เครดิต (วัน)"}</label>
             <input id="inv-creditDays" inputMode="numeric" className={inputClass(!!shown.fields.creditDays)}
               aria-invalid={!!shown.fields.creditDays || undefined} value={draft.creditDays} onChange={(e) => set({ creditDays: e.target.value })} />
             <Problem id="inv-creditDays-error">{shown.fields.creditDays}</Problem>
-            {dueDate && <p className="mt-1 text-xs text-gray-500">ครบกำหนด {formatDisplayDate(dueDate)}</p>}
+            {!ordering && dueDate && <p className="mt-1 text-xs text-gray-500">ครบกำหนด {formatDisplayDate(dueDate)}</p>}
           </div>
           <div>
-            <label htmlFor="inv-customerPoNo" className={LABEL}>เลขที่ PO ลูกค้า</label>
-            <input id="inv-customerPoNo" className={inputClass()} maxLength={INVOICE_LIMITS.customerPoNo}
+            <label htmlFor="inv-customerPoNo" className={LABEL}>เลขที่ PO ลูกค้า{ordering && <span className="text-red-500"> *</span>}</label>
+            <input id="inv-customerPoNo" className={inputClass(!!shown.fields.customerPoNo)} maxLength={INVOICE_LIMITS.customerPoNo}
+              aria-invalid={!!shown.fields.customerPoNo || undefined} readOnly={!ordering && !!draft.salesOrderId}
               value={draft.customerPoNo} onChange={(e) => set({ customerPoNo: e.target.value })} />
+            <Problem id="inv-customerPoNo-error">{shown.fields.customerPoNo}</Problem>
           </div>
           <div>
             <label htmlFor="inv-salespersonId" className={LABEL}>เซลล์</label>
@@ -593,6 +758,27 @@ export default function InvoiceEditor({
           <input id="inv-projectName" className={inputClass()} maxLength={INVOICE_LIMITS.projectName}
             value={draft.projectName} onChange={(e) => set({ projectName: e.target.value })} />
         </div>
+        {ordering && (
+          <div className="grid grid-cols-1 md:grid-cols-[14rem_1fr] gap-4">
+            <div>
+              <label htmlFor="inv-expectedDeliveryDate" className={LABEL}>กำหนดส่งของ</label>
+              <DatePicker
+                id="inv-expectedDeliveryDate"
+                selected={draft.expectedDeliveryDate ? new Date(`${draft.expectedDeliveryDate}T00:00:00`) : null}
+                onChange={(date) => set({ expectedDeliveryDate: date ? toLocalDateString(date) : "" })}
+                className={inputClass(!!shown.fields.expectedDeliveryDate)}
+              />
+              <Problem id="inv-expectedDeliveryDate-error">{shown.fields.expectedDeliveryDate}</Problem>
+            </div>
+            <div>
+              <label htmlFor="inv-storageNote" className={LABEL}>เก็บ PO ตัวจริงไว้ที่ (ไม่ต้องแนบไฟล์)</label>
+              <input id="inv-storageNote" className={inputClass(!!shown.fields.storageNote)} maxLength={ORDER_LIMITS.storageNote}
+                placeholder="เช่น อีเมลลูกค้า 18 พ.ย. / แฟ้ม PO ลูกค้า 2569" aria-invalid={!!shown.fields.storageNote || undefined}
+                value={draft.storageNote} onChange={(e) => set({ storageNote: e.target.value })} />
+              <Problem id="inv-storageNote-error">{shown.fields.storageNote}</Problem>
+            </div>
+          </div>
+        )}
       </section>
 
       <section className="bg-white rounded-2xl border border-gray-200 p-5 space-y-4" aria-labelledby="inv-lines">
@@ -660,10 +846,11 @@ export default function InvoiceEditor({
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
                   <div>
-                    <label htmlFor={id("qty")} className="block text-xs font-semibold text-gray-600 mb-1">จำนวน</label>
+                    <label htmlFor={id("qty")} className="block text-xs font-semibold text-gray-600 mb-1">{line.sourceLineId ? "จำนวนที่ส่งรอบนี้" : "จำนวน"}</label>
                     <input id={id("qty")} inputMode="decimal" className={inputClass(!!p.qty)} aria-invalid={!!p.qty || undefined}
                       value={line.qty} onChange={(e) => setLine(line.key, { qty: e.target.value })} />
                     <Problem id={id("qty-error")}>{p.qty}</Problem>
+                    <DeliveryHint line={orderLines.get(line.sourceLineId)} />
                   </div>
                   <div>
                     <label htmlFor={id("unit")} className="block text-xs font-semibold text-gray-600 mb-1">หน่วย</label>
@@ -694,13 +881,17 @@ export default function InvoiceEditor({
                       ลงทะเบียนเป็นเครื่องของลูกค้า (เก็บ Serial / ประกัน — เครื่องชั่ง เครื่องมือ ไม่ใช่อะไหล่)
                     </label>
                     {line.isMachine && (
-                      <div className="grid grid-cols-1 sm:grid-cols-[1fr_10rem] gap-3">
-                        <div>
-                          <label htmlFor={id("serials")} className="block text-xs font-semibold text-gray-600 mb-1">Serial Number (คั่นด้วยจุลภาคหรือขึ้นบรรทัดใหม่ — ใส่ทีหลังได้)</label>
-                          <textarea id={id("serials")} rows={2} className={`${inputClass(!!p.serials)} resize-none`} maxLength={INVOICE_LIMITS.serials}
-                            aria-invalid={!!p.serials || undefined} value={line.serials} onChange={(e) => setLine(line.key, { serials: e.target.value })} />
-                          <Problem id={id("serials-error")}>{p.serials}</Problem>
-                        </div>
+                      <div className={`grid grid-cols-1 gap-3 ${ordering ? "sm:grid-cols-[10rem_1fr]" : "sm:grid-cols-[1fr_10rem]"}`}>
+                        {ordering ? (
+                          <p className="text-xs text-gray-500 sm:order-2 self-end pb-2">Serial ใส่ตอนส่งของ (ออกใบแจ้งหนี้) — ระบบลงทะเบียนเครื่องตอนนั้น</p>
+                        ) : (
+                          <div>
+                            <label htmlFor={id("serials")} className="block text-xs font-semibold text-gray-600 mb-1">Serial Number (คั่นด้วยจุลภาคหรือขึ้นบรรทัดใหม่ — ใส่ทีหลังได้)</label>
+                            <textarea id={id("serials")} rows={2} className={`${inputClass(!!p.serials)} resize-none`} maxLength={INVOICE_LIMITS.serials}
+                              aria-invalid={!!p.serials || undefined} value={line.serials} onChange={(e) => setLine(line.key, { serials: e.target.value })} />
+                            <Problem id={id("serials-error")}>{p.serials}</Problem>
+                          </div>
+                        )}
                         <div>
                           <label htmlFor={id("warrantyMonths")} className="block text-xs font-semibold text-gray-600 mb-1">ประกัน (เดือน)</label>
                           <input id={id("warrantyMonths")} inputMode="numeric" placeholder="เช่น 12" className={inputClass(!!p.warrantyMonths)}
@@ -728,17 +919,19 @@ export default function InvoiceEditor({
             <textarea id="inv-note" rows={3} className={`${inputClass()} resize-none`} maxLength={INVOICE_LIMITS.note}
               value={draft.note} onChange={(e) => set({ note: e.target.value })} />
           </div>
-          <label className="flex items-start gap-2 text-sm text-gray-700">
-            <input type="checkbox" className="h-4 w-4 mt-0.5" checked={draft.isTaxInvoice}
-              onChange={(e) => set({ isTaxInvoice: e.target.checked, taxInvoiceAuto: false })} />
-            <span>
-              ออกใบกำกับภาษีพร้อมใบแจ้งหนี้นี้
-              <span className="block text-xs text-gray-500">
-                ขายสินค้า: ออกพร้อมกันตอนส่งของ · งานบริการล้วน: ไม่ต้องติ๊ก — ระบบจะออกใบเสร็จรับเงิน/ใบกำกับภาษีให้ตอนรับเงิน
-                {!draft.taxInvoiceAuto && " (ตั้งเองแล้ว)"}
+          {!ordering && (
+            <label className="flex items-start gap-2 text-sm text-gray-700">
+              <input type="checkbox" className="h-4 w-4 mt-0.5" checked={draft.isTaxInvoice}
+                onChange={(e) => set({ isTaxInvoice: e.target.checked, taxInvoiceAuto: false })} />
+              <span>
+                ออกใบกำกับภาษีพร้อมใบแจ้งหนี้นี้
+                <span className="block text-xs text-gray-500">
+                  ขายสินค้า: ออกพร้อมกันตอนส่งของ · งานบริการล้วน: ไม่ต้องติ๊ก — ระบบจะออกใบเสร็จรับเงิน/ใบกำกับภาษีให้ตอนรับเงิน
+                  {!draft.taxInvoiceAuto && " (ตั้งเองแล้ว)"}
+                </span>
               </span>
-            </span>
-          </label>
+            </label>
+          )}
         </div>
         <div>
           <h2 id="inv-totals" className="sr-only">สรุปยอด</h2>
@@ -748,7 +941,7 @@ export default function InvoiceEditor({
             <dt className="text-gray-600 self-center"><label htmlFor="inv-discount">ส่วนลดท้ายบิล (บาท)</label></dt>
             <dd>
               <input id="inv-discount" inputMode="decimal" className={`${inputClass(!!shown.fields.discountSatang)} text-right w-36 ml-auto block py-1`}
-                aria-invalid={!!shown.fields.discountSatang || undefined} value={draft.discount} onChange={(e) => set({ discount: e.target.value })} />
+                aria-invalid={!!shown.fields.discountSatang || undefined} value={draft.discount} onChange={(e) => set({ discount: e.target.value, discountTouched: true })} />
             </dd>
             {shown.fields.discountSatang && <dd className="col-span-2 text-sm text-red-600 text-right">{shown.fields.discountSatang}</dd>}
             <dt className="text-gray-600">มูลค่าก่อนภาษี</dt>
@@ -777,16 +970,24 @@ export default function InvoiceEditor({
       </section>
 
       <div className="flex flex-wrap items-center gap-3">
-        <button type="button" onClick={() => setShowPreview((v) => !v)} className="px-4 py-2.5 rounded-xl border border-gray-300 font-semibold text-gray-700 hover:bg-gray-50">
-          {showPreview ? "ซ่อนตัวอย่างเอกสาร" : "ดูตัวอย่างเอกสาร"}
-        </button>
+        {!ordering && (
+          <button type="button" onClick={() => setShowPreview((v) => !v)} className="px-4 py-2.5 rounded-xl border border-gray-300 font-semibold text-gray-700 hover:bg-gray-50">
+            {showPreview ? "ซ่อนตัวอย่างเอกสาร" : "ดูตัวอย่างเอกสาร"}
+          </button>
+        )}
         {onDeleteDraft && current && (
           <button type="button" onClick={onDeleteDraft} className="px-4 py-2.5 rounded-xl border border-red-200 text-red-600 font-semibold hover:bg-red-50">
-            ลบร่าง
+            {ordering ? "ลบ PO" : "ลบร่าง"}
           </button>
         )}
         <div className="ml-auto flex flex-wrap gap-3">
-          {external ? (
+          {ordering ? (
+            <button type="button" onClick={() => void onSaveClick()} disabled={!!busy}
+              className="px-5 py-2.5 rounded-xl bg-green-600 text-white font-semibold hover:bg-green-700 disabled:opacity-60 flex items-center gap-2">
+              {busy === "save" && <Spinner className="h-4 w-4 text-white" />}
+              บันทึก PO ลูกค้า
+            </button>
+          ) : external ? (
             <button type="button" onClick={() => void onRecordClick()} disabled={!!busy}
               className="px-5 py-2.5 rounded-xl bg-green-600 text-white font-semibold hover:bg-green-700 disabled:opacity-60 flex items-center gap-2">
               {busy === "issue" && <Spinner className="h-4 w-4 text-white" />}
@@ -809,7 +1010,7 @@ export default function InvoiceEditor({
         </div>
       </div>
 
-      {showPreview && (
+      {showPreview && !ordering && (
         <InvoicePaper
           draft
           copyLabel={null}
@@ -838,6 +1039,17 @@ export default function InvoiceEditor({
         />
       )}
     </div>
+  );
+}
+
+/** Under a delivery line's quantity: what the PO ordered of it, what went already, what is left. */
+function DeliveryHint({ line }: { line: OrderForDelivery["lines"][number] | undefined }) {
+  if (!line) return null;
+  const n = (q: number) => q.toLocaleString("en-US", { maximumFractionDigits: 2 });
+  return (
+    <p className="mt-1 text-xs text-gray-500" data-testid="delivery-hint">
+      PO สั่ง {n(line.qty)} · ส่งแล้ว {n(line.deliveredQty)} · <span className="font-semibold text-gray-700">เหลือ {n(remainingQty(line))}</span>
+    </p>
   );
 }
 

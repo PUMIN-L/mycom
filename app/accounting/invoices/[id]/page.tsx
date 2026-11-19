@@ -14,7 +14,8 @@ import { errorMessageOf } from "../../../lib/apiErrorMessage";
 import { bangkokDateString, formatDisplayDate, formatDisplayDateTime } from "../../../lib/dateFormat";
 import { formatSatang } from "../../../lib/accounting/money";
 import { displayStatusOf } from "../../../lib/accounting/invoiceRules";
-import type { AuditEntry, BankAccount, SellerProfile } from "../../../lib/accounting/types";
+import type { AccountingSettings, AuditEntry, BankAccount, SellerProfile } from "../../../lib/accounting/types";
+import { deliveryOrderOf, useOrderDetail } from "../../sales-orders/orderClient";
 import { useAccountingLookups } from "../../useAccountingLookups";
 import { useAccountingSettings } from "../../useAccountingSettings";
 import PaymentDialog, { type RecordedPaymentView } from "../../payments/PaymentDialog";
@@ -122,16 +123,10 @@ function InvoiceDocument({ id, onTitle }: { id: string; onTitle: (title: string)
   if (doc.status === "draft") {
     return (
       <>
-        <InvoiceEditor
-          key={doc.updatedAt}
-          initial={doc}
-          // The rate a save will use (the server takes the current setting),
-          // so the totals on screen are the totals that get stored.
-          vatRate={accSettings.vatRate}
-          defaultCreditDays={accSettings.creditDays}
-          seller={accSettings.sellerVersionId ? accSettings.seller : null}
+        <DraftInvoice
+          doc={doc}
+          settings={accSettings}
           lookups={lookups}
-          onSaved={() => {}}
           onIssued={() => {
             setState({ status: "loading" });
             setReload((n) => n + 1);
@@ -154,6 +149,53 @@ function InvoiceDocument({ id, onTitle }: { id: string; onTitle: (title: string)
       />
       {deleteDialog}
     </>
+  );
+}
+
+/** A draft in the editor — a delivery's with its customer PO, so each line stays within what is left of it. */
+function DraftInvoice({
+  doc,
+  settings,
+  lookups,
+  onIssued,
+  onDeleteDraft,
+}: {
+  doc: LoadedDocument;
+  settings: AccountingSettings;
+  lookups: ReturnType<typeof useAccountingLookups>;
+  onIssued: () => void;
+  onDeleteDraft: () => void;
+}) {
+  const order = useOrderDetail(doc.salesOrderId || null);
+  if (order.status === "loading") {
+    return (
+      <div className="flex justify-center py-16">
+        <Spinner className="h-6 w-6 text-sky-600" />
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-4">
+      {order.status === "error" && (
+        <p role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          โหลด PO ลูกค้าของใบนี้ไม่สำเร็จ — ระบบจะตรวจจำนวนที่ส่งอีกครั้งตอนออกเอกสาร ({order.message})
+        </p>
+      )}
+      <InvoiceEditor
+        key={doc.updatedAt}
+        initial={doc}
+        order={order.status === "ok" ? deliveryOrderOf(order.detail) : null}
+        // The rate a save will use (the server takes the current setting),
+        // so the totals on screen are the totals that get stored.
+        vatRate={settings.vatRate}
+        defaultCreditDays={settings.creditDays}
+        seller={settings.sellerVersionId ? settings.seller : null}
+        lookups={lookups}
+        onSaved={() => {}}
+        onIssued={onIssued}
+        onDeleteDraft={onDeleteDraft}
+      />
+    </div>
   );
 }
 
@@ -300,6 +342,14 @@ function IssuedView({
           }}
           onRetry={payments.reload}
         />
+
+        {doc.salesOrderId && (
+          <div className="bg-white rounded-2xl border border-gray-200 p-5 text-sm">
+            <Link href={`/accounting/sales-orders/${encodeURIComponent(doc.salesOrderId)}`} className="font-semibold text-sky-700 hover:text-sky-800">
+              ส่งของจาก PO ลูกค้า {doc.customerPoNo || ""} →
+            </Link>
+          </div>
+        )}
 
         {doc.salesRecordId && (
           <div className="bg-white rounded-2xl border border-gray-200 p-5 text-sm space-y-2">

@@ -21,6 +21,8 @@ export interface DocLineInput {
   serials: string;
   /** Warranty from the issue date, in months; null for none. */
   warrantyMonths: number | null;
+  /** A delivery invoice's line: the customer-PO line it delivers ("" / absent: not from a PO). */
+  sourceLineId?: string;
 }
 
 export interface InvoiceInput {
@@ -47,6 +49,8 @@ export interface InvoiceInput {
   projectName: string;
   note: string;
   lines: DocLineInput[];
+  /** The customer PO (SO) this invoice delivers from ("" / absent: none). */
+  salesOrderId?: string;
 }
 
 export const INVOICE_LIMITS = {
@@ -118,6 +122,7 @@ export function cleanInvoiceInput(raw: unknown): InvoiceInput {
       isMachine: lineType === "goods" && line.isMachine === true,
       serials: lineType === "goods" ? text(line.serials, INVOICE_LIMITS.serials) : "",
       warrantyMonths: lineType === "goods" && line.isMachine === true ? warranty : null,
+      sourceLineId: text(line.sourceLineId, 36),
     };
   });
   const branch = normalizeBranchCode(text(body.buyerBranch, 30));
@@ -138,6 +143,7 @@ export function cleanInvoiceInput(raw: unknown): InvoiceInput {
     projectName: text(body.projectName, INVOICE_LIMITS.projectName),
     note: text(body.note, INVOICE_LIMITS.note),
     lines,
+    salesOrderId: text(body.salesOrderId, 36),
   };
 }
 
@@ -150,8 +156,12 @@ export interface InvoiceProblems {
   first: string | null;
 }
 
-/** What is wrong with a draft — enough to save it. Issuing asks for more (issueProblems). */
-export function invoiceProblems(input: InvoiceInput, vatRate: number): InvoiceProblems {
+/**
+ * What is wrong with a draft — enough to save it. Issuing asks for more
+ * (issueProblems). `machinesCap: false` — a customer PO, which registers no
+ * machine itself (each delivery invoice does, within the cap).
+ */
+export function invoiceProblems(input: InvoiceInput, vatRate: number, opts: { machinesCap?: boolean } = {}): InvoiceProblems {
   const fields: InvoiceProblems["fields"] = {};
   const lines: InvoiceProblems["lines"] = {};
   if (!isValidDateString(input.issueDate)) fields.issueDate = "กรุณาเลือกวันที่ออกเอกสาร";
@@ -195,7 +205,7 @@ export function invoiceProblems(input: InvoiceInput, vatRate: number): InvoicePr
   }
 
   const machines = input.lines.filter((l) => l.isMachine).reduce((s, l) => s + (Number.isInteger(l.qty) ? l.qty : 0), 0);
-  if (machines > INVOICE_LIMITS.machinesMax) {
+  if (opts.machinesCap !== false && machines > INVOICE_LIMITS.machinesMax) {
     fields.lines = `ติดตามเครื่องได้ไม่เกิน ${INVOICE_LIMITS.machinesMax} เครื่องต่อเอกสาร (ตอนนี้ ${machines})`;
   }
 
