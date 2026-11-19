@@ -365,3 +365,16 @@ describe("dashboard — the header", () => {
     expect(screen.getByRole("button", { name: /^รายการขาย/ })).toBeTruthy();
   });
 });
+
+// Item 11 — one colour per meaning; headings without emoji.
+describe("dashboard — colours and headings", () => {
+  it("heads the Top 10 lists in words alone, and gives the jump-to-now button the page's interactive colour", async () => {
+    await renderLoaded();
+    expect(screen.getByRole("heading", { name: "Top 10 สินค้าขายดี" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Top 10 ลูกค้า" })).toBeTruthy();
+    expect(screen.queryByText(/🏆|🏢/)).toBeNull();
+    const now = screen.getByRole("button", { name: "ปีนี้" });
+    expect(now.className).toContain("text-indigo-600");
+    expect(now.className).not.toContain("#87704d");
+  });
+});

@@ -118,7 +118,7 @@ function PeriodTick({ x, y, payload, current }: {
         {payload?.value}
       </text>
       {isCurrent && (
-        <text dy={26} textAnchor="middle" fontSize={10} fill="#87704d">{current.marker}</text>
+        <text dy={26} textAnchor="middle" fontSize={10} fill="#4f46e5">{current.marker}</text>
       )}
     </g>
   );
@@ -1301,7 +1301,7 @@ export default function DashboardPage() {
               type="button"
               onClick={() => setPeriodValue(currentPeriodValue(periodType, bangkokNow()))}
               disabled={isCurrentPeriod}
-              className="ml-1 h-8 px-3 shrink-0 rounded-full text-xs font-semibold text-[#87704d] border border-[#87704d]/30 hover:bg-gray-100 transition-all disabled:opacity-40 disabled:hover:bg-transparent whitespace-nowrap"
+              className="ml-1 h-8 px-3 shrink-0 rounded-full text-xs font-semibold text-indigo-600 border border-indigo-200 hover:bg-indigo-50 transition-all disabled:opacity-40 disabled:hover:bg-transparent whitespace-nowrap"
             >
               {currentPeriodName(periodType)}
             </button>
@@ -1491,7 +1491,7 @@ export default function DashboardPage() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
           {/* Top Products */}
           <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
-            <h2 className="text-lg font-bold text-gray-800 mb-4">🏆 Top 10 สินค้าขายดี</h2>
+            <h2 className="text-lg font-bold text-gray-800 mb-4">Top 10 สินค้าขายดี</h2>
             {loading ? (
               <div className="space-y-3">{Array.from({ length: 5 }).map((_, i) => (
                 <div key={i} className="flex gap-3 animate-pulse">
@@ -1527,7 +1527,7 @@ export default function DashboardPage() {
 
           {/* Top Customers */}
           <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
-            <h2 className="text-lg font-bold text-gray-800 mb-4">🏢 Top 10 ลูกค้า</h2>
+            <h2 className="text-lg font-bold text-gray-800 mb-4">Top 10 ลูกค้า</h2>
             {loading ? (
               <div className="space-y-3">{Array.from({ length: 5 }).map((_, i) => (
                 <div key={i} className="flex gap-3 animate-pulse">

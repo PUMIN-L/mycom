@@ -1247,6 +1247,12 @@ the product forms that link suppliers said ผู้ผลิต.
   button (SaleFormShell `summary`), live as they are typed, a loss in its own
   red. Its save button is the header's green (#065f46), one colour for one
   action.
+- **One colour per meaning** (item 11): the brand navy→gold is the title
+  block only (the heading and the period badge beside it); every interactive
+  accent — links, toggles, the jump-to-now button, chips, focus rings, the
+  chart's "now" marker — is indigo; green #065f46 is saving a sale; amber,
+  red and emerald carry meaning (no cost yet / a warning, a loss, a profit).
+  Headings carry no emoji.
 - **The table keeps to the period picked at the top** (or "ทุกช่วงเวลา"): its
   days are `periodDateRange` ([`lib/dashboardPeriod.ts`](./app/lib/dashboardPeriod.ts)),
   the same function `getPeriodDateRange` uses for the figures, so the two never
