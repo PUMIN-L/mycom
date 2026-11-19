@@ -1247,8 +1247,9 @@ the product forms that link suppliers said ผู้ผลิต.
   (mysql2 sends DECIMAL as strings, which Excel kept as text).
 
 ### 8g. Accounting module (`/accounting`, schema v50–54) — sales side
-The in-house accounting module that is replacing `/billing` for issuing
-documents (plan: 10 steps; this section grows with each). Files:
+The in-house accounting module that replaces `/billing` for issuing
+documents (phase 1: 10 steps, all below; once switched on, the old builder
+issues nothing new — step 10). Files:
 [`lib/accounting/`](./app/lib/accounting/), routes under
 [`api/accounting/`](./app/api/accounting/), pages under
 [`app/accounting/`](./app/accounting/).
@@ -1621,6 +1622,24 @@ documents (plan: 10 steps; this section grows with each). Files:
   - **The whole month's tax data in one file**: the month is checked first
     (no password try spent on a slip), then the password again, and the
     download is a line in the audit log (`data.export`).
+- **The old /billing stops issuing (step 10, no schema change)** — tied to
+  the module's own switch (`isAccountingEnabled`, [`flags.ts`](./app/lib/accounting/flags.ts)):
+  turning the module on in production turns new issuing off in the old one,
+  never one without the other. With it on:
+  - `POST /api/billing` saves only over a document it already has
+    (`billingDocumentExists`) — the old builder re-saves one on every PDF
+    download — and answers a NEW one, or a "แก้ไข (New Ver.)" (a new id), with
+    409 `ISSUING_MOVED_MESSAGE`.
+  - `/billing` with no `id`, a `?type=`, or `action=clone` shows where to issue
+    instead (the accounting module's invoice, billing note and invoices list —
+    a receipt comes from receiving a payment there) — the builder never mounts;
+    an old document (`?id=…`, `view=1`) still opens, prints and is edited as
+    before.
+  - `/billing/saved`'s "+ สร้างเอกสารใหม่" points invoices, billing notes and
+    receipts into the module (quotations as before) and offers no "New Ver."
+    on a billing document; `/billing/receivables` says the module's debts are
+    on its own page. Payments on old documents are recorded there as before —
+    their debts still have to be collected; old numbers stay as they are.
 
 ### 9. Email (contact form) + lead persistence
 [`app/lib/mailer.ts`](./app/lib/mailer.ts) sends via SMTP (`nodemailer`, Gmail by

@@ -343,6 +343,12 @@ export async function saveBillingDocumentAtomic(
 
 // ── Get / List / Delete ──────────────────────────────────────────────────────
 
+/** Whether a document with this id was saved before — a re-save, not a new document (step 10). */
+export async function billingDocumentExists(id: string): Promise<boolean> {
+  const [rows] = await query<RowDataPacket[]>("SELECT 1 AS found FROM billing_documents WHERE id = ? LIMIT 1", [id]);
+  return rows.length > 0;
+}
+
 export async function getBillingDocument(
   id: string
 ): Promise<BillingDocumentRecord | null> {

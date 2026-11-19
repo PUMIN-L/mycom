@@ -21,6 +21,7 @@ import {
   type CustomerReceivableGroup,
 } from "../../lib/receivables";
 import { formatDisplayDate, addDaysToDateString } from "../../lib/dateFormat";
+import { isAccountingEnabled } from "../../lib/accounting/flags";
 
 /**
  * ลูกหนี้ค้างชำระ — the screen the owner asked for.
@@ -284,6 +285,12 @@ export default function ReceivablesPage() {
       </div>
 
       <div className="max-w-6xl mx-auto px-4 py-6 space-y-6">
+        {isAccountingEnabled() && (
+          <p role="note" data-testid="accounting-receivables-note" className="rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
+            หน้านี้คือลูกหนี้ของเอกสารเก่า (ออกก่อนเปิดระบบบัญชี) — ลูกหนี้ของใบแจ้งหนี้จากระบบบัญชี ดูที่{" "}
+            <Link href="/accounting/receivables" className="font-semibold underline">ระบบบัญชี → ลูกหนี้คงค้าง</Link>
+          </p>
+        )}
         {loading ? (
           <div className="bg-white rounded-2xl shadow-sm p-8">
             <div className="h-8 w-48 bg-gray-200 rounded animate-pulse mb-4" />

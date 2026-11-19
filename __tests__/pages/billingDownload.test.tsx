@@ -17,6 +17,12 @@ vi.mock("next/navigation", () => ({
 vi.mock("@/app/context/AuthContext", () => ({
   useAuth: () => ({ isLoggedIn: true, isLoading: false }),
 }));
+// The old builder as it works while the accounting module is off — with it on,
+// new documents are issued there (step 10, __tests__/pages/billingIssuingMoved.test.tsx).
+vi.mock("@/app/lib/accounting/flags", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/app/lib/accounting/flags")>()),
+  isAccountingEnabled: () => false,
+}));
 
 const html2canvas = vi.fn(async () => ({ toDataURL: () => "data:image/jpeg;base64,AA==" }));
 const pdfSave = vi.fn();

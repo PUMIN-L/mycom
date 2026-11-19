@@ -6,6 +6,8 @@ import { GET, POST } from '@/app/api/billing/route';
 vi.mock('@/app/lib/billingStore', () => ({
   saveBillingDocumentAtomic: vi.fn(),
   listBillingDocuments: vi.fn(),
+  // A document saved before — a re-save (every PDF download re-saves one).
+  billingDocumentExists: vi.fn(async () => true),
   BillingDocNoConflictError: class BillingDocNoConflictError extends Error {
     constructor(public docNo: string) {
       super(`docNo ${docNo} conflict`);
@@ -22,9 +24,15 @@ vi.mock('@/app/lib/billingStore', () => ({
 import {
   saveBillingDocumentAtomic,
   listBillingDocuments,
+  billingDocumentExists,
   BillingDocNoConflictError,
   BillingDocTypeChangeError,
 } from '@/app/lib/billingStore';
+vi.mock('@/app/lib/accounting/flags', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/app/lib/accounting/flags')>()),
+  isAccountingEnabled: vi.fn(() => true),
+}));
+import { ISSUING_MOVED_MESSAGE, isAccountingEnabled } from '@/app/lib/accounting/flags';
 
 vi.mock('@/app/lib/session', () => ({ getSession: vi.fn() }));
 import { getSession } from '@/app/lib/session';
@@ -41,6 +49,38 @@ const postReq = (body: any) =>
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(getSession).mockResolvedValue(adminSession);
+  vi.mocked(isAccountingEnabled).mockReturnValue(true);
+  vi.mocked(billingDocumentExists).mockResolvedValue(true);
+});
+
+// Step 10 (ARCHITECTURE.md §8g): with the accounting module on, the old
+// builder issues nothing new — it only saves over what it already has.
+describe('POST /api/billing — once the accounting module is on', () => {
+  it('refuses a NEW document (or a new version — a new id), saying where to issue it', async () => {
+    vi.mocked(billingDocumentExists).mockResolvedValue(false);
+    const res = await POST(postReq({ id: 'new-1', docType: 'invoice', data: {} }));
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: ISSUING_MOVED_MESSAGE });
+    expect(billingDocumentExists).toHaveBeenCalledWith('new-1');
+    expect(saveBillingDocumentAtomic).not.toHaveBeenCalled();
+  });
+
+  it('still saves over a document it already has — a PDF download re-saves it', async () => {
+    vi.mocked(saveBillingDocumentAtomic).mockResolvedValue(undefined);
+    const res = await POST(postReq({ id: 'b1', docType: 'invoice', docNo: 'INV-1', data: {} }));
+    expect(res.status).toBe(200);
+    expect(saveBillingDocumentAtomic).toHaveBeenCalled();
+  });
+
+  it('issues as before while the module is off — no lookup at all', async () => {
+    vi.mocked(isAccountingEnabled).mockReturnValue(false);
+    vi.mocked(billingDocumentExists).mockResolvedValue(false);
+    vi.mocked(saveBillingDocumentAtomic).mockResolvedValue(undefined);
+    const res = await POST(postReq({ id: 'new-1', docType: 'invoice', data: {} }));
+    expect(res.status).toBe(200);
+    expect(billingDocumentExists).not.toHaveBeenCalled();
+    expect(saveBillingDocumentAtomic).toHaveBeenCalled();
+  });
 });
 
 describe('GET /api/billing', () => {

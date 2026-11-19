@@ -9,6 +9,7 @@ import Toast from "../../components/Toast";
 import ImageDeleteConfirmDialog, { type OrphanedImage } from "../../components/ImageDeleteConfirmDialog";
 import DatePicker from "../../components/DatePicker";
 import { BILLING_LABELS } from "../../lib/billingNumber";
+import { isAccountingEnabled } from "../../lib/accounting/flags";
 import type { BillingDocType } from "../../lib/billingNumber";
 import {
   BULK_DELETE_MAX_ITEMS,
@@ -70,6 +71,8 @@ const TAB_OPTIONS: { value: CombinedDocType | "all"; label: string }[] = [
 
 function SavedBillingContent() {
   const router = useRouter();
+  // Step 10: with the accounting module on, new invoices, billing notes and receipts are issued there.
+  const accountingOn = isAccountingEnabled();
   const searchParams = useSearchParams();
   const { isLoggedIn, isLoading } = useAuth();
   const [items, setItems] = useState<BillingSummary[]>([]);
@@ -398,36 +401,36 @@ function SavedBillingContent() {
                   </Link>
                   <div className="h-px bg-gray-100" />
                   <Link
-                    href="/billing?type=invoice"
+                    href={accountingOn ? "/accounting/invoices/new" : "/billing?type=invoice"}
                     className="flex items-center gap-3 px-4 py-3 text-sm text-gray-700 hover:bg-orange-50 hover:text-orange-600 transition"
                     onClick={() => setCreateDropdownOpen(false)}
                   >
                     <span className="text-lg">🧾</span>
                     <div>
                       <div className="font-bold">ใบแจ้งหนี้ / ใบกำกับภาษี</div>
-                      <div className="text-[10px] text-gray-500 font-normal leading-tight mt-0.5">สร้าง Invoice / Tax Invoice</div>
+                      <div className="text-[10px] text-gray-500 font-normal leading-tight mt-0.5">{accountingOn ? "ออกที่ระบบบัญชี" : "สร้าง Invoice / Tax Invoice"}</div>
                     </div>
                   </Link>
                   <Link
-                    href="/billing?type=billing_note"
+                    href={accountingOn ? "/accounting/billing-notes/new" : "/billing?type=billing_note"}
                     className="flex items-center gap-3 px-4 py-3 text-sm text-gray-700 hover:bg-orange-50 hover:text-orange-600 transition"
                     onClick={() => setCreateDropdownOpen(false)}
                   >
                     <span className="text-lg">📋</span>
                     <div>
                       <div className="font-bold">ใบวางบิล</div>
-                      <div className="text-[10px] text-gray-500 font-normal leading-tight mt-0.5">สร้าง Billing Note</div>
+                      <div className="text-[10px] text-gray-500 font-normal leading-tight mt-0.5">{accountingOn ? "ออกที่ระบบบัญชี" : "สร้าง Billing Note"}</div>
                     </div>
                   </Link>
                   <Link
-                    href="/billing?type=receipt"
+                    href={accountingOn ? "/accounting/invoices" : "/billing?type=receipt"}
                     className="flex items-center gap-3 px-4 py-3 text-sm text-gray-700 hover:bg-orange-50 hover:text-orange-600 transition"
                     onClick={() => setCreateDropdownOpen(false)}
                   >
                     <span className="text-lg">🧾</span>
                     <div>
                       <div className="font-bold">ใบเสร็จรับเงิน</div>
-                      <div className="text-[10px] text-gray-500 font-normal leading-tight mt-0.5">สร้าง Receipt</div>
+                      <div className="text-[10px] text-gray-500 font-normal leading-tight mt-0.5">{accountingOn ? "ออกเมื่อรับชำระในใบแจ้งหนี้ (ระบบบัญชี)" : "สร้าง Receipt"}</div>
                     </div>
                   </Link>
                 </div>
@@ -773,16 +776,19 @@ function SavedBillingContent() {
                       </td>
                       <td className="px-4 py-3 text-right">
                         <div className="flex items-center justify-end gap-3">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              if (item.docType === "quotation") router.push(`/quotation?id=${item.id}&action=clone`);
-                              else router.push(`/billing?id=${item.id}&action=clone`);
-                            }}
-                            className="text-xs text-blue-500 hover:text-blue-700 font-semibold flex items-center gap-1"
-                          >
-                            <span>✏️</span> แก้ไข (New Ver.)
-                          </button>
+                          {/* A new version of an old billing document is a NEW document — issued in the accounting module now (step 10). */}
+                          {(item.docType === "quotation" || !accountingOn) && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (item.docType === "quotation") router.push(`/quotation?id=${item.id}&action=clone`);
+                                else router.push(`/billing?id=${item.id}&action=clone`);
+                              }}
+                              className="text-xs text-blue-500 hover:text-blue-700 font-semibold flex items-center gap-1"
+                            >
+                              <span>✏️</span> แก้ไข (New Ver.)
+                            </button>
+                          )}
                           <button
                             onClick={(e) => { e.stopPropagation(); setPendingDelete(item); }}
                             className="text-xs text-red-500 hover:text-red-700 font-semibold flex items-center gap-1"

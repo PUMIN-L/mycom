@@ -4,8 +4,10 @@ import {
   saveBillingDocumentAtomic,
   BillingDocNoConflictError,
   BillingDocTypeChangeError,
+  billingDocumentExists,
   listBillingDocuments,
 } from "../../lib/billingStore";
+import { ISSUING_MOVED_MESSAGE, isAccountingEnabled } from "../../lib/accounting/flags";
 import type { BillingDocType } from "../../lib/billingNumber";
 import { sanitizePlainText } from "../../lib/sanitizeHtml";
 import { computeQuoteTotals, hasNegativeLineItem } from "../../lib/quotationTotals";
@@ -59,6 +61,14 @@ export const POST = withRoute(
     const id = String(body?.id ?? "").trim();
     if (!id) {
       return NextResponse.json({ error: "ต้องระบุ id ของเอกสาร" }, { status: 400 });
+    }
+
+    // Step 10 (ARCHITECTURE.md §8g): with the accounting module on, a NEW
+    // invoice, billing note or receipt is issued there. This route only saves
+    // over a document it already has — the builder re-saves one on every PDF
+    // download. A "แก้ไข (New Ver.)" is a new document (a new id) too.
+    if (isAccountingEnabled() && !(await billingDocumentExists(id))) {
+      return NextResponse.json({ error: ISSUING_MOVED_MESSAGE }, { status: 409 });
     }
 
     if (JSON.stringify(body).length > 200000) {

@@ -1,7 +1,7 @@
 "use client";
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, Suspense } from "react";
 import AdminHomeButton from "../components/AdminHomeButton";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "../context/AuthContext";
 import Toast from "../components/Toast";
@@ -23,6 +23,7 @@ import {
   isValidDateString,
 } from "../lib/dateFormat";
 import { DEFAULT_CREDIT_TERM_DAYS } from "../lib/alertThresholds";
+import { ISSUING_MOVED_MESSAGE, isAccountingEnabled } from "../lib/accounting/flags";
 import { PAYMENT_METHODS, DEFAULT_PAYMENT_METHOD } from "../lib/paymentMethods";
 
 // ── Billing Document Builder ────────────────────────────────────────────────
@@ -216,6 +217,53 @@ const DOC_TYPE_OPTIONS: { value: BillingDocType; label: string }[] = [
 ];
 
 export default function BillingPage() {
+  return (
+    <Suspense>
+      <BillingEntry />
+    </Suspense>
+  );
+}
+
+/**
+ * Step 10 (ARCHITECTURE.md §8g): with the accounting module on, a NEW
+ * document — or a new version of an old one — is issued there instead. An old
+ * document still opens here, to view, print or edit as before.
+ */
+function BillingEntry() {
+  const params = useSearchParams();
+  const fresh = !params.get("id") || params.get("action") === "clone";
+  if (isAccountingEnabled() && fresh) return <IssuingMoved />;
+  return <BillingBuilder />;
+}
+
+function IssuingMoved() {
+  const links = [
+    { href: "/accounting/invoices/new", label: "ออกใบแจ้งหนี้ / ใบกำกับภาษี" },
+    { href: "/accounting/billing-notes/new", label: "ออกใบวางบิล" },
+    { href: "/accounting/invoices", label: "รับชำระ / ออกใบเสร็จ (จากใบแจ้งหนี้)" },
+  ];
+  return (
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+      <div role="status" className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 max-w-lg w-full space-y-4">
+        <h1 className="text-xl font-bold text-gray-900">ออกเอกสารใหม่ที่ระบบบัญชีแล้ว</h1>
+        <p className="text-sm text-gray-700">{ISSUING_MOVED_MESSAGE}</p>
+        <p className="text-sm text-gray-600">ระบบบัญชีให้เลขที่เรียงต่อเนื่อง บันทึกยอดขายใน dashboard ให้เอง และส่งออก Excel ให้นักบัญชีได้ — เอกสารเก่าที่ออกจากหน้านี้ยังเปิดดู พิมพ์ และรับชำระได้ตามเดิม</p>
+        <div className="grid gap-2">
+          {links.map((l) => (
+            <Link key={l.href} href={l.href} className="px-4 py-2.5 rounded-xl bg-green-600 text-white font-semibold text-center hover:bg-green-700">
+              {l.label}
+            </Link>
+          ))}
+          <Link href="/billing/saved" className="px-4 py-2.5 rounded-xl border border-gray-300 font-semibold text-center hover:bg-gray-50">
+            ดูเอกสารเก่าที่บันทึกไว้
+          </Link>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BillingBuilder() {
   const router = useRouter();
   const { isLoggedIn, isLoading } = useAuth();
   const [b, setB] = useState<BillingState>(newDocumentState);

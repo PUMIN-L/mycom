@@ -7,7 +7,7 @@ vi.mock('@/app/lib/db', () => ({
   withTransaction: vi.fn(async (fn: (c: typeof conn) => Promise<unknown>) => fn(conn)),
 }));
 
-import { saveBillingDocumentAtomic, BillingDocNoConflictError, BillingDocTypeChangeError } from '@/app/lib/billingStore';
+import { saveBillingDocumentAtomic, BillingDocNoConflictError, BillingDocTypeChangeError, billingDocumentExists } from '@/app/lib/billingStore';
 import { computeQuoteTotals, round2 } from '@/app/lib/quotationTotals';
 
 beforeEach(() => {
@@ -396,5 +396,16 @@ describe('saveBillingDocumentAtomic — the payment date a receipt falls back to
     expect(insert, 'a payment row is written').toBeDefined();
     expect(insert![1]).toContain('2026-10-15');
     expect(insert![1]).not.toContain('2026-10-14');
+  });
+});
+
+// Step 10: the save route asks whether a document is a re-save before it lets one through.
+describe('billingDocumentExists', () => {
+  it('answers whether a document with that id was saved — reading one row, not its data', async () => {
+    const { query } = await import('@/app/lib/db');
+    vi.mocked(query).mockResolvedValueOnce([[{ found: 1 }], []] as never).mockResolvedValueOnce([[], []] as never);
+    expect(await billingDocumentExists('b1')).toBe(true);
+    expect(await billingDocumentExists('nope')).toBe(false);
+    expect(vi.mocked(query).mock.calls[0]).toEqual(['SELECT 1 AS found FROM billing_documents WHERE id = ? LIMIT 1', ['b1']]);
   });
 });
