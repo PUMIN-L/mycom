@@ -164,8 +164,9 @@ describe("dashboard sales table — a Top 10 row", () => {
     fireEvent.click(screen.getByRole("button", { name: /Scale B/ }));
     await waitFor(() => expect(document.querySelector("[data-sales-focus]")).toBeTruthy());
     fireEvent.click(screen.getByRole("row", { name: "ดูประวัติการขายของ สมชาย" }));
-    expect(document.querySelector("[data-sales-focus]")).toBeNull();
-    expect((table().getByPlaceholderText(/ค้นหาสินค้า/) as HTMLInputElement).value).toBe("สมชาย");
+    // Narrowed to the salesperson instead — by id, not by typing the name into the search.
+    await waitFor(() => expect(document.querySelector("[data-sales-focus]")!.textContent).toContain("เซลล์ «สมชาย»"));
+    expect((table().getByPlaceholderText(/ค้นหาสินค้า/) as HTMLInputElement).value).toBe("");
   });
 });
 
@@ -251,5 +252,34 @@ describe("dashboard — opening a sale", () => {
     release();
     await waitFor(() => expect(screen.getByRole("dialog", { name: "แก้ไขรายการ" })).toBeTruthy());
     expect(screen.queryByTestId("opening-sale")).toBeNull();
+  });
+});
+
+// Item 10 — the leaderboard narrows by the salesperson, by id.
+describe("dashboard sales table — a leaderboard row", () => {
+  it("ไม่ระบุเซลล์ lists the sales with no salesperson; a customer named like a salesperson stays out", async () => {
+    const extra = [
+      { ...RECORDS[0], id: "rec-none", saleDate: "2026-10-20", salespersonId: "", salespersonName: "", productName: "Scale D", productId: "p-d", lineItems: [{ productId: "p-d", productName: "Scale D" }] },
+      { ...RECORDS[0], id: "rec-cust", saleDate: "2026-10-21", salespersonId: "sp2", salespersonName: "สมศรี", customerName: "สมชาย", productName: "Scale E", productId: "p-e", lineItems: [{ productId: "p-e", productName: "Scale E" }] },
+    ];
+    const board = [
+      { id: "sp1", name: "สมชาย", revenue: 1, deals: 1, percentage: 50, avgDealSize: 1 },
+      { id: "unspecified", name: "ไม่ระบุเซลล์", revenue: 1, deals: 1, percentage: 50, avgDealSize: 1 },
+    ];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.pathname === "/api/admin/dashboard") return json({ ...DASHBOARD, salespersonLeaderboard: board });
+      if (url.pathname === "/api/admin/sales") return json([...RECORDS, ...extra]);
+      return json([]);
+    }));
+    render(<DashboardPage />);
+    await waitFor(() => expect(heading()).toBe("รายการขาย ปี 2569 (5)"));
+
+    fireEvent.click(screen.getByRole("row", { name: "ดูประวัติการขายของ ไม่ระบุเซลล์" }));
+    await waitFor(() => expect(listedDates()).toEqual(["20 ต.ค. 2569"]));
+
+    fireEvent.click(screen.getByRole("row", { name: "ดูประวัติการขายของ สมชาย" }));
+    // สมชาย's own three — not the sale to a customer called สมชาย.
+    await waitFor(() => expect(listedDates()).toEqual(["5 ต.ค. 2569", "15 ต.ค. 2569", "10 ก.ย. 2569"]));
   });
 });

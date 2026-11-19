@@ -303,7 +303,7 @@ describe("dashboard — lists and chart", () => {
     const row = screen.getByRole("row", { name: "ดูประวัติการขายของ สมชาย" });
     expect(row.tabIndex).toBe(0);
     fireEvent.keyDown(row, { key: "Enter" });
-    await waitFor(() => expect((screen.getByPlaceholderText(/ค้นหาสินค้า/) as HTMLInputElement).value).toBe("สมชาย"));
+    await waitFor(() => expect(document.querySelector("[data-sales-focus]")!.textContent).toContain("เซลล์ «สมชาย»"));
   });
 
   it("marks today's month on the sales chart", async () => {

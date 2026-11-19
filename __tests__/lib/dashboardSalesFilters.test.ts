@@ -42,6 +42,21 @@ describe("inDateRange", () => {
   });
 });
 
+// Item 10 — a leaderboard row narrows by the salesperson's id, never by a name search.
+describe("matchesFocus — a leaderboard row", () => {
+  it("is that salesperson's sales — not a customer who shares the name", () => {
+    const focus = { kind: "salesperson" as const, id: "sp1", name: "สมชาย" };
+    expect(matchesFocus(sale(), focus)).toBe(true);
+    expect(matchesFocus(sale({ salespersonId: "sp2", salespersonName: "สมศรี", customerName: "สมชาย" }), focus)).toBe(false);
+  });
+
+  it("ไม่ระบุเซลล์ is the sales with no salesperson — not every sale", () => {
+    const none = { kind: "salesperson" as const, id: "unspecified", name: "ไม่ระบุเซลล์" };
+    expect(matchesFocus(sale({ salespersonId: "" }), none)).toBe(true);
+    expect(matchesFocus(sale(), none)).toBe(false);
+  });
+});
+
 describe("matchesFocus — a Top 10 สินค้า row", () => {
   const twoProducts = sale({
     lineItems: [

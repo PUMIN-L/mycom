@@ -1255,7 +1255,10 @@ the product forms that link suppliers said ผู้ผลิต.
   a product by `(productId, productName)` of ANY line item — `GET /api/admin/sales`
   (`listSalesRecords`, one extra `IN (…)` query) carries each bill's
   `lineItems` for this — a company by `companyId`; a row with one bill in the
-  period opens it. Export writes exactly the table's list, money as numbers
+  period opens it. A leaderboard row narrows it to that salesperson by
+  `salespersonId` (`kind: "salesperson"`; `unspecified` = the sales with none) —
+  it used to type the name into the search, which matched customers of that
+  name, and "ไม่ระบุเซลล์" listed every sale. Export writes exactly the table's list, money as numbers
   (mysql2 sends DECIMAL as strings, which Excel kept as text).
 - **A failed load is said, never read as "no sales"**: the figures' load
   keeps its error (`loadError`, the route's own message — a 401 reads as the

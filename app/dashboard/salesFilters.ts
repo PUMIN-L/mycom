@@ -10,10 +10,12 @@ import { fmtThaiDate } from "./types";
 // narrows it further to that product or company: by the SAME keys the
 // dashboard API groups by, so "3 ดีล" on the row is 3 bills in the table.
 
-/** What a click on a Top 10 row narrows the table to. */
+/** What a click on a Top 10 row — or a leaderboard row — narrows the table to. */
 export type SalesFocus =
   | { kind: "product"; id: string; name: string }
-  | { kind: "company"; id: string; name: string };
+  | { kind: "company"; id: string; name: string }
+  /** By the sale's salespersonId, as the leaderboard groups — never by a name typed into the search (item 10). */
+  | { kind: "salesperson"; id: string; name: string };
 
 /** The id the dashboard API gives a product or a company the sale has none of. */
 export const UNSPECIFIED_ID = "unspecified";
@@ -47,6 +49,8 @@ export function inDateRange(r: SalesRecord, range: DateRange): boolean {
  */
 export function matchesFocus(r: SalesRecord, focus: SalesFocus): boolean {
   if (focus.kind === "company") return (r.companyId || UNSPECIFIED_ID) === focus.id;
+  // "ไม่ระบุเซลล์" is the sales with none — not every sale, as the name search made it.
+  if (focus.kind === "salesperson") return (r.salespersonId || UNSPECIFIED_ID) === focus.id;
   return productsOf(r).some(
     (line) => (line.productId || UNSPECIFIED_ID) === focus.id && sameName(line.productName || UNNAMED_PRODUCT, focus.name)
   );

@@ -1026,8 +1026,11 @@ export default function DashboardPage() {
   };
 
   // Quick click-to-edit from rankings
+  // A leaderboard row narrows the table to that salesperson's sales by their
+  // id (item 10): the name used to go into the search box, which matched
+  // customers of the same name, and "ไม่ระบุเซลล์" emptied it — every sale.
   const handleSalespersonClick = (s: SalespersonStat) => {
-    showFocusedRecords(null, s.name === "ไม่ระบุเซลล์" ? "" : s.name);
+    showFocusedRecords({ kind: "salesperson", id: s.id, name: s.name });
   };
 
   /** A Top 10 row with ONE bill behind it in the period opens that bill;

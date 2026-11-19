@@ -310,7 +310,7 @@ export default function SalesTable({
 }: SalesTableProps) {
   const filtered = records;
   const scopeText = scope === "period" ? periodLabel : "ทุกช่วงเวลา";
-  const focusText = focus ? `${focus.kind === "product" ? "สินค้า" : "บริษัท"} «${displayText(focus.name)}»` : "";
+  const focusText = focus ? `${focus.kind === "product" ? "สินค้า" : focus.kind === "company" ? "บริษัท" : "เซลล์"} «${displayText(focus.name)}»` : "";
 
   /** What an empty list means, in words. */
   const emptyText = focus
