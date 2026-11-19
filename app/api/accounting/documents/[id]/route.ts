@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { withRoute, jsonError } from "../../../../lib/apiHelpers";
 import { requirePassword } from "../../../../lib/twoFactorReauth";
 import { noStoreJson, requireAccountingUser } from "../../../../lib/accounting/guard";
-import { deleteAccDocument, deletionImpact, getAccDocument, updateInvoiceDraft } from "../../../../lib/accounting/documents";
+import { billingNotesOf, deleteAccDocument, deletionImpact, getAccDocument, updateInvoiceDraft } from "../../../../lib/accounting/documents";
 import { cleanInvoiceInput } from "../../../../lib/accounting/invoiceRules";
 import { getSellerProfile, getSellerVersion } from "../../../../lib/accounting/settings";
 import { receiptDetail } from "../../../../lib/accounting/payments";
@@ -20,7 +20,15 @@ export const GET = withRoute("โหลดเอกสารไม่สำเ�
   if (!doc) return jsonError("ไม่พบเอกสารนี้", 404);
   const seller = doc.sellerVersionId ? await getSellerVersion(doc.sellerVersionId) : (await getSellerProfile()).seller;
   const receipt = doc.docType === "RE" ? await receiptDetail(id, doc.relatedDocId) : undefined;
-  return noStoreJson({ document: doc, seller, impact: await deletionImpact(id), ...(receipt ? { receipt } : {}) });
+  // An issued invoice: the billing notes it is on (step 7).
+  const billingNotes = doc.docType === "INV" && doc.status !== "draft" ? await billingNotesOf(id) : [];
+  return noStoreJson({
+    document: doc,
+    seller,
+    impact: await deletionImpact(id),
+    ...(receipt ? { receipt } : {}),
+    ...(billingNotes.length > 0 ? { billingNotes } : {}),
+  });
 });
 
 // PUT /api/accounting/documents/[id] — saves over a DRAFT ({ …invoice, expectedUpdatedAt }).

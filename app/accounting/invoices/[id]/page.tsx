@@ -37,6 +37,8 @@ interface Loaded {
   document: LoadedDocument;
   seller: SellerProfile | null;
   impact: DeletionImpactView;
+  /** The billing notes it is on (step 7). */
+  billingNotes?: { id: string; docNo: string | null; issueDate: string }[];
 }
 
 export default function InvoiceDocumentPage() {
@@ -111,7 +113,7 @@ function InvoiceDocument({ id, onTitle }: { id: string; onTitle: (title: string)
     );
   }
 
-  const { document: doc, seller, impact } = state;
+  const { document: doc, seller, impact, billingNotes = [] } = state;
   const { settings: accSettings } = settings.state;
   const label = doc.docNo ?? "ร่างใบแจ้งหนี้";
   const deleteDialog = deleting && (
@@ -147,6 +149,7 @@ function InvoiceDocument({ id, onTitle }: { id: string; onTitle: (title: string)
       <IssuedView
         doc={doc}
         seller={seller}
+        billingNotes={billingNotes}
         bankAccounts={accSettings.bankAccounts}
         onDelete={() => setDeleting(true)}
         onChanged={() => setReload((n) => n + 1)}
@@ -206,12 +209,14 @@ function DraftInvoice({
 function IssuedView({
   doc,
   seller,
+  billingNotes,
   bankAccounts,
   onDelete,
   onChanged,
 }: {
   doc: LoadedDocument;
   seller: SellerProfile | null;
+  billingNotes: { id: string; docNo: string | null; issueDate: string }[];
   bankAccounts: BankAccount[];
   onDelete: () => void;
   /** Something changed it (a payment, a corrected number): fetch it again. */
@@ -346,6 +351,17 @@ function IssuedView({
           }}
           onRetry={payments.reload}
         />
+
+        {billingNotes.length > 0 && (
+          <div className="bg-white rounded-2xl border border-gray-200 p-5 text-sm space-y-1" data-testid="invoice-billing-notes">
+            <p className="text-gray-700">อยู่ในใบวางบิล</p>
+            {billingNotes.map((b) => (
+              <Link key={b.id} href={`/accounting/billing-notes/${b.id}`} className="block font-semibold text-sky-700 hover:text-sky-800 tabular-nums">
+                {b.docNo} ({formatDisplayDate(b.issueDate)}) →
+              </Link>
+            ))}
+          </div>
+        )}
 
         {doc.salesOrderId && (
           <div className="bg-white rounded-2xl border border-gray-200 p-5 text-sm">

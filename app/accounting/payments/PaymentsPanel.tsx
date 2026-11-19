@@ -31,6 +31,9 @@ export interface PaymentView {
   note: string;
   voidedAt: string | null;
   voidReason: string | null;
+  /** Received against a billing note (step 7): it goes as it came — every invoice's share together. */
+  billingNoteId?: string | null;
+  groupId?: string | null;
 }
 
 export type PaymentsState =
@@ -155,6 +158,13 @@ export default function PaymentsPanel({
                   </div>
                 )}
                 {p.note && <div className="text-gray-500">{p.note}</div>}
+                {p.groupId && p.billingNoteId && (
+                  <div className="text-gray-500">
+                    รับตามใบวางบิล ·{" "}
+                    <Link href={`/accounting/billing-notes/${p.billingNoteId}`} className="font-semibold text-sky-700 hover:text-sky-800">ดูใบวางบิล</Link>
+                    {!voided && <span className="block text-xs text-amber-700">ยกเลิกรายการนี้ = ยกเลิกการรับชำระทั้งใบวางบิล (ทุกใบแจ้งหนี้ และใบเสร็จรวม)</span>}
+                  </div>
+                )}
                 {voided ? (
                   <div className="text-red-600">ยกเลิกแล้ว: {p.voidReason}</div>
                 ) : (
@@ -217,6 +227,9 @@ export function VoidPaymentDialog({ payment, onCancel, onDone }: { payment: Paym
           ยอด {formatSatang(payment.amountSatang)} บาท วันที่ {formatDisplayDate(payment.paidDate)} จะกลับเป็นยอดค้างชำระ
         </li>
         {payment.receiptNo && <li>ใบเสร็จ {payment.receiptNo} จะถูกยกเลิก (เลขที่ยังอยู่ในทะเบียน พร้อมเหตุผล)</li>}
+        {payment.groupId && (
+          <li className="text-amber-800">รับตามใบวางบิล — ทุกใบแจ้งหนี้ที่รับชำระครั้งนี้ และใบเสร็จรวม จะถูกยกเลิกด้วยกัน</li>
+        )}
       </ul>
       <div>
         <label htmlFor="void-reason" className="block text-sm font-semibold text-gray-700 mb-1">

@@ -11,6 +11,7 @@ export const ACCOUNTING_TABS = [
   { key: "home", href: "/accounting", label: "หน้าหลักบัญชี" },
   { key: "orders", href: "/accounting/sales-orders", label: "PO ลูกค้า" },
   { key: "invoices", href: "/accounting/invoices", label: "ใบแจ้งหนี้ / ใบกำกับภาษี" },
+  { key: "billing", href: "/accounting/billing-notes", label: "ใบวางบิล" },
   { key: "receipts", href: "/accounting/receipts", label: "ใบเสร็จรับเงิน" },
   { key: "receivables", href: "/accounting/receivables", label: "ลูกหนี้คงค้าง" },
   { key: "settings", href: "/accounting/settings", label: "ตั้งค่าบัญชี" },

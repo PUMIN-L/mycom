@@ -1246,7 +1246,7 @@ the product forms that link suppliers said ผู้ผลิต.
   period opens it. Export writes exactly the table's list, money as numbers
   (mysql2 sends DECIMAL as strings, which Excel kept as text).
 
-### 8g. Accounting module (`/accounting`, schema v50–52) — sales side
+### 8g. Accounting module (`/accounting`, schema v50–53) — sales side
 The in-house accounting module that is replacing `/billing` for issuing
 documents (plan: 10 steps; this section grows with each). Files:
 [`lib/accounting/`](./app/lib/accounting/), routes under
@@ -1504,6 +1504,44 @@ documents (plan: 10 steps; this section grows with each). Files:
     deposit (the dialog opens with what is left of the item), collect on the
     oldest invoice still owing, or deliver. The dashboard's backlog shows the
     deposits received and not yet deducted (ex VAT, as the backlog).
+- **Billing notes (ใบวางบิล, step 7, schema v53)** —
+  [`billingNotes.ts`](./app/lib/accounting/billingNotes.ts), rules in
+  [`billingRules.ts`](./app/lib/accounting/billingRules.ts); routes under
+  [`api/accounting/billing-notes/`](./app/api/accounting/billing-notes/); pages
+  under [`app/accounting/billing-notes/`](./app/accounting/billing-notes/) (tab
+  "ใบวางบิล"; "ออกใบวางบิล" per customer on the receivables page).
+  - **A BN lists one customer's open invoices** (`acc_billing_items`: each
+    invoice and what it owed when billed — read under its lock), numbered at
+    once (BN + month + running number), pointing at our company's version, the
+    customer as on the latest of them; a due date (นัดชำระ / นัดรับเช็ค). Not a
+    tax document: cancelled with a reason (no password), but not once money
+    came in against it. Its state is derived from its invoices as they are now
+    (paid on it or directly): รอชำระ / ชำระบางส่วน / ชำระครบ / ยกเลิก. An
+    invoice may be billed again (a lost note); an invoice on an OPEN note
+    cannot be deleted.
+  - **Money received against it** (`recordBillingPayment`, the payment dialog
+    with `kind="billing"`): spread over its invoices that still owe, in its
+    order (the oldest first) — `spreadBillingPayment`: the withholding by each
+    share's services (by amount when nothing is a service), the bank fee by
+    amount, each share's VAT its invoice's (the settling payment takes what is
+    left). **One payment row per invoice** (`billingNoteId`, one `groupId`) so
+    each invoice owes less — under **ONE combined receipt** (the owner's
+    choice, 2026-11-19), **two when goods and services mix**: the services'
+    receipt is the tax invoice, the goods' is not (their invoices were). The
+    receipt's `relatedDocId` is the BN; it prints every invoice it pays.
+  - **Each payment keeps its own share of VAT** (`acc_payments.vatSatang`,
+    v53; also on every new single payment and deposit): a receipt covering
+    several invoices cannot say which part of its VAT is whose, and the next
+    payment on an invoice must know what was declared on it before
+    (`vatOnLivePayments` prefers the payment's own figure; older rows fall back
+    to their receipt's).
+  - **It goes as it came**: voiding any share voids the whole group and its
+    receipt(s); its 50 ทวิ is one certificate for all the shares (marked on
+    every share withheld; one line in the 50 ทวิ list, named by the BN);
+    deleting its receipt gives each invoice it paid its share back. Locks:
+    the BN first, then its invoices, then payments and receipts — so these
+    queue behind each other. On an invoice page such a payment says it came
+    through the note, and that voiding it voids all of it.
 
 ### 9. Email (contact form) + lead persistence
 [`app/lib/mailer.ts`](./app/lib/mailer.ts) sends via SMTP (`nodemailer`, Gmail by

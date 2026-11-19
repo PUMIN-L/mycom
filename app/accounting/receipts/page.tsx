@@ -30,7 +30,11 @@ interface Row {
 
 /** Where what a receipt pays lives: the invoice — or the customer PO, for a deposit. */
 const relatedHref = (r: Pick<Row, "relatedDocId" | "relatedDocType">) =>
-  r.relatedDocType === "SO" ? `/accounting/sales-orders/${r.relatedDocId}` : `/accounting/invoices/${r.relatedDocId}`;
+  r.relatedDocType === "SO"
+    ? `/accounting/sales-orders/${r.relatedDocId}`
+    : r.relatedDocType === "BN"
+      ? `/accounting/billing-notes/${r.relatedDocId}`
+      : `/accounting/invoices/${r.relatedDocId}`;
 
 export default function ReceiptListPage() {
   return (

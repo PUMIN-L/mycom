@@ -13,7 +13,7 @@ import { repairTruncatedRichText } from "./sanitizeHtml";
 // did not lower the 33 already written to `settings`, so the next change to
 // reuse 33 was skipped entirely and its tables were never created in
 // production. Reverting a migration means moving FORWARD to a new number.
-const SCHEMA_VERSION = 52;
+const SCHEMA_VERSION = 53;
 
 type DbPool = ReturnType<typeof mysql.createPool>;
 
@@ -1902,6 +1902,38 @@ async function bootstrapSchemaOnce(): Promise<void> {
       await connection.query("CREATE INDEX idx_api_so ON acc_plan_items (salesOrderId)");
     } catch (error) {
       if (!isBenignSchemaError(error)) throw error;
+    }
+
+    // ── v53: billing notes (ใบวางบิล — §8g step 7) ──────────────────────────
+    // A billing note lists the invoices it bills (and how much of each, as
+    // billed). Money received against it is one payment row PER INVOICE —
+    // tied together by `groupId`, under one receipt — each knowing its own
+    // share of VAT (`vatSatang`): a receipt covering several invoices cannot
+    // say how much of its VAT belongs to which.
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS acc_billing_items (
+        id VARCHAR(36) PRIMARY KEY,
+        billingNoteId VARCHAR(36) NOT NULL,
+        invoiceId VARCHAR(36) NOT NULL,
+        sortOrder INT NOT NULL DEFAULT 0,
+        amountSatang BIGINT NOT NULL,
+        INDEX idx_abi_bn (billingNoteId),
+        INDEX idx_abi_inv (invoiceId)
+      )
+    `);
+    for (const statement of [
+      "ALTER TABLE acc_payments ADD COLUMN IF NOT EXISTS vatSatang BIGINT DEFAULT NULL",
+      "ALTER TABLE acc_payments ADD COLUMN IF NOT EXISTS groupId VARCHAR(36) DEFAULT NULL",
+      "CREATE INDEX idx_abi_bn ON acc_billing_items (billingNoteId)",
+      "CREATE INDEX idx_abi_inv ON acc_billing_items (invoiceId)",
+      "CREATE INDEX idx_ap_bn ON acc_payments (billingNoteId)",
+      "CREATE INDEX idx_ap_group ON acc_payments (groupId)",
+    ]) {
+      try {
+        await connection.query(statement);
+      } catch (error) {
+        if (!isBenignSchemaError(error)) throw error;
+      }
     }
 
     // ── Seed default admin user ────────────────────────────────────────────

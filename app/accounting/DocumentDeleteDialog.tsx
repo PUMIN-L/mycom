@@ -48,6 +48,7 @@ export default function DocumentDeleteDialog({
   docType?: string;
 }) {
   const isOrder = docType === "SO";
+  const isBilling = docType === "BN";
   const [draftBusy, setDraftBusy] = useState(false);
   const [draftError, setDraftError] = useState<string | null>(null);
   const send = async (password?: string): Promise<string | null> => {
@@ -142,7 +143,12 @@ export default function DocumentDeleteDialog({
           </li>
         )}
       </ul>
-      {!isOrder && (
+      {isBilling && (
+        <p className="text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
+          ใบวางบิลไม่ใช่เอกสารภาษี — ถ้ามอบให้ลูกค้าไปแล้ว ควรกด ยกเลิกใบวางบิล แทน (เก็บเลขที่และเหตุผลไว้)
+        </p>
+      )}
+      {!isOrder && !isBilling && (
         <p className="text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
           {!impact.receiptPayment
             ? "ถ้าส่งเอกสารนี้ให้ลูกค้าไปแล้ว ไม่ควรลบ — จะหายจากรายงานภาษีขาย ให้ยกเลิกหรือทำใบลดหนี้แทน"

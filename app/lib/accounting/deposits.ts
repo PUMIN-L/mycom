@@ -132,7 +132,7 @@ export async function recordDeposit(salesOrderId: string, input: PaymentInput, a
       docNo: receipt.docNo,
       detail: `ออก${title} (มัดจำ) · ${order.buyerName} · ${formatSatang(input.amountSatang)} บาท · PO ${order.customerPoNo}`,
     });
-    const paymentId = await insertPaymentTx(conn, { documentId: salesOrderId, receiptId: receipt.id, input, actor, now });
+    const paymentId = await insertPaymentTx(conn, { documentId: salesOrderId, receiptId: receipt.id, input, actor, now, vatSatang: vat });
     const paid = await recomputePaidSatang(conn, salesOrderId);
     const parts = [
       `รับเงินมัดจำ ${formatSatang(input.amountSatang)} บาท (${methodLabel(input.method)} ${formatDisplayDate(input.paidDate)})`,

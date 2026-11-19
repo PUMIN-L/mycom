@@ -718,7 +718,7 @@ describe("delivering from a customer PO", () => {
         [/SELECT docNo, docType, customerPoNo FROM acc_documents WHERE id = \?/, () => [{ docNo: null, docType: "SO", customerPoNo: "PO-6611" }]],
         [/COUNT\(\*\) AS n/, () => [{ n: 0 }]],
       ]) as never);
-      expect((await deletionImpact("re1"))!.receiptPayment).toEqual({ amountSatang: 3210000, voided: false, invoiceId: "so1", invoiceNo: "PO PO-6611", deposit: true });
+      expect((await deletionImpact("re1"))!.receiptPayment).toEqual({ amountSatang: 3210000, voided: false, invoiceId: "so1", invoiceNo: "PO PO-6611", deposit: true, billing: false, invoiceIds: ["so1"] });
     });
   });
 
@@ -768,5 +768,76 @@ describe("delivering from a customer PO", () => {
       expect(releaseDocNoIfLatest).not.toHaveBeenCalled();
       expect(writeAudit).toHaveBeenCalledWith(conn, expect.objectContaining({ action: "doc.delete", docNo: "PO-6611", detail: expect.stringMatching(/^ลบ · PO ลูกค้า PO-6611 · /) }));
     });
+  });
+});
+
+// Step 7 — billing notes.
+describe("deleting around a billing note", () => {
+  it("refuses to delete an invoice while an open billing note lists it", async () => {
+    conn.query.mockImplementation(router([
+      [/SELECT docType, relatedDocId FROM acc_documents WHERE id = \?$/, () => [{ docType: "INV", relatedDocId: null }]],
+      [/SELECT id, docType, status, docNo, salesRecordId, relatedDocId, .*FROM acc_documents WHERE id = \? FOR UPDATE/, () => [{
+        id: "d1", docType: "INV", status: "issued", docNo: "INV2026110005", salesRecordId: null, relatedDocId: null, salesOrderId: null, customerPoNo: "", buyerName: "บริษัท เอ", totalSatang: 6206000,
+      }]],
+      [/COUNT\(\*\) AS n/, () => [{ n: 0 }]],
+      [/FROM acc_billing_items bi JOIN acc_documents b/, () => [{ docNo: "BN2026110001" }]],
+    ]));
+    await expect(deleteAccDocument("d1", actor, { passwordChecked: true })).rejects.toMatchObject({
+      status: 409,
+      message: "ใบนี้อยู่ในใบวางบิล BN2026110001 — ยกเลิกหรือลบใบวางบิลนั้นก่อน",
+    });
+  });
+
+  const noteDb = (live: number, receipts = 0) =>
+    conn.query.mockImplementation(router([
+      [/SELECT docType, relatedDocId FROM acc_documents WHERE id = \?$/, () => [{ docType: "BN", relatedDocId: null }]],
+      [/SELECT id, docType, status, docNo, salesRecordId, relatedDocId, .*FROM acc_documents WHERE id = \? FOR UPDATE/, () => [{
+        id: "bn1", docType: "BN", status: "issued", docNo: "BN2026110001", salesRecordId: null, relatedDocId: null, salesOrderId: null, customerPoNo: "", buyerName: "บริษัท เอ", totalSatang: 160500,
+      }]],
+      [/COUNT\(\*\) AS n FROM acc_payments WHERE billingNoteId = \?/, () => [{ n: live }]],
+      [/WHERE relatedDocId = \? OR salesOrderId = \?/, () => [{ n: receipts }]],
+      [/FROM acc_counters/, () => [{ lastNo: 1 }]],
+    ]));
+
+  it("refuses to delete a billing note money came in against, or one with its receipts left", async () => {
+    noteDb(2);
+    await expect(deleteAccDocument("bn1", actor, { passwordChecked: true })).rejects.toMatchObject({ status: 409, message: expect.stringContaining("มีการรับชำระแล้ว") });
+    noteDb(0, 1);
+    await expect(deleteAccDocument("bn1", actor, { passwordChecked: true })).rejects.toMatchObject({ status: 409, message: expect.stringContaining("มีใบเสร็จตามใบวางบิลนี้") });
+  });
+
+  it("deletes a billing note with its list; the payments voided on it stop pointing at it; its number goes back", async () => {
+    noteDb(0);
+    const result = await deleteAccDocument("bn1", actor, { passwordChecked: true });
+    const calls = vi.mocked(conn.query).mock.calls;
+    expect(calls).toContainEqual(["DELETE FROM acc_billing_items WHERE billingNoteId = ?", ["bn1"]]);
+    expect(calls).toContainEqual(["UPDATE acc_payments SET billingNoteId = NULL WHERE billingNoteId = ?", ["bn1"]]);
+    expect(result.releasedNumber).toBe(true);
+  });
+
+  it("deleting a billing note's receipt gives each invoice it paid its share back", async () => {
+    conn.query.mockImplementation(router([
+      [/SELECT docType, relatedDocId FROM acc_documents WHERE id = \?$/, () => [{ docType: "RE", relatedDocId: "bn1" }]],
+      [/SELECT id, docType, docNo, salesRecordId, customerPoNo, vatRate FROM acc_documents WHERE id = \? FOR UPDATE/, () => [{ id: "bn1", docType: "BN", docNo: "BN2026110001", salesRecordId: null, customerPoNo: "", vatRate: "7.00" }]],
+      [/SELECT id, docType, status, docNo, salesRecordId, relatedDocId, .*FROM acc_documents WHERE id = \? FOR UPDATE/, () => [{
+        id: "re1", docType: "RE", status: "issued", docNo: "RE2026110007", salesRecordId: null, relatedDocId: "bn1", salesOrderId: null, customerPoNo: "", buyerName: "บริษัท เอ", totalSatang: 160500, vatBaseSatang: 150000,
+      }]],
+      [/SELECT amountSatang, voidedAt, documentId FROM acc_payments WHERE receiptId = \?/, () => [
+        { amountSatang: 107000, voidedAt: null, documentId: "A" },
+        { amountSatang: 53500, voidedAt: null, documentId: "B" },
+      ]],
+      [/SELECT docNo, docType, customerPoNo FROM acc_documents WHERE id = \?/, () => [{ docNo: "BN2026110001", docType: "BN", customerPoNo: "" }]],
+      [/COUNT\(\*\) AS n/, () => [{ n: 0 }]],
+      [/FROM acc_counters/, () => [{ lastNo: 7 }]],
+      [/COALESCE\(SUM\(amountSatang\), 0\) AS paid/, () => [{ paid: 0 }]],
+      [/SELECT docNo, salesRecordId FROM acc_documents WHERE id = \? FOR UPDATE/, (p) => [{ docNo: p[0] === "A" ? "INV2026110001" : "INV2026110002", salesRecordId: null }]],
+    ]));
+    await deleteAccDocument("re1", actor, { passwordChecked: true });
+    const calls = vi.mocked(conn.query).mock.calls;
+    expect(calls).toContainEqual(["DELETE FROM acc_payments WHERE receiptId = ?", ["re1"]]);
+    expect(calls).toContainEqual(["UPDATE acc_documents SET paidSatang = ? WHERE id = ?", [0, "A"]]);
+    expect(calls).toContainEqual(["UPDATE acc_documents SET paidSatang = ? WHERE id = ?", [0, "B"]]);
+    expect(writeAudit).toHaveBeenCalledWith(conn, expect.objectContaining({ documentId: "A", detail: expect.stringContaining("ตามใบวางบิล BN2026110001") }));
+    expect(writeAudit).toHaveBeenCalledWith(conn, expect.objectContaining({ documentId: "bn1", detail: expect.stringContaining("1,605.00") }));
   });
 });

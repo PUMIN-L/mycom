@@ -33,6 +33,8 @@ interface MissingCert50View {
   invoiceId: string;
   /** A deposit's withholding — paid against a customer PO. */
   deposit?: boolean;
+  /** Received against a billing note — the note it names. */
+  billing?: boolean;
   invoiceNo: string | null;
   buyerName: string;
   paidDate: string;
@@ -160,6 +162,12 @@ function Receivables() {
                             {g.name}
                             <span className="ml-1 font-normal text-gray-500">({g.invoices.length} ใบ)</span>
                           </button>
+                          <Link
+                            href={`/accounting/billing-notes/new?${g.key.startsWith("co:") ? `companyId=${encodeURIComponent(g.key.slice(3))}` : `buyerName=${encodeURIComponent(g.name)}`}`}
+                            className="ml-3 text-xs font-semibold text-sky-700 hover:text-sky-800 whitespace-nowrap"
+                          >
+                            ออกใบวางบิล
+                          </Link>
                         </td>
                         {AGEING_BUCKETS.map((b) => (
                           <td key={b.key} className={`py-3 px-3 text-right ${g.buckets[b.key] > 0 ? BUCKET_TONE[b.key] : "text-gray-300"}`}>
@@ -228,7 +236,10 @@ function Receivables() {
                     <td className="py-2.5 px-4 whitespace-nowrap">{formatDisplayDate(m.paidDate)}</td>
                     <td className="py-2.5 px-4">{m.buyerName}</td>
                     <td className="py-2.5 px-4">
-                      <Link href={m.deposit ? `/accounting/sales-orders/${m.invoiceId}` : `/accounting/invoices/${m.invoiceId}`} className="text-sky-700 hover:text-sky-800">
+                      <Link
+                        href={m.deposit ? `/accounting/sales-orders/${m.invoiceId}` : m.billing ? `/accounting/billing-notes/${m.invoiceId}` : `/accounting/invoices/${m.invoiceId}`}
+                        className="text-sky-700 hover:text-sky-800"
+                      >
                         {m.invoiceNo}
                         {m.deposit && " (มัดจำ)"}
                       </Link>

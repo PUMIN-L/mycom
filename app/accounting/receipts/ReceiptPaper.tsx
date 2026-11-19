@@ -43,6 +43,13 @@ export interface ReceiptPaperInvoice {
   lines: { name: string; qty: number; unit: string }[];
 }
 
+/** A billing note's receipt (step 7): the note it is for, and each invoice it pays with how much of it. */
+export interface ReceiptPaperBilling {
+  docNo: string | null;
+  issueDate: string;
+  invoices: { id: string; docNo: string | null; issueDate: string; amountSatang: number }[];
+}
+
 /**
  * The receipt on A4 — ใบเสร็จรับเงิน, or ใบเสร็จรับเงิน/ใบกำกับภาษี when it is
  * the tax invoice (services). It pays an invoice, which it names, with that
@@ -55,12 +62,14 @@ export default function ReceiptPaper({
   payment,
   invoice,
   copyLabel,
+  billing = null,
 }: {
   doc: ReceiptPaperDocument;
   seller: SellerProfile;
   payment: ReceiptPaperPayment | null;
   invoice: ReceiptPaperInvoice | null;
   copyLabel: string | null;
+  billing?: ReceiptPaperBilling | null;
 }) {
   const voided = doc.status === "void";
   const deposit = invoice?.docType === "SO";
@@ -150,6 +159,18 @@ export default function ReceiptPaper({
           </tr>
         </thead>
         <tbody>
+          {billing ? (
+            billing.invoices.map((inv, i) => (
+              <tr key={inv.id} className="border-b border-gray-100 align-top" data-testid="receipt-billed-invoice">
+                <td className="py-2 pr-2">{i + 1}</td>
+                <td className="py-2 pr-2">
+                  ชำระใบแจ้งหนี้ เลขที่ {inv.docNo} ลงวันที่ {formatDisplayDate(inv.issueDate)}
+                  {i === 0 && <span className="block text-xs text-gray-600">ตามใบวางบิล เลขที่ {billing.docNo} ลงวันที่ {formatDisplayDate(billing.issueDate)}</span>}
+                </td>
+                <td className="py-2 text-right">{formatSatang(inv.amountSatang)}</td>
+              </tr>
+            ))
+          ) : (
           <tr className="border-b border-gray-100 align-top">
             <td className="py-2 pr-2">1</td>
             <td className="py-2 pr-2">
@@ -180,6 +201,7 @@ export default function ReceiptPaper({
             </td>
             <td className="py-2 text-right">{formatSatang(doc.totalSatang)}</td>
           </tr>
+          )}
         </tbody>
       </table>
 

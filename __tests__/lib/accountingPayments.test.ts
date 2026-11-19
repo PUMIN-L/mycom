@@ -27,7 +27,7 @@ import { writeAudit } from "@/app/lib/accounting/audit";
 vi.mock("@/app/lib/accounting/numbering", () => ({ allocateDocNo: vi.fn(async () => "RE2026110001") }));
 import { allocateDocNo } from "@/app/lib/accounting/numbering";
 
-import { paymentContext, receivables, recordPayment, updateCert50, voidPayment } from "@/app/lib/accounting/payments";
+import { paymentContext, receiptDetail, receivables, recordPayment, updateCert50, voidPayment } from "@/app/lib/accounting/payments";
 import { recomputePaidSatang, syncSaleReceiptRef } from "@/app/lib/accounting/paymentLedger";
 import type { PaymentInput } from "@/app/lib/accounting/paymentRules";
 
@@ -67,7 +67,7 @@ function firstPayment(over: { lockedStatus?: string; livePaid?: number; resum?: 
   conn.query.mockImplementation(router([
     [/SELECT status, totalSatang, vatSatang FROM acc_documents WHERE id = \? FOR UPDATE/, () => [{ status: over.lockedStatus ?? "issued", totalSatang: 2033000, vatSatang: 133000 }]],
     [/COALESCE\(SUM\(amountSatang\), 0\) AS paid/, () => [{ paid: over.resum ?? 2033000 }]],
-    [/SELECT id, amountSatang, receiptId FROM acc_payments/, () => (over.livePaid ? [{ id: "p0", amountSatang: over.livePaid, receiptId: null }] : [])],
+    [/SELECT id, amountSatang, receiptId, vatSatang FROM acc_payments/, () => (over.livePaid ? [{ id: "p0", amountSatang: over.livePaid, receiptId: null }] : [])],
     [/SELECT receiptId, externalReceiptNo FROM acc_payments/, () => [{ receiptId: "re-new", externalReceiptNo: "" }]],
     [/SELECT id, docNo FROM acc_documents WHERE id IN/, () => [{ id: "re-new", docNo: "RE2026110001" }]],
   ]));
@@ -175,7 +175,7 @@ describe("recordPayment", () => {
     conn.query.mockImplementation(router([
       [/SELECT status, totalSatang, vatSatang/, () => [{ status: "issued", totalSatang: 2033000, vatSatang: 133000 }]],
       [/COALESCE\(SUM/, () => [{ paid: 2033000 }]],
-      [/SELECT id, amountSatang, receiptId FROM acc_payments/, () => [{ id: "p0", amountSatang: 1016500, receiptId: "re0" }]],
+      [/SELECT id, amountSatang, receiptId, vatSatang FROM acc_payments/, () => [{ id: "p0", amountSatang: 1016500, receiptId: "re0" }]],
       [/SELECT id, vatSatang FROM acc_documents WHERE id IN/, () => [{ id: "re0", vatSatang: 66501 }]],
     ]));
     await recordPayment("inv1", { ...PAYMENT, amountSatang: 1016500, whtSatang: 28500 }, actor);
@@ -226,7 +226,7 @@ describe("recordPayment", () => {
 describe("voidPayment", () => {
   function recorded(over: { voidedAt?: string | null; receiptStatus?: string } = {}) {
     conn.query.mockImplementation(router([
-      [/SELECT documentId FROM acc_payments WHERE id = \?$/, () => [{ documentId: "inv1" }]],
+      [/SELECT documentId, groupId, billingNoteId FROM acc_payments WHERE id = \?$/, () => [{ documentId: "inv1" }]],
       [/SELECT docType, docNo, salesRecordId, customerPoNo, vatRate FROM acc_documents WHERE id = \? FOR UPDATE/, () => [{ docNo: "INV2026110001", salesRecordId: "sale-1" }]],
       [/SELECT id, receiptId, amountSatang, voidedAt FROM acc_payments WHERE id = \? FOR UPDATE/, () => [{ id: "p1", receiptId: "re1", amountSatang: 2033000, voidedAt: over.voidedAt ?? null }]],
       [/SELECT docNo, status FROM acc_documents WHERE id = \? FOR UPDATE/, () => [{ docNo: "RE2026110001", status: over.receiptStatus ?? "issued" }]],
@@ -276,7 +276,7 @@ describe("voidPayment", () => {
   describe("a deposit", () => {
     function deposit(deducted: number) {
       conn.query.mockImplementation(router([
-        [/SELECT documentId FROM acc_payments WHERE id = \?$/, () => [{ documentId: "so1" }]],
+        [/SELECT documentId, groupId, billingNoteId FROM acc_payments WHERE id = \?$/, () => [{ documentId: "so1" }]],
         [/SELECT docType, docNo, salesRecordId, customerPoNo, vatRate FROM acc_documents WHERE id = \? FOR UPDATE/, () => [{ docType: "SO", docNo: null, salesRecordId: null, customerPoNo: "PO-6611", vatRate: "7.00" }]],
         [/SELECT id, receiptId, amountSatang, voidedAt FROM acc_payments WHERE id = \? FOR UPDATE/, () => [{ id: "p1", receiptId: "re1", amountSatang: 3210000, voidedAt: null }]],
         [/SELECT vatBaseSatang FROM acc_documents WHERE id = \? FOR UPDATE/, () => [{ vatBaseSatang: 3000000 }]],
@@ -306,7 +306,7 @@ describe("voidPayment", () => {
 describe("updateCert50", () => {
   it("marks the 50 ทวิ received, with where it is kept, and logs it on the invoice", async () => {
     conn.query.mockImplementation(router([
-      [/SELECT documentId, whtSatang, voidedAt FROM acc_payments/, () => [{ documentId: "inv1", whtSatang: 57000, voidedAt: null }]],
+      [/SELECT documentId, whtSatang, voidedAt, groupId, billingNoteId FROM acc_payments/, () => [{ documentId: "inv1", whtSatang: 57000, voidedAt: null }]],
       [/SELECT docNo FROM acc_documents/, () => [{ docNo: "INV2026110001" }]],
     ]));
     await updateCert50("p1", { received: true, note: " แฟ้ม 50 ทวิ 2569 " }, actor);
@@ -355,8 +355,8 @@ describe("receivables", () => {
     expect(r.totals).toMatchObject({ all: 1033000, d31_60: 1033000 });
     expect(r.groups[0]).toMatchObject({ name: "บริษัท เอ", outstandingSatang: 1033000 });
     expect(r.missingCert50).toEqual([
-      { paymentId: "p1", invoiceId: "inv1", invoiceNo: "INV2026110001", deposit: false, buyerName: "บริษัท เอ", paidDate: "2026-10-05", receiptNo: "RE2026100001", whtPercent: 3, whtSatang: 30000 },
-      { paymentId: "p2", invoiceId: "so1", invoiceNo: "PO PO-6611", deposit: true, buyerName: "บริษัท เอ", paidDate: "2026-10-01", receiptNo: "RE2026100002", whtPercent: 3, whtSatang: 9000 },
+      { paymentId: "p1", invoiceId: "inv1", invoiceNo: "INV2026110001", deposit: false, buyerName: "บริษัท เอ", paidDate: "2026-10-05", receiptNo: "RE2026100001", whtPercent: 3, whtSatang: 30000, billing: false },
+      { paymentId: "p2", invoiceId: "so1", invoiceNo: "PO PO-6611", deposit: true, buyerName: "บริษัท เอ", paidDate: "2026-10-01", receiptNo: "RE2026100002", whtPercent: 3, whtSatang: 9000, billing: false },
     ]);
     expect(r.missingCert50Satang).toBe(39000);
     const certSql = vi.mocked(query).mock.calls.map(([sql]) => String(sql)).find((s) => s.includes("cert50Received = 0"))!;
@@ -400,5 +400,103 @@ describe("the payment ledger", () => {
   it("leaves the sales alone when the invoice has none", async () => {
     await syncSaleReceiptRef(conn as never, null, "inv1");
     expect(conn.query).not.toHaveBeenCalled();
+  });
+});
+
+// Step 7 — each payment keeps its share of VAT; what came in against a billing note goes as it came.
+describe("a payment's own share of VAT", () => {
+  it("is kept on the payment itself", async () => {
+    vi.mocked(getAccDocument).mockResolvedValue(INVOICE as never);
+    firstPayment();
+    await recordPayment("inv1", PAYMENT, actor);
+    expect(insertOf("acc_payments")!("vatSatang")).toBe(133000);
+  });
+
+  it("is what counts for the invoice — a receipt covering several invoices declares more than its share", async () => {
+    vi.mocked(getAccDocument).mockResolvedValue({ ...INVOICE, paidSatang: 1016500 } as never);
+    conn.query.mockImplementation(router([
+      [/SELECT status, totalSatang, vatSatang/, () => [{ status: "issued", totalSatang: 2033000, vatSatang: 133000 }]],
+      [/COALESCE\(SUM/, () => [{ paid: 2033000 }]],
+      // An earlier share, under a billing note's receipt (whose own VAT is larger).
+      [/SELECT id, amountSatang, receiptId, vatSatang FROM acc_payments/, () => [{ id: "p0", amountSatang: 1016500, receiptId: "re-bn", vatSatang: 66500 }]],
+      [/SELECT id, vatSatang FROM acc_documents WHERE id IN/, () => [{ id: "re-bn", vatSatang: 999999 }]],
+    ]));
+    await recordPayment("inv1", { ...PAYMENT, amountSatang: 1016500, whtSatang: 28500 }, actor);
+    expect(insertOf("acc_documents")!("vatSatang")).toBe(133000 - 66500);
+    expect(statements().some((s) => s.startsWith("SELECT id, vatSatang FROM acc_documents"))).toBe(false);
+  });
+});
+
+describe("a payment received against a billing note", () => {
+  function group(over: { voided?: boolean } = {}) {
+    conn.query.mockImplementation(router([
+      [/SELECT documentId, groupId, billingNoteId FROM acc_payments WHERE id = \?$/, () => [{ documentId: "A", groupId: "g1", billingNoteId: "bn1" }]],
+      [/SELECT docNo FROM acc_documents WHERE id = \? FOR UPDATE/, () => [{ docNo: "BN2026110001" }]],
+      [/SELECT id, documentId FROM acc_payments WHERE groupId = \?$/, () => [{ id: "p1", documentId: "A" }, { id: "p2", documentId: "B" }]],
+      [/SELECT id, docNo, salesRecordId FROM acc_documents WHERE id IN/, () => [{ id: "A", docNo: "INV2026110001", salesRecordId: "sale-A" }, { id: "B", docNo: "INV2026110002", salesRecordId: null }]],
+      [/SELECT id, documentId, receiptId, amountSatang, voidedAt FROM acc_payments WHERE groupId = \? FOR UPDATE/, () => [
+        { id: "p1", documentId: "A", receiptId: "re1", amountSatang: 107000, voidedAt: over.voided ? "x" : null },
+        { id: "p2", documentId: "B", receiptId: "re2", amountSatang: 53500, voidedAt: over.voided ? "x" : null },
+      ]],
+      [/SELECT docNo, status FROM acc_documents WHERE id = \? FOR UPDATE/, (p) => [{ docNo: p[0] === "re1" ? "RE2026110007" : "RE2026110008", status: "issued" }]],
+      [/COALESCE\(SUM\(amountSatang\), 0\) AS paid/, () => [{ paid: 0 }]],
+      [/COALESCE\(SUM\(whtSatang\), 0\) AS w/, () => [{ w: 1500 }]],
+      [/SELECT documentId, whtSatang, voidedAt, groupId, billingNoteId FROM acc_payments/, () => [{ documentId: "B", whtSatang: 1500, voidedAt: null, groupId: "g1", billingNoteId: "bn1" }]],
+      [/SELECT docNo FROM acc_documents WHERE id = \?$/, () => [{ docNo: "BN2026110001" }]],
+    ]));
+  }
+
+  it("is voided whole — every invoice's share and both receipts — the note first, then its invoices", async () => {
+    group();
+    await voidPayment("p1", "เช็คเด้ง", actor);
+    const order = statements();
+    expect(order.indexOf("SELECT docNo FROM acc_documents WHERE id = ? FOR UPDATE")).toBeLessThan(order.findIndex((s) => s.startsWith("SELECT id, docNo, salesRecordId FROM acc_documents WHERE id IN")));
+    const calls = vi.mocked(conn.query).mock.calls;
+    expect(calls).toContainEqual(["UPDATE acc_payments SET voidedAt = ?, voidedBy = ?, voidReason = ? WHERE groupId = ? AND voidedAt IS NULL", [expect.any(String), "admin", "เช็คเด้ง", "g1"]]);
+    expect(statements().filter((s) => s.startsWith("UPDATE acc_documents SET status = 'void'"))).toHaveLength(2);
+    expect(calls).toContainEqual(["UPDATE acc_documents SET paidSatang = ? WHERE id = ?", [0, "A"]]);
+    expect(calls).toContainEqual(["UPDATE acc_documents SET paidSatang = ? WHERE id = ?", [0, "B"]]);
+    expect(writeAudit).toHaveBeenCalledWith(conn, expect.objectContaining({ action: "payment.void", documentId: "bn1", detail: expect.stringContaining("1,605.00") }));
+    expect(writeAudit).toHaveBeenCalledWith(conn, expect.objectContaining({ action: "payment.void", documentId: "A", detail: expect.stringContaining("ตามใบวางบิล BN2026110001") }));
+  });
+
+  it("refuses to void it twice", async () => {
+    group({ voided: true });
+    await expect(voidPayment("p1", "ซ้ำ", actor)).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("has ONE 50 ทวิ for all its shares — marked on every one that was withheld", async () => {
+    group();
+    await updateCert50("p2", { received: true, note: "แฟ้ม 50 ทวิ 2569" }, actor);
+    expect(vi.mocked(conn.query).mock.calls).toContainEqual(["UPDATE acc_payments SET cert50Received = ?, cert50Note = ? WHERE groupId = ? AND whtSatang > 0", [1, "แฟ้ม 50 ทวิ 2569", "g1"]]);
+    expect(writeAudit).toHaveBeenCalledWith(conn, expect.objectContaining({ action: "payment.update", documentId: "bn1", detail: expect.stringContaining("15.00 บาท") }));
+  });
+});
+
+describe("receiptDetail — a billing note's receipt", () => {
+  it("adds its payments up, and lists each invoice it pays with how much of it", async () => {
+    vi.mocked(query).mockImplementation(router([
+      [/WHERE p\.receiptId = \?/, () => [
+        { ...PAYMENT_ROW, id: "p1", documentId: "A", amountSatang: 107000, whtSatang: 0, groupId: "g1", billingNoteId: "bn1" },
+        { ...PAYMENT_ROW, id: "p2", documentId: "B", amountSatang: 53500, whtSatang: 1500, groupId: "g1", billingNoteId: "bn1" },
+      ]],
+      [/SELECT id, docNo, issueDate FROM acc_documents WHERE id IN/, () => [
+        { id: "A", docNo: "INV2026110001", issueDate: "2026-11-01" },
+        { id: "B", docNo: "INV2026110002", issueDate: "2026-11-05" },
+      ]],
+    ]) as never);
+    vi.mocked(getAccDocument).mockResolvedValue({ id: "bn1", docType: "BN", docNo: "BN2026110001", issueDate: "2026-11-19", totalSatang: 160500, paidSatang: 0, lines: [] } as never);
+    const detail = await receiptDetail("re1", "bn1");
+    expect(detail.invoice).toBeNull();
+    expect(detail.payment).toMatchObject({ amountSatang: 160500, whtSatang: 1500 });
+    expect(detail.billing).toEqual({
+      id: "bn1",
+      docNo: "BN2026110001",
+      issueDate: "2026-11-19",
+      invoices: [
+        { id: "A", docNo: "INV2026110001", issueDate: "2026-11-01", amountSatang: 107000 },
+        { id: "B", docNo: "INV2026110002", issueDate: "2026-11-05", amountSatang: 53500 },
+      ],
+    });
   });
 });

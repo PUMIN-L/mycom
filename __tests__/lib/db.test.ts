@@ -40,14 +40,14 @@ process.env.DB_USER = 'tester';
 process.env.DB_PASSWORD = 'pw';
 process.env.DB_NAME = 'testdb';
 
-// A version SELECT result that MATCHES SCHEMA_VERSION (52) → bootstrap fast-path,
+// A version SELECT result that MATCHES SCHEMA_VERSION (53) → bootstrap fast-path,
 // skipping DDL. Value is a string because settings stores VARCHAR values.
 //
 // ⚠️ This constant only ever goes UP, in step with db.ts. The bootstrap's fast
 // path is `stored >= SCHEMA_VERSION`, so a number the live database has already
 // recorded can never trigger a migration again — reusing one silently skips the
 // entire migration in production (that is how v33 was burned).
-const SCHEMA_VERSION = '52';
+const SCHEMA_VERSION = '53';
 const SCHEMA_MATCH: [Array<{ value: string }>, unknown[]] = [[{ value: SCHEMA_VERSION }], []];
 // An empty result → no schema_version row / no admin row → full bootstrap.
 const EMPTY: [unknown[], unknown[]] = [[], []];
@@ -918,6 +918,23 @@ describe('db.ts', () => {
       expect(planDdl).toMatch(/amountSatang BIGINT NOT NULL/);
       expect(planDdl).not.toMatch(/REFERENCES|FOREIGN KEY/i);
       expect(hasSql(/CREATE INDEX idx_api_so ON acc_plan_items \(salesOrderId\)/)).toBe(true);
+    });
+
+    it('v53: a billing note lists the invoices it bills; a payment knows its share of VAT and the payments it came with', async () => {
+      const db = await freshImport();
+      mockConnection.query.mockResolvedValue(EMPTY);
+
+      await db.getDbConnection();
+      const sql = bootstrapSql();
+      const hasSql = (re: RegExp) => sql.some((s) => re.test(s));
+      const itemsDdl = sql.find((s) => /CREATE TABLE IF NOT EXISTS acc_billing_items/.test(s))!;
+      expect(itemsDdl).toMatch(/billingNoteId VARCHAR\(36\) NOT NULL/);
+      expect(itemsDdl).toMatch(/invoiceId VARCHAR\(36\) NOT NULL/);
+      expect(itemsDdl).not.toMatch(/REFERENCES|FOREIGN KEY/i);
+      expect(hasSql(/ALTER TABLE acc_payments ADD COLUMN IF NOT EXISTS vatSatang BIGINT DEFAULT NULL/)).toBe(true);
+      expect(hasSql(/ALTER TABLE acc_payments ADD COLUMN IF NOT EXISTS groupId VARCHAR\(36\) DEFAULT NULL/)).toBe(true);
+      expect(hasSql(/CREATE INDEX idx_ap_group ON acc_payments \(groupId\)/)).toBe(true);
+      expect(hasSql(/CREATE INDEX idx_ap_bn ON acc_payments \(billingNoteId\)/)).toBe(true);
     });
 
     it('issues the whole v35 DDL: three tables, every standalone index, the composite PK — and NOT ONE foreign key', async () => {

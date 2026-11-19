@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import AccountingFrame from "../../AccountingFrame";
 import StatusBadge from "../../StatusBadge";
 import DocumentDeleteDialog, { type DeletionImpactView } from "../../DocumentDeleteDialog";
-import ReceiptPaper, { type ReceiptPaperDocument, type ReceiptPaperInvoice } from "../ReceiptPaper";
+import ReceiptPaper, { type ReceiptPaperBilling, type ReceiptPaperDocument, type ReceiptPaperInvoice } from "../ReceiptPaper";
 import { VoidPaymentDialog, type PaymentView } from "../../payments/PaymentsPanel";
 import Spinner from "../../../components/Spinner";
 import { errorMessageOf } from "../../../lib/apiErrorMessage";
@@ -19,7 +19,7 @@ interface LoadedReceipt {
   document: ReceiptPaperDocument & { id: string; docType: string; relatedDocId: string | null; voidReason: string | null };
   seller: SellerProfile | null;
   impact: DeletionImpactView;
-  receipt?: { payment: PaymentView | null; invoice: (ReceiptPaperInvoice & { id: string }) | null };
+  receipt?: { payment: PaymentView | null; invoice: (ReceiptPaperInvoice & { id: string }) | null; billing?: (ReceiptPaperBilling & { id: string }) | null };
 }
 
 export default function ReceiptDocumentPage() {
@@ -94,6 +94,7 @@ function ReceiptDocument({ id, onTitle }: { id: string; onTitle: (title: string)
   const { document: doc, seller, impact } = state;
   const payment = state.receipt?.payment ?? null;
   const invoice = state.receipt?.invoice ?? null;
+  const billing = state.receipt?.billing ?? null;
   const voided = doc.status === "void";
   const printAs = (label: "ต้นฉบับ" | "สำเนา") => {
     setCopyLabel(label);
@@ -114,6 +115,7 @@ function ReceiptDocument({ id, onTitle }: { id: string; onTitle: (title: string)
           seller={seller ?? { name: "", address: "", taxId: "", branchCode: "", phone: "", email: "" }}
           payment={payment}
           invoice={invoice}
+          billing={billing}
           copyLabel={copyLabel}
         />
       </div>
@@ -143,7 +145,11 @@ function ReceiptDocument({ id, onTitle }: { id: string; onTitle: (title: string)
               </>
             )}
           </dl>
-          {invoice && invoice.docType === "SO" ? (
+          {billing ? (
+            <Link href={`/accounting/billing-notes/${billing.id}`} className="block text-sm font-semibold text-sky-700 hover:text-sky-800">
+              ← ใบวางบิล {billing.docNo} ({billing.invoices.length} ใบแจ้งหนี้)
+            </Link>
+          ) : invoice && invoice.docType === "SO" ? (
             <Link href={`/accounting/sales-orders/${invoice.id}`} className="block text-sm font-semibold text-sky-700 hover:text-sky-800">
               ← มัดจำของ PO ลูกค้า {doc.customerPoNo} ({formatDisplayDate(invoice.issueDate)})
             </Link>
@@ -208,7 +214,15 @@ function ReceiptDocument({ id, onTitle }: { id: string; onTitle: (title: string)
           impact={impact}
           onCancel={() => setDeleting(false)}
           onDeleted={() =>
-            router.push(invoice ? (invoice.docType === "SO" ? `/accounting/sales-orders/${invoice.id}` : `/accounting/invoices/${invoice.id}`) : "/accounting/receipts")
+            router.push(
+              billing
+                ? `/accounting/billing-notes/${billing.id}`
+                : invoice
+                  ? invoice.docType === "SO"
+                    ? `/accounting/sales-orders/${invoice.id}`
+                    : `/accounting/invoices/${invoice.id}`
+                  : "/accounting/receipts"
+            )
           }
         />
       )}

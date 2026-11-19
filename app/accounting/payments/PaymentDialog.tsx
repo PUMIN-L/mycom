@@ -32,6 +32,8 @@ export interface PaymentDialogContext {
 export interface RecordedPaymentView {
   receipt: { id: string; docNo: string; title: string } | null;
   paidSatang: number;
+  /** Against a billing note: the receipt(s) issued — one, or two when goods and services mix. */
+  receipts?: { id: string; docNo: string; title: string }[];
 }
 
 const LABEL = "block text-sm font-semibold text-gray-700 mb-1";
@@ -68,6 +70,8 @@ export default function PaymentDialog({
   onRecorded,
   kind = "payment",
   initialAmountSatang = null,
+  suggestWht,
+  receiptLabel,
 }: {
   /** What is paid: the invoice — or, for a deposit, the PO ("PO …" as its docNo). */
   invoice: { id: string; docNo: string | null; issueDate: string; totalSatang: number };
@@ -75,11 +79,17 @@ export default function PaymentDialog({
   bankAccounts: BankAccount[];
   onCancel: () => void;
   onRecorded: (result: RecordedPaymentView) => void;
-  kind?: "payment" | "deposit";
+  /** "billing": against a billing note (step 7) — spread over its invoices, one receipt for all. */
+  kind?: "payment" | "deposit" | "billing";
   /** The amount to open with (an item of the payment plan); null = what is owed (a deposit: nothing). */
   initialAmountSatang?: number | null;
+  /** Works the withholding out for an amount at a rate — a billing note's, over each of its invoices. */
+  suggestWht?: (amountSatang: number, whtPercent: number) => number;
+  /** What issuing from the system gives, in place of "ออก<title>จากระบบ". */
+  receiptLabel?: string;
 }) {
   const deposit = kind === "deposit";
+  const billing = kind === "billing";
   const today = bangkokDateString(new Date());
   const activeAccounts = useMemo(() => bankAccounts.filter((b) => b.isActive), [bankAccounts]);
   const hasServices = context.serviceBaseSatang > 0;
@@ -114,7 +124,9 @@ export default function PaymentDialog({
   });
 
   const amountSatang = moneyOf(amount, -1);
-  const suggested = suggestedWhtSatang(amountSatang, invoice.totalSatang, context.serviceBaseSatang, Number(whtPercent));
+  const suggested = suggestWht
+    ? suggestWht(amountSatang, Number(whtPercent))
+    : suggestedWhtSatang(amountSatang, invoice.totalSatang, context.serviceBaseSatang, Number(whtPercent));
   const whtSatang = whtText === null ? suggested : moneyOf(whtText, 0);
   const feeSatang = moneyOf(fee, 0);
   const netSatang = amountSatang - whtSatang - feeSatang;
@@ -176,7 +188,9 @@ export default function PaymentDialog({
     try {
       const url = deposit
         ? `/api/accounting/sales-orders/${encodeURIComponent(invoice.id)}/deposits`
-        : `/api/accounting/documents/${encodeURIComponent(invoice.id)}/payments`;
+        : billing
+          ? `/api/accounting/billing-notes/${encodeURIComponent(invoice.id)}/payments`
+          : `/api/accounting/documents/${encodeURIComponent(invoice.id)}/payments`;
       const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -207,7 +221,7 @@ export default function PaymentDialog({
         className="relative bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[92vh] flex flex-col"
       >
         <div className="px-6 pt-6 pb-3 border-b border-gray-100">
-          <h2 id="payment-title" className="text-lg font-bold text-gray-900">{deposit ? "รับเงินมัดจำ" : "รับชำระเงิน"}</h2>
+          <h2 id="payment-title" className="text-lg font-bold text-gray-900">{deposit ? "รับเงินมัดจำ" : billing ? "รับชำระตามใบวางบิล" : "รับชำระเงิน"}</h2>
           <p className="text-sm text-gray-600 tabular-nums">
             {invoice.docNo} · {deposit ? "รับมัดจำได้ไม่เกิน" : "ค้างชำระ"} <span className="font-semibold text-gray-900">{formatSatang(context.outstandingSatang)}</span> บาท
             {deposit && " (รวม VAT)"}
@@ -222,7 +236,7 @@ export default function PaymentDialog({
                 value={paidDate} onChange={(e) => setPaidDate(e.target.value)} />
               <Problem id="pay-date-error">{shown.paidDate}</Problem>
               {!shown.paidDate && paidDate && paidDate < invoice.issueDate && (
-                <p className="mt-1 text-xs text-amber-700">ก่อนวันที่ของ{deposit ? " PO" : "ใบแจ้งหนี้"} ({formatDisplayDate(invoice.issueDate)})</p>
+                <p className="mt-1 text-xs text-amber-700">ก่อนวันที่ของ{deposit ? " PO" : billing ? "ใบวางบิล" : "ใบแจ้งหนี้"} ({formatDisplayDate(invoice.issueDate)})</p>
               )}
             </div>
             <div>
@@ -336,7 +350,7 @@ export default function PaymentDialog({
                 <input type="radio" name="receipt-mode" className="mt-0.5 h-4 w-4 accent-sky-600" checked={issuing} onChange={() => setReceiptMode("system")} />
               )}
               <span>
-                ออก{title}จากระบบ
+                {receiptLabel ?? `ออก${title}จากระบบ`}
                 {nextNo && <span className="text-gray-500 tabular-nums"> — จะได้เลขที่ {nextNo}</span>}
               </span>
             </label>

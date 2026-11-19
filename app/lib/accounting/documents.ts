@@ -197,6 +197,16 @@ export async function getAccDocument(id: string): Promise<AccDocument | null> {
   return rowToDoc(rows[0], lineRows.map(rowToLine));
 }
 
+/** The billing notes an invoice is on (not cancelled), oldest first. */
+export async function billingNotesOf(invoiceId: string): Promise<{ id: string; docNo: string | null; issueDate: string }[]> {
+  const [rows] = await query<RowDataPacket[]>(
+    `SELECT b.id, b.docNo, b.issueDate FROM acc_billing_items bi JOIN acc_documents b ON b.id = bi.billingNoteId
+      WHERE bi.invoiceId = ? AND b.status = 'issued' ORDER BY b.issueDate ASC`,
+    [invoiceId]
+  );
+  return rows.map((r) => ({ id: String(r.id), docNo: strOrNull(r.docNo), issueDate: str(r.issueDate) }));
+}
+
 const LIST_LIMIT = 1000;
 
 /** `%`, `_` and the escape itself, made literal for LIKE … ESCAPE '!'. */
@@ -613,7 +623,17 @@ export interface DeletionImpact {
   sale: { id: string; costSatang: number; sharedWithOtherDocs: boolean } | null;
   machines: { total: number; withHistory: number };
   /** A receipt: the payment it records, which goes with it, and the invoice that then owes it again. */
-  receiptPayment: { amountSatang: number; voided: boolean; invoiceId: string; invoiceNo: string | null; deposit: boolean } | null;
+  receiptPayment: {
+    amountSatang: number;
+    voided: boolean;
+    /** What it pays — an invoice, a customer PO (a deposit) or a billing note. */
+    invoiceId: string;
+    invoiceNo: string | null;
+    deposit: boolean;
+    /** A billing note's receipt: it pays `invoiceIds`, each of which owes its share again once it goes. */
+    billing?: boolean;
+    invoiceIds?: string[];
+  } | null;
   /** An issued delivery from a customer PO: the PO its quantities go back to. */
   fromOrder: { id: string; customerPoNo: string } | null;
 }
@@ -643,27 +663,53 @@ async function impactOf(
   const current = conn ? " FOR UPDATE" : "";
   let receiptPayment: DeletionImpact["receiptPayment"] = null;
   if (doc.docType === "RE") {
-    const [p] = await run(conn, `SELECT amountSatang, voidedAt, documentId FROM acc_payments WHERE receiptId = ? LIMIT 1${current}`, [doc.id]);
-    const invoiceId = p ? String(p.documentId) : doc.relatedDocId;
-    if (p && invoiceId) {
-      // What it paid: an invoice — or a customer PO, for a deposit.
-      const [inv] = await run(conn, "SELECT docNo, docType, customerPoNo FROM acc_documents WHERE id = ?", [invoiceId]);
+    // Every payment it records — a billing note's receipt records one per invoice.
+    const ps = await run(conn, `SELECT amountSatang, voidedAt, documentId FROM acc_payments WHERE receiptId = ?${current}`, [doc.id]);
+    const relatedId = doc.relatedDocId ?? (ps[0] ? String(ps[0].documentId) : null);
+    if (ps.length > 0 && relatedId) {
+      // What it paid: an invoice — a customer PO, for a deposit — or a billing note's invoices.
+      const [inv] = await run(conn, "SELECT docNo, docType, customerPoNo FROM acc_documents WHERE id = ?", [relatedId]);
       const deposit = inv?.docType === "SO";
       receiptPayment = {
-        amountSatang: num(p.amountSatang),
-        voided: Boolean(p.voidedAt),
-        invoiceId,
+        amountSatang: ps.reduce((s, p) => s + num(p.amountSatang), 0),
+        voided: ps.every((p) => Boolean(p.voidedAt)),
+        invoiceId: relatedId,
         invoiceNo: deposit ? `PO ${str(inv.customerPoNo)}` : strOrNull(inv?.docNo),
         deposit,
+        billing: inv?.docType === "BN",
+        invoiceIds: [...new Set(ps.map((p) => String(p.documentId)))],
       };
     }
   }
-  const [payments] = await run(conn, `SELECT COUNT(*) AS n FROM acc_payments WHERE documentId = ? AND voidedAt IS NULL${current}`, [doc.id]);
+  // A billing note's payments are on its invoices — counted by the note they came through.
+  const [payments] = await run(
+    conn,
+    `SELECT COUNT(*) AS n FROM acc_payments WHERE ${doc.docType === "BN" ? "billingNoteId" : "documentId"} = ? AND voidedAt IS NULL${current}`,
+    [doc.id]
+  );
   const [dependents] = await run(conn, `SELECT COUNT(*) AS n FROM acc_documents WHERE relatedDocId = ? OR salesOrderId = ?${current}`, [doc.id, doc.id]);
   const livePayments = num(payments?.n);
   const dependentDocs = num(dependents?.n);
+  // An invoice on an open billing note: the note printed it — it goes first.
+  const billedOn =
+    doc.docType === "INV" && doc.status !== "draft"
+      ? (
+          await run(
+            conn,
+            `SELECT b.docNo FROM acc_billing_items bi JOIN acc_documents b ON b.id = bi.billingNoteId WHERE bi.invoiceId = ? AND b.status = 'issued'${current}`,
+            [doc.id]
+          )
+        ).map((r) => str(r.docNo))
+      : [];
   let blockedReason: string | null = null;
-  if (doc.docType === "SO") {
+  if (doc.docType === "BN") {
+    blockedReason =
+      livePayments > 0
+        ? "ใบวางบิลนี้มีการรับชำระแล้ว — ยกเลิกรายการรับชำระก่อนจึงจะลบได้"
+        : dependentDocs > 0
+          ? "มีใบเสร็จตามใบวางบิลนี้ (ที่ยกเลิกแล้ว) — ลบใบเสร็จนั้นก่อน"
+          : null;
+  } else if (doc.docType === "SO") {
     // A PO's dependents: the invoices delivered from it, and its deposits' receipts.
     const deliveries = dependentDocs > 0 ? num((await run(conn, `SELECT COUNT(*) AS n FROM acc_documents WHERE salesOrderId = ?${current}`, [doc.id]))[0]?.n) : 0;
     blockedReason =
@@ -680,7 +726,9 @@ async function impactOf(
         ? "ใบนี้มีรายการรับชำระแล้ว — ยกเลิกรายการรับชำระก่อนจึงจะลบได้"
         : dependentDocs > 0
           ? "มีเอกสารอื่นอ้างถึงใบนี้ (ใบเสร็จ / ใบลดหนี้) — ลบเอกสารนั้นก่อน"
-          : null;
+          : billedOn.length > 0
+            ? `ใบนี้อยู่ในใบวางบิล ${billedOn.join(", ")} — ยกเลิกหรือลบใบวางบิลนั้นก่อน`
+            : null;
   }
   let isLatestNumber = false;
   const parsed = parseDocNo(doc.docNo);
@@ -804,10 +852,16 @@ export async function deleteAccDocument(id: string, actor: Actor, opts: { passwo
       // Only voided deposits can be left (a live one refused above), and its plan goes with it.
       await conn.query("DELETE FROM acc_payments WHERE documentId = ?", [id]);
       await conn.query("DELETE FROM acc_plan_items WHERE salesOrderId = ?", [id]);
+    } else if (doc.docType === "BN") {
+      // Its list goes; the payments voided on it stay on their invoices, no longer pointing at it.
+      await conn.query("DELETE FROM acc_billing_items WHERE billingNoteId = ?", [id]);
+      await conn.query("UPDATE acc_payments SET billingNoteId = NULL WHERE billingNoteId = ?", [id]);
     } else {
       // Only VOIDED payments can be left here (a live one refused above):
       // dead rows of a document that is going — kept, they would only take space.
       await conn.query("DELETE FROM acc_payments WHERE documentId = ?", [id]);
+      // A cancelled billing note's line for it goes too (an open one refused above).
+      await conn.query("DELETE FROM acc_billing_items WHERE invoiceId = ?", [id]);
     }
 
     let machinesDeleted = 0;
@@ -837,7 +891,28 @@ export async function deleteAccDocument(id: string, actor: Actor, opts: { passwo
     if (deliveredFrom && orderLocked) await recomputeDeliveredTx(conn, deliveredFrom);
 
     const livePayment = impact.receiptPayment && !impact.receiptPayment.voided ? impact.receiptPayment : null;
-    if (paidInvoice) {
+    if (paidInvoice && paidInvoice.docType === "BN") {
+      // A billing note's receipt: each invoice it paid owes its share again.
+      for (const invoiceId of impact.receiptPayment?.invoiceIds ?? []) {
+        await recomputePaidSatang(conn, invoiceId);
+        const [inv] = await run(conn, "SELECT docNo, salesRecordId FROM acc_documents WHERE id = ? FOR UPDATE", [invoiceId]);
+        await syncSaleReceiptRef(conn, strOrNull(inv?.salesRecordId), invoiceId);
+        await writeAudit(conn, {
+          ...actor,
+          action: "doc.delete",
+          documentId: invoiceId,
+          docNo: strOrNull(inv?.docNo),
+          detail: `ลบใบเสร็จ ${doc.docNo ?? ""} (ตามใบวางบิล ${str(paidInvoice.docNo)})${livePayment ? " · รายการรับชำระของใบนี้ถูกลบด้วย (กลับเป็นยอดค้าง)" : ""}`,
+        });
+      }
+      await writeAudit(conn, {
+        ...actor,
+        action: "doc.delete",
+        documentId: String(paidInvoice.id),
+        docNo: strOrNull(paidInvoice.docNo),
+        detail: `ลบใบเสร็จ ${doc.docNo ?? ""}${livePayment ? ` · รายการรับชำระ ${formatSatang(livePayment.amountSatang)} บาท ถูกลบด้วย` : ""}`,
+      });
+    } else if (paidInvoice) {
       const invoiceId = String(paidInvoice.id);
       await recomputePaidSatang(conn, invoiceId);
       await syncSaleReceiptRef(conn, strOrNull(paidInvoice.salesRecordId), invoiceId);

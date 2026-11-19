@@ -77,6 +77,11 @@ export interface AccPayment {
   voidReason: string | null;
   createdAt: string;
   createdBy: string;
+  /** Received against a billing note (step 7) — with the other payments of `groupId`, under the same receipt(s). */
+  billingNoteId: string | null;
+  groupId: string | null;
+  /** The number of the document it pays (an invoice's; a PO's customer number for a deposit). */
+  documentNo: string | null;
 }
 
 const str = (v: unknown) => (v === null || v === undefined ? "" : String(v));
@@ -89,10 +94,11 @@ async function run(conn: Exec, sql: string, params: unknown[]): Promise<RowDataP
   return rows;
 }
 
-const PAYMENT_SELECT = `SELECT p.*, r.docNo AS receiptNo, r.status AS receiptStatus, b.bankName, b.accountNo
+const PAYMENT_SELECT = `SELECT p.*, r.docNo AS receiptNo, r.status AS receiptStatus, b.bankName, b.accountNo, d.docNo AS documentNo
   FROM acc_payments p
   LEFT JOIN acc_documents r ON r.id = p.receiptId
-  LEFT JOIN acc_bank_accounts b ON b.id = p.bankAccountId`;
+  LEFT JOIN acc_bank_accounts b ON b.id = p.bankAccountId
+  LEFT JOIN acc_documents d ON d.id = p.documentId`;
 
 function rowToPayment(r: RowDataPacket): AccPayment {
   const amount = num(r.amountSatang);
@@ -122,13 +128,21 @@ function rowToPayment(r: RowDataPacket): AccPayment {
     voidReason: strOrNull(r.voidReason),
     createdAt: str(r.createdAt),
     createdBy: str(r.createdBy),
+    billingNoteId: strOrNull(r.billingNoteId),
+    groupId: strOrNull(r.groupId),
+    documentNo: strOrNull(r.documentNo),
   };
 }
 
-/** An invoice's payments, voided ones too (the history shows them struck through), oldest first. */
-export async function listPayments(invoiceId: string): Promise<AccPayment[]> {
-  const rows = await run(null, `${PAYMENT_SELECT} WHERE p.documentId = ? ORDER BY p.paidDate ASC, p.createdAt ASC`, [invoiceId]);
+/** Payments matching `where` (on `p`), voided ones too, oldest first. */
+export async function listPaymentsWhere(where: string, params: unknown[]): Promise<AccPayment[]> {
+  const rows = await run(null, `${PAYMENT_SELECT} WHERE ${where} ORDER BY p.paidDate ASC, p.createdAt ASC`, params);
   return rows.map(rowToPayment);
+}
+
+/** An invoice's payments, voided ones too (the history shows them struck through), oldest first. */
+export function listPayments(invoiceId: string): Promise<AccPayment[]> {
+  return listPaymentsWhere("p.documentId = ?", [invoiceId]);
 }
 
 export async function getPayment(id: string): Promise<AccPayment | null> {
@@ -165,13 +179,19 @@ export async function paymentContext(invoiceId: string): Promise<PaymentContext 
   };
 }
 
-/** The VAT already declared on an invoice's live payments: their receipts', or their share where the receipt is an outside one. */
-async function vatOnLivePayments(
+/**
+ * The VAT already declared on an invoice's live payments. Each payment knows
+ * its own share since v53 (`vatSatang` — a receipt may cover several invoices,
+ * step 7); an older one has its receipt's, or its share where the receipt is
+ * an outside one.
+ */
+export async function vatOnLivePayments(
   conn: Exec,
   live: RowDataPacket[],
   invoice: { totalSatang: number; vatSatang: number }
 ): Promise<number> {
-  const receiptIds = live.map((p) => strOrNull(p.receiptId)).filter((id): id is string => Boolean(id));
+  const own = (p: RowDataPacket) => p.vatSatang !== null && p.vatSatang !== undefined;
+  const receiptIds = live.filter((p) => !own(p)).map((p) => strOrNull(p.receiptId)).filter((id): id is string => Boolean(id));
   let vat = 0;
   if (receiptIds.length > 0) {
     // A locking (current) read: the receipt of a payment committed while this
@@ -180,7 +200,10 @@ async function vatOnLivePayments(
     const byId = new Map(rows.map((r) => [String(r.id), num(r.vatSatang)]));
     for (const id of receiptIds) vat += byId.get(id) ?? 0;
   }
-  for (const p of live) if (!p.receiptId) vat += vatShareSatang(num(p.amountSatang), invoice);
+  for (const p of live) {
+    if (own(p)) vat += num(p.vatSatang);
+    else if (!p.receiptId) vat += vatShareSatang(num(p.amountSatang), invoice);
+  }
   return vat;
 }
 
@@ -250,7 +273,18 @@ export async function insertReceiptTx(
 /** Writes the payment row — against an invoice, or a customer PO for a deposit — inside the caller's transaction. */
 export async function insertPaymentTx(
   conn: PoolConnection,
-  p: { documentId: string; receiptId: string | null; input: PaymentInput; actor: Actor; now: string }
+  p: {
+    documentId: string;
+    receiptId: string | null;
+    input: PaymentInput;
+    actor: Actor;
+    now: string;
+    /** Its share of the VAT — what its receipt declares for it. */
+    vatSatang: number;
+    /** Received against a billing note, with the other payments it came with (step 7). */
+    billingNoteId?: string | null;
+    groupId?: string | null;
+  }
 ): Promise<string> {
   const { input } = p;
   const paymentId = crypto.randomUUID();
@@ -269,6 +303,9 @@ export async function insertPaymentTx(
     cert50Note: input.whtSatang > 0 ? input.cert50Note : "",
     externalReceiptNo: input.externalReceiptNo,
     note: input.note,
+    vatSatang: p.vatSatang,
+    billingNoteId: p.billingNoteId ?? null,
+    groupId: p.groupId ?? null,
     createdAt: p.now,
     createdBy: p.actor.username,
   };
@@ -309,7 +346,7 @@ export async function recordPayment(invoiceId: string, input: PaymentInput, acto
     const [inv] = await run(conn, "SELECT status, totalSatang, vatSatang FROM acc_documents WHERE id = ? FOR UPDATE", [invoiceId]);
     if (!inv || inv.status !== "issued") throw new ApiError(409, "ใบแจ้งหนี้นี้เปลี่ยนไปแล้ว — กรุณาเปิดหน้านี้ใหม่");
     const invoice = { totalSatang: num(inv.totalSatang), vatSatang: num(inv.vatSatang) };
-    const live = await run(conn, "SELECT id, amountSatang, receiptId FROM acc_payments WHERE documentId = ? AND voidedAt IS NULL FOR UPDATE", [invoiceId]);
+    const live = await run(conn, "SELECT id, amountSatang, receiptId, vatSatang FROM acc_payments WHERE documentId = ? AND voidedAt IS NULL FOR UPDATE", [invoiceId]);
     const paidBefore = live.reduce((sum, p) => sum + num(p.amountSatang), 0);
     const owed = invoice.totalSatang - paidBefore;
     if (input.amountSatang > owed) {
@@ -317,10 +354,12 @@ export async function recordPayment(invoiceId: string, input: PaymentInput, acto
     }
     const now = new Date().toISOString();
 
+    // Its share of the invoice's VAT (the settling payment takes what is left) —
+    // on its receipt, and kept on the payment itself.
+    const vatBefore = await vatOnLivePayments(conn, live, invoice);
+    const vat = receiptVatSatang(input.amountSatang, invoice, { paidSatang: paidBefore, vatSatang: vatBefore });
     let receipt: RecordedPayment["receipt"] = null;
     if (issuing) {
-      const vatBefore = await vatOnLivePayments(conn, live, invoice);
-      const vat = receiptVatSatang(input.amountSatang, invoice, { paidSatang: paidBefore, vatSatang: vatBefore });
       const { id, docNo } = await insertReceiptTx(conn, {
         pays: doc,
         relatedDocId: invoiceId,
@@ -343,7 +382,7 @@ export async function recordPayment(invoiceId: string, input: PaymentInput, acto
       });
     }
 
-    const paymentId = await insertPaymentTx(conn, { documentId: invoiceId, receiptId: receipt?.id ?? null, input, actor, now });
+    const paymentId = await insertPaymentTx(conn, { documentId: invoiceId, receiptId: receipt?.id ?? null, input, actor, now, vatSatang: vat });
     const paid = await recomputePaidSatang(conn, invoiceId);
     await syncSaleReceiptRef(conn, doc.salesRecordId, invoiceId);
 
@@ -371,8 +410,13 @@ export async function voidPayment(paymentId: string, reasonText: string, actor: 
   if (reason.length > PAYMENT_LIMITS.voidReason) throw new ApiError(400, `เหตุผลยาวเกิน ${PAYMENT_LIMITS.voidReason} ตัวอักษร`);
 
   await withTransaction(async (conn) => {
-    const [peek] = await run(conn, "SELECT documentId FROM acc_payments WHERE id = ?", [paymentId]);
+    const [peek] = await run(conn, "SELECT documentId, groupId, billingNoteId FROM acc_payments WHERE id = ?", [paymentId]);
     if (!peek) throw new ApiError(404, "ไม่พบรายการรับชำระนี้");
+    // Received against a billing note: it goes as it came — every invoice's share, and the receipt(s).
+    if (peek.groupId) {
+      await voidGroupTx(conn, String(peek.groupId), strOrNull(peek.billingNoteId), reason, actor);
+      return;
+    }
     const invoiceId = String(peek.documentId);
     // Invoice (or, for a deposit, the customer PO) first, then the payment —
     // the order every payment change takes.
@@ -418,23 +462,85 @@ export async function voidPayment(paymentId: string, reasonText: string, actor: 
   return (await getPayment(paymentId))!;
 }
 
-/** Marks a payment's 50 ทวิ certificate as received (and where it is kept), or not yet. */
+/**
+ * Voids what was received against a billing note in one go: every invoice's
+ * share and the receipt(s) they got (numbers kept, marked ยกเลิก). The note
+ * first, then its invoices, then the payments and receipts — the order
+ * receiving against it takes.
+ */
+async function voidGroupTx(conn: PoolConnection, groupId: string, billingNoteId: string | null, reason: string, actor: Actor): Promise<void> {
+  const [bn] = billingNoteId ? await run(conn, "SELECT docNo FROM acc_documents WHERE id = ? FOR UPDATE", [billingNoteId]) : [];
+  const members = await run(conn, "SELECT id, documentId FROM acc_payments WHERE groupId = ?", [groupId]);
+  const invoiceIds = [...new Set(members.map((m) => String(m.documentId)))];
+  const invoices = invoiceIds.length
+    ? await run(conn, `SELECT id, docNo, salesRecordId FROM acc_documents WHERE id IN (${invoiceIds.map(() => "?").join(", ")}) FOR UPDATE`, invoiceIds)
+    : [];
+  const rows = await run(conn, "SELECT id, documentId, receiptId, amountSatang, voidedAt FROM acc_payments WHERE groupId = ? FOR UPDATE", [groupId]);
+  const live = rows.filter((r) => !r.voidedAt);
+  if (live.length === 0) throw new ApiError(409, "รายการนี้ถูกยกเลิกไปแล้ว");
+  const now = new Date().toISOString();
+  await conn.query("UPDATE acc_payments SET voidedAt = ?, voidedBy = ?, voidReason = ? WHERE groupId = ? AND voidedAt IS NULL", [now, actor.username, reason, groupId]);
+  const receiptNos: string[] = [];
+  for (const receiptId of [...new Set(live.map((r) => strOrNull(r.receiptId)).filter((id): id is string => Boolean(id)))]) {
+    const [re] = await run(conn, "SELECT docNo, status FROM acc_documents WHERE id = ? FOR UPDATE", [receiptId]);
+    if (!re || re.status === "void") continue;
+    receiptNos.push(str(re.docNo));
+    await conn.query("UPDATE acc_documents SET status = 'void', voidedAt = ?, voidedBy = ?, voidReason = ?, updatedAt = ? WHERE id = ?", [now, actor.username, reason, now, receiptId]);
+    await writeAudit(conn, { ...actor, action: "doc.void", documentId: receiptId, docNo: strOrNull(re.docNo), detail: `ยกเลิกใบเสร็จ · เหตุผล: ${reason}` });
+  }
+  const receiptsText = receiptNos.length > 0 ? ` (ใบเสร็จ ${receiptNos.join(", ")})` : "";
+  const noteText = bn ? ` ตามใบวางบิล ${str(bn.docNo)}` : "";
+  for (const inv of invoices) {
+    const invoiceId = String(inv.id);
+    await recomputePaidSatang(conn, invoiceId);
+    await syncSaleReceiptRef(conn, strOrNull(inv.salesRecordId), invoiceId);
+    const amount = live.filter((r) => String(r.documentId) === invoiceId).reduce((s, r) => s + num(r.amountSatang), 0);
+    await writeAudit(conn, {
+      ...actor,
+      action: "payment.void",
+      documentId: invoiceId,
+      docNo: strOrNull(inv.docNo),
+      detail: `ยกเลิกรายการรับชำระ ${formatSatang(amount)} บาท${noteText}${receiptsText} · เหตุผล: ${reason}`,
+    });
+  }
+  if (billingNoteId) {
+    const total = live.reduce((s, r) => s + num(r.amountSatang), 0);
+    await writeAudit(conn, {
+      ...actor,
+      action: "payment.void",
+      documentId: billingNoteId,
+      docNo: bn ? strOrNull(bn.docNo) : null,
+      detail: `ยกเลิกรายการรับชำระ ${formatSatang(total)} บาท · ${invoices.length} ใบแจ้งหนี้${receiptsText} · เหตุผล: ${reason}`,
+    });
+  }
+}
+
+/** Marks a payment's 50 ทวิ certificate as received (and where it is kept), or not yet — for a billing note's payment, the one certificate of all its shares. */
 export async function updateCert50(paymentId: string, change: { received: boolean; note: string }, actor: Actor): Promise<AccPayment> {
   const note = change.received ? String(change.note ?? "").trim() : "";
   if (note.length > PAYMENT_LIMITS.cert50Note) throw new ApiError(400, `ที่เก็บยาวเกิน ${PAYMENT_LIMITS.cert50Note} ตัวอักษร`);
   await withTransaction(async (conn) => {
-    const [p] = await run(conn, "SELECT documentId, whtSatang, voidedAt FROM acc_payments WHERE id = ? FOR UPDATE", [paymentId]);
+    const [p] = await run(conn, "SELECT documentId, whtSatang, voidedAt, groupId, billingNoteId FROM acc_payments WHERE id = ? FOR UPDATE", [paymentId]);
     if (!p) throw new ApiError(404, "ไม่พบรายการรับชำระนี้");
     if (p.voidedAt) throw new ApiError(409, "รายการนี้ถูกยกเลิกแล้ว");
-    if (num(p.whtSatang) <= 0) throw new ApiError(409, "รายการนี้ไม่ได้ถูกหัก ณ ที่จ่าย — ไม่มี 50 ทวิ");
-    await conn.query("UPDATE acc_payments SET cert50Received = ?, cert50Note = ? WHERE id = ?", [change.received ? 1 : 0, note, paymentId]);
-    const [inv] = await run(conn, "SELECT docNo FROM acc_documents WHERE id = ?", [p.documentId]);
+    const group = strOrNull(p.groupId);
+    const withheld = group
+      ? num((await run(conn, "SELECT COALESCE(SUM(whtSatang), 0) AS w FROM acc_payments WHERE groupId = ? AND voidedAt IS NULL FOR UPDATE", [group]))[0]?.w)
+      : num(p.whtSatang);
+    if (withheld <= 0) throw new ApiError(409, "รายการนี้ไม่ได้ถูกหัก ณ ที่จ่าย — ไม่มี 50 ทวิ");
+    if (group) {
+      await conn.query("UPDATE acc_payments SET cert50Received = ?, cert50Note = ? WHERE groupId = ? AND whtSatang > 0", [change.received ? 1 : 0, note, group]);
+    } else {
+      await conn.query("UPDATE acc_payments SET cert50Received = ?, cert50Note = ? WHERE id = ?", [change.received ? 1 : 0, note, paymentId]);
+    }
+    const documentId = group && p.billingNoteId ? String(p.billingNoteId) : String(p.documentId);
+    const [doc] = await run(conn, "SELECT docNo FROM acc_documents WHERE id = ?", [documentId]);
     await writeAudit(conn, {
       ...actor,
       action: "payment.update",
-      documentId: String(p.documentId),
-      docNo: inv ? strOrNull(inv.docNo) : null,
-      detail: change.received ? `ได้รับ 50 ทวิ แล้ว (หัก ${formatSatang(num(p.whtSatang))} บาท)${note ? ` · เก็บที่ ${note}` : ""}` : "50 ทวิ: กลับเป็นยังไม่ได้รับ",
+      documentId,
+      docNo: doc ? strOrNull(doc.docNo) : null,
+      detail: change.received ? `ได้รับ 50 ทวิ แล้ว (หัก ${formatSatang(withheld)} บาท)${note ? ` · เก็บที่ ${note}` : ""}` : "50 ทวิ: กลับเป็นยังไม่ได้รับ",
     });
   });
   return (await getPayment(paymentId))!;
@@ -453,12 +559,50 @@ export interface ReceiptInvoiceRef {
   lines: { name: string; qty: number; unit: string; lineType: string }[];
 }
 
-/** The payment a receipt is for and the invoice it pays — the receipt prints both. */
-export async function receiptDetail(receiptId: string, relatedDocId: string | null): Promise<{ payment: AccPayment | null; invoice: ReceiptInvoiceRef | null }> {
-  const [row] = await run(null, `${PAYMENT_SELECT} WHERE p.receiptId = ? LIMIT 1`, [receiptId]);
+/** A billing note's receipt (step 7): the note, and each invoice it pays with how much of it. */
+export interface ReceiptBillingRef {
+  id: string;
+  docNo: string | null;
+  issueDate: string;
+  invoices: { id: string; docNo: string | null; issueDate: string; amountSatang: number }[];
+}
+
+/**
+ * The payment a receipt is for and the invoice it pays — the receipt prints
+ * both. A billing note's receipt covers several invoices: its payment is their
+ * shares added up, and `billing` lists them.
+ */
+export async function receiptDetail(
+  receiptId: string,
+  relatedDocId: string | null
+): Promise<{ payment: AccPayment | null; invoice: ReceiptInvoiceRef | null; billing?: ReceiptBillingRef }> {
+  const rows = (await run(null, `${PAYMENT_SELECT} WHERE p.receiptId = ? ORDER BY p.createdAt ASC`, [receiptId])).map(rowToPayment);
   const invoice = relatedDocId ? await getAccDocument(relatedDocId) : null;
+  if (invoice?.docType === "BN") {
+    const ids = [...new Set(rows.map((p) => p.documentId))];
+    const docs = ids.length ? await run(null, `SELECT id, docNo, issueDate FROM acc_documents WHERE id IN (${ids.map(() => "?").join(", ")})`, ids) : [];
+    const byId = new Map(docs.map((d) => [String(d.id), d]));
+    const first = rows[0] ?? null;
+    const sum = (k: "amountSatang" | "whtSatang" | "feeSatang" | "netSatang") => rows.reduce((s, p) => s + p[k], 0);
+    return {
+      payment: first ? { ...first, amountSatang: sum("amountSatang"), whtSatang: sum("whtSatang"), feeSatang: sum("feeSatang"), netSatang: sum("netSatang") } : null,
+      invoice: null,
+      billing: {
+        id: invoice.id,
+        docNo: invoice.docNo,
+        issueDate: invoice.issueDate,
+        invoices: ids.map((id) => ({
+          id,
+          docNo: strOrNull(byId.get(id)?.docNo),
+          issueDate: str(byId.get(id)?.issueDate),
+          amountSatang: rows.filter((p) => p.documentId === id).reduce((s, p) => s + p.amountSatang, 0),
+        })),
+      },
+    };
+  }
+  const row = rows[0];
   return {
-    payment: row ? rowToPayment(row) : null,
+    payment: row ?? null,
     invoice: invoice
       ? {
           id: invoice.id,
@@ -481,6 +625,8 @@ export interface MissingCert50 {
   invoiceId: string;
   invoiceNo: string | null;
   deposit: boolean;
+  /** Received against a billing note: `invoiceId` / `invoiceNo` are the note's. */
+  billing: boolean;
   buyerName: string;
   paidDate: string;
   receiptNo: string;
@@ -524,24 +670,43 @@ export async function receivables(today: string): Promise<Receivables> {
     null,
     // A deposit's withholding counts too — named by its customer PO (it has no invoice number).
     `SELECT p.id, p.documentId, p.paidDate, p.whtPercent, p.whtSatang, p.externalReceiptNo,
-            COALESCE(d.docNo, CONCAT('PO ', d.customerPoNo)) AS invoiceNo, d.docType, d.buyerName, r.docNo AS receiptNo
+            COALESCE(d.docNo, CONCAT('PO ', d.customerPoNo)) AS invoiceNo, d.docType, d.buyerName, r.docNo AS receiptNo,
+            p.groupId, p.billingNoteId, bn.docNo AS billingNo
        FROM acc_payments p
        JOIN acc_documents d ON d.id = p.documentId
        LEFT JOIN acc_documents r ON r.id = p.receiptId
+       LEFT JOIN acc_documents bn ON bn.id = p.billingNoteId
       WHERE p.voidedAt IS NULL AND p.whtSatang > 0 AND p.cert50Received = 0
       ORDER BY p.paidDate ASC, p.createdAt ASC LIMIT 1000`,
     []
   );
-  const missingCert50 = certRows.map((r) => ({
-    paymentId: String(r.id),
-    invoiceId: String(r.documentId),
-    invoiceNo: strOrNull(r.invoiceNo),
-    deposit: r.docType === "SO",
-    buyerName: str(r.buyerName),
-    paidDate: str(r.paidDate),
-    receiptNo: str(r.receiptNo) || str(r.externalReceiptNo),
-    whtPercent: num(r.whtPercent),
-    whtSatang: num(r.whtSatang),
-  }));
+  // A billing note's payment is one certificate for all its invoices' shares — one line, named by the note.
+  const missingCert50: MissingCert50[] = [];
+  const byGroup = new Map<string, MissingCert50>();
+  for (const r of certRows) {
+    const receiptNo = str(r.receiptNo) || str(r.externalReceiptNo);
+    const group = strOrNull(r.groupId);
+    const known = group ? byGroup.get(group) : undefined;
+    if (known) {
+      known.whtSatang += num(r.whtSatang);
+      if (receiptNo && !known.receiptNo.split(", ").includes(receiptNo)) known.receiptNo = [known.receiptNo, receiptNo].filter(Boolean).join(", ");
+      continue;
+    }
+    const billing = Boolean(group && r.billingNoteId);
+    const line: MissingCert50 = {
+      paymentId: String(r.id),
+      invoiceId: billing ? String(r.billingNoteId) : String(r.documentId),
+      invoiceNo: billing ? strOrNull(r.billingNo) : strOrNull(r.invoiceNo),
+      deposit: r.docType === "SO",
+      billing,
+      buyerName: str(r.buyerName),
+      paidDate: str(r.paidDate),
+      receiptNo,
+      whtPercent: num(r.whtPercent),
+      whtSatang: num(r.whtSatang),
+    };
+    missingCert50.push(line);
+    if (group) byGroup.set(group, line);
+  }
   return { today, groups, totals, missingCert50, missingCert50Satang: missingCert50.reduce((s, m) => s + m.whtSatang, 0) };
 }
