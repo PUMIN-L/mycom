@@ -141,6 +141,102 @@ describe("the invoice list", () => {
   });
 });
 
+// The ⋯ menu of a row. The list sits in a rounded box with overflow-hidden, and
+// a menu drawn INSIDE it was cut off at the box's edge — on the last row (or the
+// only one) it opened out of sight. It is drawn on <body>, placed by the button.
+describe("the invoice list's ⋯ menu", () => {
+  async function loaded() {
+    render(<InvoiceListPage />);
+    await screen.findByTestId("invoice-table");
+  }
+  const open = (name: string) => {
+    fireEvent.click(screen.getByRole("button", { name }));
+    return screen.getByRole("menu");
+  };
+  /** The button's box on screen — jsdom has no layout, so the test gives it one. */
+  const placeButton = (name: string, rect: { top: number; bottom: number; right: number }) => {
+    const button = screen.getByRole("button", { name });
+    vi.spyOn(button, "getBoundingClientRect").mockReturnValue({ ...rect, left: rect.right - 36, width: 36, height: rect.bottom - rect.top, x: rect.right - 36, y: rect.top, toJSON: () => ({}) } as DOMRect);
+  };
+
+  it("is drawn outside the list's clipping box, over everything", async () => {
+    await loaded();
+    const menu = open("ทำรายการกับ INV2026100040");
+    // Not inside the table's box (overflow-hidden would cut it) — on <body>, fixed.
+    expect(screen.getByTestId("invoice-table").closest(".overflow-hidden")!.contains(menu)).toBe(false);
+    expect(menu.parentElement).toBe(document.body);
+    expect(menu.className).toContain("fixed");
+    // A list that stops Esc of a window under it, as every dropdown panel does.
+    expect(menu.hasAttribute("data-dropdown-panel")).toBe(true);
+  });
+
+  it("opens below the button, its right edge on the button's", async () => {
+    await loaded();
+    placeButton("ทำรายการกับ INV2026100040", { top: 100, bottom: 136, right: 900 });
+    const menu = open("ทำรายการกับ INV2026100040");
+    expect(menu.style.top).toBe("140px");
+    expect(menu.style.left).toBe("740px"); // right 900 − the menu's 160 wide
+    expect(menu.style.bottom).toBe("");
+  });
+
+  it("opens upward when there is no room below — the last row of a short window", async () => {
+    await loaded();
+    placeButton("ทำรายการกับ INV2026110033", { top: window.innerHeight - 50, bottom: window.innerHeight - 14, right: 900 });
+    const menu = open("ทำรายการกับ INV2026110033");
+    expect(menu.style.bottom).toBe("54px"); // 50 from the button's top to the window's bottom, + a 4px gap
+    expect(menu.style.top).toBe("");
+  });
+
+  it("stays on screen at the left edge of a narrow window", async () => {
+    await loaded();
+    placeButton("ทำรายการกับ INV2026100040", { top: 100, bottom: 136, right: 100 });
+    expect(open("ทำรายการกับ INV2026100040").style.left).toBe("8px");
+  });
+
+  it("closes on Esc and on a click elsewhere — and again on the button", async () => {
+    await loaded();
+    open("ทำรายการกับ INV2026100040");
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("menu")).toBeNull();
+    open("ทำรายการกับ INV2026100040");
+    fireEvent.mouseDown(document.body);
+    expect(screen.queryByRole("menu")).toBeNull();
+    open("ทำรายการกับ INV2026100040");
+    fireEvent.click(screen.getByRole("button", { name: "ทำรายการกับ INV2026100040" }));
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  it("a click inside the menu does not close it by the outside-click rule, and opens the document — once, not twice", async () => {
+    await loaded();
+    const menu = open("ทำรายการกับ INV2026100040");
+    fireEvent.mouseDown(within(menu).getByRole("menuitem", { name: "ดู / พิมพ์" }));
+    expect(screen.queryByRole("menu")).not.toBeNull();
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "ดู / พิมพ์" }));
+    expect(router.push).toHaveBeenCalledTimes(1);
+    expect(router.push).toHaveBeenCalledWith("/accounting/invoices/d2");
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  it("choosing ลบ asks about deleting and does not also open the row", async () => {
+    override = (path, init) =>
+      path === "/api/accounting/documents/d2" && !init?.method ? json({ document: {}, seller: SELLER, impact: { ...IMPACT, docNo: "INV2026100040" } }) : undefined;
+    await loaded();
+    const menu = open("ทำรายการกับ INV2026100040");
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "ลบ" }));
+    expect(router.push).not.toHaveBeenCalled();
+  });
+
+  it("follows the button when the page scrolls, and goes with a window resize", async () => {
+    await loaded();
+    placeButton("ทำรายการกับ INV2026100040", { top: 100, bottom: 136, right: 900 });
+    const menu = open("ทำรายการกับ INV2026100040");
+    expect(menu.style.top).toBe("140px");
+    placeButton("ทำรายการกับ INV2026100040", { top: 60, bottom: 96, right: 900 });
+    fireEvent.scroll(window);
+    expect(screen.getByRole("menu").style.top).toBe("100px");
+  });
+});
+
 describe("a new invoice", () => {
   async function loaded() {
     render(<NewInvoicePage />);

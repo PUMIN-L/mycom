@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import { createPortal } from "react-dom";
 import AccountingFrame from "../AccountingFrame";
 import StatusBadge, { StatusDot } from "../StatusBadge";
 import DocumentDeleteDialog, { type DeletionImpactView } from "../DocumentDeleteDialog";
@@ -321,28 +322,70 @@ function SummaryCard({ label, value, note, tone }: { label: string; value: numbe
   );
 }
 
-/** The ⋯ button of a row and its short menu. Closes on a choice, a click elsewhere, or Esc. */
+const MENU_WIDTH = 160; // the menu's w-40
+const MENU_ITEM_HEIGHT = 36; // one item: py-2 + a line of text-sm
+const MENU_GAP = 4;
+const SCREEN_MARGIN = 8;
+
+/**
+ * The ⋯ button of a row and its short menu. Closes on a choice, a click
+ * elsewhere, or Esc.
+ *
+ * The list sits in a rounded box with `overflow-hidden`, which cuts off
+ * anything drawn inside it — a menu opened on the last row (or the only one)
+ * was out of sight. So the menu is drawn on <body> (as SearchableDropdown's
+ * list is), `fixed`, placed from the button's box on screen: under it, right
+ * edges level — or above it when there is no room below — and kept on screen.
+ * It follows the button while the page scrolls, and is marked
+ * `data-dropdown-panel` so a window under it leaves Esc to the menu.
+ */
 function RowMenu({ label, items }: { label: string; items: { label: string; danger?: boolean; onSelect: () => void }[] }) {
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
+  const [place, setPlace] = useState<{ left: number; top?: number; bottom?: number }>({ left: 0, top: 0 });
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLUListElement>(null);
+
+  const reposition = useCallback(() => {
+    const rect = buttonRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const height = items.length * MENU_ITEM_HEIGHT + 8;
+    const left = Math.min(Math.max(SCREEN_MARGIN, rect.right - MENU_WIDTH), Math.max(SCREEN_MARGIN, window.innerWidth - MENU_WIDTH - SCREEN_MARGIN));
+    const spaceBelow = window.innerHeight - rect.bottom - SCREEN_MARGIN;
+    const spaceAbove = rect.top - SCREEN_MARGIN;
+    setPlace(
+      spaceBelow < height && spaceAbove > spaceBelow
+        ? { left, bottom: window.innerHeight - rect.top + MENU_GAP }
+        : { left, top: rect.bottom + MENU_GAP }
+    );
+  }, [items.length]);
+
   useEffect(() => {
     if (!open) return;
+    reposition();
     const onDown = (e: MouseEvent) => {
-      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+      const target = e.target as Node;
+      if (!buttonRef.current?.contains(target) && !menuRef.current?.contains(target)) setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setOpen(false);
     };
     document.addEventListener("mousedown", onDown);
     document.addEventListener("keydown", onKey);
+    // Scroll anywhere (capture: a scrolling box, not just the window) or a resize moves the button.
+    window.addEventListener("resize", reposition);
+    window.addEventListener("scroll", reposition, true);
     return () => {
       document.removeEventListener("mousedown", onDown);
       document.removeEventListener("keydown", onKey);
+      window.removeEventListener("resize", reposition);
+      window.removeEventListener("scroll", reposition, true);
     };
-  }, [open]);
+  }, [open, reposition]);
+
   return (
-    <div className="relative" ref={ref} data-dropdown-panel={open ? "" : undefined}>
+    <>
       <button
+        ref={buttonRef}
         type="button"
         aria-haspopup="menu"
         aria-expanded={open}
@@ -352,25 +395,34 @@ function RowMenu({ label, items }: { label: string; items: { label: string; dang
       >
         ⋯
       </button>
-      {open && (
-        <ul role="menu" className="absolute right-0 top-10 z-20 w-40 bg-white border border-gray-200 rounded-xl shadow-lg py-1">
-          {items.map((item) => (
-            <li key={item.label} role="none">
-              <button
-                type="button"
-                role="menuitem"
-                onClick={() => {
-                  setOpen(false);
-                  item.onSelect();
-                }}
-                className={`w-full text-left px-4 py-2 text-sm hover:bg-gray-50 ${item.danger ? "text-red-600" : "text-gray-800"}`}
-              >
-                {item.label}
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
+      {open &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <ul
+            ref={menuRef}
+            role="menu"
+            data-dropdown-panel=""
+            style={{ left: place.left, top: place.top, bottom: place.bottom, width: MENU_WIDTH }}
+            className="fixed z-9999 bg-white border border-gray-200 rounded-xl shadow-lg py-1"
+          >
+            {items.map((item) => (
+              <li key={item.label} role="none">
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setOpen(false);
+                    item.onSelect();
+                  }}
+                  className={`w-full text-left px-4 py-2 text-sm hover:bg-gray-50 ${item.danger ? "text-red-600" : "text-gray-800"}`}
+                >
+                  {item.label}
+                </button>
+              </li>
+            ))}
+          </ul>,
+          document.body
+        )}
+    </>
   );
 }

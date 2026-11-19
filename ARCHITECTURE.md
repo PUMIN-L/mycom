@@ -1640,6 +1640,13 @@ issues nothing new — step 10). Files:
     on a billing document; `/billing/receivables` says the module's debts are
     on its own page. Payments on old documents are recorded there as before —
     their debts still have to be collected; old numbers stay as they are.
+- **A menu or list drawn inside a rounded `overflow-hidden` box is cut off** —
+  the lists in this module sit in such a box (for the rounded corners). So the
+  invoice list's ⋯ menu (`RowMenu`) is drawn on <body> like
+  `SearchableDropdown`'s list: `fixed`, placed from the button's box (below
+  it, or above when there is no room; kept on screen), following the page
+  while it scrolls, marked `data-dropdown-panel`. Anything new that pops out of
+  a list row must do the same.
 
 ### 9. Email (contact form) + lead persistence
 [`app/lib/mailer.ts`](./app/lib/mailer.ts) sends via SMTP (`nodemailer`, Gmail by
