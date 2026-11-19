@@ -11,6 +11,8 @@ import { formatSatang } from "./money";
 import { getAccDocument, type AccDocument } from "./documents";
 import { recomputePaidSatang, syncSaleReceiptRef } from "./paymentLedger";
 import { assertDepositNotDeductedTx } from "./depositLedger";
+import { creditedOf } from "./creditLedger";
+import { effectiveInvoice, owedSatang, refundDueSatang } from "./creditRules";
 import { vatInsideSatang } from "./depositRules";
 import {
   PAYMENT_LIMITS,
@@ -172,7 +174,7 @@ export async function paymentContext(invoiceId: string): Promise<PaymentContext 
   }
   return {
     payments: await listPayments(invoiceId),
-    outstandingSatang: Math.max(0, doc.totalSatang - doc.paidSatang),
+    outstandingSatang: owedSatang(doc),
     serviceBaseSatang: serviceBaseSatang(doc),
     defaultWhtPercent,
     receiptIsTaxInvoice: !doc.isTaxInvoice,
@@ -333,7 +335,7 @@ export async function recordPayment(invoiceId: string, input: PaymentInput, acto
   if (doc.status === "draft") throw new ApiError(409, "ออกใบแจ้งหนี้ก่อนจึงจะรับชำระได้");
   if (doc.status !== "issued") throw new ApiError(409, "ใบแจ้งหนี้นี้ถูกยกเลิกแล้ว — รับชำระไม่ได้");
   const problem = firstPaymentProblem(
-    paymentProblems(input, { outstandingSatang: doc.totalSatang - doc.paidSatang, today: bangkokDateString(new Date()) })
+    paymentProblems(input, { outstandingSatang: owedSatang(doc), today: bangkokDateString(new Date()) })
   );
   if (problem) throw new ApiError(400, problem);
   await assertBankAccountUsable(input.bankAccountId);
@@ -345,7 +347,9 @@ export async function recordPayment(invoiceId: string, input: PaymentInput, acto
   const done = await withTransaction(async (conn) => {
     const [inv] = await run(conn, "SELECT status, totalSatang, vatSatang FROM acc_documents WHERE id = ? FOR UPDATE", [invoiceId]);
     if (!inv || inv.status !== "issued") throw new ApiError(409, "ใบแจ้งหนี้นี้เปลี่ยนไปแล้ว — กรุณาเปิดหน้านี้ใหม่");
-    const invoice = { totalSatang: num(inv.totalSatang), vatSatang: num(inv.vatSatang) };
+    // What it comes to now: its credit notes taken off (step 8) — read with locks, under the invoice's.
+    const credited = await creditedOf(conn, invoiceId);
+    const invoice = effectiveInvoice({ totalSatang: num(inv.totalSatang), vatSatang: num(inv.vatSatang), creditedSatang: credited.totalSatang, creditedVatSatang: credited.vatSatang });
     const live = await run(conn, "SELECT id, amountSatang, receiptId, vatSatang FROM acc_payments WHERE documentId = ? AND voidedAt IS NULL FOR UPDATE", [invoiceId]);
     const paidBefore = live.reduce((sum, p) => sum + num(p.amountSatang), 0);
     const owed = invoice.totalSatang - paidBefore;
@@ -456,7 +460,11 @@ export async function voidPayment(paymentId: string, reasonText: string, actor: 
       action: "payment.void",
       documentId: invoiceId,
       docNo: inv ? strOrNull(deposit ? inv.customerPoNo : inv.docNo) : null,
-      detail: `ยกเลิก${deposit ? "เงินมัดจำ" : "รายการรับชำระ"} ${formatSatang(num(p.amountSatang))} บาท${receiptNo ? ` (ใบเสร็จ ${receiptNo})` : ""} · เหตุผล: ${reason}`,
+      // A refund (step 8) is money handed back — a negative payment, no receipt.
+      detail:
+        num(p.amountSatang) < 0
+          ? `ยกเลิกการคืนเงินลูกค้า ${formatSatang(-num(p.amountSatang))} บาท · เหตุผล: ${reason}`
+          : `ยกเลิก${deposit ? "เงินมัดจำ" : "รายการรับชำระ"} ${formatSatang(num(p.amountSatang))} บาท${receiptNo ? ` (ใบเสร็จ ${receiptNo})` : ""} · เหตุผล: ${reason}`,
     });
   });
   return (await getPayment(paymentId))!;
@@ -640,15 +648,18 @@ export interface Receivables {
   totals: Record<AgeingBucket, number> & { all: number };
   missingCert50: MissingCert50[];
   missingCert50Satang: number;
+  /** Invoices paid beyond what they now come to (a credit note took off more than was owed): hand the money back. */
+  refundsDue: { invoiceId: string; invoiceNo: string | null; buyerName: string; refundDueSatang: number }[];
 }
 
 /** Who owes what, by age — and the withholding certificates still to come in. */
 export async function receivables(today: string): Promise<Receivables> {
   const rows = await run(
     null,
-    `SELECT id, docNo, source, issueDate, dueDate, companyId, buyerName, totalSatang, paidSatang
+    // What is owed takes the credit notes off (step 8).
+    `SELECT id, docNo, source, issueDate, dueDate, companyId, buyerName, totalSatang - creditedSatang AS totalSatang, paidSatang
        FROM acc_documents
-      WHERE docType = 'INV' AND status = 'issued' AND paidSatang < totalSatang
+      WHERE docType = 'INV' AND status = 'issued' AND paidSatang + creditedSatang < totalSatang
       ORDER BY issueDate ASC LIMIT 5000`,
     []
   );
@@ -708,5 +719,17 @@ export async function receivables(today: string): Promise<Receivables> {
     missingCert50.push(line);
     if (group) byGroup.set(group, line);
   }
-  return { today, groups, totals, missingCert50, missingCert50Satang: missingCert50.reduce((s, m) => s + m.whtSatang, 0) };
+  const refundRows = await run(
+    null,
+    `SELECT id, docNo, buyerName, totalSatang, creditedSatang, paidSatang FROM acc_documents
+      WHERE docType = 'INV' AND status = 'issued' AND paidSatang + creditedSatang > totalSatang ORDER BY issueDate ASC LIMIT 500`,
+    []
+  );
+  const refundsDue = refundRows.map((r) => ({
+    invoiceId: String(r.id),
+    invoiceNo: strOrNull(r.docNo),
+    buyerName: str(r.buyerName),
+    refundDueSatang: refundDueSatang({ totalSatang: num(r.totalSatang), creditedSatang: num(r.creditedSatang), paidSatang: num(r.paidSatang) }),
+  })).filter((r) => r.refundDueSatang > 0);
+  return { today, groups, totals, missingCert50, missingCert50Satang: missingCert50.reduce((s, m) => s + m.whtSatang, 0), refundsDue };
 }

@@ -48,6 +48,8 @@ interface ReceivablesView {
   totals: Record<AgeingBucket, number> & { all: number };
   missingCert50: MissingCert50View[];
   missingCert50Satang: number;
+  /** Paid beyond what a credit note left the invoice at (step 8). */
+  refundsDue?: { invoiceId: string; invoiceNo: string | null; buyerName: string; refundDueSatang: number }[];
 }
 
 export default function ReceivablesPage() {
@@ -133,6 +135,24 @@ function Receivables() {
         <Card label="เกินกำหนดแล้ว" value={`฿${formatSatang(overdue)}`} note={data.totals.d90plus > 0 ? `เกิน 90 วัน ฿${formatSatang(data.totals.d90plus)}` : "ไม่มีที่เกิน 90 วัน"} tone={overdue > 0 ? "text-red-600" : "text-gray-900"} />
         <Card label="รอ 50 ทวิ จากลูกค้า" value={`฿${formatSatang(data.missingCert50Satang)}`} note={`${data.missingCert50.length} รายการ`} tone={data.missingCert50.length > 0 ? "text-amber-700" : "text-gray-900"} />
       </div>
+
+      {(data.refundsDue ?? []).length > 0 && (
+        <section className="bg-white rounded-2xl border border-red-200 overflow-hidden" data-testid="refunds-due">
+          <h2 className="px-5 pt-4 pb-1 font-bold text-red-700">ต้องคืนเงินลูกค้า</h2>
+          <p className="px-5 pb-3 text-sm text-gray-500">ใบลดหนี้ลดยอดลงมากกว่าที่ยังค้าง ลูกค้าจึงจ่ายเกิน — คืนเงิน (เปิดใบแจ้งหนี้ แล้วกด บันทึกคืนเงินลูกค้า) หรือเก็บไว้หักใบถัดไป</p>
+          <ul className="divide-y divide-gray-100 text-sm tabular-nums">
+            {(data.refundsDue ?? []).map((r) => (
+              <li key={r.invoiceId} className="px-5 py-2.5 flex justify-between gap-3">
+                <span>
+                  <Link href={`/accounting/invoices/${r.invoiceId}`} className="font-semibold text-sky-700 hover:text-sky-800">{r.invoiceNo}</Link>
+                  <span className="text-gray-600"> · {r.buyerName}</span>
+                </span>
+                <span className="font-semibold text-red-600">{formatSatang(r.refundDueSatang)}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <section className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
         <h2 className="px-5 pt-4 pb-2 font-bold text-gray-900">อายุลูกหนี้ตามลูกค้า</h2>

@@ -56,6 +56,7 @@ import {
   peekNextDocNo,
   saleInputFromInvoice,
   updateInvoiceDraft,
+  voidInvoice,
   warrantyEndOf,
   type AccDocument,
 } from "@/app/lib/accounting/documents";
@@ -839,5 +840,121 @@ describe("deleting around a billing note", () => {
     expect(calls).toContainEqual(["UPDATE acc_documents SET paidSatang = ? WHERE id = ?", [0, "B"]]);
     expect(writeAudit).toHaveBeenCalledWith(conn, expect.objectContaining({ documentId: "A", detail: expect.stringContaining("ตามใบวางบิล BN2026110001") }));
     expect(writeAudit).toHaveBeenCalledWith(conn, expect.objectContaining({ documentId: "bn1", detail: expect.stringContaining("1,605.00") }));
+  });
+});
+
+// Step 8 — an issued invoice voided (its number kept), and a credit note deleted.
+describe("voidInvoice", () => {
+  const INV_ROW = { docType: "INV", status: "issued", docNo: "INV2026110005", salesRecordId: "sale-1", salesOrderId: null, buyerName: "บริษัท เอ", totalSatang: 6206000 };
+  const voidDb = (over: { row?: Record<string, unknown> | null; live?: number; notes?: number; billed?: string[]; machines?: { id: string; hasHistory: number }[] } = {}) => {
+    vi.mocked(query).mockImplementation(router([]) as never);
+    conn.query.mockImplementation(router([
+      [/SELECT docType, status, docNo, salesRecordId, salesOrderId, buyerName, totalSatang FROM acc_documents WHERE id = \? FOR UPDATE/, () => (over.row === null ? [] : [{ ...INV_ROW, ...over.row }])],
+      [/COUNT\(\*\) AS n FROM acc_payments WHERE documentId = \? AND voidedAt IS NULL FOR UPDATE/, () => [{ n: over.live ?? 0 }]],
+      [/docType = 'CN' AND status = 'issued' FOR UPDATE/, () => [{ n: over.notes ?? 0 }]],
+      [/FROM acc_billing_items bi JOIN acc_documents b/, () => (over.billed ?? []).map((docNo) => ({ docNo }))],
+      [/SELECT id FROM sales_records WHERE id = \?/, (p) => [{ id: p[0] }]],
+      [/FROM customer_equipments e/, () => over.machines ?? []],
+      [/SELECT id FROM acc_documents WHERE id = \? FOR UPDATE/, () => [{ id: "so1" }]],
+      [/SELECT id, name, unit, qty FROM acc_document_lines WHERE documentId = \?/, () => [{ id: "pol1", name: "เครื่องชั่ง", unit: "เครื่อง", qty: 2 }]],
+      [/SELECT id FROM acc_documents WHERE salesOrderId = \? AND docType = 'INV' AND status = 'issued'/, () => []],
+    ]));
+  };
+
+  it("asks why, within its length, before anything is locked", async () => {
+    await expect(voidInvoice("d1", " ", actor)).rejects.toMatchObject({ status: 400, message: "กรุณาบอกเหตุผลที่ยกเลิก" });
+    await expect(voidInvoice("d1", "ก".repeat(301), actor)).rejects.toMatchObject({ status: 400 });
+    expect(withTransaction).not.toHaveBeenCalled();
+  });
+
+  it("voids only an issued invoice", async () => {
+    voidDb({ row: null });
+    await expect(voidInvoice("d1", "ออกผิด", actor)).rejects.toMatchObject({ status: 404 });
+    voidDb({ row: { docType: "RE" } });
+    await expect(voidInvoice("d1", "ออกผิด", actor)).rejects.toMatchObject({ status: 404 });
+    voidDb({ row: { status: "draft" } });
+    await expect(voidInvoice("d1", "ออกผิด", actor)).rejects.toMatchObject({ status: 409, message: "ร่างยังไม่ใช่เอกสาร — ลบร่างได้เลย ไม่ต้องยกเลิก" });
+    voidDb({ row: { status: "void" } });
+    await expect(voidInvoice("d1", "ออกผิด", actor)).rejects.toMatchObject({ status: 409, message: "ใบแจ้งหนี้นี้ถูกยกเลิกไปแล้ว" });
+  });
+
+  it("refuses while money, a credit note or an open billing note hangs off it — read with locks", async () => {
+    voidDb({ live: 1 });
+    await expect(voidInvoice("d1", "ออกผิด", actor)).rejects.toMatchObject({ status: 409, message: expect.stringContaining("มีรายการรับชำระแล้ว") });
+    voidDb({ notes: 1 });
+    await expect(voidInvoice("d1", "ออกผิด", actor)).rejects.toMatchObject({ status: 409, message: "มีใบลดหนี้ของใบนี้ — ยกเลิกใบลดหนี้ก่อนจึงจะยกเลิกใบแจ้งหนี้ได้" });
+    voidDb({ billed: ["BN2026110001"] });
+    await expect(voidInvoice("d1", "ออกผิด", actor)).rejects.toMatchObject({ status: 409, message: "ใบนี้อยู่ในใบวางบิล BN2026110001 — ยกเลิกใบวางบิลนั้นก่อน" });
+    expect(statements().some((s) => s.includes("SET status = 'void'"))).toBe(false);
+  });
+
+  it("keeps the number marked void with its reason, and takes the sale and history-free machines along", async () => {
+    voidDb({ machines: [{ id: "m1", hasHistory: 0 }, { id: "m2", hasHistory: 1 }] });
+    await voidInvoice("d1", "ลูกค้ายกเลิกคำสั่งซื้อ", actor);
+    const calls = vi.mocked(conn.query).mock.calls;
+    expect(calls).toContainEqual([expect.stringContaining("SET status = 'void', voidReason = ?"), ["ลูกค้ายกเลิกคำสั่งซื้อ", expect.any(String), "admin", expect.any(String), "d1"]]);
+    expect(statements().find((s) => s.includes("SET status = 'void'"))).toContain("salesRecordId = NULL");
+    expect(calls).toContainEqual(["DELETE FROM customer_equipments WHERE id = ?", ["m1"]]);
+    expect(calls).toContainEqual(["UPDATE customer_equipments SET salesRecordId = '' WHERE id = ?", ["m2"]]);
+    expect(calls).toContainEqual(["DELETE FROM sales_records WHERE id = ?", ["sale-1"]]);
+    expect(statements()).not.toContain("DELETE FROM acc_documents WHERE id = ?");
+    expect(releaseDocNoIfLatest).not.toHaveBeenCalled();
+    expect(writeAudit).toHaveBeenCalledWith(conn, expect.objectContaining({
+      action: "doc.void",
+      docNo: "INV2026110005",
+      detail: "ยกเลิกใบแจ้งหนี้ · บริษัท เอ · 62,060.00 บาท · ลบรายการขายใน dashboard · ลบเครื่อง 1 เครื่อง · เก็บเครื่องที่มีประวัติไว้ 1 เครื่อง · เหตุผล: ลูกค้ายกเลิกคำสั่งซื้อ",
+    }));
+  });
+
+  it("a delivery gives its quantities back to the PO — locked after the invoice", async () => {
+    voidDb({ row: { salesOrderId: "so1", salesRecordId: null } });
+    await voidInvoice("d1", "ส่งผิดรุ่น", actor);
+    const order = statements();
+    expect(order.indexOf("SELECT id FROM acc_documents WHERE id = ? FOR UPDATE")).toBeGreaterThan(0);
+    expect(vi.mocked(conn.query).mock.calls).toContainEqual(["UPDATE acc_document_lines SET deliveredQty = ? WHERE id = ?", [0, "pol1"]]);
+    expect(writeAudit).toHaveBeenCalledWith(conn, expect.objectContaining({ detail: expect.stringContaining("คืนจำนวนที่ส่งให้ PO ลูกค้า") }));
+  });
+});
+
+describe("deleting a credit note", () => {
+  it("locks its invoice first and gives the invoice back what it took off — its negative sale goes with it", async () => {
+    conn.query.mockImplementation(router([
+      [/SELECT docType, relatedDocId FROM acc_documents WHERE id = \?$/, () => [{ docType: "CN", relatedDocId: "inv1" }]],
+      [/SELECT id, docType, docNo, salesRecordId, customerPoNo, vatRate FROM acc_documents WHERE id = \? FOR UPDATE/, () => [{ id: "inv1", docType: "INV", docNo: "INV2026110001", salesRecordId: "sale-1", customerPoNo: "", vatRate: "7.00" }]],
+      [/SELECT id, docType, status, docNo, salesRecordId, relatedDocId, .*FROM acc_documents WHERE id = \? FOR UPDATE/, () => [{
+        id: "cn1", docType: "CN", status: "issued", docNo: "CN2026110001", salesRecordId: "credit-sale-1", relatedDocId: "inv1", salesOrderId: null, customerPoNo: "", buyerName: "บริษัท เอ", totalSatang: 107000, vatBaseSatang: 100000,
+      }]],
+      [/COUNT\(\*\) AS n/, () => [{ n: 0 }]],
+      [/FROM acc_counters/, () => [{ lastNo: 1 }]],
+      [/SELECT costAmount FROM sales_records/, () => [{ costAmount: "0.00" }]],
+      [/FROM customer_equipments e/, () => []],
+      [/SUM\(totalSatang\), 0\) AS t, COALESCE\(SUM\(vatSatang\), 0\) AS v/, () => [{ t: 0, v: 0, b: 0 }]],
+    ]));
+    const result = await deleteAccDocument("cn1", actor, { passwordChecked: true });
+    expect(result).toMatchObject({ docNo: "CN2026110001", releasedNumber: true, saleDeleted: true });
+    const calls = vi.mocked(conn.query).mock.calls;
+    expect(calls).toContainEqual(["DELETE FROM sales_records WHERE id = ?", ["credit-sale-1"]]);
+    expect(calls).toContainEqual(["UPDATE acc_documents SET creditedSatang = ?, creditedVatSatang = ? WHERE id = ?", [0, 0, "inv1"]]);
+    const order = statements();
+    expect(order.findIndex((s) => s.startsWith("SELECT id, docType, docNo, salesRecordId, customerPoNo, vatRate"))).toBeLessThan(order.findIndex((s) => s.startsWith("SELECT id, docType, status")));
+    // The credited sum is read under the lock, after the credit note is gone.
+    expect(order.find((s) => s.includes("AS t, COALESCE(SUM(vatSatang)"))).toContain("FOR UPDATE");
+    expect(order.findIndex((s) => s.includes("AS t, COALESCE(SUM(vatSatang)"))).toBeGreaterThan(order.indexOf("DELETE FROM acc_documents WHERE id = ?"));
+    expect(writeAudit).toHaveBeenCalledWith(conn, expect.objectContaining({ documentId: "inv1", detail: "ลบใบลดหนี้ CN2026110001 — 1,070.00 บาท กลับเป็นยอดของใบนี้" }));
+    // Not a receipt: no payment of its own to take, no paid figure to re-sum.
+    expect(calls).not.toContainEqual(["DELETE FROM acc_payments WHERE receiptId = ?", ["cn1"]]);
+    expect(order.some((s) => s.startsWith("UPDATE acc_documents SET paidSatang"))).toBe(false);
+  });
+
+  it("an invoice with a credit note cannot be deleted before it", async () => {
+    conn.query.mockImplementation(router([
+      [/SELECT docType, relatedDocId FROM acc_documents WHERE id = \?$/, () => [{ docType: "INV", relatedDocId: null }]],
+      [/SELECT id, docType, status, docNo, salesRecordId, relatedDocId, .*FROM acc_documents WHERE id = \? FOR UPDATE/, () => [{
+        id: "inv1", docType: "INV", status: "issued", docNo: "INV2026110001", salesRecordId: null, relatedDocId: null, salesOrderId: null, customerPoNo: "", buyerName: "บริษัท เอ", totalSatang: 214000,
+      }]],
+      [/COUNT\(\*\) AS n FROM acc_payments/, () => [{ n: 0 }]],
+      [/WHERE relatedDocId = \? OR salesOrderId = \?/, () => [{ n: 1 }]],
+    ]));
+    await expect(deleteAccDocument("inv1", actor, { passwordChecked: true })).rejects.toMatchObject({ status: 409, message: expect.stringContaining("ใบลดหนี้") });
   });
 });

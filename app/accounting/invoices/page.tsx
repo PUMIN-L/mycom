@@ -28,6 +28,8 @@ interface Row {
   customerPoNo: string;
   totalSatang: number;
   paidSatang: number;
+  /** What its credit notes took off it — counts as settled in its status (step 8). */
+  creditedSatang?: number;
 }
 interface Summary {
   outstandingSatang: number;

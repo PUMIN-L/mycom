@@ -554,7 +554,8 @@ function PlanSection({
   const plan = detail.plan ?? [];
   const planned = plan.reduce((s, p) => s + p.amountSatang, 0);
   // The oldest delivery still owing — where an item collected on the invoices is received.
-  const owing = detail.deliveries.find((d) => d.status === "issued" && (d.paidSatang ?? 0) < d.totalSatang);
+  // Its credit notes count as settled (step 8).
+  const owing = detail.deliveries.find((d) => d.status === "issued" && (d.paidSatang ?? 0) + (d.creditedSatang ?? 0) < d.totalSatang);
   return (
     <section className="bg-white rounded-2xl border border-gray-200 p-5" aria-labelledby="order-plan">
       <div className="flex items-center justify-between gap-3 mb-2">

@@ -6,6 +6,7 @@ import { billingNotesOf, deleteAccDocument, deletionImpact, getAccDocument, upda
 import { cleanInvoiceInput } from "../../../../lib/accounting/invoiceRules";
 import { getSellerProfile, getSellerVersion } from "../../../../lib/accounting/settings";
 import { receiptDetail } from "../../../../lib/accounting/payments";
+import { creditContext } from "../../../../lib/accounting/creditNotes";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -20,14 +21,19 @@ export const GET = withRoute("โหลดเอกสารไม่สำเ�
   if (!doc) return jsonError("ไม่พบเอกสารนี้", 404);
   const seller = doc.sellerVersionId ? await getSellerVersion(doc.sellerVersionId) : (await getSellerProfile()).seller;
   const receipt = doc.docType === "RE" ? await receiptDetail(id, doc.relatedDocId) : undefined;
-  // An issued invoice: the billing notes it is on (step 7).
+  // An issued invoice: the billing notes it is on (step 7), its credit notes and any money due back (step 8).
   const billingNotes = doc.docType === "INV" && doc.status !== "draft" ? await billingNotesOf(id) : [];
+  const credit = doc.docType === "INV" && doc.status !== "draft" ? await creditContext(id, doc) : null;
+  // A credit note: the invoice it is set against.
+  const creditOf = doc.docType === "CN" && doc.relatedDocId ? await getAccDocument(doc.relatedDocId) : null;
   return noStoreJson({
     document: doc,
     seller,
     impact: await deletionImpact(id),
     ...(receipt ? { receipt } : {}),
     ...(billingNotes.length > 0 ? { billingNotes } : {}),
+    ...(credit ? { credit: { creditNotes: credit.creditNotes, refundDueSatang: credit.refundDueSatang } } : {}),
+    ...(creditOf ? { creditOf: { id: creditOf.id, docNo: creditOf.docNo, issueDate: creditOf.issueDate, isTaxInvoice: creditOf.isTaxInvoice } } : {}),
   });
 });
 

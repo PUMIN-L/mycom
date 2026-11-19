@@ -29,6 +29,7 @@ import {
   updateCostItem,
   deleteCostItem,
   createSaleWithLineItems,
+  insertCreditSaleTx,
   syncCostItems,
   ProductCostIsPerLineError,
   ProductCostNotAttributableError,
@@ -496,7 +497,7 @@ describe('salesDashboardStore', () => {
       await getDashboardOverview('2026-08-01', '2026-09-01', '2026-07-01', '2026-08-01');
       const dealCalls = vi.mocked(query).mock.calls.filter(([sql]) => String(sql).includes(' AS deals'));
       expect(dealCalls).toHaveLength(2);
-      for (const [sql] of dealCalls) expect(sql).toContain('COUNT(DISTINCT COALESCE(dealId, id)) AS deals');
+      for (const [sql] of dealCalls) expect(sql).toContain('COUNT(DISTINCT CASE WHEN totalAmount >= 0 THEN COALESCE(dealId, id) END) AS deals');
     });
 
     it('counts ONLY quotation docNos (QT prefix), not invoices/billing notes/receipts sharing the same ledger', async () => {
@@ -862,6 +863,8 @@ describe('salesDashboardStore', () => {
 
       const [sql] = vi.mocked(query).mock.calls[0];
       expect(sql).toContain('sr.saleDate >= ?');
+      // A credit note lowers the customer's revenue but is no deal of its own.
+      expect(sql).toContain('COUNT(DISTINCT CASE WHEN sr.totalAmount >= 0 THEN COALESCE(sr.dealId, sr.id) END) AS deals');
     });
 
     it('getTopCustomers falls back to a placeholder name when missing', async () => {
@@ -905,7 +908,7 @@ describe('salesDashboardStore', () => {
       expect(insights.some((i) => i.title.includes('2 เครื่องประกันจะหมด'))).toBe(true);
       // A customer PO delivered in parts is one purchase, not a repeat.
       const repeatSql = vi.mocked(query).mock.calls.map(([sql]) => String(sql)).find((s) => s.includes('repeaters'))!;
-      expect(repeatSql).toContain('COUNT(DISTINCT COALESCE(dealId, id)) AS cnt');
+      expect(repeatSql).toContain('COUNT(DISTINCT CASE WHEN totalAmount >= 0 THEN COALESCE(dealId, id) END) AS cnt');
     });
 
     it('uses the Bangkok calendar month for the dormant-customer 6-month cutoff, not the server-local one', async () => {
@@ -928,6 +931,8 @@ describe('salesDashboardStore', () => {
         // 6 months before Bangkok's 2026-02-01 is 2025-08-01, not 2025-07-01
         // (which is what the server's own UTC date at that instant would give).
         expect(dormantCall?.[1]).toEqual(['2025-08-01']);
+        // A credit note in those months (a negative sale) is no purchase — the customer may still be dormant.
+        expect(String(dormantCall?.[0])).toContain('WHERE saleDate >= ? AND totalAmount >= 0');
       } finally {
         vi.useRealTimers();
       }
@@ -1489,7 +1494,7 @@ describe('salesDashboardStore — schema v33 line items', () => {
       expect(categories.reduce((s, c) => s + c.percentage, 0)).toBe(100);
 
       const sql = String(vi.mocked(query).mock.calls[0][0]);
-      expect(sql).toContain('COUNT(DISTINCT COALESCE(sr.dealId, sri.salesRecordId)) AS deals');
+      expect(sql).toContain('COUNT(DISTINCT CASE WHEN COALESCE(sr.totalAmount, 0) >= 0 THEN COALESCE(sr.dealId, sri.salesRecordId) END) AS deals');
       expect(sql).toContain('GROUP BY sri.categoryId');
     });
 
@@ -1506,7 +1511,7 @@ describe('salesDashboardStore — schema v33 line items', () => {
       expect(products.reduce((s, p) => s + p.revenue, 0)).toBe(BILL_TOTAL);
 
       const sql = String(vi.mocked(query).mock.calls[0][0]);
-      expect(sql).toContain('COUNT(DISTINCT COALESCE(sr.dealId, sri.salesRecordId)) AS deals');
+      expect(sql).toContain('COUNT(DISTINCT CASE WHEN COALESCE(sr.totalAmount, 0) >= 0 THEN COALESCE(sr.dealId, sri.salesRecordId) END) AS deals');
       expect(sql).toContain('GROUP BY sri.productId, sri.productName');
     });
   });
@@ -2410,5 +2415,68 @@ describe('addSalesRecord — warranty dates', () => {
     const params = vi.mocked(query).mock.calls[0][1] as unknown[];
     expect(params[18]).toBeNull(); // warrantyStartDate
     expect(params[19]).toBe('2028-02-29'); // warrantyEndDate
+  });
+});
+
+// Step 8 — a credit note's sale: negative amounts, the same deal, in its own month.
+describe('insertCreditSaleTx', () => {
+  const CREDIT = {
+    saleDate: '2026-11-19',
+    dealId: 'sale-1',
+    salespersonId: 'sp1',
+    customerId: 'c1',
+    companyId: 'co1',
+    saleType: 'equipment',
+    poRef: 'PO-77',
+    invoiceRef: 'CN2026110001',
+    note: 'ใบลดหนี้ CN2026110001 ของใบแจ้งหนี้ INV2026110001',
+    lines: [
+      // Two machines taken back; the installation's price cut takes no quantity.
+      { productId: 'p1', productName: 'เครื่องวัดความดัน', categoryId: 4, qty: -2, totalAmount: -600 },
+      { productId: '', productName: 'ค่าติดตั้ง', categoryId: null, qty: 0, totalAmount: -400 },
+    ],
+  };
+
+  it('writes the sale and its lines with negative amounts, in the deal of the invoice it lowers', async () => {
+    conn.query.mockResolvedValue([{}, []]);
+    const id = await insertCreditSaleTx(conn as never, CREDIT);
+    const [saleSql, sale] = conn.query.mock.calls[0];
+    expect(String(saleSql)).toContain('INSERT INTO sales_records');
+    expect(String(saleSql)).toContain('dealId');
+    const values = sale as unknown[];
+    expect(values[0]).toBe(id);
+    // The line taking the most off names the sale; the total is every line's.
+    expect(values.slice(4, 10)).toEqual(['p1', 'เครื่องวัดความดัน', 4, -2, 300, -1000]);
+    expect(values[10]).toBe(0); // no cost
+    expect(values[12]).toBe('2026-11-19');
+    expect(values[16]).toBe('CN2026110001');
+    expect(values[values.length - 1]).toBe('sale-1');
+    const items = conn.query.mock.calls.slice(1);
+    expect(items).toHaveLength(2);
+    expect(items.map(([, v]) => [(v as unknown[])[3], (v as unknown[])[5], (v as unknown[])[6], (v as unknown[])[7]])).toEqual([
+      ['เครื่องวัดความดัน', -2, 300, -600],
+      ['ค่าติดตั้ง', 0, -400, -400],
+    ]);
+  });
+
+  it('never writes a positive amount or quantity from it, and refuses no lines at all', async () => {
+    conn.query.mockResolvedValue([{}, []]);
+    await insertCreditSaleTx(conn as never, { ...CREDIT, lines: [{ ...CREDIT.lines[0], qty: 3, totalAmount: 250 }] });
+    expect((conn.query.mock.calls[0][1] as unknown[])[9]).toBe(0);
+    expect((conn.query.mock.calls[0][1] as unknown[])[7]).toBe(0);
+    await expect(insertCreditSaleTx(conn as never, { ...CREDIT, lines: [] })).rejects.toThrow();
+  });
+});
+
+describe('a credit note sale on the dashboard form', () => {
+  it('cannot be edited there — the form would clamp it to ฿0 and lose the reduction', async () => {
+    vi.mocked(query)
+      .mockResolvedValueOnce([[{ id: 'credit-sale-1', totalAmount: '-1000.00', qty: 1 }]] as never)
+      .mockResolvedValueOnce([[]] as never);
+    await expect(updateSalesRecord('credit-sale-1', { qty: 1, totalAmount: 0 })).rejects.toMatchObject({
+      status: 409,
+      message: 'รายการนี้มาจากใบลดหนี้ — แก้ไขหรือยกเลิกที่ระบบบัญชี (ใบลดหนี้) แทน',
+    });
+    expect(conn.query).not.toHaveBeenCalled();
   });
 });

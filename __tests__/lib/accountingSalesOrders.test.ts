@@ -352,7 +352,7 @@ describe("salesOrderDetail", () => {
       ...stored(),
       [/COALESCE\(SUM\(depositSatang\), 0\) AS d/, () => [{ d: 3000000 }]],
       [/FROM acc_documents WHERE salesOrderId = \? AND docType = 'INV'/, () => [
-        { id: "inv1", docNo: "INV2026110001", status: "issued", source: "internal", issueDate: "2026-11-12", totalSatang: 7490000, paidSatang: 5000000, discountSatang: 0, depositSatang: 3000000 },
+        { id: "inv1", docNo: "INV2026110001", status: "issued", source: "internal", issueDate: "2026-11-12", totalSatang: 7490000, paidSatang: 5000000, creditedSatang: "107000", discountSatang: 0, depositSatang: 3000000 },
       ]],
       [/SELECT id, amountSatang, receiptId FROM acc_payments WHERE documentId = \? AND voidedAt IS NULL/, () => [{ id: "p1", amountSatang: 3210000, receiptId: "re1" }]],
       [/SELECT id, vatBaseSatang FROM acc_documents WHERE id IN/, () => [{ id: "re1", vatBaseSatang: 3000000 }]],
@@ -363,7 +363,8 @@ describe("salesOrderDetail", () => {
     ]) as never);
     const detail = (await salesOrderDetail("so1", "2026-11-19"))!;
     expect(detail.deposits).toEqual({ receivedSatang: 3210000, receivedExVatSatang: 3000000, deductedSatang: 3000000, leftSatang: 0 });
-    expect(detail.deliveries[0]).toMatchObject({ paidSatang: 5000000, depositSatang: 3000000 });
+    // What its credit notes took off it comes along (step 8) — the PO page counts it as settled.
+    expect(detail.deliveries[0]).toMatchObject({ paidSatang: 5000000, creditedSatang: 107000, depositSatang: 3000000 });
     expect(detail.plan).toEqual([
       { id: "i1", label: "มัดจำ 30%", stage: "deposit", amountSatang: 3210000, dueDate: "2026-11-10", receivedSatang: 3210000, status: "paid", late: false },
       { id: "i2", label: "ส่งของ 70%", stage: "invoice", amountSatang: 7490000, dueDate: "2026-11-15", receivedSatang: 5000000, status: "partial", late: true },

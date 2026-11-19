@@ -12,6 +12,7 @@ import { writeAudit } from "./audit";
 import { recomputePaidSatang, syncSaleReceiptRef } from "./paymentLedger";
 import { checkDeliveryTx, draftDeliveryProblem, lockOrderTx, recomputeDeliveredTx } from "./orderDelivery";
 import { assertDepositNotDeductedTx } from "./depositLedger";
+import { recomputeCreditedTx } from "./creditLedger";
 import { getSellerProfile, getVatRate } from "./settings";
 import { allocateProportionally, computeTotals, formatSatang, lineAmountSatang, satangToBaht, withVatOverride, type DocTotals } from "./money";
 import {
@@ -74,6 +75,11 @@ export interface AccDocument {
   vatSatang: number;
   totalSatang: number;
   paidSatang: number;
+  /** An invoice: what its issued credit notes took off it — VAT included, and its VAT (a cache, step 8). */
+  creditedSatang: number;
+  creditedVatSatang: number;
+  /** A credit note: the value it was set against, before VAT, as printed. */
+  refValueSatang: number | null;
   customerPoNo: string;
   projectName: string;
   note: string;
@@ -108,6 +114,8 @@ export interface AccListRow {
   customerPoNo: string;
   totalSatang: number;
   paidSatang: number;
+  /** What its issued credit notes took off it (step 8). */
+  creditedSatang: number;
   /** A receipt's invoice (RE → INV). */
   relatedDocId: string | null;
   relatedDocNo: string | null;
@@ -168,6 +176,9 @@ function rowToDoc(r: RowDataPacket, lines: AccDocumentLine[]): AccDocument {
     vatSatang: num(r.vatSatang),
     totalSatang: num(r.totalSatang),
     paidSatang: num(r.paidSatang),
+    creditedSatang: num(r.creditedSatang),
+    creditedVatSatang: num(r.creditedVatSatang),
+    refValueSatang: r.refValueSatang === null || r.refValueSatang === undefined ? null : num(r.refValueSatang),
     customerPoNo: str(r.customerPoNo),
     projectName: str(r.projectName),
     note: str(r.note),
@@ -231,7 +242,7 @@ export async function listAccDocuments(opts: { type: AccDocType; from?: string; 
     params.push(like, like, like, like);
   }
   const [rows] = await query<RowDataPacket[]>(
-    `SELECT id, docType, docNo, status, source, isTaxInvoice, issueDate, dueDate, buyerName, projectName, customerPoNo, totalSatang, paidSatang,
+    `SELECT id, docType, docNo, status, source, isTaxInvoice, issueDate, dueDate, buyerName, projectName, customerPoNo, totalSatang, paidSatang, creditedSatang,
             relatedDocId,
             (SELECT COALESCE(rel.docNo, CONCAT('PO ', rel.customerPoNo)) FROM acc_documents rel WHERE rel.id = d.relatedDocId) AS relatedDocNo,
             (SELECT rel.docType FROM acc_documents rel WHERE rel.id = d.relatedDocId) AS relatedDocType
@@ -253,6 +264,7 @@ export async function listAccDocuments(opts: { type: AccDocType; from?: string; 
     customerPoNo: str(r.customerPoNo),
     totalSatang: num(r.totalSatang),
     paidSatang: num(r.paidSatang),
+    creditedSatang: num(r.creditedSatang),
     relatedDocId: strOrNull(r.relatedDocId),
     relatedDocNo: strOrNull(r.relatedDocNo),
     relatedDocType: strOrNull(r.relatedDocType),
@@ -269,12 +281,13 @@ export interface DocumentSummary {
 
 /** What is still owed across every issued invoice (whatever the list's filter), and what was issued in [monthStart, monthEnd). */
 export async function documentSummary(today: string, monthStart: string, monthEnd: string): Promise<DocumentSummary> {
-  const owed = "status = 'issued' AND paidSatang < totalSatang";
+  // What is owed takes the credit notes off (step 8).
+  const owed = "status = 'issued' AND paidSatang + creditedSatang < totalSatang";
   const [rows] = await query<RowDataPacket[]>(
     `SELECT
-       COALESCE(SUM(CASE WHEN ${owed} THEN totalSatang - paidSatang END), 0) AS outstanding,
+       COALESCE(SUM(CASE WHEN ${owed} THEN totalSatang - creditedSatang - paidSatang END), 0) AS outstanding,
        COALESCE(SUM(CASE WHEN ${owed} THEN 1 ELSE 0 END), 0) AS outstandingCount,
-       COALESCE(SUM(CASE WHEN ${owed} AND dueDate IS NOT NULL AND dueDate < ? THEN totalSatang - paidSatang END), 0) AS overdue,
+       COALESCE(SUM(CASE WHEN ${owed} AND dueDate IS NOT NULL AND dueDate < ? THEN totalSatang - creditedSatang - paidSatang END), 0) AS overdue,
        COALESCE(SUM(CASE WHEN ${owed} AND dueDate IS NOT NULL AND dueDate < ? THEN 1 ELSE 0 END), 0) AS overdueCount,
        COALESCE(SUM(CASE WHEN status = 'issued' AND issueDate >= ? AND issueDate < ? THEN totalSatang END), 0) AS issuedInMonth
      FROM acc_documents WHERE docType = 'INV'`,
@@ -809,7 +822,9 @@ export async function deleteAccDocument(id: string, actor: Actor, opts: { passwo
     // A receipt's invoice is locked BEFORE the receipt: the order every
     // payment change takes (payments.ts), so the two cannot deadlock.
     const [peek] = await run(conn, "SELECT docType, relatedDocId FROM acc_documents WHERE id = ?", [id]);
-    const paidInvoiceId = peek?.docType === "RE" ? strOrNull(peek.relatedDocId) : null;
+    // A receipt's — or a credit note's — invoice is locked BEFORE it, the order every change to what an invoice owes takes.
+    const paidInvoiceId = peek?.docType === "RE" || peek?.docType === "CN" ? strOrNull(peek.relatedDocId) : null;
+    const creditedInvoice = peek?.docType === "CN";
     // What a receipt pays: an invoice — or, for a deposit, the customer PO.
     const [paidInvoice] = paidInvoiceId
       ? await run(conn, "SELECT id, docType, docNo, salesRecordId, customerPoNo, vatRate FROM acc_documents WHERE id = ? FOR UPDATE", [paidInvoiceId])
@@ -891,7 +906,17 @@ export async function deleteAccDocument(id: string, actor: Actor, opts: { passwo
     if (deliveredFrom && orderLocked) await recomputeDeliveredTx(conn, deliveredFrom);
 
     const livePayment = impact.receiptPayment && !impact.receiptPayment.voided ? impact.receiptPayment : null;
-    if (paidInvoice && paidInvoice.docType === "BN") {
+    if (creditedInvoice && paidInvoice) {
+      // A credit note: what it took off goes back on its invoice.
+      await recomputeCreditedTx(conn, String(paidInvoice.id));
+      await writeAudit(conn, {
+        ...actor,
+        action: "doc.delete",
+        documentId: String(paidInvoice.id),
+        docNo: strOrNull(paidInvoice.docNo),
+        detail: `ลบใบลดหนี้ ${doc.docNo ?? ""} — ${formatSatang(num(row.totalSatang))} บาท กลับเป็นยอดของใบนี้`,
+      });
+    } else if (paidInvoice && paidInvoice.docType === "BN") {
       // A billing note's receipt: each invoice it paid owes its share again.
       for (const invoiceId of impact.receiptPayment?.invoiceIds ?? []) {
         await recomputePaidSatang(conn, invoiceId);
@@ -950,6 +975,86 @@ export async function deleteAccDocument(id: string, actor: Actor, opts: { passwo
     });
     return { docNo: doc.docNo, releasedNumber, machinesDeleted, machinesKept, saleDeleted };
   });
+}
+
+// ── Void an issued invoice (step 8) ─────────────────────────────────────────
+
+export const INVOICE_VOID_REASON_MAX = 300;
+
+/**
+ * Voids an issued invoice — for one handed to the customer and wrong (a test
+ * one is deleted instead): its number stays, marked ยกเลิก with the reason;
+ * what issuing created goes — its sale (and the costs typed into it; the
+ * dialog says so first) and the machines no service was recorded against
+ * (the others kept, unlinked); a delivery's quantities go back to its PO, its
+ * deposit deduction with them. Refused while money is recorded on it, a credit
+ * note still stands on it, or an open billing note lists it. The route asks
+ * for the password first.
+ */
+export async function voidInvoice(id: string, reasonText: string, actor: Actor): Promise<AccDocument> {
+  const reason = String(reasonText ?? "").trim();
+  if (!reason) throw new ApiError(400, "กรุณาบอกเหตุผลที่ยกเลิก");
+  if (reason.length > INVOICE_VOID_REASON_MAX) throw new ApiError(400, `เหตุผลยาวเกิน ${INVOICE_VOID_REASON_MAX} ตัวอักษร`);
+  await withTransaction(async (conn) => {
+    const [row] = await run(conn, "SELECT docType, status, docNo, salesRecordId, salesOrderId, buyerName, totalSatang FROM acc_documents WHERE id = ? FOR UPDATE", [id]);
+    if (!row || row.docType !== "INV") throw new ApiError(404, "ไม่พบใบแจ้งหนี้นี้");
+    if (row.status === "draft") throw new ApiError(409, "ร่างยังไม่ใช่เอกสาร — ลบร่างได้เลย ไม่ต้องยกเลิก");
+    if (row.status !== "issued") throw new ApiError(409, "ใบแจ้งหนี้นี้ถูกยกเลิกไปแล้ว");
+    // Locking reads, as for a delete: a payment or credit note committed while this waited counts.
+    const [live] = await run(conn, "SELECT COUNT(*) AS n FROM acc_payments WHERE documentId = ? AND voidedAt IS NULL FOR UPDATE", [id]);
+    if (num(live?.n) > 0) throw new ApiError(409, "ใบนี้มีรายการรับชำระแล้ว — ยกเลิกรายการรับชำระก่อนจึงจะยกเลิกใบแจ้งหนี้ได้");
+    const [notes] = await run(conn, "SELECT COUNT(*) AS n FROM acc_documents WHERE relatedDocId = ? AND docType = 'CN' AND status = 'issued' FOR UPDATE", [id]);
+    if (num(notes?.n) > 0) throw new ApiError(409, "มีใบลดหนี้ของใบนี้ — ยกเลิกใบลดหนี้ก่อนจึงจะยกเลิกใบแจ้งหนี้ได้");
+    const billedOn = await run(
+      conn,
+      "SELECT b.docNo FROM acc_billing_items bi JOIN acc_documents b ON b.id = bi.billingNoteId WHERE bi.invoiceId = ? AND b.status = 'issued' FOR UPDATE",
+      [id]
+    );
+    if (billedOn.length > 0) throw new ApiError(409, `ใบนี้อยู่ในใบวางบิล ${billedOn.map((b) => str(b.docNo)).join(", ")} — ยกเลิกใบวางบิลนั้นก่อน`);
+    // A delivery: its PO locked now (after the invoice), its quantities given back below.
+    const deliveredFrom = strOrNull(row.salesOrderId);
+    const orderLocked = deliveredFrom ? await lockOrderTx(conn, deliveredFrom) : false;
+
+    const now = new Date().toISOString();
+    await conn.query("UPDATE acc_documents SET status = 'void', voidReason = ?, voidedAt = ?, voidedBy = ?, updatedAt = ?, salesRecordId = NULL WHERE id = ?", [
+      reason,
+      now,
+      actor.username,
+      now,
+      id,
+    ]);
+    let machinesDeleted = 0;
+    let machinesKept = 0;
+    let saleDeleted = false;
+    const saleId = strOrNull(row.salesRecordId);
+    const [sale] = saleId ? await run(conn, "SELECT id FROM sales_records WHERE id = ?", [saleId]) : [];
+    if (sale) {
+      for (const unit of await machinesOf(conn, String(sale.id))) {
+        if (unit.hasHistory) {
+          await conn.query("UPDATE customer_equipments SET salesRecordId = '' WHERE id = ?", [unit.id]);
+          machinesKept += 1;
+        } else {
+          await conn.query("DELETE FROM customer_equipments WHERE id = ?", [unit.id]);
+          machinesDeleted += 1;
+        }
+      }
+      await conn.query("DELETE FROM sales_record_items WHERE salesRecordId = ?", [sale.id]);
+      await conn.query("DELETE FROM sale_cost_items WHERE salesRecordId = ?", [sale.id]);
+      await conn.query("DELETE FROM sales_records WHERE id = ?", [sale.id]);
+      saleDeleted = true;
+    }
+    if (deliveredFrom && orderLocked) await recomputeDeliveredTx(conn, deliveredFrom);
+    const parts = [
+      `ยกเลิกใบแจ้งหนี้ · ${str(row.buyerName)} · ${formatSatang(num(row.totalSatang))} บาท`,
+      saleDeleted ? "ลบรายการขายใน dashboard" : null,
+      machinesDeleted ? `ลบเครื่อง ${machinesDeleted} เครื่อง` : null,
+      machinesKept ? `เก็บเครื่องที่มีประวัติไว้ ${machinesKept} เครื่อง` : null,
+      deliveredFrom && orderLocked ? "คืนจำนวนที่ส่งให้ PO ลูกค้า" : null,
+      `เหตุผล: ${reason}`,
+    ].filter(Boolean);
+    await writeAudit(conn, { ...actor, action: "doc.void", documentId: id, docNo: strOrNull(row.docNo), detail: parts.join(" · ") });
+  });
+  return (await getAccDocument(id))!;
 }
 
 // ── A document issued elsewhere, recorded here (step 3) ─────────────────────

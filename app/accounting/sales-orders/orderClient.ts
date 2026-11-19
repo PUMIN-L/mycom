@@ -43,7 +43,7 @@ export interface OrderDetailView {
   };
   orderStatus: OrderStatus;
   backlogSatang: number;
-  deliveries: { id: string; docNo: string | null; status: string; source: string; issueDate: string; totalSatang: number; paidSatang?: number; depositSatang?: number }[];
+  deliveries: { id: string; docNo: string | null; status: string; source: string; issueDate: string; totalSatang: number; paidSatang?: number; creditedSatang?: number; depositSatang?: number }[];
   invoicedLineDiscounts: Record<string, number>;
   invoicedBillDiscountSatang: number;
   /** Its deposits (step 6) — absent from an older answer. */

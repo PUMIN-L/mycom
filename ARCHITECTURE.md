@@ -948,7 +948,7 @@ line items (`LEFT JOIN` + `COALESCE` so lines with no product/category still lan
 in the existing `"ไม่ระบุสินค้า"` / `"ไม่ระบุหมวด"` buckets rather than
 disappearing; `deals = COUNT(DISTINCT COALESCE(sr.dealId, salesRecordId))`, one
 bill = one deal — and since v51 every delivery of one customer PO is still that
-one deal, §8g step 5).
+one deal, §8g step 5; a credit note's negative sale is never a deal, §8g step 8).
 
 - The scalar columns on `sales_records` are still filled, because the overview
   cards and exports read them: `qty`/`totalAmount`/`costAmount` = the **sums**
@@ -1246,7 +1246,7 @@ the product forms that link suppliers said ผู้ผลิต.
   period opens it. Export writes exactly the table's list, money as numbers
   (mysql2 sends DECIMAL as strings, which Excel kept as text).
 
-### 8g. Accounting module (`/accounting`, schema v50–53) — sales side
+### 8g. Accounting module (`/accounting`, schema v50–54) — sales side
 The in-house accounting module that is replacing `/billing` for issuing
 documents (plan: 10 steps; this section grows with each). Files:
 [`lib/accounting/`](./app/lib/accounting/), routes under
@@ -1447,7 +1447,8 @@ documents (plan: 10 steps; this section grows with each). Files:
     every deal count is `COUNT(DISTINCT COALESCE(dealId, id))` — overview,
     charts, top products/customers, leaderboard and the repeat-customer
     insight — so revenue lands month by month as delivered while a PO in three
-    deliveries is still one deal.
+    deliveries is still one deal. (Over `totalAmount >= 0` rows only since
+    step 8: a credit note's negative sale lowers revenue but is no deal.)
   - **"ยอดรอส่งของ · ณ วันนี้"** on /dashboard (`GET /api/accounting/sales-orders/backlog`):
     every open PO still holding something, as of today in Bangkok whatever
     period the page shows, **ex VAT** (`backlogSatang` — the undelivered share
@@ -1542,6 +1543,60 @@ documents (plan: 10 steps; this section grows with each). Files:
     the BN first, then its invoices, then payments and receipts — so these
     queue behind each other. On an invoice page such a payment says it came
     through the note, and that voiding it voids all of it.
+- **Credit notes, voiding an invoice, refunds (step 8, schema v54)** —
+  [`creditNotes.ts`](./app/lib/accounting/creditNotes.ts), rules in
+  [`creditRules.ts`](./app/lib/accounting/creditRules.ts), the credited sum in
+  [`creditLedger.ts`](./app/lib/accounting/creditLedger.ts); routes under
+  [`api/accounting/credit-notes/`](./app/api/accounting/credit-notes/) and
+  `documents/[id]/void` · `documents/[id]/refunds`; pages under
+  [`app/accounting/credit-notes/`](./app/accounting/credit-notes/) (tab
+  "ใบลดหนี้"; "ออกใบลดหนี้" on an issued invoice).
+  - **A credit note (ใบลดหนี้, CN)** is issued at once (CN + month + running
+    number) against an issued invoice (`relatedDocId`), in the cases §86/10
+    allows (picked from `CREDIT_REASONS`, or typed). It is a tax document when
+    the invoice was the tax invoice (goods); a services invoice that is not yet
+    the tax invoice gets a plain one, and only what is still owed can come off
+    it (what was received went out on receipts that ARE tax invoices). Its
+    lines are the invoice's own, picked and cut back (a line's discount shared
+    by the quantity), or one typed in for a price cut — at the invoice's price
+    mode and VAT rate; never more than the invoice has left. The paper prints
+    what §86/10 asks: the original invoice's number, date and value
+    (`refValueSatang` — the value less earlier credit notes, kept at issue),
+    the correct value, the difference and the VAT on it, and why.
+  - **The invoice keeps what its issued credit notes took off it**
+    (`creditedSatang` / `creditedVatSatang`, v54) — a cache with ONE writer,
+    `recomputeCreditedTx`, a full re-sum like `paidSatang` (issue, void and
+    delete of a CN all call it, under the invoice's lock). Everything that asks
+    what an invoice owes takes it off: **owed = total − credited − paid**
+    (`owedSatang`; receivables, the summary cards, the invoice list's status,
+    billing notes, the PO page). Its payments see the invoice as
+    `effectiveInvoice` (total and VAT less what was credited), so the receipt
+    that settles it declares the VAT that is left; a billing note's invoice
+    shrinks its service base in proportion, as the single-payment dialog does.
+  - **The dashboard (the owner's choice, 2026-11-19)**: sales go down in the
+    credit note's OWN month — the original month stays as it was — as a sale of
+    NEGATIVE amounts (`insertCreditSaleTx`, ex VAT) in the invoice sale's deal
+    (`dealId`). Quantity goes down only for goods taken back (the "รับคืนสินค้า"
+    case; a price cut takes value only, qty 0). It is no purchase: every deal
+    count is over `totalAmount >= 0` rows only, and the dormant-customer
+    insight ignores it. The dashboard form refuses to edit it (409 — it would
+    clamp it to ฿0); voiding or deleting the CN removes it.
+  - **Money due back**: a credit note on an invoice already paid leaves the
+    customer having paid too much (`refundDueSatang`). The invoice page and
+    receivables say "ต้องคืนเงินลูกค้า"; **บันทึกคืนเงิน** records it as a
+    payment of a NEGATIVE amount — no receipt, no VAT (the CN took that off) —
+    never more than is due, checked under the invoice's lock; voided like any
+    payment. The credit may also simply stay for the next invoice.
+  - **Voiding** keeps the number in the register, marked ยกเลิก with the
+    reason (route: the reason first, then the password — a typo spends no
+    try). A **credit note**: the invoice owes its value again, its negative
+    sale goes. An **invoice** (`voidInvoice`, for one already sent; a test one
+    is deleted): refused while it has a live payment, an issued credit note or
+    an open billing note (the page offers the button only when none hangs
+    off it); its sale and history-free machines go (others kept, unlinked), a
+    delivery's quantities go back to its PO; printed, it says ยกเลิก across
+    it. Deleting a CN locks its invoice first and gives the value back too.
+    Locks: the invoice, then its credit notes / payments.
 
 ### 9. Email (contact form) + lead persistence
 [`app/lib/mailer.ts`](./app/lib/mailer.ts) sends via SMTP (`nodemailer`, Gmail by

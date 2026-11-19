@@ -1,5 +1,6 @@
 import "server-only";
 import { query, withTransaction } from "./db";
+import { ApiError } from "./apiHelpers";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { sanitizePlainText } from "./sanitizeHtml";
 import { bangkokDateString, bangkokParts, isValidDateString } from "./dateFormat";
@@ -408,6 +409,9 @@ export async function updateSalesRecord(
 ): Promise<SalesRecord | null> {
   const existing = await getSalesRecord(id);
   if (!existing) return null;
+  // A credit note's reduction (negative amounts) belongs to the accounting
+  // module — this form would clamp it to ฿0 and lose the reduction.
+  if (Number(existing.totalAmount) < 0) throw new ApiError(409, "รายการนี้มาจากใบลดหนี้ — แก้ไขหรือยกเลิกที่ระบบบัญชี (ใบลดหนี้) แทน");
   /** The stored sale, cleaned — the baseline every "did this change?" test uses. */
   const before = cleanInput(existing);
   const v = cleanInput({ ...existing, ...data });
@@ -800,6 +804,75 @@ export async function insertPreparedSaleTx(conn: TxConnection, prepared: Prepare
   return id;
 }
 
+/**
+ * A credit note's reduction of sales (accounting step 8 — the owner's choice:
+ * in the credit note's OWN month, the original month kept as it was): a sale
+ * whose amounts are NEGATIVE, dated the credit note's day, in the deal of the
+ * sale it reduces (`dealId`, so the deal count does not move). Written here by
+ * hand, because every other writer keeps amounts at ฿0 or above — and never
+ * edited from the dashboard's form (`updateSalesRecord` refuses one).
+ * `lines[].totalAmount` are baht, negative.
+ */
+export async function insertCreditSaleTx(
+  conn: TxConnection,
+  c: {
+    saleDate: string;
+    dealId: string;
+    salespersonId: string;
+    customerId: string;
+    companyId: string;
+    saleType: string;
+    poRef: string;
+    invoiceRef: string;
+    note: string;
+    /**
+     * `qty` is never above 0: minus what was taken back (goods returned), 0 for
+     * a price cut — so the quantities sold go down only for goods that came back.
+     */
+    lines: { productId: string; productName: string; categoryId: number | null; qty: number; totalAmount: number }[];
+  }
+): Promise<string> {
+  if (c.lines.length === 0) throw new Error("ใบลดหนี้ต้องมีรายการอย่างน้อย 1 รายการ");
+  const id = crypto.randomUUID();
+  const now = new Date().toISOString();
+  const lines = c.lines.map((l, i) => ({
+    ...l,
+    qty: Math.min(0, Math.round(l.qty)) || 0,
+    totalAmount: round2(Math.min(0, l.totalAmount)),
+    sortOrder: i,
+  }));
+  // A price cut has no quantity: its "unit price" is the cut itself.
+  const unitPriceOf = (l: { qty: number; totalAmount: number }) => (l.qty !== 0 ? round2(l.totalAmount / l.qty) : l.totalAmount);
+  const totalAmount = round2(lines.reduce((s, l) => s + l.totalAmount, 0));
+  const qty = lines.reduce((s, l) => s + l.qty, 0);
+  // The line taking the most off names the sale, as the largest line names a bill.
+  const main = lines.reduce((best, l) => (l.totalAmount < best.totalAmount ? l : best));
+  await conn.query(
+    `INSERT INTO sales_records
+       (id, salespersonId, customerId, companyId, productId, productName,
+        categoryId, qty, unitPrice, totalAmount, costAmount, saleType, saleDate, quotationRef,
+        poRef, deliveryRef, invoiceRef, receiptRef, warrantyStartDate, warrantyEndDate,
+        equipmentId, note, createdAt, quotationId, dealId)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      id, c.salespersonId, c.customerId, c.companyId, main.productId, main.productName,
+      main.categoryId, qty, unitPriceOf(main), totalAmount, 0, c.saleType, c.saleDate, "",
+      c.poRef, "", c.invoiceRef, "", null, null,
+      "", c.note, now, null, c.dealId,
+    ]
+  );
+  for (const l of lines) {
+    await conn.query(
+      `INSERT INTO sales_record_items
+         (id, salesRecordId, productId, productName, categoryId, qty,
+          unitPrice, totalAmount, costAmount, quotationItemId, sortOrder, createdAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [crypto.randomUUID(), id, l.productId, l.productName, l.categoryId, l.qty, unitPriceOf(l), l.totalAmount, 0, null, l.sortOrder, now]
+    );
+  }
+  return id;
+}
+
 export async function listSalesRecords(filters?: {
   salespersonId?: string;
   customerId?: string;
@@ -885,6 +958,11 @@ export function getPeriodDateRange(periodType?: string, periodValue?: string) {
  * A sale is one deal — except that each delivery of one customer PO is its own
  * sale (its date, machines and costs) carrying the PO as `dealId` (v51,
  * lib/accounting), and they count once: "1 PO = 1 ดีล".
+ *
+ * A credit note's reduction (step 8) is a sale of NEGATIVE amounts in the deal
+ * it lowers, dated in its own month: it takes revenue off there, but it is no
+ * purchase — never counted as a deal (`totalAmount >= 0` only), so a return
+ * in November is not a November deal.
  */
 export async function getDashboardOverview(
   curStart: string,
@@ -895,7 +973,7 @@ export async function getDashboardOverview(
 
   // Current month
   const [curRows] = await query<RowDataPacket[]>(
-    `SELECT COALESCE(SUM(totalAmount), 0) AS revenue, COUNT(DISTINCT COALESCE(dealId, id)) AS deals,
+    `SELECT COALESCE(SUM(totalAmount), 0) AS revenue, COUNT(DISTINCT CASE WHEN totalAmount >= 0 THEN COALESCE(dealId, id) END) AS deals,
             COALESCE(SUM(costAmount), 0) AS cost
      FROM sales_records WHERE saleDate >= ? AND saleDate < ?`,
     [curStart, curEnd]
@@ -908,7 +986,7 @@ export async function getDashboardOverview(
 
   // Previous period
   const [prevRows] = await query<RowDataPacket[]>(
-    `SELECT COALESCE(SUM(totalAmount), 0) AS revenue, COUNT(DISTINCT COALESCE(dealId, id)) AS deals,
+    `SELECT COALESCE(SUM(totalAmount), 0) AS revenue, COUNT(DISTINCT CASE WHEN totalAmount >= 0 THEN COALESCE(dealId, id) END) AS deals,
             COALESCE(SUM(costAmount), 0) AS cost
      FROM sales_records WHERE saleDate >= ? AND saleDate < ?`,
     [prevStart, prevEnd]
@@ -1053,7 +1131,7 @@ async function getRevenueByPeriod(
     `SELECT ${periodSql.sales} AS period,
             COALESCE(SUM(totalAmount), 0) AS revenue,
             COALESCE(SUM(costAmount), 0) AS cost,
-            COUNT(DISTINCT COALESCE(dealId, id)) AS deals
+            COUNT(DISTINCT CASE WHEN totalAmount >= 0 THEN COALESCE(dealId, id) END) AS deals
      FROM sales_records
      WHERE saleDate >= ? AND saleDate < ?
      GROUP BY period ORDER BY period`,
@@ -1161,7 +1239,7 @@ export async function getRevenueByCategory(
             COALESCE(pc.name_th, 'ไม่ระบุหมวด') AS name,
             COALESCE(SUM(sri.totalAmount), 0) AS revenue,
             COALESCE(SUM(sri.qty), 0) AS qty,
-            COUNT(DISTINCT COALESCE(sr.dealId, sri.salesRecordId)) AS deals
+            COUNT(DISTINCT CASE WHEN COALESCE(sr.totalAmount, 0) >= 0 THEN COALESCE(sr.dealId, sri.salesRecordId) END) AS deals
      FROM sales_record_items sri
      LEFT JOIN sales_records sr ON sri.salesRecordId = sr.id
      LEFT JOIN product_categories pc ON sri.categoryId = pc.id
@@ -1201,7 +1279,7 @@ export async function getTopProducts(
     `SELECT sri.productId AS id, sri.productName AS name,
             COALESCE(SUM(sri.totalAmount), 0) AS revenue,
             COALESCE(SUM(sri.qty), 0) AS qty,
-            COUNT(DISTINCT COALESCE(sr.dealId, sri.salesRecordId)) AS deals
+            COUNT(DISTINCT CASE WHEN COALESCE(sr.totalAmount, 0) >= 0 THEN COALESCE(sr.dealId, sri.salesRecordId) END) AS deals
      FROM sales_record_items sri
      LEFT JOIN sales_records sr ON sri.salesRecordId = sr.id
      ${clause}
@@ -1232,7 +1310,7 @@ export async function getTopCustomers(
             COALESCE(co.name, 'ไม่ระบุ') AS name,
             COALESCE(SUM(sr.totalAmount), 0) AS revenue,
             COALESCE(SUM(sr.qty), 0) AS qty,
-            COUNT(DISTINCT COALESCE(sr.dealId, sr.id)) AS deals
+            COUNT(DISTINCT CASE WHEN sr.totalAmount >= 0 THEN COALESCE(sr.dealId, sr.id) END) AS deals
      FROM sales_records sr
      LEFT JOIN companies co ON sr.companyId = co.id
      ${clause}
@@ -1261,7 +1339,7 @@ export async function getSalespersonLeaderboard(
             COALESCE(sp.name, sr.salespersonId) AS name,
             COALESCE(SUM(sr.totalAmount), 0) AS revenue,
             COALESCE(SUM(sr.costAmount), 0) AS cost,
-            COUNT(DISTINCT COALESCE(sr.dealId, sr.id)) AS deals
+            COUNT(DISTINCT CASE WHEN sr.totalAmount >= 0 THEN COALESCE(sr.dealId, sr.id) END) AS deals
      FROM sales_records sr
      LEFT JOIN salespeople sp ON sr.salespersonId = sp.id
      ${clause}
@@ -1335,7 +1413,7 @@ export async function getSmartInsights(
   const [dormant] = await query<RowDataPacket[]>(
     `SELECT COUNT(DISTINCT companyId) AS cnt FROM sales_records
      WHERE companyId IS NOT NULL AND companyId != '' AND companyId NOT IN (
-       SELECT DISTINCT companyId FROM sales_records WHERE saleDate >= ? AND companyId IS NOT NULL AND companyId != ''
+       SELECT DISTINCT companyId FROM sales_records WHERE saleDate >= ? AND totalAmount >= 0 AND companyId IS NOT NULL AND companyId != ''
      )`,
     [sixMonthsAgo]
   );
@@ -1374,7 +1452,7 @@ export async function getSmartInsights(
        COUNT(DISTINCT companyId) AS total,
        SUM(CASE WHEN cnt >= 2 THEN 1 ELSE 0 END) AS repeaters
      FROM (
-       SELECT companyId, COUNT(DISTINCT COALESCE(dealId, id)) AS cnt FROM sales_records
+       SELECT companyId, COUNT(DISTINCT CASE WHEN totalAmount >= 0 THEN COALESCE(dealId, id) END) AS cnt FROM sales_records
        WHERE companyId IS NOT NULL AND companyId != ''
        GROUP BY companyId
      ) sub`

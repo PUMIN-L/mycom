@@ -13,7 +13,7 @@ import { repairTruncatedRichText } from "./sanitizeHtml";
 // did not lower the 33 already written to `settings`, so the next change to
 // reuse 33 was skipped entirely and its tables were never created in
 // production. Reverting a migration means moving FORWARD to a new number.
-const SCHEMA_VERSION = 53;
+const SCHEMA_VERSION = 54;
 
 type DbPool = ReturnType<typeof mysql.createPool>;
 
@@ -1928,6 +1928,23 @@ async function bootstrapSchemaOnce(): Promise<void> {
       "CREATE INDEX idx_abi_inv ON acc_billing_items (invoiceId)",
       "CREATE INDEX idx_ap_bn ON acc_payments (billingNoteId)",
       "CREATE INDEX idx_ap_group ON acc_payments (groupId)",
+    ]) {
+      try {
+        await connection.query(statement);
+      } catch (error) {
+        if (!isBenignSchemaError(error)) throw error;
+      }
+    }
+
+    // ── v54: credit notes (ใบลดหนี้ — §8g step 8) ───────────────────────────
+    // An invoice keeps what its issued credit notes took off it (VAT
+    // included, and the VAT of it) — a cache with one writer, re-summed like
+    // paidSatang. A credit note keeps the value it was set against as printed
+    // (มูลค่าตามใบกำกับภาษีเดิม — the law asks for it on the paper).
+    for (const statement of [
+      "ALTER TABLE acc_documents ADD COLUMN IF NOT EXISTS creditedSatang BIGINT NOT NULL DEFAULT 0",
+      "ALTER TABLE acc_documents ADD COLUMN IF NOT EXISTS creditedVatSatang BIGINT NOT NULL DEFAULT 0",
+      "ALTER TABLE acc_documents ADD COLUMN IF NOT EXISTS refValueSatang BIGINT DEFAULT NULL",
     ]) {
       try {
         await connection.query(statement);

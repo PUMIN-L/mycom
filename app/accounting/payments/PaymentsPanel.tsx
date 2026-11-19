@@ -121,13 +121,15 @@ export default function PaymentsPanel({
         <ul className="divide-y divide-gray-100 text-sm">
           {state.payments.map((p) => {
             const voided = Boolean(p.voidedAt);
+            // A refund (step 8): money handed back — a negative amount, no receipt.
+            const refund = p.amountSatang < 0;
             return (
               <li key={p.id} className="py-2.5 space-y-0.5" data-testid="payment-row">
                 <div className="flex items-baseline justify-between gap-2 tabular-nums">
                   <span className={voided ? "text-gray-400" : "text-gray-700"}>
-                    {formatDisplayDate(p.paidDate)} · {methodLabel(p.method)}
+                    {formatDisplayDate(p.paidDate)} · {refund && "คืนเงินลูกค้า · "}{methodLabel(p.method)}
                   </span>
-                  <span className={`font-semibold ${voided ? "line-through text-gray-400" : "text-gray-900"}`}>{formatSatang(p.amountSatang)}</span>
+                  <span className={`font-semibold ${voided ? "line-through text-gray-400" : refund ? "text-red-600" : "text-gray-900"}`}>{formatSatang(p.amountSatang)}</span>
                 </div>
                 <div className={voided ? "text-gray-400" : "text-gray-600"}>
                   {p.receiptId && p.receiptNo ? (
@@ -224,7 +226,9 @@ export function VoidPaymentDialog({ payment, onCancel, onDone }: { payment: Paym
     <PasswordConfirmDialog title="ยกเลิกรายการรับชำระ?" confirmText="ยกเลิกรายการ" danger onSubmit={submit} onCancel={onCancel} onDone={onDone}>
       <ul className="list-disc pl-5 space-y-1">
         <li className="tabular-nums">
-          ยอด {formatSatang(payment.amountSatang)} บาท วันที่ {formatDisplayDate(payment.paidDate)} จะกลับเป็นยอดค้างชำระ
+          {payment.amountSatang < 0
+            ? `คืนเงิน ${formatSatang(-payment.amountSatang)} บาท วันที่ ${formatDisplayDate(payment.paidDate)} จะกลับเป็นยอดที่ต้องคืนลูกค้า`
+            : `ยอด ${formatSatang(payment.amountSatang)} บาท วันที่ ${formatDisplayDate(payment.paidDate)} จะกลับเป็นยอดค้างชำระ`}
         </li>
         {payment.receiptNo && <li>ใบเสร็จ {payment.receiptNo} จะถูกยกเลิก (เลขที่ยังอยู่ในทะเบียน พร้อมเหตุผล)</li>}
         {payment.groupId && (

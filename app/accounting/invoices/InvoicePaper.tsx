@@ -44,6 +44,7 @@ export default function InvoicePaper({
   copyLabel,
   draft = false,
   printable = false,
+  voided = false,
 }: {
   doc: PaperDocument;
   seller: SellerProfile;
@@ -52,6 +53,8 @@ export default function InvoicePaper({
   /** A draft prints "ร่าง" across it — it is not a document yet. */
   draft?: boolean;
   printable?: boolean;
+  /** Voided (step 8): "ยกเลิก" across it — printed so, never as a live document. */
+  voided?: boolean;
 }) {
   const title = invoiceTitle(doc);
   return (
@@ -72,6 +75,11 @@ export default function InvoicePaper({
       {draft && (
         <div aria-hidden="true" className="pointer-events-none absolute inset-0 flex items-center justify-center overflow-hidden">
           <span className="text-[90px] font-black text-gray-200/70 -rotate-12 select-none">ร่าง</span>
+        </div>
+      )}
+      {voided && (
+        <div aria-hidden="true" data-testid="invoice-void-mark" className="pointer-events-none absolute inset-0 flex items-center justify-center overflow-hidden">
+          <span className="text-[90px] font-black text-red-200/80 -rotate-12 select-none">ยกเลิก</span>
         </div>
       )}
 

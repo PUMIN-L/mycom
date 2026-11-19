@@ -28,8 +28,11 @@ vi.mock("@/app/lib/accounting/documents", () => ({
   recordExternalInvoice: vi.fn(async () => ({ id: "x1" })),
   updateExternalReference: vi.fn(async () => ({ id: "x1" })),
   recentExternalNotes: vi.fn(async () => ["แฟ้ม 2569"]),
+  billingNotesOf: vi.fn(async () => []),
 }));
 import * as docs from "@/app/lib/accounting/documents";
+vi.mock("@/app/lib/accounting/creditNotes", () => ({ creditContext: vi.fn(async () => null) }));
+import { creditContext } from "@/app/lib/accounting/creditNotes";
 vi.mock("@/app/lib/accounting/settings", () => ({
   getSellerProfile: vi.fn(async () => ({ seller: { name: "เรา" }, versionId: "v1" })),
   getSellerVersion: vi.fn(async () => ({ name: "เราเวอร์ชันเก่า" })),
@@ -99,6 +102,31 @@ describe("GET /api/accounting/documents/[id]", () => {
   it("404s a document that is not there", async () => {
     vi.mocked(docs.getAccDocument).mockResolvedValue(null);
     expect((await getOne(req("/api/accounting/documents/x"), ctx("x"))).status).toBe(404);
+  });
+
+  // Step 8.
+  it("an issued invoice brings its credit notes and any money due back — from the invoice already read", async () => {
+    const inv = { id: "inv1", docType: "INV", status: "issued", sellerVersionId: "v0" };
+    vi.mocked(docs.getAccDocument).mockResolvedValue(inv as never);
+    vi.mocked(docs.deletionImpact).mockResolvedValue(impact("issued") as never);
+    vi.mocked(creditContext).mockResolvedValueOnce({ invoice: inv, credit: {}, creditNotes: [{ id: "cn1", docNo: "CN2026110001", status: "issued", issueDate: "2026-11-19", totalSatang: 107000 }], refundDueSatang: 107000 } as never);
+    const body = await (await getOne(req("/api/accounting/documents/inv1"), ctx("inv1"))).json();
+    expect(creditContext).toHaveBeenCalledWith("inv1", inv);
+    expect(body.credit).toEqual({ creditNotes: [{ id: "cn1", docNo: "CN2026110001", status: "issued", issueDate: "2026-11-19", totalSatang: 107000 }], refundDueSatang: 107000 });
+    expect(body.creditOf).toBeUndefined();
+  });
+
+  it("a credit note brings the invoice it was set against", async () => {
+    vi.mocked(docs.getAccDocument).mockImplementation(async (id: string) =>
+      (id === "cn1"
+        ? { id: "cn1", docType: "CN", status: "issued", relatedDocId: "inv1", sellerVersionId: "v0" }
+        : { id: "inv1", docType: "INV", docNo: "INV2026110001", issueDate: "2026-11-01", isTaxInvoice: true, status: "issued" }) as never
+    );
+    vi.mocked(docs.deletionImpact).mockResolvedValue(impact("issued") as never);
+    const body = await (await getOne(req("/api/accounting/documents/cn1"), ctx("cn1"))).json();
+    expect(body.creditOf).toEqual({ id: "inv1", docNo: "INV2026110001", issueDate: "2026-11-01", isTaxInvoice: true });
+    expect(creditContext).not.toHaveBeenCalled();
+    expect(body.credit).toBeUndefined();
   });
 });
 

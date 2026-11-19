@@ -13,6 +13,7 @@ export const ACCOUNTING_TABS = [
   { key: "invoices", href: "/accounting/invoices", label: "ใบแจ้งหนี้ / ใบกำกับภาษี" },
   { key: "billing", href: "/accounting/billing-notes", label: "ใบวางบิล" },
   { key: "receipts", href: "/accounting/receipts", label: "ใบเสร็จรับเงิน" },
+  { key: "credits", href: "/accounting/credit-notes", label: "ใบลดหนี้" },
   { key: "receivables", href: "/accounting/receivables", label: "ลูกหนี้คงค้าง" },
   { key: "settings", href: "/accounting/settings", label: "ตั้งค่าบัญชี" },
 ] as const;

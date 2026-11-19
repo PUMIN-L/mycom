@@ -500,3 +500,80 @@ describe("receiptDetail — a billing note's receipt", () => {
     });
   });
 });
+
+// Step 8 — what credit notes took off an invoice, as its payments see it.
+describe("payments after a credit note", () => {
+  /** Half of the services credited: 10,165.00 off (VAT 665.00) — 10,165.00 left to pay, VAT 665.00 of it. */
+  const CREDITED = { t: 1016500, v: 66500, b: 950000 };
+  const creditedDb = (over: { livePaid?: number } = {}) =>
+    conn.query.mockImplementation(router([
+      [/SELECT status, totalSatang, vatSatang FROM acc_documents WHERE id = \? FOR UPDATE/, () => [{ status: "issued", totalSatang: 2033000, vatSatang: 133000 }]],
+      [/AS t, COALESCE\(SUM\(vatSatang\), 0\) AS v/, () => [CREDITED]],
+      [/COALESCE\(SUM\(amountSatang\), 0\) AS paid/, () => [{ paid: 1016500 }]],
+      [/SELECT id, amountSatang, receiptId, vatSatang FROM acc_payments/, () => (over.livePaid ? [{ id: "p0", amountSatang: over.livePaid, receiptId: null }] : [])],
+      [/SELECT receiptId, externalReceiptNo FROM acc_payments/, () => [{ receiptId: "re-new", externalReceiptNo: "" }]],
+      [/SELECT id, docNo FROM acc_documents WHERE id IN/, () => [{ id: "re-new", docNo: "RE2026110001" }]],
+    ]));
+
+  it("asks only for what is left, its credit notes taken off", async () => {
+    vi.mocked(getAccDocument).mockResolvedValue({ ...INVOICE, creditedSatang: 1016500 } as never);
+    vi.mocked(query).mockImplementation(router([[/SELECT whtPercent FROM companies/, () => [{ whtPercent: "3.00" }]]]) as never);
+    expect((await paymentContext("inv1"))!.outstandingSatang).toBe(1016500);
+    await expect(recordPayment("inv1", PAYMENT, actor)).rejects.toMatchObject({ status: 400 });
+  });
+
+  it("the receipt declares the VAT the invoice has left after the credit note — read under the invoice's lock", async () => {
+    vi.mocked(getAccDocument).mockResolvedValue({ ...INVOICE, creditedSatang: 1016500 } as never);
+    creditedDb();
+    await recordPayment("inv1", { ...PAYMENT, amountSatang: 1016500, whtSatang: 28500 }, actor);
+    const re = insertOf("acc_documents")!;
+    expect(re("totalSatang")).toBe(1016500);
+    expect(re("vatSatang")).toBe(66500);
+    expect(insertOf("acc_payments")!("vatSatang")).toBe(66500);
+    const sql = statements();
+    expect(sql.find((s) => s.includes("AS t, COALESCE(SUM(vatSatang)"))).toContain("FOR UPDATE");
+    expect(sql.findIndex((s) => s.startsWith("SELECT status, totalSatang, vatSatang"))).toBeLessThan(sql.findIndex((s) => s.includes("AS t, COALESCE(SUM(vatSatang)")));
+  });
+
+  it("refuses what a credit note issued meanwhile took off — checked again under the lock", async () => {
+    // The page was opened before the credit note: it still thinks 20,330.00 is owed.
+    creditedDb();
+    await expect(recordPayment("inv1", PAYMENT, actor)).rejects.toMatchObject({ status: 409, message: "ยอดเกินยอดค้างชำระ — ตอนนี้ค้างอยู่ 10,165.00 บาท" });
+    expect(insertOf("acc_payments")).toBeNull();
+  });
+
+  it("receivables count what is left after credit notes, and list the money due back to customers", async () => {
+    vi.mocked(query).mockImplementation(router([
+      [/paidSatang \+ creditedSatang > totalSatang/, () => [
+        { id: "inv2", docNo: "INV2026110002", buyerName: "ร้าน บี", totalSatang: 214000, creditedSatang: 107000, paidSatang: 214000 },
+        // Refunded already, as the cache may still say for a moment — nothing due.
+        { id: "inv3", docNo: "INV2026110003", buyerName: "ร้าน ซี", totalSatang: 214000, creditedSatang: 107000, paidSatang: 107000 },
+      ]],
+      [/FROM acc_documents\s+WHERE docType = 'INV'/, () => [
+        { id: "inv1", docNo: "INV2026110001", source: "internal", issueDate: "2026-11-01", dueDate: "2026-12-01", companyId: "co1", buyerName: "บริษัท เอ", totalSatang: 1016500, paidSatang: 0 },
+      ]],
+    ]) as never);
+    const r = await receivables("2026-11-18");
+    expect(r.totals.all).toBe(1016500);
+    expect(r.refundsDue).toEqual([{ invoiceId: "inv2", invoiceNo: "INV2026110002", buyerName: "ร้าน บี", refundDueSatang: 107000 }]);
+    const sql = vi.mocked(query).mock.calls.map(([s]) => String(s));
+    const open = sql.find((s) => s.includes("paidSatang + creditedSatang < totalSatang"))!;
+    expect(open).toContain("totalSatang - creditedSatang AS totalSatang");
+  });
+});
+
+describe("voiding a refund", () => {
+  it("puts the money back as due to the customer, and says so in the history — there is no receipt to void", async () => {
+    conn.query.mockImplementation(router([
+      [/SELECT documentId, groupId, billingNoteId FROM acc_payments WHERE id = \?$/, () => [{ documentId: "inv1" }]],
+      [/SELECT docType, docNo, salesRecordId, customerPoNo, vatRate FROM acc_documents WHERE id = \? FOR UPDATE/, () => [{ docType: "INV", docNo: "INV2026110001", salesRecordId: "sale-1" }]],
+      [/SELECT id, receiptId, amountSatang, voidedAt FROM acc_payments WHERE id = \? FOR UPDATE/, () => [{ id: "p9", receiptId: null, amountSatang: -107000, voidedAt: null }]],
+      [/COALESCE\(SUM/, () => [{ paid: 214000 }]],
+      [/SELECT receiptId, externalReceiptNo FROM acc_payments/, () => []],
+    ]));
+    await voidPayment("p9", "โอนคืนผิดบัญชี", actor);
+    expect(statements().some((s) => s.startsWith("UPDATE acc_documents SET status = 'void'"))).toBe(false);
+    expect(vi.mocked(conn.query).mock.calls).toContainEqual(["UPDATE acc_documents SET paidSatang = ? WHERE id = ?", [214000, "inv1"]]);
+    expect(writeAudit).toHaveBeenCalledWith(conn, expect.objectContaining({ action: "payment.void", detail: "ยกเลิกการคืนเงินลูกค้า 1,070.00 บาท · เหตุผล: โอนคืนผิดบัญชี" }));
+  });
+});

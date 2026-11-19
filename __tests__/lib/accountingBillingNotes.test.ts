@@ -30,7 +30,8 @@ let seq = 0;
 vi.mock("@/app/lib/accounting/numbering", () => ({ allocateDocNo: vi.fn(async (_c: unknown, type: string) => `${type}20261100${String(++seq).padStart(2, "0")}`) }));
 import { allocateDocNo } from "@/app/lib/accounting/numbering";
 
-import { createBillingNote, listBillingNotes, openInvoicesFor, recordBillingPayment, voidBillingNote } from "@/app/lib/accounting/billingNotes";
+import { billingNoteDetail, createBillingNote, listBillingNotes, openInvoicesFor, recordBillingPayment, voidBillingNote } from "@/app/lib/accounting/billingNotes";
+import { suggestedBillingWhtSatang } from "@/app/lib/accounting/billingRules";
 import type { PaymentInput } from "@/app/lib/accounting/paymentRules";
 
 const actor = { userId: "admin-001", username: "admin" };
@@ -81,7 +82,7 @@ beforeEach(() => {
 describe("openInvoicesFor", () => {
   it("lists a customer's invoices still owing, oldest first, with the open billing notes each is on", async () => {
     vi.mocked(query).mockImplementation(router([
-      [/FROM acc_documents\s+WHERE docType = 'INV' AND status = 'issued' AND paidSatang < totalSatang/, () => INV_ROWS],
+      [/FROM acc_documents\s+WHERE docType = 'INV' AND status = 'issued' AND paidSatang \+ creditedSatang < totalSatang/, () => INV_ROWS],
       [/FROM acc_billing_items bi JOIN acc_documents b/, () => [{ invoiceId: "A", id: "bn0", docNo: "BN2026100003" }]],
     ]) as never);
     const rows = await openInvoicesFor({ companyId: "co1", buyerName: "" });
@@ -202,7 +203,7 @@ describe("recordBillingPayment", () => {
   function noteDb(paidB = 0) {
     const common: Handler[] = [
       [/SELECT invoiceId, amountSatang FROM acc_billing_items WHERE billingNoteId = \?/, () => [{ invoiceId: "A", amountSatang: 107000 }, { invoiceId: "B", amountSatang: 53500 }]],
-      [/SELECT id, docNo, status, issueDate, dueDate, isTaxInvoice, totalSatang, vatSatang, vatBaseSatang, paidSatang\s+FROM acc_documents WHERE id IN/, () => INV_ROWS],
+      [/SELECT id, docNo, status, issueDate, dueDate, isTaxInvoice, totalSatang, vatSatang, vatBaseSatang, paidSatang, creditedSatang, creditedVatSatang\s+FROM acc_documents WHERE id IN/, () => INV_ROWS],
       [/SELECT documentId, lineType, amountSatang FROM acc_document_lines/, () => LINES],
     ];
     vi.mocked(getAccDocument).mockResolvedValue(BN as never);
@@ -268,5 +269,47 @@ describe("recordBillingPayment", () => {
     noteDb();
     await expect(recordBillingPayment("bn1", { ...PAY, amountSatang: 160501 }, actor)).rejects.toMatchObject({ status: 400 });
     expect(withTransaction).not.toHaveBeenCalled();
+  });
+});
+
+// Step 8 — an invoice on the note that a credit note took half off: B now 267.50, VAT 17.50, services 250.00.
+describe("a billing note's invoice credited after it was billed", () => {
+  const CREDITED_ROWS = [INV_ROWS[0], { ...INV_ROWS[1], creditedSatang: 26750, creditedVatSatang: 1750 }];
+  const creditedDb = () => {
+    const common: Handler[] = [
+      [/SELECT invoiceId, amountSatang FROM acc_billing_items WHERE billingNoteId = \?/, () => [{ invoiceId: "A", amountSatang: 107000 }, { invoiceId: "B", amountSatang: 53500 }]],
+      [/SELECT id, docNo, status, issueDate, dueDate, isTaxInvoice, totalSatang, vatSatang, vatBaseSatang, paidSatang, creditedSatang, creditedVatSatang\s+FROM acc_documents WHERE id IN/, () => CREDITED_ROWS],
+      [/SELECT documentId, lineType, amountSatang FROM acc_document_lines/, () => LINES],
+    ];
+    vi.mocked(getAccDocument).mockResolvedValue(BN as never);
+    vi.mocked(query).mockImplementation(router([...common, [/SELECT whtPercent FROM companies/, () => [{ whtPercent: "3.00" }]]]) as never);
+    conn.query.mockImplementation(router([
+      [/SELECT status FROM acc_documents WHERE id = \? FOR UPDATE/, () => [{ status: "issued" }]],
+      ...common,
+      [/COALESCE\(SUM\(amountSatang\), 0\) AS paid/, () => [{ paid: 0 }]],
+      [/SELECT salesRecordId FROM acc_documents WHERE id = \?/, (p) => [{ salesRecordId: `sale-${p[0]}` }]],
+    ]));
+  };
+
+  it("owes, and withholds on, what is left — its services shrinking with it", async () => {
+    creditedDb();
+    const detail = (await billingNoteDetail("bn1"))!;
+    const b = detail.invoices.find((i) => i.id === "B")!;
+    expect([b.totalSatang, b.vatSatang, b.outstandingSatang, b.serviceBaseSatang]).toEqual([26750, 1750, 26750, 25000]);
+    expect(detail.outstandingSatang).toBe(107000 + 26750);
+    // 3% of the 250.00 of services left — not of the 500.00 billed.
+    expect(suggestedBillingWhtSatang(detail.invoices, 107000 + 26750, 3)).toBe(750);
+  });
+
+  it("the services' receipt declares the VAT left on it after the credit note", async () => {
+    creditedDb();
+    await recordBillingPayment("bn1", { ...PAY, amountSatang: 107000 + 26750, whtSatang: 750 }, actor);
+    const [, services] = inserts("acc_documents");
+    expect([services("isTaxInvoice"), services("totalSatang"), services("vatSatang")]).toEqual([1, 26750, 1750]);
+    const payments = inserts("acc_payments");
+    expect(payments.map((p) => [p("documentId"), p("amountSatang"), p("whtSatang"), p("vatSatang")])).toEqual([
+      ["A", 107000, 0, 7000],
+      ["B", 26750, 750, 1750],
+    ]);
   });
 });

@@ -310,12 +310,13 @@ export const STATUS_STYLES: Record<DisplayStatus, { badge: string; dot: string }
 };
 
 export function displayStatusOf(
-  doc: { status: string; totalSatang: number; paidSatang: number; dueDate: string | null },
+  doc: { status: string; totalSatang: number; paidSatang: number; dueDate: string | null; creditedSatang?: number },
   today: string
 ): DisplayStatus {
   if (doc.status === "draft") return "draft";
   if (doc.status === "void") return "void";
-  if (doc.paidSatang >= doc.totalSatang && doc.totalSatang > 0) return "paid";
+  // Its credit notes take off what it comes to (step 8).
+  if (doc.paidSatang + (doc.creditedSatang ?? 0) >= doc.totalSatang && doc.totalSatang > 0) return "paid";
   if (doc.paidSatang > 0) return "partial";
   if (doc.dueDate && doc.dueDate < today) return "overdue";
   return "awaiting";

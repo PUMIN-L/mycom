@@ -20,11 +20,17 @@ import { useAccountingLookups } from "../../useAccountingLookups";
 import { useAccountingSettings } from "../../useAccountingSettings";
 import PaymentDialog, { type RecordedPaymentView } from "../../payments/PaymentDialog";
 import PaymentsPanel, { useInvoicePayments } from "../../payments/PaymentsPanel";
+import VoidDocumentDialog from "../../VoidDocumentDialog";
+import RefundDialog from "../../payments/RefundDialog";
+import { owedSatang } from "../../../lib/accounting/creditRules";
 
 type LoadedDocument = EditorDocument &
   PaperDocument & {
     docType: string;
     paidSatang: number;
+    /** What its issued credit notes took off it (step 8). */
+    creditedSatang?: number;
+    voidReason?: string | null;
     salesRecordId: string | null;
     issuedAt: string | null;
     issuedBy: string | null;
@@ -39,6 +45,8 @@ interface Loaded {
   impact: DeletionImpactView;
   /** The billing notes it is on (step 7). */
   billingNotes?: { id: string; docNo: string | null; issueDate: string }[];
+  /** Its credit notes, and money due back to the customer (step 8). */
+  credit?: { creditNotes: { id: string; docNo: string | null; status: string; issueDate: string; totalSatang: number }[]; refundDueSatang: number };
 }
 
 export default function InvoiceDocumentPage() {
@@ -81,6 +89,10 @@ function InvoiceDocument({ id, onTitle }: { id: string; onTitle: (title: string)
           router.replace(`/accounting/sales-orders/${encodeURIComponent(id)}`);
           return;
         }
+        if (body.document.docType === "CN") {
+          router.replace(`/accounting/credit-notes/${encodeURIComponent(id)}`);
+          return;
+        }
         setState({ status: "ok", ...body });
         onTitle(body.document.status === "draft" ? "แก้ไขร่างใบแจ้งหนี้" : body.document.docNo ?? "ใบแจ้งหนี้");
       } catch {
@@ -113,7 +125,7 @@ function InvoiceDocument({ id, onTitle }: { id: string; onTitle: (title: string)
     );
   }
 
-  const { document: doc, seller, impact, billingNotes = [] } = state;
+  const { document: doc, seller, impact, billingNotes = [], credit } = state;
   const { settings: accSettings } = settings.state;
   const label = doc.docNo ?? "ร่างใบแจ้งหนี้";
   const deleteDialog = deleting && (
@@ -150,6 +162,7 @@ function InvoiceDocument({ id, onTitle }: { id: string; onTitle: (title: string)
         doc={doc}
         seller={seller}
         billingNotes={billingNotes}
+        credit={credit ?? { creditNotes: [], refundDueSatang: 0 }}
         bankAccounts={accSettings.bankAccounts}
         onDelete={() => setDeleting(true)}
         onChanged={() => setReload((n) => n + 1)}
@@ -210,6 +223,7 @@ function IssuedView({
   doc,
   seller,
   billingNotes,
+  credit,
   bankAccounts,
   onDelete,
   onChanged,
@@ -217,6 +231,7 @@ function IssuedView({
   doc: LoadedDocument;
   seller: SellerProfile | null;
   billingNotes: { id: string; docNo: string | null; issueDate: string }[];
+  credit: { creditNotes: { id: string; docNo: string | null; status: string; issueDate: string; totalSatang: number }[]; refundDueSatang: number };
   bankAccounts: BankAccount[];
   onDelete: () => void;
   /** Something changed it (a payment, a corrected number): fetch it again. */
@@ -232,7 +247,16 @@ function IssuedView({
   const [auditKey, setAuditKey] = useState(0);
   const payments = useInvoicePayments(doc.id);
   const status = displayStatusOf(doc, bangkokDateString(new Date()));
-  const outstanding = Math.max(0, doc.totalSatang - doc.paidSatang);
+  // What it owes now: its credit notes taken off (step 8).
+  const outstanding = owedSatang(doc);
+  const credited = doc.creditedSatang ?? 0;
+  const [dialog, setDialog] = useState<"void" | "refund" | null>(null);
+  // Offered only when the server would allow it: voiding needs no live payment,
+  // credit note or open billing note; crediting needs value left (and, when it
+  // is not the tax invoice, something still owed).
+  const livePayments = payments.state.status === "ok" ? payments.state.payments.some((p) => !p.voidedAt) : true;
+  const voidBlocked = livePayments || credit.creditNotes.some((c) => c.status === "issued") || billingNotes.length > 0;
+  const canCredit = doc.totalSatang - credited > 0 && (doc.isTaxInvoice || outstanding > 0);
 
   // The history again whenever the document or its payments change.
   useEffect(() => {
@@ -277,6 +301,7 @@ function IssuedView({
           seller={seller ?? { name: "", address: "", taxId: "", branchCode: "", phone: "", email: "" }}
           copyLabel={external ? null : copyLabel}
           printable={!external}
+          voided={doc.status === "void"}
         />
       </div>
 
@@ -291,8 +316,20 @@ function IssuedView({
             <dd className="text-right font-semibold">{formatSatang(doc.totalSatang)}</dd>
             <dt className="text-gray-500">รับชำระแล้ว</dt>
             <dd className="text-right">{formatSatang(doc.paidSatang)}</dd>
+            {credited > 0 && (
+              <>
+                <dt className="text-gray-500">ลดหนี้แล้ว</dt>
+                <dd className="text-right">{formatSatang(credited)}</dd>
+              </>
+            )}
             <dt className="text-gray-500">ค้างชำระ</dt>
-            <dd className="text-right font-semibold">{formatSatang(outstanding)}</dd>
+            <dd className="text-right font-semibold" data-testid="invoice-owed">{formatSatang(outstanding)}</dd>
+            {credit.refundDueSatang > 0 && (
+              <>
+                <dt className="text-red-600 font-semibold">ต้องคืนเงินลูกค้า</dt>
+                <dd className="text-right font-semibold text-red-600" data-testid="invoice-refund-due">{formatSatang(credit.refundDueSatang)}</dd>
+              </>
+            )}
             {doc.dueDate && (
               <>
                 <dt className="text-gray-500">ครบกำหนด</dt>
@@ -351,6 +388,75 @@ function IssuedView({
           }}
           onRetry={payments.reload}
         />
+
+        {doc.status === "issued" && (
+          <div className="bg-white rounded-2xl border border-gray-200 p-5 space-y-2 text-sm" data-testid="invoice-credit">
+            {credit.creditNotes.length > 0 && (
+              <ul className="space-y-1">
+                {credit.creditNotes.map((c) => (
+                  <li key={c.id} className="flex justify-between gap-2 tabular-nums">
+                    <Link href={`/accounting/credit-notes/${c.id}`} className={`font-semibold ${c.status === "void" ? "text-gray-400 line-through" : "text-sky-700 hover:text-sky-800"}`}>
+                      ใบลดหนี้ {c.docNo}
+                    </Link>
+                    <span className={c.status === "void" ? "text-gray-400" : "text-gray-700"}>{formatSatang(c.totalSatang)}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {credit.refundDueSatang > 0 && (
+              <button type="button" onClick={() => setDialog("refund")} className="w-full px-3 py-2 rounded-xl border border-red-200 text-red-700 font-semibold hover:bg-red-50">
+                บันทึกคืนเงินลูกค้า
+              </button>
+            )}
+            {canCredit && (
+              <Link href={`/accounting/credit-notes/new?invoice=${encodeURIComponent(doc.id)}`} className="block text-center px-3 py-2 rounded-xl border border-amber-300 text-amber-800 font-semibold hover:bg-amber-50">
+                ออกใบลดหนี้
+              </Link>
+            )}
+            {voidBlocked ? (
+              <p className="text-xs text-gray-500" data-testid="invoice-void-blocked">ยกเลิกใบแจ้งหนี้ได้เมื่อไม่มีรายการรับชำระ ใบลดหนี้ หรือใบวางบิลที่ยังเปิดอยู่</p>
+            ) : (
+              <button type="button" onClick={() => setDialog("void")} className="w-full px-3 py-2 rounded-xl border border-gray-300 text-gray-700 font-semibold hover:bg-gray-50">
+                ยกเลิกใบแจ้งหนี้
+              </button>
+            )}
+          </div>
+        )}
+        {doc.status === "void" && (
+          <div role="status" className="rounded-xl border border-gray-300 bg-gray-50 px-4 py-3 text-sm text-gray-700">
+            <p className="font-semibold">ใบแจ้งหนี้นี้ถูกยกเลิกแล้ว</p>
+            {doc.voidReason && <p>เหตุผล: {doc.voidReason}</p>}
+          </div>
+        )}
+        {dialog === "void" && (
+          <VoidDocumentDialog
+            url={`/api/accounting/documents/${encodeURIComponent(doc.id)}/void`}
+            title={`ยกเลิกใบแจ้งหนี้ ${doc.docNo ?? ""}?`}
+            effects={[
+              "เลขที่ยังอยู่ในทะเบียน ทำเครื่องหมาย ยกเลิก พร้อมเหตุผล — ใช้เมื่อส่งเอกสารให้ลูกค้าไปแล้ว (เอกสารทดสอบให้ลบแทน)",
+              "รายการขายใน dashboard ที่สร้างจากใบนี้จะถูกลบ (รวมต้นทุนที่กรอกไว้)",
+              "เครื่องที่ลงทะเบียนจากใบนี้ที่ยังไม่มีประวัติบริการจะถูกลบ",
+              ...(doc.salesOrderId ? ["จำนวนที่ส่งในใบนี้จะกลับไปค้างใน PO ลูกค้า"] : []),
+            ]}
+            onCancel={() => setDialog(null)}
+            onDone={() => {
+              setDialog(null);
+              onChanged();
+            }}
+          />
+        )}
+        {dialog === "refund" && (
+          <RefundDialog
+            invoice={{ id: doc.id, docNo: doc.docNo, issueDate: doc.issueDate }}
+            refundDueSatang={credit.refundDueSatang}
+            bankAccounts={bankAccounts}
+            onCancel={() => setDialog(null)}
+            onDone={() => {
+              setDialog(null);
+              afterPaymentChange();
+            }}
+          />
+        )}
 
         {billingNotes.length > 0 && (
           <div className="bg-white rounded-2xl border border-gray-200 p-5 text-sm space-y-1" data-testid="invoice-billing-notes">

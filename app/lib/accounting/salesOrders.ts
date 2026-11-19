@@ -399,6 +399,8 @@ export interface OrderDelivery {
   totalSatang: number;
   /** Received on it so far (its own payments). */
   paidSatang: number;
+  /** What its credit notes took off it (step 8). */
+  creditedSatang: number;
   /** The PO's deposit it deducts, ex VAT. */
   depositSatang: number;
 }
@@ -439,7 +441,7 @@ export async function salesOrderDetail(id: string, today: string = bangkokDateSt
   if (!order || order.docType !== "SO") return null;
   const invoiceRows = await run(
     null,
-    "SELECT id, docNo, status, source, issueDate, totalSatang, paidSatang, discountSatang, depositSatang FROM acc_documents WHERE salesOrderId = ? AND docType = 'INV' ORDER BY issueDate ASC, createdAt ASC",
+    "SELECT id, docNo, status, source, issueDate, totalSatang, paidSatang, creditedSatang, discountSatang, depositSatang FROM acc_documents WHERE salesOrderId = ? AND docType = 'INV' ORDER BY issueDate ASC, createdAt ASC",
     [id]
   );
   const issued = invoiceRows.filter((r) => r.status === "issued");
@@ -475,6 +477,7 @@ export async function salesOrderDetail(id: string, today: string = bangkokDateSt
       issueDate: str(r.issueDate),
       totalSatang: num(r.totalSatang),
       paidSatang: num(r.paidSatang),
+      creditedSatang: num(r.creditedSatang),
       depositSatang: num(r.depositSatang),
     })),
     invoicedLineDiscounts,

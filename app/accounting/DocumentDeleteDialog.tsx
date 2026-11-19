@@ -49,6 +49,7 @@ export default function DocumentDeleteDialog({
 }) {
   const isOrder = docType === "SO";
   const isBilling = docType === "BN";
+  const isCredit = docType === "CN";
   const [draftBusy, setDraftBusy] = useState(false);
   const [draftError, setDraftError] = useState<string | null>(null);
   const send = async (password?: string): Promise<string | null> => {
@@ -130,6 +131,7 @@ export default function DocumentDeleteDialog({
             {impact.machines.withHistory > 0 && <> — ยกเว้น {impact.machines.withHistory} เครื่องที่มีประวัติบริการแล้ว (เก็บไว้)</>}
           </li>
         )}
+        {isCredit && <li>ยอดที่ใบนี้ลดหนี้ไว้จะกลับเป็นยอดของใบแจ้งหนี้</li>}
         {impact.fromOrder && (
           <li>จำนวนที่ส่งในใบนี้จะกลับไปค้างใน PO ลูกค้า {impact.fromOrder.customerPoNo} (ยอดรอส่งของเพิ่มขึ้น)</li>
         )}
@@ -148,7 +150,12 @@ export default function DocumentDeleteDialog({
           ใบวางบิลไม่ใช่เอกสารภาษี — ถ้ามอบให้ลูกค้าไปแล้ว ควรกด ยกเลิกใบวางบิล แทน (เก็บเลขที่และเหตุผลไว้)
         </p>
       )}
-      {!isOrder && !isBilling && (
+      {isCredit && (
+        <p className="text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
+          ถ้าส่งใบลดหนี้นี้ให้ลูกค้าไปแล้ว ไม่ควรลบ — ให้กด ยกเลิกใบลดหนี้ แทน (เลขที่ยังอยู่ในทะเบียน พร้อมเหตุผล)
+        </p>
+      )}
+      {!isOrder && !isBilling && !isCredit && (
         <p className="text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
           {!impact.receiptPayment
             ? "ถ้าส่งเอกสารนี้ให้ลูกค้าไปแล้ว ไม่ควรลบ — จะหายจากรายงานภาษีขาย ให้ยกเลิกหรือทำใบลดหนี้แทน"

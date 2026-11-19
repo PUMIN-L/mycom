@@ -40,14 +40,14 @@ process.env.DB_USER = 'tester';
 process.env.DB_PASSWORD = 'pw';
 process.env.DB_NAME = 'testdb';
 
-// A version SELECT result that MATCHES SCHEMA_VERSION (53) → bootstrap fast-path,
+// A version SELECT result that MATCHES SCHEMA_VERSION (54) → bootstrap fast-path,
 // skipping DDL. Value is a string because settings stores VARCHAR values.
 //
 // ⚠️ This constant only ever goes UP, in step with db.ts. The bootstrap's fast
 // path is `stored >= SCHEMA_VERSION`, so a number the live database has already
 // recorded can never trigger a migration again — reusing one silently skips the
 // entire migration in production (that is how v33 was burned).
-const SCHEMA_VERSION = '53';
+const SCHEMA_VERSION = '54';
 const SCHEMA_MATCH: [Array<{ value: string }>, unknown[]] = [[{ value: SCHEMA_VERSION }], []];
 // An empty result → no schema_version row / no admin row → full bootstrap.
 const EMPTY: [unknown[], unknown[]] = [[], []];
@@ -935,6 +935,17 @@ describe('db.ts', () => {
       expect(hasSql(/ALTER TABLE acc_payments ADD COLUMN IF NOT EXISTS groupId VARCHAR\(36\) DEFAULT NULL/)).toBe(true);
       expect(hasSql(/CREATE INDEX idx_ap_group ON acc_payments \(groupId\)/)).toBe(true);
       expect(hasSql(/CREATE INDEX idx_ap_bn ON acc_payments \(billingNoteId\)/)).toBe(true);
+    });
+
+    it('v54: an invoice keeps what its credit notes took off it; a credit note the value it was set against', async () => {
+      const db = await freshImport();
+      mockConnection.query.mockResolvedValue(EMPTY);
+
+      await db.getDbConnection();
+      const hasSql = (re: RegExp) => bootstrapSql().some((s) => re.test(s));
+      expect(hasSql(/ALTER TABLE acc_documents ADD COLUMN IF NOT EXISTS creditedSatang BIGINT NOT NULL DEFAULT 0/)).toBe(true);
+      expect(hasSql(/ALTER TABLE acc_documents ADD COLUMN IF NOT EXISTS creditedVatSatang BIGINT NOT NULL DEFAULT 0/)).toBe(true);
+      expect(hasSql(/ALTER TABLE acc_documents ADD COLUMN IF NOT EXISTS refValueSatang BIGINT DEFAULT NULL/)).toBe(true);
     });
 
     it('issues the whole v35 DDL: three tables, every standalone index, the composite PK — and NOT ONE foreign key', async () => {

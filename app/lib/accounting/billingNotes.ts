@@ -7,7 +7,7 @@ import { bangkokDateString, formatDisplayDate } from "../dateFormat";
 import { allocateDocNo } from "./numbering";
 import { writeAudit } from "./audit";
 import { getSellerProfile } from "./settings";
-import { formatSatang } from "./money";
+import { formatSatang, mulDivRound } from "./money";
 import { getAccDocument, likeEscape, type AccDocument } from "./documents";
 import { recomputePaidSatang, syncSaleReceiptRef } from "./paymentLedger";
 import {
@@ -75,8 +75,8 @@ export async function openInvoicesFor(customer: { companyId: string; buyerName: 
   if (!byCompany && !name) return [];
   const rows = await run(
     null,
-    `SELECT id, docNo, issueDate, dueDate, totalSatang, paidSatang FROM acc_documents
-      WHERE docType = 'INV' AND status = 'issued' AND paidSatang < totalSatang
+    `SELECT id, docNo, issueDate, dueDate, totalSatang, paidSatang, creditedSatang FROM acc_documents
+      WHERE docType = 'INV' AND status = 'issued' AND paidSatang + creditedSatang < totalSatang
         AND ${byCompany ? "companyId = ?" : "(companyId IS NULL OR companyId = '') AND LOWER(TRIM(buyerName)) = ?"}
       ORDER BY issueDate ASC, docNo ASC LIMIT 500`,
     [byCompany ? customer.companyId : name]
@@ -102,7 +102,7 @@ export async function openInvoicesFor(customer: { companyId: string; buyerName: 
     dueDate: strOrNull(r.dueDate),
     totalSatang: num(r.totalSatang),
     paidSatang: num(r.paidSatang),
-    outstandingSatang: Math.max(0, num(r.totalSatang) - num(r.paidSatang)),
+    outstandingSatang: Math.max(0, num(r.totalSatang) - num(r.creditedSatang) - num(r.paidSatang)),
     billedOn: billed.get(String(r.id)) ?? [],
   }));
 }
@@ -126,7 +126,7 @@ export async function createBillingNote(input: BillingNoteInput, actor: Actor): 
     const rows = await run(
       conn,
       `SELECT id, docType, status, docNo, issueDate, companyId, customerId, salespersonId, buyerName, buyerAddress, buyerTaxId, buyerBranch,
-              vatRate, totalSatang, paidSatang
+              vatRate, totalSatang, paidSatang, creditedSatang
          FROM acc_documents WHERE id IN (${marks(input.invoiceIds.length)}) FOR UPDATE`,
       input.invoiceIds
     );
@@ -135,14 +135,14 @@ export async function createBillingNote(input: BillingNoteInput, actor: Actor): 
       const r = byId.get(invoiceId);
       if (!r || r.docType !== "INV") throw new ApiError(404, "ไม่พบใบแจ้งหนี้บางใบ — กรุณาเปิดหน้านี้ใหม่");
       if (r.status !== "issued") throw new ApiError(409, `ใบแจ้งหนี้ ${str(r.docNo) || "ร่าง"} ยังไม่ได้ออกหรือถูกยกเลิกแล้ว`);
-      if (num(r.paidSatang) >= num(r.totalSatang)) throw new ApiError(409, `ใบแจ้งหนี้ ${str(r.docNo)} ชำระครบแล้ว`);
+      if (num(r.paidSatang) + num(r.creditedSatang) >= num(r.totalSatang)) throw new ApiError(409, `ใบแจ้งหนี้ ${str(r.docNo)} ชำระครบแล้ว`);
       const ours = input.companyId ? str(r.companyId) === input.companyId : !str(r.companyId) && sameName(r.buyerName, input.buyerName);
       if (!ours) throw new ApiError(400, `ใบแจ้งหนี้ ${str(r.docNo)} เป็นของลูกค้ารายอื่น — ใบวางบิลหนึ่งใบเป็นของลูกค้ารายเดียว`);
       return r;
     });
     // The customer as printed on the latest of the invoices.
     const latest = [...invoices].sort((a, b) => str(b.issueDate).localeCompare(str(a.issueDate)))[0];
-    const amounts = invoices.map((r) => num(r.totalSatang) - num(r.paidSatang));
+    const amounts = invoices.map((r) => num(r.totalSatang) - num(r.creditedSatang) - num(r.paidSatang));
     const total = amounts.reduce((s, a) => s + a, 0);
     const docNo = await allocateDocNo(conn, "BN", input.issueDate);
     const docId = crypto.randomUUID();
@@ -235,7 +235,7 @@ async function itemsOf(noteIds: string[]) {
   if (noteIds.length === 0) return new Map<string, { invoiceId: string; billedSatang: number; totalSatang: number; paidSatang: number; status: string }[]>();
   const rows = await run(
     null,
-    `SELECT bi.billingNoteId, bi.invoiceId, bi.amountSatang, i.totalSatang, i.paidSatang, i.status
+    `SELECT bi.billingNoteId, bi.invoiceId, bi.amountSatang, i.totalSatang - i.creditedSatang AS totalSatang, i.paidSatang, i.status
        FROM acc_billing_items bi JOIN acc_documents i ON i.id = bi.invoiceId
       WHERE bi.billingNoteId IN (${marks(noteIds.length)}) ORDER BY bi.sortOrder ASC`,
     noteIds
@@ -322,7 +322,7 @@ async function billedInvoices(conn: Exec, noteId: string): Promise<BillingNoteIn
   const ids = items.map((r) => String(r.invoiceId));
   const rows = await run(
     conn,
-    `SELECT id, docNo, status, issueDate, dueDate, isTaxInvoice, totalSatang, vatSatang, vatBaseSatang, paidSatang
+    `SELECT id, docNo, status, issueDate, dueDate, isTaxInvoice, totalSatang, vatSatang, vatBaseSatang, paidSatang, creditedSatang, creditedVatSatang
        FROM acc_documents WHERE id IN (${marks(ids.length)})${conn ? " FOR UPDATE" : ""}`,
     ids
   );
@@ -333,8 +333,13 @@ async function billedInvoices(conn: Exec, noteId: string): Promise<BillingNoteIn
   return items.flatMap((it) => {
     const r = byId.get(String(it.invoiceId));
     if (!r) return [];
-    const total = num(r.totalSatang);
+    // What it comes to now: its credit notes taken off (step 8).
+    const total = num(r.totalSatang) - num(r.creditedSatang);
     const paid = num(r.paidSatang);
+    // Its services shrink with it, in proportion — as its own payment dialog sees them — or
+    // the withholding worked out on what is left would count services no longer there.
+    const services = serviceBaseSatang({ vatBaseSatang: num(r.vatBaseSatang), lines: linesOf.get(String(r.id)) ?? [] });
+    const serviceBase = total !== num(r.totalSatang) && num(r.totalSatang) > 0 ? mulDivRound([services, Math.max(0, total)], num(r.totalSatang)) : services;
     return [
       {
         id: String(r.id),
@@ -344,11 +349,11 @@ async function billedInvoices(conn: Exec, noteId: string): Promise<BillingNoteIn
         dueDate: strOrNull(r.dueDate),
         billedSatang: num(it.amountSatang),
         totalSatang: total,
-        vatSatang: num(r.vatSatang),
+        vatSatang: num(r.vatSatang) - num(r.creditedVatSatang),
         paidSatang: paid,
         vatPaidSatang: 0,
         outstandingSatang: r.status === "issued" ? Math.max(0, total - paid) : 0,
-        serviceBaseSatang: serviceBaseSatang({ vatBaseSatang: num(r.vatBaseSatang), lines: linesOf.get(String(r.id)) ?? [] }),
+        serviceBaseSatang: serviceBase,
         receiptIsTaxInvoice: Number(r.isTaxInvoice) !== 1,
       },
     ];
