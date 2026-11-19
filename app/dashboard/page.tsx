@@ -7,6 +7,7 @@ import DatePicker from "../components/DatePicker";
 import { toLocalDateString } from "../lib/dateFormat";
 import { downloadExcel } from "../lib/xlsxExport";
 import { errorMessageOf } from "../lib/apiErrorMessage";
+import Spinner from "../components/Spinner";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine,
   Legend,
@@ -866,6 +867,12 @@ export default function DashboardPage() {
   // Delete with confirm dialog
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const handleDelete = (id: string) => setDeleteTarget(id);
+
+  // A sale being opened — to view or to edit: both fetch it first, and the
+  // page used to sit still meanwhile, inviting a second click (item 7). The
+  // ref answers a second click at once; the state draws the "loading" signs.
+  const openingRef = useRef(false);
+  const [opening, setOpening] = useState<{ id: string; kind: "view" | "edit" } | null>(null);
   const confirmDelete = async () => {
     if (!deleteTarget) return;
     try {
@@ -886,6 +893,9 @@ export default function DashboardPage() {
 
   // View — fetch full record (with serial numbers) before showing modal
   const handleView = async (rec: SalesRecord) => {
+    if (openingRef.current) return;
+    openingRef.current = true;
+    setOpening({ id: rec.id, kind: "view" });
     try {
       const res = await fetch(`/api/admin/sales/${rec.id}`);
       if (res.ok) {
@@ -897,11 +907,17 @@ export default function DashboardPage() {
       }
     } catch {
       setViewingRecord(rec);
+    } finally {
+      openingRef.current = false;
+      setOpening(null);
     }
   };
 
   // Edit
   const handleEdit = async (rec: SalesRecord) => {
+    if (openingRef.current) return;
+    openingRef.current = true;
+    setOpening({ id: rec.id, kind: "edit" });
     try {
       const fullRes = await fetch(`/api/admin/sales/${rec.id}`);
       if (!fullRes.ok) throw new Error("โหลดข้อมูลยอดขายไม่สำเร็จ");
@@ -965,6 +981,9 @@ export default function DashboardPage() {
       openSaleForm(fullRec.id, loadedForm, loadedCosts);
     } catch {
       showToast("เกิดข้อผิดพลาดในการดึงข้อมูลต้นทุน กรุณาลองใหม่", "error");
+    } finally {
+      openingRef.current = false;
+      setOpening(null);
     }
   };
 
@@ -1615,6 +1634,7 @@ export default function DashboardPage() {
         {/* ── Sales Records Table ──────────────────────────────────────────── */}
         {showRecords && (
           <SalesTable
+            openingId={opening?.id ?? null}
             load={recordsLoad}
             onRetry={() => {
               setRecordsLoad({ status: "loading" });
@@ -1635,6 +1655,14 @@ export default function DashboardPage() {
           />
         )}
       </div>
+
+      {/* A sale being fetched to view or edit — said where the eye is, over everything. */}
+      {opening && (
+        <div role="status" aria-live="polite" data-testid="opening-sale" className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[120] flex items-center gap-2 rounded-full bg-gray-900/90 px-4 py-2 text-sm text-white shadow-lg">
+          <Spinner className="h-4 w-4 text-white" />
+          {opening.kind === "edit" ? "กำลังโหลดรายการขายเพื่อแก้ไข…" : "กำลังเปิดรายการขาย…"}
+        </div>
+      )}
 
       {/* ── View Sales Record Modal ─────────────────────────────────── */}
       {viewingRecord && (

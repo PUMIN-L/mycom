@@ -269,6 +269,8 @@ function SaleDetailPanel({
 }
 
 interface SalesTableProps {
+  /** The sale being fetched to view or edit — its row says so, and no other opens meanwhile. */
+  openingId?: string | null;
   /** Where the list's own load stands — a failure is said, never "ยังไม่มีรายการขาย". */
   load?: { status: "loading" | "ok" } | { status: "error"; message: string };
   onRetry?: () => void;
@@ -291,6 +293,7 @@ interface SalesTableProps {
 }
 
 export default function SalesTable({
+  openingId = null,
   load = { status: "ok" },
   onRetry,
   records,
@@ -513,7 +516,7 @@ export default function SalesTable({
                 const isExpanded = expandedIds.has(r.id);
                 return (
                 <React.Fragment key={r.id}>
-                <tr className="border-t border-gray-50 hover:bg-indigo-50/30 cursor-pointer transition-colors group" onClick={() => onView(r)}>
+                <tr aria-busy={openingId === r.id || undefined} className={`border-t border-gray-50 hover:bg-indigo-50/30 cursor-pointer transition-colors group ${openingId === r.id ? "bg-indigo-50/60" : ""}`} onClick={() => onView(r)}>
                   <td className="py-3 pr-1 align-middle">
                     {/* Separate affordance: expanding must not hijack the row
                         click that opens the view modal. */}
@@ -580,7 +583,8 @@ export default function SalesTable({
                     <div className="flex items-center justify-end gap-1.5">
                       <button
                         onClick={(e) => { e.stopPropagation(); onEdit(r); }}
-                        className="px-2.5 py-1 text-xs font-semibold bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded-lg transition-colors"
+                        disabled={openingId !== null}
+                        className="px-2.5 py-1 text-xs font-semibold bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-wait"
                         title="แก้ไขยอดขาย"
                       >
                         แก้ไข

@@ -210,3 +210,46 @@ describe("dashboard sales table — Export", () => {
     expect(sheets[0].rows).toHaveLength(4);
   });
 });
+
+// Item 7 — opening a sale fetches it first: the page says so meanwhile, and a second click waits.
+describe("dashboard — opening a sale", () => {
+  function gateSale(id: string) {
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    const working = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.pathname === `/api/admin/sales/${id}`) await held;
+      return working(input, init);
+    });
+    return () => release();
+  }
+  const saleCalls = (path: string) => vi.mocked(fetch).mock.calls.filter(([u]) => new URL(String(u), "http://localhost").pathname === path).length;
+
+  it("says it is opening the sale, marks its row, and opens nothing else meanwhile", async () => {
+    await renderLoaded();
+    const release = gateSale("rec-oct");
+    const row = table().getByText("Scale A").closest("tr")!;
+    fireEvent.click(row);
+    expect(await screen.findByTestId("opening-sale")).toHaveTextContent("กำลังเปิดรายการขาย…");
+    expect(row.getAttribute("aria-busy")).toBe("true");
+    // A second click — on this row or another — waits for the first.
+    fireEvent.click(table().getByText("Scale C").closest("tr")!);
+    expect(saleCalls("/api/admin/sales/rec-sep")).toBe(0);
+    release();
+    await waitFor(() => expect(screen.queryByTestId("opening-sale")).toBeNull());
+    expect(row.getAttribute("aria-busy")).toBeNull();
+  });
+
+  it("says it is loading the sale to edit, and holds every แก้ไข until the form opens", async () => {
+    await renderLoaded();
+    const release = gateSale("rec-oct");
+    const row = table().getByText("Scale A").closest("tr")!;
+    fireEvent.click(within(row).getByRole("button", { name: "แก้ไข" }));
+    expect(await screen.findByTestId("opening-sale")).toHaveTextContent("กำลังโหลดรายการขายเพื่อแก้ไข…");
+    expect(table().getAllByRole("button", { name: "แก้ไข" }).every((b) => (b as HTMLButtonElement).disabled)).toBe(true);
+    release();
+    await waitFor(() => expect(screen.getByRole("dialog", { name: "แก้ไขรายการ" })).toBeTruthy());
+    expect(screen.queryByTestId("opening-sale")).toBeNull();
+  });
+});

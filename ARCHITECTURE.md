@@ -1263,6 +1263,10 @@ the product forms that link suppliers said ผู้ผลิต.
   (named แยกตามเดือน / แยกตามไตรมาส — not like the period picker's
   รายเดือน / รายไตรมาส) shows for a year only; the choice is kept for the
   next year shown.
+- **Opening a sale says it is loading**: viewing and editing both fetch the
+  sale first (editing its costs too); meanwhile a `role="status"` pill says
+  so over everything, the row is `aria-busy`, every แก้ไข is disabled, and a
+  ref turns a second click — on any row — away until the first is open.
 
 ### 8g. Accounting module (`/accounting`, schema v50–54) — sales side
 The in-house accounting module that replaces `/billing` for issuing
