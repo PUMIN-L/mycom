@@ -102,7 +102,7 @@ async function renderLoaded() {
 describe("dashboard sales table — the period", () => {
   it("lists the sales of the period on screen, not every sale", async () => {
     await renderLoaded();
-    expect(listedDates()).toEqual(["2026-10-05", "2026-10-15", "2026-09-10"]);
+    expect(listedDates()).toEqual(["5 ต.ค. 2569", "15 ต.ค. 2569", "10 ก.ย. 2569"]);
     // The header's รายการขาย button counts the same sales, not every year's 4.
     expect(document.querySelector("[data-records-count]")!.textContent).toBe("3");
   });
@@ -111,7 +111,7 @@ describe("dashboard sales table — the period", () => {
     await renderLoaded();
     fireEvent.click(screen.getByRole("button", { name: "ช่วงก่อนหน้า" }));
     await waitFor(() => expect(heading()).toBe("รายการขาย ปี 2568 (1)"));
-    expect(listedDates()).toEqual(["2025-12-20"]);
+    expect(listedDates()).toEqual(["20 ธ.ค. 2568"]);
     expect(document.querySelector("[data-records-count]")!.textContent).toBe("1");
   });
 
@@ -128,7 +128,7 @@ describe("dashboard sales table — a Top 10 row", () => {
     await renderLoaded();
     fireEvent.click(screen.getByRole("button", { name: /Scale B/ }));
     await waitFor(() => expect(heading()).toBe("รายการขาย ปี 2569 (2)"));
-    expect(listedDates()).toEqual(["2026-10-05", "2026-10-15"]);
+    expect(listedDates()).toEqual(["5 ต.ค. 2569", "15 ต.ค. 2569"]);
     expect(document.querySelector("[data-sales-focus]")!.textContent).toContain("เฉพาะสินค้า «Scale B»");
     // Why the first bill is listed: its other product is named under it.
     expect(document.querySelector("[data-other-products]")!.textContent).toBe("+ Scale B");

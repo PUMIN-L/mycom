@@ -73,8 +73,7 @@ function renderTable(props: Partial<React.ComponentProps<typeof SalesTable>> = {
       {...FILTER_PROPS}
       onView={onView}
       onEdit={vi.fn()}
-      onDelete={vi.fn()}
-      onHide={vi.fn()}
+      onDelete={vi.fn()}
       {...props}
     />
   );
@@ -284,7 +283,7 @@ describe('SalesTable — expandable sale rows', () => {
       <SalesTable
         records={[makeRecord({ totalAmount: 290000 })]}
         {...FILTER_PROPS}
-        onView={vi.fn()} onEdit={vi.fn()} onDelete={vi.fn()} onHide={vi.fn()}
+        onView={vi.fn()} onEdit={vi.fn()} onDelete={vi.fn()}
       />
     );
 
@@ -358,7 +357,7 @@ describe('SalesTable — which sales it lists', () => {
     const { rerender } = renderTable();
     expect(screen.getByRole('heading', { name: 'รายการขาย ปี 2569 (1)' })).toBeTruthy();
     rerender(
-      <SalesTable records={[]} {...FILTER_PROPS} scope="all" onView={vi.fn()} onEdit={vi.fn()} onDelete={vi.fn()} onHide={vi.fn()} />
+      <SalesTable records={[]} {...FILTER_PROPS} scope="all" onView={vi.fn()} onEdit={vi.fn()} onDelete={vi.fn()} />
     );
     expect(screen.getByRole('heading', { name: 'รายการขาย ทุกช่วงเวลา (0)' })).toBeTruthy();
     expect(screen.getByText('ยังไม่มีรายการขาย')).toBeTruthy();
@@ -385,12 +384,12 @@ describe('SalesTable — which sales it lists', () => {
     expect(screen.getByText('ยังไม่มีรายการขายในปี 2569')).toBeTruthy();
 
     rerender(
-      <SalesTable records={[]} {...FILTER_PROPS} recordSearch=" ตู้ " onView={vi.fn()} onEdit={vi.fn()} onDelete={vi.fn()} onHide={vi.fn()} />
+      <SalesTable records={[]} {...FILTER_PROPS} recordSearch=" ตู้ " onView={vi.fn()} onEdit={vi.fn()} onDelete={vi.fn()} />
     );
     expect(screen.getByText('ไม่พบรายการขายที่ตรงกับ «ตู้» ในปี 2569')).toBeTruthy();
 
     rerender(
-      <SalesTable records={[]} {...FILTER_PROPS} focus={{ kind: 'company', id: 'co-9', name: 'บริษัท บี' }} onView={vi.fn()} onEdit={vi.fn()} onDelete={vi.fn()} onHide={vi.fn()} />
+      <SalesTable records={[]} {...FILTER_PROPS} focus={{ kind: 'company', id: 'co-9', name: 'บริษัท บี' }} onView={vi.fn()} onEdit={vi.fn()} onDelete={vi.fn()} />
     );
     expect(screen.getByText('ไม่มีรายการขายของบริษัท «บริษัท บี» ในปี 2569')).toBeTruthy();
   });
@@ -401,7 +400,7 @@ describe('SalesTable — which sales it lists', () => {
     fireEvent.click(screen.getByRole('button', { name: 'ถัดไป' }));
     expect(screen.getByText('หน้า 2 / 2')).toBeTruthy();
     rerender(
-      <SalesTable records={records.slice(0, 12)} {...FILTER_PROPS} onView={vi.fn()} onEdit={vi.fn()} onDelete={vi.fn()} onHide={vi.fn()} />
+      <SalesTable records={records.slice(0, 12)} {...FILTER_PROPS} onView={vi.fn()} onEdit={vi.fn()} onDelete={vi.fn()} />
     );
     expect(screen.getByText('หน้า 1 / 2')).toBeTruthy();
   });
@@ -418,5 +417,53 @@ describe('SalesTable — a sale with no cost yet', () => {
     renderTable({ records: [makeRecord({ costAmount: 207000, totalAmount: 300000 })] });
     expect(screen.queryByTestId('no-cost-badge')).toBeNull();
     expect(screen.getByText('31%')).toBeTruthy();
+  });
+});
+
+// Item 8 — the table says what a click does, reads in พ.ศ., marks a loss, and works from the keyboard.
+describe('SalesTable — reading and using it', () => {
+  it('says a row click opens the sale (แก้ไข edits), and offers no way to hide the table', () => {
+    renderTable();
+    expect(screen.getByText(/คลิกแถว \(หรือกด Enter\) เพื่อดูรายละเอียด/)).toBeTruthy();
+    expect(screen.queryByText(/ซ่อนตาราง/)).toBeNull();
+  });
+
+  it('dates a sale in พ.ศ., as every name on the dashboard is', () => {
+    renderTable({ records: [makeRecord({ saleDate: '2026-03-10' })] });
+    expect(screen.getByText('10 มี.ค. 2569')).toBeTruthy();
+    expect(screen.queryByText('2026-03-10')).toBeNull();
+  });
+
+  it('marks a sale at a loss apart from a thin margin — and its profit in red', () => {
+    renderTable({ records: [makeRecord({ id: 'loss', totalAmount: 1000, costAmount: 1200 }), makeRecord({ id: 'thin', totalAmount: 1000, costAmount: 950 })] });
+    const loss = screen.getByText('-20%');
+    const thin = screen.getByText('5%');
+    expect(loss.className).toContain('bg-red-600');
+    expect(thin.className).toContain('bg-red-100');
+    expect(loss.className).not.toEqual(thin.className);
+    expect(screen.getByText('฿-200.00').className).toContain('text-red-600');
+    expect(screen.getByText('฿50.00').className).toContain('text-emerald-700');
+  });
+
+  it('opens a sale from the keyboard: Tab to its row, Enter — a key on a button inside stays the button\'s', () => {
+    const { onView } = renderTable();
+    const row = screen.getByRole('row', { name: /^ดูรายการขาย .* วันที่ 10 มี.ค. 2569$/ });
+    expect(row.tabIndex).toBe(0);
+    fireEvent.keyDown(row, { key: 'Enter' });
+    expect(onView).toHaveBeenCalledTimes(1);
+    fireEvent.keyDown(row, { key: ' ' });
+    expect(onView).toHaveBeenCalledTimes(2);
+    fireEvent.keyDown(expandButton(), { key: 'Enter' });
+    expect(onView).toHaveBeenCalledTimes(2);
+  });
+
+  it('searches with the shared search field — named, with its own ✕ to clear', () => {
+    const setRecordSearch = vi.fn();
+    renderTable({ recordSearch: 'PO-1', setRecordSearch });
+    const box = screen.getByRole('textbox', { name: 'ค้นหารายการขาย' });
+    expect((box as HTMLInputElement).value).toBe('PO-1');
+    expect((box as HTMLInputElement).placeholder).toMatch(/^ค้นหาสินค้า .*PO Invoice$/);
+    fireEvent.change(box, { target: { value: 'INV-9' } });
+    expect(setRecordSearch).toHaveBeenLastCalledWith('INV-9');
   });
 });

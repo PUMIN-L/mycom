@@ -3,7 +3,8 @@ import React, { useState, useEffect, useCallback } from "react";
 import type { SalesRecord } from "../lib/types";
 import SearchableDropdown from "../components/SearchableDropdown";
 import Spinner from "../components/Spinner";
-import { fmtDec, safeImageUrl } from "./types";
+import SearchBox from "../components/SearchBox";
+import { fmtDec, fmtThaiDate, safeImageUrl } from "./types";
 import { displayText } from "../lib/stripHtml";
 import type { SalesFocus } from "./salesFilters";
 
@@ -289,7 +290,6 @@ interface SalesTableProps {
   onView: (r: SalesRecord) => void;
   onEdit: (r: SalesRecord) => void;
   onDelete: (id: string) => void;
-  onHide: () => void;
 }
 
 export default function SalesTable({
@@ -307,7 +307,6 @@ export default function SalesTable({
   onView,
   onEdit,
   onDelete,
-  onHide,
 }: SalesTableProps) {
   const filtered = records;
   const scopeText = scope === "period" ? periodLabel : "ทุกช่วงเวลา";
@@ -428,9 +427,9 @@ export default function SalesTable({
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
         <div>
           <h2 className="text-lg font-bold text-gray-800">รายการขาย {scopeText} ({filtered.length})</h2>
-          <p className="text-xs text-gray-500">คลิกที่แถวหรือกดปุ่ม &quot;แก้ไข&quot; เพื่อแก้ไขรายละเอียดของยอดขาย — กดลูกศร ▸ หน้าแถวเพื่อดูรายการสินค้าและเครื่องในบิลนั้น</p>
+          <p className="text-xs text-gray-500">คลิกแถว (หรือกด Enter) เพื่อดูรายละเอียด · กด &quot;แก้ไข&quot; เพื่อแก้ยอดขายหรือกรอกต้นทุน · กดลูกศร ▸ หน้าแถวเพื่อดูรายการสินค้าและเครื่องในบิล</p>
         </div>
-        <div className="flex gap-2 w-full sm:w-auto items-center">
+        <div className="flex flex-wrap gap-2 w-full sm:w-auto items-center">
           {/* The period comes from the picker at the top of the page — the
               figures above are counted over it — and the heading names it.
               "ทุกช่วงเวลา" is the way to look further back without changing
@@ -446,25 +445,15 @@ export default function SalesTable({
             searchable={false}
             className="w-40 shrink-0"
           />
-          <input
-            type="text"
+          {/* The shared search field (its own ✕ to clear) — it wraps under
+              the scope picker on a phone instead of running off the page. */}
+          <SearchBox
             value={recordSearch}
-            onChange={(e) => setRecordSearch(e.target.value)}
-            placeholder="ค้นหาสินค้า, ลูกค้า, บริษัท, เซลล์..."
-            className="px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm w-full sm:w-72 focus:bg-white focus:ring-2 focus:ring-indigo-200 outline-none"
+            onChange={setRecordSearch}
+            label="ค้นหารายการขาย"
+            placeholder="ค้นหาสินค้า ลูกค้า บริษัท เซลล์ PO Invoice"
+            className="w-full sm:w-72 text-sm"
           />
-          {recordSearch && (
-            <button onClick={() => setRecordSearch("")} className="px-3 py-2 text-xs bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-200">
-              ล้าง
-            </button>
-          )}
-          <button
-            onClick={onHide}
-            className="px-3 py-2 text-xs bg-gray-100 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded-xl transition-colors font-medium whitespace-nowrap"
-            title="ซ่อนตาราง"
-          >
-            ✕ ซ่อนตาราง
-          </button>
         </div>
       </div>
       {focus && (
@@ -516,7 +505,19 @@ export default function SalesTable({
                 const isExpanded = expandedIds.has(r.id);
                 return (
                 <React.Fragment key={r.id}>
-                <tr aria-busy={openingId === r.id || undefined} className={`border-t border-gray-50 hover:bg-indigo-50/30 cursor-pointer transition-colors group ${openingId === r.id ? "bg-indigo-50/60" : ""}`} onClick={() => onView(r)}>
+                <tr
+                  aria-busy={openingId === r.id || undefined}
+                  aria-label={`ดูรายการขาย ${displayText(r.productName) || "ไม่ระบุสินค้า"} วันที่ ${fmtThaiDate(r.saleDate)}`}
+                  tabIndex={0}
+                  className={`border-t border-gray-50 hover:bg-indigo-50/30 cursor-pointer transition-colors group outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-400 ${openingId === r.id ? "bg-indigo-50/60" : ""}`}
+                  onClick={() => onView(r)}
+                  onKeyDown={(e) => {
+                    // The row itself, from the keyboard — not a key pressed on a button inside it.
+                    if (e.target !== e.currentTarget || (e.key !== "Enter" && e.key !== " ")) return;
+                    e.preventDefault();
+                    onView(r);
+                  }}
+                >
                   <td className="py-3 pr-1 align-middle">
                     {/* Separate affordance: expanding must not hijack the row
                         click that opens the view modal. */}
@@ -530,7 +531,7 @@ export default function SalesTable({
                       <svg className={`w-4 h-4 transition-transform ${isExpanded ? "rotate-90" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7" /></svg>
                     </button>
                   </td>
-                  <td className="py-3 pr-3 text-sm text-gray-600">{r.saleDate}</td>
+                  <td className="py-3 pr-3 text-sm text-gray-600 whitespace-nowrap">{fmtThaiDate(r.saleDate)}</td>
                   <td className="py-3 pr-3 text-sm font-medium text-gray-800">
                     {displayText(r.productName)}
                     {safeImageUrl(r.productImage) && (
@@ -559,7 +560,8 @@ export default function SalesTable({
                   <td className="py-3 pr-3 text-sm text-right text-gray-600">{r.qty}</td>
                   <td className="py-3 pr-3 text-sm text-right font-semibold text-gray-800">฿{fmtDec(r.totalAmount)}</td>
                   <td className="py-3 pr-3 text-sm text-right">
-                    <span className="font-semibold text-emerald-700">฿{fmtDec(r.totalAmount - (r.costAmount || 0))}</span>
+                    {/* A loss reads as one — it used to be as green as a profit. */}
+                    <span className={`font-semibold ${r.totalAmount - (r.costAmount || 0) < 0 ? "text-red-600" : "text-emerald-700"}`}>฿{fmtDec(r.totalAmount - (r.costAmount || 0))}</span>
                   </td>
                   <td className="py-3 pr-3 text-right">
                     {(() => {
@@ -575,7 +577,9 @@ export default function SalesTable({
                         );
                       }
                       const margin = total > 0 ? Math.round(((total - cost) / total) * 100) : 0;
-                      const color = margin >= 20 ? "bg-emerald-100 text-emerald-700" : margin >= 10 ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700";
+                      // Sold at a loss stands apart from a thin margin (0–9%).
+                      const color =
+                        margin < 0 ? "bg-red-600 text-white" : margin >= 20 ? "bg-emerald-100 text-emerald-700" : margin >= 10 ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700";
                       return <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${color}`}>{margin}%</span>;
                     })()}
                   </td>

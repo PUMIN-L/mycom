@@ -67,6 +67,15 @@ export const fmt = (n: any) => Number(n || 0).toLocaleString("th-TH", { minimumF
 export const fmtDec = (n: any) => Number(n || 0).toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 export const MONTHS_TH = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
 
+/** "2026-10-05" → "5 ต.ค. 2569" — a day as every name on the dashboard is, in พ.ศ.; anything else as it came. */
+export function fmtThaiDate(value: string | null | undefined): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(value ?? ""));
+  if (!m) return String(value ?? "");
+  const month = Number(m[2]);
+  if (month < 1 || month > 12) return String(value);
+  return `${Number(m[3])} ${MONTHS_TH[month - 1]} ${Number(m[1]) + 543}`;
+}
+
 export interface Change { value: number; label: string; color: string }
 
 /** Green for a move the business wants, red for one it does not. A COST going

@@ -101,6 +101,14 @@ describe("matchesSearch", () => {
     expect(matchesSearch(sale(), "ไม่มีแน่นอน")).toBe(false);
   });
 
+  // Item 8 — every document number on the sale, and its date as the table shows it.
+  it("finds a sale by its PO, delivery note, invoice or receipt number, and by its date in พ.ศ.", () => {
+    const bill = sale({ poRef: "PO-6611", deliveryRef: "DO-77", invoiceRef: "INV2026100003", receiptRef: "RE-9" });
+    for (const q of ["po-6611", "DO-77", "inv2026100003", "re-9", "5 ต.ค. 2569", "ต.ค. 2569"]) {
+      expect(matchesSearch(bill, q)).toBe(true);
+    }
+  });
+
   it("finds any product on the bill, and reads a rich name as text", () => {
     const bill = sale({ lineItems: [{ productId: "p-a", productName: "Scale A" }, { productId: "p-b", productName: "<p>ตู้อบ &amp; ถาด</p>" }] });
     expect(matchesSearch(bill, "ตู้อบ & ถาด")).toBe(true);

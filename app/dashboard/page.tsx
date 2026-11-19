@@ -165,7 +165,6 @@ export default function DashboardPage() {
    */
   const [lineCountFor, setLineCountFor] = useState<{ id: string; count: number } | null>(null);
   const [viewingRecord, setViewingRecord] = useState<SalesRecord | null>(null);
-  const [showRecords, setShowRecords] = useState(true);
   const [recordSearch, setRecordSearch] = useState("");
   /** The table keeps to the period picked at the top ("period"), or shows every sale ("all"). */
   const [recordScope, setRecordScope] = useState<RecordScope>("period");
@@ -248,7 +247,6 @@ export default function DashboardPage() {
   }, []);
 
   const handleScrollToRecords = () => {
-    setShowRecords(true);
     setTimeout(() => {
       document.getElementById("sales-records-section")?.scrollIntoView({ behavior: "smooth", block: "start" });
     }, 50);
@@ -1019,7 +1017,6 @@ export default function DashboardPage() {
 
   /** The table, narrowed to one Top 10 row within the period on screen. */
   const showFocusedRecords = (focus: SalesFocus | null, search = "") => {
-    setShowRecords(true);
     setRecordScope("period");
     setRecordFocus(focus);
     setRecordSearch(search);
@@ -1632,8 +1629,7 @@ export default function DashboardPage() {
         </div>
 
         {/* ── Sales Records Table ──────────────────────────────────────────── */}
-        {showRecords && (
-          <SalesTable
+        <SalesTable
             openingId={opening?.id ?? null}
             load={recordsLoad}
             onRetry={() => {
@@ -1651,9 +1647,7 @@ export default function DashboardPage() {
             onView={handleView}
             onEdit={handleEdit}
             onDelete={handleDelete}
-            onHide={() => setShowRecords(false)}
-          />
-        )}
+        />
       </div>
 
       {/* A sale being fetched to view or edit — said where the eye is, over everything. */}

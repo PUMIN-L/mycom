@@ -1,6 +1,8 @@
 "use client";
-import React from "react";
+import React, { useRef } from "react";
 import type { SalesRecord } from "../lib/types";
+import { useModalEscape } from "../components/useModalEscape";
+import { fmtThaiDate } from "./types";
 
 interface ViewRecordModalProps {
   record: SalesRecord;
@@ -9,12 +11,22 @@ interface ViewRecordModalProps {
 }
 
 export default function ViewRecordModal({ record, onClose, onEdit }: ViewRecordModalProps) {
+  // Over the admin bell (z-90) — it used to open underneath it — and Esc closes it.
+  const ref = useRef<HTMLDivElement>(null);
+  useModalEscape(ref, onClose);
   return (
-    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4" onClick={onClose}>
+      <div
+        ref={ref}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="view-record-title"
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="p-6 border-b border-gray-100 flex justify-between items-center">
-          <h3 className="text-xl font-bold text-gray-800">รายละเอียดยอดขาย</h3>
-          <button onClick={onClose} className="p-2 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100">
+          <h3 id="view-record-title" className="text-xl font-bold text-gray-800">รายละเอียดยอดขาย</h3>
+          <button type="button" onClick={onClose} aria-label="ปิด" className="p-2 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100">
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
           </button>
         </div>
@@ -22,7 +34,7 @@ export default function ViewRecordModal({ record, onClose, onEdit }: ViewRecordM
           <div className="grid grid-cols-2 gap-y-4 gap-x-6 text-sm">
             <div>
               <div className="text-gray-500 mb-1">วันที่ขาย</div>
-              <div className="font-semibold text-gray-800">{record.saleDate}</div>
+              <div className="font-semibold text-gray-800">{fmtThaiDate(record.saleDate)}</div>
             </div>
             <div>
               <div className="text-gray-500 mb-1">ประเภทการขาย</div>

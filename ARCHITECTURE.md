@@ -1267,6 +1267,15 @@ the product forms that link suppliers said ผู้ผลิต.
   sale first (editing its costs too); meanwhile a `role="status"` pill says
   so over everything, the row is `aria-busy`, every แก้ไข is disabled, and a
   ref turns a second click — on any row — away until the first is open.
+- **The table reads and works as it says**: a row opens the sale's view (the
+  hint used to say it edits) and is reachable from the keyboard (`tabIndex`,
+  Enter / Space on the row itself); dates are in พ.ศ. (`fmtThaiDate`, types.ts
+  — the Excel keeps ISO dates); the search is the shared `SearchBox` (it
+  wraps on a phone) and finds every document number on a sale — PO, delivery
+  note, invoice, receipt — and the date as shown; a sale at a loss has its own
+  badge and a red profit; the table can no longer be hidden. The view window
+  (`ViewRecordModal`) is a real dialog over the admin bell (`z-[100]`) that
+  Esc closes.
 
 ### 8g. Accounting module (`/accounting`, schema v50–54) — sales side
 The in-house accounting module that replaces `/billing` for issuing

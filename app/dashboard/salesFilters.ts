@@ -1,5 +1,6 @@
 import type { SalesRecord } from "../lib/types";
 import { displayText } from "../lib/stripHtml";
+import { fmtThaiDate } from "./types";
 
 // Which sales /dashboard's table shows — and therefore which it exports. Pure.
 //
@@ -51,7 +52,11 @@ export function matchesFocus(r: SalesRecord, focus: SalesFocus): boolean {
   );
 }
 
-/** Free-text search: any product on the bill, the customer, company, salesperson, date and quotation number. */
+/**
+ * Free-text search: any product on the bill, the customer, company,
+ * salesperson, the date (as stored and as shown, in พ.ศ.), and every document
+ * number on it — quotation, PO, delivery note, invoice, receipt.
+ */
 export function matchesSearch(r: SalesRecord, search: string): boolean {
   const q = search.trim().toLowerCase();
   if (!q) return true;
@@ -62,7 +67,12 @@ export function matchesSearch(r: SalesRecord, search: string): boolean {
     r.companyName,
     r.salespersonName,
     r.saleDate,
+    fmtThaiDate(r.saleDate),
     r.quotationRef,
+    r.poRef,
+    r.deliveryRef,
+    r.invoiceRef,
+    r.receiptRef,
   ]
     .filter(Boolean)
     .map((v) => displayText(String(v)))
