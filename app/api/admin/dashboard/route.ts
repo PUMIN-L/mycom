@@ -9,13 +9,14 @@ import {
   getTopProducts,
   getTopCustomers,
   getSalespersonLeaderboard,
-  getSmartInsights,
   getPeriodDateRange
 } from "../../../lib/salesDashboardStore";
 
 // GET /api/admin/dashboard — aggregated stats for the dashboard page.
-// Returns overview cards, chart data, rankings, and smart insights in one call
-// to minimize round-trips from the client.
+// Returns overview cards, chart data and rankings in one call to minimize
+// round-trips from the client. No "smart insights": the page stopped showing
+// them (2073ab9), and they cost about six more queries on every load and
+// every ◀ ▶ (dashboard item 12) — getSmartInsights stays in the store, unused.
 export const GET = withRoute(
   "โหลดข้อมูล Dashboard ไม่สำเร็จ",
   async (request: NextRequest) => {
@@ -35,7 +36,6 @@ export const GET = withRoute(
       topProducts,
       topCustomers,
       salespersonLeaderboard,
-      insights,
     ] = await Promise.all([
       getDashboardOverview(curStart, curEnd, prevStart, prevEnd),
       periodType === "month" ? getRevenueByDay(curStart, curEnd) : getRevenueByMonth(curStart, curEnd),
@@ -44,7 +44,6 @@ export const GET = withRoute(
       getTopProducts(10, curStart, curEnd),
       getTopCustomers(10, curStart, curEnd),
       getSalespersonLeaderboard(curStart, curEnd),
-      getSmartInsights(curStart, curEnd, prevStart, prevEnd, periodLabel),
     ]);
 
     const overview = {
@@ -60,7 +59,6 @@ export const GET = withRoute(
       topProducts,
       topCustomers,
       salespersonLeaderboard,
-      insights,
     });
   }
 );

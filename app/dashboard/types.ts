@@ -15,7 +15,6 @@ export interface DashboardData {
   topProducts: TopItem[];
   topCustomers: TopItem[];
   salespersonLeaderboard: SalespersonStat[];
-  insights: Insight[];
 }
 
 export interface ChartPeriod {

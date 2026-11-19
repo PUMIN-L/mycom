@@ -1253,6 +1253,10 @@ the product forms that link suppliers said ผู้ผลิต.
   chart's "now" marker — is indigo; green #065f46 is saving a sale; amber,
   red and emerald carry meaning (no cost yet / a warning, a loss, a profit).
   Headings carry no emoji.
+- **No "smart insights" are worked out** (item 12): `GET /api/admin/dashboard`
+  stopped calling `getSmartInsights` — the page has not shown them since
+  2073ab9, and they cost about six queries on every load and every ◀ ▶. The
+  function stays in the store, unused.
 - **The table keeps to the period picked at the top** (or "ทุกช่วงเวลา"): its
   days are `periodDateRange` ([`lib/dashboardPeriod.ts`](./app/lib/dashboardPeriod.ts)),
   the same function `getPeriodDateRange` uses for the figures, so the two never

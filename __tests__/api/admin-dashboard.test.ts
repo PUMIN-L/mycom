@@ -53,7 +53,8 @@ describe('Admin Dashboard API', () => {
     expect(json).toHaveProperty('topProducts');
     expect(json).toHaveProperty('topCustomers');
     expect(json).toHaveProperty('salespersonLeaderboard');
-    expect(json).toHaveProperty('insights');
+    // Item 12: the insights are no longer worked out — nothing on the page shows them.
+    expect(json).not.toHaveProperty('insights');
     expect(getRevenueByDay).toHaveBeenCalledWith('2026-08-01', '2026-09-01');
   });
 });
