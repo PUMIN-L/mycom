@@ -431,9 +431,13 @@ export default function DashboardPage() {
   );
 
   // Chart data
+  // Bars by month or by quarter is a choice for a YEAR only: a month's chart
+  // is its days, a quarter's its months — "by quarter" would draw one bar
+  // (item 5). The choice made on a year is kept for the next year shown.
+  const chartView: "monthly" | "quarterly" = periodType === "year" ? chartMode : "monthly";
   const chartData = useMemo(() => {
     if (!data) return [];
-    if (chartMode === "monthly") {
+    if (chartView === "monthly") {
       return data.revenueMonthly.map((r) => {
         const parts = r.period.split("-");
         if (parts.length === 3) {
@@ -444,7 +448,7 @@ export default function DashboardPage() {
       });
     }
     return data.revenueQuarterly.map((r) => ({ ...r, name: r.period.split("-")[1] }));
-  }, [data, chartMode]);
+  }, [data, chartView]);
 
   // The bar of today's day / month / quarter, when the period on screen holds
   // it — its axis label is marked "วันนี้" / "เดือนนี้" / "ไตรมาสนี้". Every bar is
@@ -453,7 +457,7 @@ export default function DashboardPage() {
     if (!data) return null;
     const { year, month, day } = bangkokParts(new Date());
     const mm = String(month + 1).padStart(2, "0");
-    const quarterly = chartMode === "quarterly";
+    const quarterly = chartView === "quarterly";
     const wanted = quarterly
       ? [`${year}-Q${Math.floor(month / 3) + 1}`]
       : [`${year}-${mm}-${String(day).padStart(2, "0")}`, `${year}-${mm}`];
@@ -462,7 +466,7 @@ export default function DashboardPage() {
     if (i < 0 || !chartData[i]) return null;
     const marker = quarterly ? "ไตรมาสนี้" : source[i].period.length === 10 ? "วันนี้" : "เดือนนี้";
     return { name: chartData[i].name, marker };
-  }, [data, chartMode, chartData]);
+  }, [data, chartView, chartData]);
 
   // Filtered sales records for table search
 
@@ -1348,14 +1352,17 @@ export default function DashboardPage() {
               {/* The period picked, not the one last loaded: this heading stays
                   up while the next period loads. */}
               <h2 className="text-lg font-bold text-gray-800">ยอดขาย {shownPeriodLabel}</h2>
-              <div className="flex bg-gray-100 rounded-lg p-1">
-                <button onClick={() => setChartMode("monthly")} className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${chartMode === "monthly" ? "bg-white shadow-sm text-indigo-600" : "text-gray-500"}`}>
-                  รายเดือน
-                </button>
-                <button onClick={() => setChartMode("quarterly")} className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${chartMode === "quarterly" ? "bg-white shadow-sm text-indigo-600" : "text-gray-500"}`}>
-                  รายไตรมาส
-                </button>
-              </div>
+              {/* Only for a year — and not named like the period picker's รายเดือน / รายไตรมาส. */}
+              {periodType === "year" && (
+                <div role="group" aria-label="แบ่งแท่งกราฟ" className="flex bg-gray-100 rounded-lg p-1">
+                  <button type="button" aria-pressed={chartMode === "monthly"} onClick={() => setChartMode("monthly")} className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${chartMode === "monthly" ? "bg-white shadow-sm text-indigo-600" : "text-gray-500"}`}>
+                    แยกตามเดือน
+                  </button>
+                  <button type="button" aria-pressed={chartMode === "quarterly"} onClick={() => setChartMode("quarterly")} className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${chartMode === "quarterly" ? "bg-white shadow-sm text-indigo-600" : "text-gray-500"}`}>
+                    แยกตามไตรมาส
+                  </button>
+                </div>
+              )}
             </div>
             {loading ? (
               <div className="h-64 bg-gray-100 rounded-xl animate-pulse" />

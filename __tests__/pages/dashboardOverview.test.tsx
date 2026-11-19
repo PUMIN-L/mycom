@@ -310,4 +310,44 @@ describe("dashboard — lists and chart", () => {
     await renderLoaded();
     await waitFor(() => expect(screen.getAllByText("เดือนนี้").length).toBeGreaterThan(0));
   });
+
+  // Item 5 — bars by month or by quarter is a choice for a year only.
+  it("offers by-month / by-quarter bars for a year only — a month always shows its days", async () => {
+    const working = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.pathname === "/api/admin/dashboard" && url.searchParams.get("periodType") === "month") {
+        const body = dashboardBody("month", "2026-10");
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            ...body,
+            revenueMonthly: Array.from({ length: 31 }, (_, i) => ({ period: `2026-10-${String(i + 1).padStart(2, "0")}`, revenue: 100, deals: 1, cost: 0, expense: 0, profit: 0, margin: 0 })),
+            revenueQuarterly: [{ period: "2026-Q4", revenue: 3100, deals: 31, cost: 0, expense: 0, profit: 0, margin: 0 }],
+          }),
+        } as Response;
+      }
+      if (url.pathname === "/api/admin/dashboard" && url.searchParams.get("periodType") === "year") {
+        const body = dashboardBody("year", url.searchParams.get("periodValue") ?? "2026");
+        const quarters = ["Q1", "Q2", "Q3", "Q4"].map((q) => ({ period: `2026-${q}`, revenue: 3000, deals: 3, cost: 0, expense: 0, profit: 0, margin: 0 }));
+        return { ok: true, status: 200, json: async () => ({ ...body, revenueQuarterly: quarters }) } as Response;
+      }
+      return working(input, init);
+    });
+    await renderLoaded();
+    const toggle = screen.getByRole("group", { name: "แบ่งแท่งกราฟ" });
+    fireEvent.click(within(toggle).getByRole("button", { name: "แยกตามไตรมาส" }));
+    expect(within(toggle).getByRole("button", { name: "แยกตามไตรมาส" }).getAttribute("aria-pressed")).toBe("true");
+    await waitFor(() => expect(screen.getAllByText("ไตรมาสนี้").length).toBeGreaterThan(0));
+
+    fireEvent.click(screen.getByRole("button", { name: "รายปี" }));
+    const options = screen.getAllByRole("button", { name: "รายเดือน" });
+    fireEvent.click(options[options.length - 1]);
+    await waitFor(() => expect(badge().textContent).toBe("ภาพรวมเดือน ต.ค. 2569"));
+    // No toggle for a month — and its days, not one quarter bar, even though "by quarter" was picked on the year.
+    await waitFor(() => expect(screen.getAllByText("วันนี้").length).toBeGreaterThan(0));
+    expect(screen.queryByRole("group", { name: "แบ่งแท่งกราฟ" })).toBeNull();
+    expect(screen.queryByText("ไตรมาสนี้")).toBeNull();
+  });
 });

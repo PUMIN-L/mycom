@@ -1258,6 +1258,11 @@ the product forms that link suppliers said ผู้ผลิต.
   note under the charts stays. The sales list has its own load state
   (loading / ok / error in `SalesTable`, ลองใหม่), and Export refuses to write
   a file while the list is not loaded.
+- **Bars by month or by quarter is a choice for a year only** (`chartView`):
+  a month's chart is its days and a quarter's its months, so the toggle
+  (named แยกตามเดือน / แยกตามไตรมาส — not like the period picker's
+  รายเดือน / รายไตรมาส) shows for a year only; the choice is kept for the
+  next year shown.
 
 ### 8g. Accounting module (`/accounting`, schema v50–54) — sales side
 The in-house accounting module that replaces `/billing` for issuing
