@@ -111,10 +111,9 @@ export const VAT_RATE = 0.07;
  *
  * Exported because, under the original arithmetic, `grandTotal` itself is NOT
  * rounded (only per-line discounts pass through here), so 7% VAT on an odd
- * base leaves float dust (version 2 rounds every figure here — see the header). The billing
- * store settles that dust with THIS function before writing
- * `billing_documents.totalAmount`, so the number in the receivables column is
- * the same satang the printed sheet shows.
+ * base leaves float dust (version 2 rounds every figure here — see the header).
+ * A stored total is settled with THIS function, so it is the same satang the
+ * printed sheet shows.
  */
 export function round2(n: number): number {
   const scaled = n * 100;

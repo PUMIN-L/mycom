@@ -19,7 +19,6 @@ import { useAuth } from "../context/AuthContext";
 const ADMIN_PATH_PREFIXES = [
   "/adminpanel",
   "/assets",
-  "/billing",
   "/create-content",
   "/create-product",
   "/crm",
@@ -40,7 +39,7 @@ const ADMIN_PATH_PREFIXES = [
 ];
 
 /** True only for a path inside one of the admin sections above. Matches the
- *  section root ("/billing") and anything under it ("/billing/abc"), but never
+ *  section root ("/crm") and anything under it ("/crm/alerts"), but never
  *  a different segment that merely starts with the same letters
  *  ("/settings-public"). */
 function isAdminPath(pathname: string | null | undefined): boolean {

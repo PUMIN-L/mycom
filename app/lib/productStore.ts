@@ -8,8 +8,8 @@ import { cleanRichText, DESCRIPTION_LIMIT, TITLE_LIMIT } from "./richTextLimits"
 import { saveRevision } from "./revisionStore";
 import { htmlToText } from "./stripHtml";
 
-/** Pool or transaction connection — the same narrow shape `billingPayments`
- *  uses, so a helper can be called from inside a transaction or outside one. */
+/** Pool or transaction connection — a narrow shape, so a helper can be called
+ *  from inside a transaction or outside one. */
 type Queryable = Pick<PoolConnection, "query">;
 
 // Re-exported so existing callers can keep importing these from "./productStore".

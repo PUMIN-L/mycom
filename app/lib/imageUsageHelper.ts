@@ -3,14 +3,14 @@ import { RowDataPacket } from "mysql2";
 import { deleteCloudinaryImage, extractPublicId } from "./cloudinaryHelper";
 
 export type ExcludeSource = {
-  type: "product" | "content" | "document" | "quotation" | "billing";
+  type: "product" | "content" | "document" | "quotation";
   id: string;
 };
 
 /**
  * Checks if a given Cloudinary image URL is still referenced by any product,
- * document, content block, quotation (uploaded images or line items) or
- * billing document in the database.
+ * document, content block or quotation (uploaded images or line items) in
+ * the database.
  * @param imageUrl The URL to check
  * @param excludeSource The entity currently being deleted (to ignore it in the check)
  */
@@ -71,19 +71,6 @@ export async function isCloudinaryImageInUse(
   const [quotationRows] = await query<RowDataPacket[]>(quotationSql, quotationParams);
   if (quotationRows.length > 0) return true;
 
-  // 5. Check billing_documents table (the whole `data` blob — line items can
-  // carry an imageUrl anywhere inside it).
-  let billingSql =
-    "SELECT id FROM billing_documents WHERE JSON_SEARCH(data, 'one', ?) IS NOT NULL";
-  const billingParams: any[] = [imageUrl];
-  if (excludeSource?.type === "billing") {
-    billingSql += " AND id != ?";
-    billingParams.push(excludeSource.id);
-  }
-  billingSql += " LIMIT 1";
-  const [billingRows] = await query<RowDataPacket[]>(billingSql, billingParams);
-  if (billingRows.length > 0) return true;
-
   return false;
 }
 
@@ -127,14 +114,14 @@ const QUOTATION_PAGE = 100;
 
 /**
  * Collect every Cloudinary URL currently referenced anywhere in the database
- * (products, documents, contents, quotations, billing documents). Returns a
+ * (products, documents, contents, quotations). Returns a
  * Set for O(1) lookup.
  */
 export async function getAllUsedImageUrls(): Promise<Set<string>> {
   const urls = new Set<string>();
 
   // Every Cloudinary URL anywhere inside a JSON value — for the blobs whose
-  // shape is the client's (quotation / billing `data`).
+  // shape is the client's (a quotation's `data`).
   const collectCloudinaryUrls = (value: unknown): void => {
     if (typeof value === "string") {
       if (value.includes("cloudinary.com")) urls.add(value);
@@ -210,15 +197,6 @@ export async function getAllUsedImageUrls(): Promise<Set<string>> {
     }
     if (quotRows.length < QUOTATION_PAGE) break;
     after = String(quotRows[quotRows.length - 1].id);
-  }
-
-  // 5. Billing document line-item images (scan the whole `data` blob — the
-  // shape of items is opaque/client-defined, same approach as quotations).
-  const [billingRows] = await query<RowDataPacket[]>(
-    "SELECT data FROM billing_documents WHERE data IS NOT NULL"
-  );
-  for (const row of billingRows) {
-    collectCloudinaryUrls(parsedJson(row.data));
   }
 
   return urls;

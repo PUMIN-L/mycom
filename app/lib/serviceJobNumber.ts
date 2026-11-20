@@ -5,7 +5,7 @@
 // construction quotations (`QT…`) and billing documents (`INV`/`BN`/`RC`)
 // already use, running within the day from DOCNO_START, except that the
 // literal prefix is EMPTY. Everything below is `quotationNumber.ts` with a
-// different literal, exactly as `billingNumber.ts` is: the date parts, the
+// different literal (as poNumber.ts is): the date parts, the
 // prefix list and `nextDocNo` itself all come from there.
 //
 // ⚠️ THE EMPTY PREFIX IS LOAD-BEARING, so do not "tidy" it into a literal and

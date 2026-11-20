@@ -58,7 +58,7 @@ describe("indexImageReferences", () => {
   });
 
   it("the same id under two kinds is two pages", () => {
-    const index = indexImageReferences([ref({ kind: "quotation", sourceId: "x" }), ref({ kind: "billing", sourceId: "x" })]);
+    const index = indexImageReferences([ref({ kind: "quotation", sourceId: "x" }), ref({ kind: "document", sourceId: "x" })]);
     expect(index.pages).toHaveLength(2);
     expect(index.images).toHaveLength(1);
   });
@@ -66,7 +66,7 @@ describe("indexImageReferences", () => {
 
 describe("pagesWithMissingImages", () => {
   const refs = [
-    ref({ url: `${CLD}gone.jpg`, kind: "billing", sourceId: "b1", title: "INV-1", where: "รายการที่ 1", href: "/billing?id=b1&view=1" }),
+    ref({ url: `${CLD}gone.jpg`, kind: "quotation", sourceId: "q1", title: "QT-1", where: "รายการที่ 1", href: "/quotation?id=q1&view=1" }),
     ref({ url: `${CLD}gone.jpg`, kind: "product", sourceId: "p1", title: "เครื่องชั่ง", where: "รูปสินค้า", href: "/edit-product/p1", hidden: true }),
     ref({ url: `${CLD}ok.jpg`, kind: "content", sourceId: "c1", title: "ข", where: "บล็อกที่ 1 (รูป)" }),
     ref({ url: `${CLD}gone2.png`, kind: "content", sourceId: "c2", title: "ก", where: "บล็อกที่ 2 (แกลเลอรี) · รูปที่ 3", href: "/showcase/c2" }),
@@ -74,7 +74,7 @@ describe("pagesWithMissingImages", () => {
   ];
   const index = indexImageReferences(refs);
 
-  it("reports a missing file on every page that shows it — content first, then products, … billing last", () => {
+  it("reports a missing file on every page that shows it — content first, then products, … quotations last", () => {
     const results = new Map([
       result(`${CLD}gone.jpg`, "missing"),
       result(`${CLD}ok.jpg`, "ok"),
@@ -85,7 +85,7 @@ describe("pagesWithMissingImages", () => {
     expect(pages.map((p) => [p.kind, p.sourceId])).toEqual([
       ["content", "c2"],
       ["product", "p1"],
-      ["billing", "b1"],
+      ["quotation", "q1"],
     ]);
     expect(pages[0]).toMatchObject({
       title: "ก",
@@ -102,12 +102,12 @@ describe("pagesWithMissingImages", () => {
 
   it("orders by kind before title — titles that sort the other way round do not reorder the kinds", () => {
     const mixed = indexImageReferences([
-      ref({ url: `${CLD}y.jpg`, kind: "billing", sourceId: "b", title: "ก" }),
+      ref({ url: `${CLD}y.jpg`, kind: "quotation", sourceId: "q", title: "ก" }),
       ref({ url: `${CLD}y.jpg`, kind: "product", sourceId: "p", title: "ข" }),
       ref({ url: `${CLD}y.jpg`, kind: "content", sourceId: "c", title: "ฮ" }),
     ]);
     const pages = pagesWithMissingImages(mixed, new Map([result(`${CLD}y.jpg`, "missing")]));
-    expect(pages.map((p) => p.kind)).toEqual(["content", "product", "billing"]);
+    expect(pages.map((p) => p.kind)).toEqual(["content", "product", "quotation"]);
   });
 
   it("orders pages of one kind by title, the Thai way", () => {

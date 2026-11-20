@@ -16,9 +16,10 @@ import { getAllUsedImageUrls } from "@/app/lib/imageUsageHelper";
 const CLD = "https://res.cloudinary.com/demo/image/upload/v1/";
 
 type Rows = Record<string, unknown>[];
-let tables: { contents: Rows; products: Rows; documents: Rows; quotations: Rows; billing: Rows };
+let tables: { contents: Rows; products: Rows; documents: Rows; quotations: Rows };
 
-/** Answers each query from `tables`, paging quotations / billing like the store asks. */
+/** Answers each query from `tables`, paging quotations like the store asks. Any
+ *  other table — the old billing_documents among them — is an error. */
 function fakeDb() {
   vi.mocked(query).mockImplementation((async (sql: string, params: unknown[] = []) => {
     const page = (rows: Rows) => {
@@ -32,14 +33,13 @@ function fakeDb() {
     if (/FROM products/.test(sql)) return [tables.products, []];
     if (/FROM documents/.test(sql)) return [tables.documents, []];
     if (/FROM quotations/.test(sql)) return [params.length ? page(tables.quotations) : tables.quotations, []];
-    if (/FROM billing_documents/.test(sql)) return [params.length ? page(tables.billing) : tables.billing, []];
     throw new Error(`unexpected SQL: ${sql}`);
   }) as never);
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
-  tables = { contents: [], products: [], documents: [], quotations: [], billing: [] };
+  tables = { contents: [], products: [], documents: [], quotations: [] };
   fakeDb();
 });
 
@@ -100,7 +100,7 @@ describe("listImageReferences", () => {
     ]);
   });
 
-  it("quotations and billing documents: line-item pictures by item number, titled by number and customer, opened read-only", async () => {
+  it("quotations: line-item pictures by item number, titled by number and customer, opened read-only", async () => {
     tables.quotations = [
       {
         id: "q1",
@@ -113,17 +113,15 @@ describe("listImageReferences", () => {
       },
       { id: "q2", docNo: "QT2026-0002", data: { items: [{ imageUrl: "https://example.com/x.jpg" }] } },
     ];
-    tables.billing = [{ id: "b1", docNo: "", data: { customerName: "คุณ ข", items: [{ imageUrl: `${CLD}b-item1.jpg` }] } }];
     const refs = await listImageReferences();
     expect(refs).toEqual([
       { kind: "quotation", sourceId: "q1", title: "QT2026-0001 · บริษัท ก", href: "/quotation?id=q1&view=1", hidden: false, url: `${CLD}q-item2.jpg`, where: "รายการที่ 2" },
       { kind: "quotation", sourceId: "q1", title: "QT2026-0001 · บริษัท ก", href: "/quotation?id=q1&view=1", hidden: false, url: `${CLD}q-nested.jpg`, where: "รายการที่ 2" },
       { kind: "quotation", sourceId: "q1", title: "QT2026-0001 · บริษัท ก", href: "/quotation?id=q1&view=1", hidden: false, url: `${CLD}q-logo.png`, where: "รูปในเอกสาร" },
-      { kind: "billing", sourceId: "b1", title: "คุณ ข", href: "/billing?id=b1&view=1", hidden: false, url: `${CLD}b-item1.jpg`, where: "รายการที่ 1" },
     ]);
   });
 
-  it("reads quotations and billing a page at a time, all the way through", async () => {
+  it("reads quotations a page at a time, all the way through", async () => {
     tables.quotations = Array.from({ length: 250 }, (_, i) => ({
       id: `q${String(i).padStart(3, "0")}`,
       docNo: `QT-${i}`,
@@ -158,7 +156,6 @@ describe("the scan covers what deletion protects", () => {
         data: JSON.stringify({ items: [{ imageUrl: `${CLD}q-upload.jpg` }, { imageUrl: `${CLD}p.jpg` }] }),
       },
     ];
-    tables.billing = [{ id: "b", docNo: "B", data: JSON.stringify({ items: [{ imageUrl: `${CLD}b.jpg` }] }) }];
 
     const protectedUrls = await getAllUsedImageUrls();
     const scanned = new Set((await listImageReferences()).map((r) => r.url));

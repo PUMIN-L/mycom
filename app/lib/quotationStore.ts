@@ -30,7 +30,7 @@ function parseJson<T>(value: unknown, fallback: T): T {
 /**
  * Previously deleted orphaned images. Now a no-op: images from quotation
  * cleanup will be picked up by the Orphan Scanner for manual review (which
- * itself checks quotations/billing_documents/products/documents/contents
+ * itself checks quotations/products/documents/contents
  * before treating anything as deletable — see app/lib/imageUsageHelper.ts).
  * Cron jobs have no UI to show a confirmation dialog.
  */

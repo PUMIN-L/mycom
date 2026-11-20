@@ -10,7 +10,7 @@
 // deletes like that any more (ImageDeleteConfirmDialog + imageUsageHelper),
 // but the files already gone stay gone; this finds the pages they broke.
 
-export type ImageSourceKind = "content" | "product" | "document" | "quotation" | "billing";
+export type ImageSourceKind = "content" | "product" | "document" | "quotation";
 
 /** One place a Cloudinary file is used. */
 export interface ImageReference {
@@ -68,11 +68,10 @@ export const IMAGE_KIND_LABEL: Record<ImageSourceKind, string> = {
   product: "สินค้า",
   document: "แคตตาล็อก",
   quotation: "ใบเสนอราคา",
-  billing: "เอกสารขาย",
 };
 
 /** Pages a visitor sees first; then the documents only staff open. */
-const KIND_ORDER: ImageSourceKind[] = ["content", "product", "document", "quotation", "billing"];
+const KIND_ORDER: ImageSourceKind[] = ["content", "product", "document", "quotation"];
 
 /** The references as pages + files, each file once (so it is checked once). */
 export function indexImageReferences(refs: readonly ImageReference[]): ImageIndex {
@@ -115,8 +114,8 @@ export interface MissingOnPage extends ImagePage {
 
 /**
  * The pages that show at least one missing file, with what is missing where:
- * pages visitors see first (content, products, catalogs), then quotations and
- * billing documents; by title within a kind.
+ * pages visitors see first (content, products, catalogs), then quotations; by
+ * title within a kind.
  */
 export function pagesWithMissingImages(
   index: ImageIndex,

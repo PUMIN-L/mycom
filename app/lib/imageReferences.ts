@@ -32,7 +32,7 @@ function parsedJson(value: unknown): unknown {
 }
 
 /**
- * Every Cloudinary URL inside a document's JSON (quotation / billing `data`,
+ * Every Cloudinary URL inside a document's JSON (a quotation's `data`,
  * whose shape is the client's), with where it sits: "รายการที่ 3" for a line
  * item (`items[2]`), otherwise just "in the document".
  */
@@ -133,18 +133,13 @@ export async function listImageReferences(): Promise<ImageReference[]> {
     if (isCloudinaryUrl(row.pdfUrl)) refs.push({ ...page, url: row.pdfUrl, where: "ไฟล์ PDF" });
   }
 
-  // 4 + 5. Quotations and billing documents — what they print. A page at a
+  // 4. Quotations — what they print. A page at a
   // time: two years of quotes, up to 200 KB each, is too much to hold at once.
   const documents = [
     {
       kind: "quotation" as const,
       sql: "SELECT id, docNo, data FROM quotations WHERE id > ? ORDER BY id LIMIT ?",
       href: (id: string) => `/quotation?id=${encodeURIComponent(id)}&view=1`,
-    },
-    {
-      kind: "billing" as const,
-      sql: "SELECT id, docNo, data FROM billing_documents WHERE id > ? ORDER BY id LIMIT ?",
-      href: (id: string) => `/billing?id=${encodeURIComponent(id)}&view=1`,
     },
   ];
   for (const source of documents) {

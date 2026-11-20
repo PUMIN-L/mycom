@@ -71,7 +71,7 @@ export const GET = withRoute(
       // Billing documents (invoice/billing note/receipt) are real financial
       // and tax records, unlike throwaway quotation drafts — they must NEVER
       // be auto-deleted, so there is no purge call for them here anymore
-      // (the function that did this was removed from billingStore.ts).
+      // (and the old billing module, with its tables, is gone).
       // `billingDeleted` is kept in the response shape for compatibility
       // with anything parsing this cron's JSON output.
       const billingDeleted = 0;

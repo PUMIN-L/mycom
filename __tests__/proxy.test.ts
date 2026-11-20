@@ -65,11 +65,11 @@ describe('proxy — the admin page gate', () => {
   // secret precisely so that it is never accepted as a session here.
   it('refuses a login-device token as a session', async () => {
     const device = await issueLoginDeviceToken('admin', 0);
-    expect(redirectedToLogin(await visit('/billing', device))).toBe(true);
+    expect(redirectedToLogin(await visit('/accounting', device))).toBe(true);
   });
 
   it('refuses garbage', async () => {
-    expect(redirectedToLogin(await visit('/billing', 'not.a.jwt'))).toBe(true);
+    expect(redirectedToLogin(await visit('/accounting', 'not.a.jwt'))).toBe(true);
   });
 });
 
@@ -92,7 +92,7 @@ describe('proxy — the file convention', () => {
   it('still gates every admin area, and never the public pages beside them', () => {
     const matcher = config.matcher as string[];
     for (const area of [
-      '/accounting', '/adminpanel', '/assets', '/billing', '/create-content', '/create-product', '/crm', '/customers',
+      '/accounting', '/adminpanel', '/assets', '/create-content', '/create-product', '/crm', '/customers',
       '/dashboard', '/documents', '/edit-product', '/expenses', '/product-specs',
       '/purchase-order', '/quotation', '/service-job', '/settings', '/stock', '/suppliers', '/tools',
     ]) {

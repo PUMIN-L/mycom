@@ -6,7 +6,7 @@ import type { PoolConnection } from "mysql2/promise";
 // the change — shared by the payments store and document deletion.
 //
 // ⚠️ `acc_documents.paidSatang` is only ever a full re-sum of the invoice's
-// LIVE payments (as billingPayments.recomputePaidAmount): idempotent and
+// LIVE payments: idempotent and
 // self-healing, where `paidSatang = paidSatang + ?` would drift for good the
 // first time a transaction is retried. The caller holds the invoice's row
 // lock (SELECT … FOR UPDATE) — that is what makes two payments recorded at

@@ -39,7 +39,7 @@ describe('isCloudinaryImageInUse', () => {
     expect(vi.mocked(query).mock.calls[0][0]).toContain('FROM products');
   });
 
-  it('checks products, documents, contents, quotations, billing_documents in order when nothing matches', async () => {
+  it('checks products, documents, contents and quotations in order when nothing matches', async () => {
     vi.mocked(query).mockResolvedValue([[]] as any);
     expect(await isCloudinaryImageInUse(URL_A)).toBe(false);
     const sqls = vi.mocked(query).mock.calls.map((c) => String(c[0]));
@@ -48,9 +48,9 @@ describe('isCloudinaryImageInUse', () => {
     expect(sqls[2]).toContain('FROM contents');
     expect(sqls[3]).toContain('FROM quotations');
     expect(sqls[3]).toContain('JSON_SEARCH');
-    expect(sqls[4]).toContain('FROM billing_documents');
-    expect(sqls[4]).toContain('JSON_SEARCH');
-    expect(sqls).toHaveLength(5);
+    // The old billing documents are gone with /billing.
+    expect(sqls).toHaveLength(4);
+    expect(sqls.join(' ')).not.toContain('billing_documents');
   });
 
   it('finds a match in quotations.uploadedImages via JSON_SEARCH', async () => {
@@ -60,17 +60,7 @@ describe('isCloudinaryImageInUse', () => {
       .mockResolvedValueOnce([[]] as any) // contents
       .mockResolvedValueOnce([[{ id: 'q1' }]] as any); // quotations — match
     expect(await isCloudinaryImageInUse(URL_A)).toBe(true);
-    expect(query).toHaveBeenCalledTimes(4); // stops before billing_documents
-  });
-
-  it('finds a match in billing_documents.data via JSON_SEARCH', async () => {
-    vi.mocked(query)
-      .mockResolvedValueOnce([[]] as any)
-      .mockResolvedValueOnce([[]] as any)
-      .mockResolvedValueOnce([[]] as any)
-      .mockResolvedValueOnce([[]] as any)
-      .mockResolvedValueOnce([[{ id: 'b1' }]] as any); // billing_documents — match
-    expect(await isCloudinaryImageInUse(URL_A)).toBe(true);
+    expect(query).toHaveBeenCalledTimes(4); // the last check
   });
 
   it('excludes the quotation currently being deleted from its own quotations check', async () => {
@@ -81,18 +71,10 @@ describe('isCloudinaryImageInUse', () => {
     expect(quotationCall[1]).toEqual([URL_A, URL_A, 'q1']);
   });
 
-  it('excludes the billing document currently being deleted from its own billing check', async () => {
-    vi.mocked(query).mockResolvedValue([[]] as any);
-    await isCloudinaryImageInUse(URL_A, { type: 'billing', id: 'b1' });
-    const billingCall = vi.mocked(query).mock.calls[4];
-    expect(billingCall[0]).toContain('AND id != ?');
-    expect(billingCall[1]).toEqual([URL_A, 'b1']);
-  });
-
   it('does NOT exclude by id when excludeSource is for a different entity type', async () => {
     vi.mocked(query).mockResolvedValue([[]] as any);
     await isCloudinaryImageInUse(URL_A, { type: 'product', id: 'p1' });
-    // The quotations/billing checks should NOT carry the product's exclude id.
+    // The quotations check should NOT carry the product's exclude id.
     const quotationCall = vi.mocked(query).mock.calls[3];
     expect(quotationCall[0]).not.toContain('AND id != ?');
     expect(quotationCall[1]).toEqual([URL_A, URL_A]);
@@ -190,7 +172,7 @@ describe('safeDeleteCloudinaryImage(s)', () => {
 });
 
 describe('getAllUsedImageUrls', () => {
-  it('collects Cloudinary URLs from every source: products, documents, contents, quotations, billing', async () => {
+  it('collects Cloudinary URLs from every source: products, documents, contents, quotations', async () => {
     vi.mocked(query)
       .mockResolvedValueOnce([[{ image: 'https://res.cloudinary.com/x/product.jpg' }]] as any) // products
       .mockResolvedValueOnce([
@@ -201,10 +183,7 @@ describe('getAllUsedImageUrls', () => {
       ] as any) // contents
       .mockResolvedValueOnce([
         [{ uploadedImages: JSON.stringify(['https://res.cloudinary.com/x/quote.jpg']) }],
-      ] as any) // quotations
-      .mockResolvedValueOnce([
-        [{ data: JSON.stringify({ items: [{ imageUrl: 'https://res.cloudinary.com/x/billing.jpg' }] }) }],
-      ] as any); // billing_documents
+      ] as any); // quotations
 
     const urls = await getAllUsedImageUrls();
 
@@ -214,8 +193,9 @@ describe('getAllUsedImageUrls', () => {
     expect(urls.has('https://res.cloudinary.com/x/block.jpg')).toBe(true);
     expect(urls.has('https://res.cloudinary.com/x/gallery.jpg')).toBe(true);
     expect(urls.has('https://res.cloudinary.com/x/quote.jpg')).toBe(true);
-    expect(urls.has('https://res.cloudinary.com/x/billing.jpg')).toBe(true);
-    expect(urls.size).toBe(7);
+    expect(urls.size).toBe(6);
+    // The old billing documents are gone with /billing.
+    for (const [sql] of vi.mocked(query).mock.calls) expect(String(sql)).not.toContain('billing_documents');
   });
 
   it('handles already-parsed-array JSON columns (not strings) for contents.blocks and quotations.uploadedImages', async () => {
@@ -227,26 +207,11 @@ describe('getAllUsedImageUrls', () => {
       ] as any) // contents — already an array, not a JSON string
       .mockResolvedValueOnce([
         [{ uploadedImages: ['https://res.cloudinary.com/x/parsed-quote.jpg'] }],
-      ] as any) // quotations — already an array
-      .mockResolvedValueOnce([[]] as any); // billing_documents
+      ] as any); // quotations — already an array
 
     const urls = await getAllUsedImageUrls();
     expect(urls.has('https://res.cloudinary.com/x/parsed-block.jpg')).toBe(true);
     expect(urls.has('https://res.cloudinary.com/x/parsed-quote.jpg')).toBe(true);
-  });
-
-  it('handles an already-parsed-object JSON column (not a string) for billing_documents.data', async () => {
-    vi.mocked(query)
-      .mockResolvedValueOnce([[]] as any)
-      .mockResolvedValueOnce([[]] as any)
-      .mockResolvedValueOnce([[]] as any)
-      .mockResolvedValueOnce([[]] as any)
-      .mockResolvedValueOnce([
-        [{ data: { nested: { imageUrl: 'https://res.cloudinary.com/x/deep.jpg' } } }],
-      ] as any);
-
-    const urls = await getAllUsedImageUrls();
-    expect(urls.has('https://res.cloudinary.com/x/deep.jpg')).toBe(true);
   });
 
   it('does not crash on malformed JSON — degrades to skipping that row', async () => {
@@ -254,8 +219,7 @@ describe('getAllUsedImageUrls', () => {
       .mockResolvedValueOnce([[]] as any)
       .mockResolvedValueOnce([[]] as any)
       .mockResolvedValueOnce([[{ blocks: 'not-valid-json{' }]] as any)
-      .mockResolvedValueOnce([[]] as any)
-      .mockResolvedValueOnce([[{ data: 'not-valid-json{' }]] as any);
+      .mockResolvedValueOnce([[{ id: 'q', uploadedImages: 'not-valid-json{', data: 'not-valid-json{' }]] as any);
 
     const urls = await getAllUsedImageUrls();
     expect(urls.size).toBe(0);
@@ -275,8 +239,7 @@ describe('getAllUsedImageUrls', () => {
           },
           { id: 'quo-2', uploadedImages: [], data: { items: [{ imageUrl: 'https://res.cloudinary.com/x/parsed.jpg' }] } },
         ],
-      ] as never) // quotations
-      .mockResolvedValueOnce([[]] as never); // billing_documents
+      ] as never); // quotations
 
     const urls = await getAllUsedImageUrls();
     expect(urls.has('https://res.cloudinary.com/x/old-product.jpg')).toBe(true);
@@ -313,8 +276,7 @@ describe('getAllUsedImageUrls', () => {
           { id: 'quo-bad', uploadedImages: 'not-json{', data: 'not-json{' },
           { id: 'quo-ok', uploadedImages: '["https://res.cloudinary.com/x/ok.jpg"]', data: '{}' },
         ],
-      ] as never)
-      .mockResolvedValueOnce([[]] as never);
+      ] as never);
 
     const urls = await getAllUsedImageUrls();
     expect([...urls]).toEqual(['https://res.cloudinary.com/x/ok.jpg']);

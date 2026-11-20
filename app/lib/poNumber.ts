@@ -1,6 +1,6 @@
 // Purchase-order running-number helpers. Thin wrapper around the generic
-// allocator in quotationNumber.ts — same construction as billingNumber.ts /
-// serviceJobNumber.ts, not a second implementation of the same idea.
+// allocator in quotationNumber.ts — same construction as serviceJobNumber.ts,
+// not a second implementation of the same idea.
 //
 // A PO number is `PO<DDMMYY>-<NN>`, NN running within the day from
 // DOCNO_START. No legacy YYMMDD shape: unlike quotations/billing/service

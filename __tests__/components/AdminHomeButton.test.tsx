@@ -79,8 +79,10 @@ describe("every admin page uses it", () => {
     expect(offenders.map((f) => path.relative(process.cwd(), f))).toEqual([]);
   });
 
-  it("is on every page that had a way back (18 of them)", () => {
+  // The three /billing pages went with the old billing module, and
+  // /quotation/saved came with the quotation list.
+  it("is on every page that had a way back (17 of them)", () => {
     const users = files.filter((f) => fs.readFileSync(f, "utf8").includes("<AdminHomeButton"));
-    expect(users.length).toBeGreaterThanOrEqual(18);
+    expect(users.length).toBeGreaterThanOrEqual(17);
   });
 });

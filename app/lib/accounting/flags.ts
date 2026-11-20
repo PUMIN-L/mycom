@@ -6,10 +6,3 @@
 export function isAccountingEnabled(): boolean {
   return process.env.NODE_ENV !== "production" || process.env.NEXT_PUBLIC_ACCOUNTING_ENABLED === "1";
 }
-
-/**
- * Step 10: once the module is on, the old /billing issues nothing new — this
- * is said wherever it would have (its builder, its save route). Its old
- * documents still open, print and take payments there.
- */
-export const ISSUING_MOVED_MESSAGE = "เปิดใช้ระบบบัญชีแล้ว — ใบแจ้งหนี้ ใบวางบิล และใบเสร็จใหม่ ให้ออกที่ ระบบบัญชี";

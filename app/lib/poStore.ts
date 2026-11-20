@@ -12,9 +12,8 @@ import { computeQuoteTotals } from "./quotationTotals";
 // for an id that already has a row. The only ways to change what a PO says
 // after it exists are `cancelPurchaseOrder` (stops it counting, keeps the
 // row) and `supersedePurchaseOrder` (issues a brand-new PO with a brand-new
-// number and stamps the old row's `supersededById`) — the same rigor
-// `billing_documents` applies to invoices, because a PO is a commitment
-// already sent to a supplier.
+// number and stamps the old row's `supersededById`) — the rigor an issued
+// invoice gets, because a PO is a commitment already sent to a supplier.
 export interface PurchaseOrderRecord {
   id: string;
   docNo: string;
@@ -171,8 +170,8 @@ function summarize(data: PoDataLite): { supplier: string; total: number; docDate
 
 const LIST_LIMIT = 2000;
 
-/** Saved-PO summaries, newest first. Same LIMIT-2000 shape as
- *  listBillingDocuments — purchase orders are financial/procurement records,
+/** Saved-PO summaries, newest first, at most LIMIT 2000 — purchase orders are
+ *  financial/procurement records,
  *  never auto-purged, so this list only grows. */
 export async function listPurchaseOrders(): Promise<PurchaseOrderSummary[]> {
   const [rows] = await query<RowDataPacket[]>(

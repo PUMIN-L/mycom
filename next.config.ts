@@ -83,6 +83,14 @@ const nextConfig: NextConfig = {
         destination: "/tools/pdf-editor",
         permanent: false,
       },
+      // The old billing module (/billing) was replaced by the accounting
+      // module and removed. A bookmark of one of its pages lands on what took
+      // its place: its saved list held the quotations, its receivables are the
+      // module's now, and anything else is the module itself. The two exact
+      // paths come first — the catch-all below would take them too.
+      { source: "/billing/saved", destination: "/quotation/saved", permanent: false },
+      { source: "/billing/receivables", destination: "/accounting/receivables", permanent: false },
+      { source: "/billing/:path*", destination: "/accounting", permanent: false },
     ];
   },
   async headers() {
