@@ -11,6 +11,7 @@ import type { SearchableDropdownOption } from "../../components/SearchableDropdo
 import ImageDeleteConfirmDialog, { type OrphanedImage } from "../../components/ImageDeleteConfirmDialog";
 import { stripHtml } from "../../lib/stripHtml";
 import { useLeaveGuard } from "../../components/LeaveGuard";
+import AdminHomeButton from "../../components/AdminHomeButton";
 import { uploadFormData } from "../../lib/uploadClient";
 
 interface ProductCategory {
@@ -313,6 +314,8 @@ export default function EditProduct({ params }: { params: Promise<{ id: string }
     <div className="min-h-screen bg-gray-50 py-12">
       {toast && <Toast message={toast.message} type={toast.type} />}
       <main className="max-w-4xl mx-auto px-4">
+        {/* A page load, so the unsaved-form warning (beforeunload) still asks. */}
+        <AdminHomeButton guard={(href) => window.location.assign(href)} className="mb-4" />
         <h1 className="text-4xl font-bold mb-2 text-gray-900">แก้ไขสินค้า</h1>
         <p className="text-gray-600 mb-8">
           Edit product — แก้ไขข้อมูลสินค้าและอัปเดตรูปภาพ

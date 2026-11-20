@@ -21,6 +21,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import NavButton from "../../components/NavButton";
+import AdminHomeButton from "../../components/AdminHomeButton";
 import { useRouter } from "next/navigation";
 import { useAuth } from "../../context/AuthContext";
 import Toast from "../../components/Toast";
@@ -107,7 +108,10 @@ export default function TasksPage() {
 
       <div className="bg-white border-b border-gray-100">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6">
-          <NavButton href="/crm/alerts" label="กลับไปหน้าแจ้งเตือน" className="mb-3" />
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <NavButton href="/crm/alerts" label="กลับไปหน้าแจ้งเตือน" />
+            <AdminHomeButton />
+          </div>
           <div className="flex items-center gap-3 mb-1">
             <div className="w-10 h-10 bg-amber-100 text-amber-600 rounded-xl flex items-center justify-center text-xl shadow-sm">
               📝

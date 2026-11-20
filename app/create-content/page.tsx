@@ -432,7 +432,7 @@ function CreateContentInner() {
               Build your content by adding text and images
             </p>
           </div>
-          <AdminHomeButton onNavigate={() => guardedNavigate("/adminpanel")} className="self-start sm:self-auto" />
+          <AdminHomeButton guard={guardedNavigate} className="self-start sm:self-auto" />
         </div>
 
         {/* Title Input */}

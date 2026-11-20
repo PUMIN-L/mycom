@@ -4,7 +4,6 @@ import AdminHomeButton from "../components/AdminHomeButton";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "../context/AuthContext";
 import Toast from "../components/Toast";
-import Link from "next/link";
 import EquipmentTab from "./EquipmentTab";
 import DeleteDialog from "./DeleteDialog";
 import { CompanyForm, CustomerForm, SalespersonForm } from "./EntityForms";
@@ -626,9 +625,6 @@ function CustomersInner() {
             <p className="text-gray-500 mt-2 text-lg">จัดการรายชื่อลูกค้าและข้อมูลบริษัทคู่ค้าของคุณ</p>
           </div>
           <div className="flex gap-3 items-center flex-wrap">
-            <Link href="/dashboard" className="px-5 py-2.5 bg-white border border-gray-200 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 hover:shadow-sm transition-all flex items-center gap-2">
-              📊 Dashboard ยอดขาย
-            </Link>
             <AdminHomeButton />
           </div>
         </div>

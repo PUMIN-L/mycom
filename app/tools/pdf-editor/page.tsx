@@ -1074,7 +1074,7 @@ export default function PdfEditorPage() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-5">
           <div className="flex flex-wrap justify-between items-center gap-3">
             <div>
-              <AdminHomeButton onNavigate={() => guardedNavigate("/adminpanel")} className="mb-3" />
+              <AdminHomeButton guard={guardedNavigate} className="mb-3" />
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 bg-violet-100 text-violet-600 rounded-xl flex items-center justify-center text-xl shadow-sm">
                   📄

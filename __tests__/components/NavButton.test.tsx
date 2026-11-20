@@ -55,10 +55,11 @@ describe("no faint grey way back is left", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("the pages that lead back to the dashboard or the alerts use it", () => {
+  it("the pages that lead back to the alerts use it (the dashboard way is AdminHomeButton's)", () => {
+    for (const file of ["app/crm/alerts/page.tsx", "app/expenses/page.tsx", "app/crm/tasks/page.tsx"]) {
+      expect(fs.readFileSync(path.join(process.cwd(), file), "utf8")).toContain("<AdminHomeButton");
+    }
     for (const [file, label] of [
-      ["app/crm/alerts/page.tsx", "กลับไป Dashboard"],
-      ["app/expenses/page.tsx", "กลับไป Dashboard"],
       ["app/crm/tasks/page.tsx", "กลับไปหน้าแจ้งเตือน"],
     ]) {
       expect(fs.readFileSync(path.join(process.cwd(), file), "utf8")).toContain(`<NavButton`);

@@ -10,6 +10,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
+import AdminHomeButton from "../AdminHomeButton";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "../../context/AuthContext";
 import SearchableDropdown from "../SearchableDropdown";
@@ -175,7 +176,8 @@ export default function InventoryLabelsPage({ kind }: { kind: InventoryKind }) {
             </Link>
             <h1 className="text-xl font-bold text-gray-900">พิมพ์สติกเกอร์</h1>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
+            <AdminHomeButton />
             <button type="button" className={secondaryButton} onClick={() => router.back()}>
               กลับ
             </button>

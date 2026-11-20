@@ -5,6 +5,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import AdminHomeButton from "../AdminHomeButton";
 import { useRouter } from "next/navigation";
 import { useAuth } from "../../context/AuthContext";
 import Toast from "../Toast";
@@ -145,11 +146,14 @@ export default function InventoryItemPage({ kind, id }: { kind: InventoryKind; i
 
   const header = (
     <header className="sticky top-0 z-30 border-b border-gray-200 bg-white/95 backdrop-blur">
-      <div className="mx-auto max-w-3xl px-4 py-3 sm:px-6">
-        <Link href={base} className="text-xs font-semibold text-gray-400 hover:text-gray-600">
-          ← {INVENTORY_TITLE[kind]}
-        </Link>
-        <h1 className="font-mono text-xl font-bold text-gray-900 sm:text-2xl">{data?.item.code ?? "…"}</h1>
+      <div className="mx-auto flex max-w-3xl flex-wrap items-center justify-between gap-2 px-4 py-3 sm:px-6">
+        <div>
+          <Link href={base} className="text-xs font-semibold text-gray-400 hover:text-gray-600">
+            ← {INVENTORY_TITLE[kind]}
+          </Link>
+          <h1 className="font-mono text-xl font-bold text-gray-900 sm:text-2xl">{data?.item.code ?? "…"}</h1>
+        </div>
+        <AdminHomeButton />
       </div>
     </header>
   );

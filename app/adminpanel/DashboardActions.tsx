@@ -25,6 +25,15 @@ export default function DashboardActions() {
 
   const menuItems = [
     {
+      // First: the owner wanted the dashboard one click from everywhere, and
+      // every other admin page has it beside its way back (AdminHomeButton).
+      href: "/dashboard",
+      title: "Dashboard ยอดขาย",
+      description: "ยอดขาย กราฟ ต้นทุน กำไร และรายการขายทั้งหมด",
+      icon: "📊",
+      color: "bg-indigo-50 text-indigo-600 border-indigo-200 hover:border-indigo-400 hover:shadow-indigo-100",
+    },
+    {
       href: "/create-content",
       title: "สร้างคอนเทนต์ใหม่",
       description: "เพิ่มบทความ ข่าวสาร หรือหน้าเว็บใหม่",
