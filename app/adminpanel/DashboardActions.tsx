@@ -34,13 +34,6 @@ export default function DashboardActions() {
       color: "bg-indigo-50 text-indigo-600 border-indigo-200 hover:border-indigo-400 hover:shadow-indigo-100",
     },
     {
-      href: "/create-content",
-      title: "สร้างคอนเทนต์ใหม่",
-      description: "เพิ่มบทความ ข่าวสาร หรือหน้าเว็บใหม่",
-      icon: "✨",
-      color: "bg-orange-50 text-orange-600 border-orange-200 hover:border-orange-400 hover:shadow-orange-100",
-    },
-    {
       href: "/documents",
       title: "เอกสารดาวน์โหลด",
       description: "จัดการโบรชัวร์และแคตตาล็อก",
