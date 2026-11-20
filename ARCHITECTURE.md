@@ -1379,7 +1379,10 @@ see "The old /billing is removed" below). Files:
     dialog says all of this first (`deletionImpact`).
   - **Printing** is the browser's: the paper ([`InvoicePaper.tsx`](./app/accounting/invoices/InvoicePaper.tsx))
     hides the rest of the page in print, original or copy; "Save as PDF"
-    makes the file. Nothing is stored.
+    makes the file. Nothing is stored. Every paper of the module (invoice,
+    receipt, billing note, credit note) puts the website's own logo in front of
+    our company's name ([`SellerLogo.tsx`](./app/accounting/SellerLogo.tsx) — a
+    plain `<img>`, 11 mm wide, as on the quotation's paper).
   - **The dashboard's บันทึกยอดขาย** leads to a new invoice while the module
     is on (so a sale is never typed in twice); with it off (the live site
     before go-live) the old form still records sales.

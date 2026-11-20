@@ -6,6 +6,7 @@ import { branchLabel, formatTaxId } from "../../lib/thaiTaxId";
 import { formatSatang, satangToBaht } from "../../lib/accounting/money";
 import { methodLabel, receiptTitle } from "../../lib/accounting/paymentRules";
 import type { SellerProfile } from "../../lib/accounting/types";
+import SellerLogo from "../SellerLogo";
 
 export interface ReceiptPaperDocument {
   docNo: string | null;
@@ -94,16 +95,19 @@ export default function ReceiptPaper({
       )}
 
       <div className="relative flex flex-col sm:flex-row justify-between gap-4 border-b border-gray-300 pb-4">
-        <div className="min-w-0">
-          <p className="text-base font-bold">{seller.name || "— ยังไม่ได้ตั้งชื่อบริษัท —"}</p>
-          <p className="whitespace-pre-line text-gray-700">{seller.address}</p>
-          <p className="text-gray-700 tabular-nums">
-            เลขประจำตัวผู้เสียภาษี {formatTaxId(seller.taxId) || "—"}
-            {seller.branchCode && <> · {branchLabel(seller.branchCode)}</>}
-          </p>
-          {(seller.phone || seller.email) && (
-            <p className="text-gray-700">{[seller.phone && `โทร ${seller.phone}`, seller.email].filter(Boolean).join(" · ")}</p>
-          )}
+        <div className="min-w-0 flex items-start gap-3">
+          <SellerLogo />
+          <div className="min-w-0">
+            <p className="text-base font-bold">{seller.name || "— ยังไม่ได้ตั้งชื่อบริษัท —"}</p>
+            <p className="whitespace-pre-line text-gray-700">{seller.address}</p>
+            <p className="text-gray-700 tabular-nums">
+              เลขประจำตัวผู้เสียภาษี {formatTaxId(seller.taxId) || "—"}
+              {seller.branchCode && <> · {branchLabel(seller.branchCode)}</>}
+            </p>
+            {(seller.phone || seller.email) && (
+              <p className="text-gray-700">{[seller.phone && `โทร ${seller.phone}`, seller.email].filter(Boolean).join(" · ")}</p>
+            )}
+          </div>
         </div>
         <div className="sm:text-right shrink-0">
           <p className="text-lg font-bold">{receiptTitle(doc.isTaxInvoice)}</p>
