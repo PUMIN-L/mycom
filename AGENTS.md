@@ -28,3 +28,36 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
   `searchable={false}` when a handful of fixed options make the search box dead
   weight, and wrap it in a `<fieldset disabled>` for the disabled state (it has
   no `disabled` prop). This holds everywhere in the project, no exceptions.
+
+## How every piece of work is done — one step at a time
+
+The owner's rule (2026-11-20): every task is split into steps, and **each step
+goes round this loop** before the next one starts.
+
+```
+1. สรุปงานขั้นนี้ให้ดูก่อน ──▶ 2. อ่านโค้ด/เอกสารที่เกี่ยวข้อง ──▶ 3. เขียนเทสต์ก่อน
+                                                                      │
+8. รายงานผล รอคำสั่ง ◀── 7. ลองใช้จริงบน DB ทดสอบ ◀── 6. ตรวจหาบั๊ก ◀── 5. ตรวจอัตโนมัติ ◀── 4. เขียนโค้ด
+                                                         └─ เจอบั๊ก → แก้ → กลับไปข้อ 5 จนสะอาด
+```
+
+1. **Summarise the step first** — what it will change, in the owner's terms
+   (in Thai), before anything is touched.
+2. **Read the code and the docs it touches** — [`ARCHITECTURE.md`](./ARCHITECTURE.md),
+   the files themselves, and the Next docs (above).
+3. **Write the tests first**, and see them fail against the old code.
+4. **Write the code.**
+5. **Automatic checks** — `npx tsc --noEmit`; lint the touched files (no file
+   may end up with more problems than it had); `npm run test:run`.
+6. **Look for bugs** — read the whole diff. A bug found → fix it → back to 5,
+   until it is clean.
+7. **Try it for real on a TEST database**, never the live one (Vercel
+   previews share the live database). There is none yet; until there is, the
+   report says plainly that this step was skipped — the owner agreed to that.
+8. **Report, then wait** — what was done, what the checks said, what was
+   skipped — and stop for the owner's go before the next step. When the owner
+   has asked for the whole job to run to the end, report each step and carry
+   on, with every check still made.
+
+A push is never part of a step: `main` is the live site (Vercel deploys it),
+so pushing waits until the owner says to push.
