@@ -46,12 +46,9 @@ export default function DashboardActions() {
       color: "bg-emerald-50 text-emerald-600 border-emerald-200 hover:border-emerald-400 hover:shadow-emerald-100",
     },
     {
-      href: "/billing/saved",
-      title: "เอกสารบัญชี / ใบเสนอราคา",
-      // Step 10: with the accounting module on, new invoices are issued there — this keeps quotations and the old documents.
-      description: isAccountingEnabled()
-        ? "ใบเสนอราคา และเอกสารบัญชีเก่า (ก่อนเปิดระบบบัญชี) — ดู พิมพ์ และรับชำระ"
-        : "สร้าง ดู และจัดการใบเสนอราคา ใบแจ้งหนี้ ใบวางบิล ใบเสร็จ",
+      href: "/quotation/saved",
+      title: "ใบเสนอราคาที่บันทึกไว้",
+      description: "ค้นหา เปิดดู ทำเวอร์ชันใหม่ และลบใบเสนอราคาที่บันทึกไว้",
       icon: "📋",
       color: "bg-teal-50 text-teal-600 border-teal-200 hover:border-teal-400 hover:shadow-teal-100",
     },

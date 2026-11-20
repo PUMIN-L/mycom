@@ -13,3 +13,23 @@ export function retentionLabel(days: number = QUOTATION_RETENTION_DAYS): string 
   if (days >= 365 && days % 365 === 0) return `${days / 365} ปี`;
   return `${days} วัน`;
 }
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Whole days until the nightly cleanup purges a quotation last saved at
+ * `createdAt` (it deletes those saved more than `days` ago — every save
+ * restarts the clock), or null when the date cannot be read. The old saved
+ * list counted down from 30 days, the window before it became two years, and
+ * showed nearly every quotation in red.
+ */
+export function daysUntilPurge(
+  createdAt: string | null | undefined,
+  now: number = Date.now(),
+  days: number = QUOTATION_RETENTION_DAYS
+): number | null {
+  if (!createdAt) return null;
+  const saved = new Date(createdAt).getTime();
+  if (!Number.isFinite(saved)) return null;
+  return Math.max(0, Math.ceil(days - (now - saved) / DAY_MS));
+}

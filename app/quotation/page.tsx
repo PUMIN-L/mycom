@@ -1865,7 +1865,7 @@ export default function QuotationPage() {
       <div className="no-print sticky top-0 z-20 bg-white/95 backdrop-blur border-b border-gray-200 shadow-sm">
         <div className="max-w-[1400px] mx-auto px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
           <div className="flex items-center gap-3 min-w-0 flex-wrap">
-            <button type="button" onClick={() => guardedNavigate("/billing/saved?tab=quotation")} className={NAV_BUTTON}>
+            <button type="button" onClick={() => guardedNavigate("/quotation/saved")} className={NAV_BUTTON}>
               <svg aria-hidden="true" className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" /></svg>
               ใบเสนอราคาที่บันทึกไว้
             </button>

@@ -386,7 +386,7 @@ describe("8 · after บันทึก the page stays", () => {
     expect(nav.push).not.toHaveBeenCalled();
     // Leaving now does not ask.
     fireEvent.click(screen.getByRole("button", { name: "ใบเสนอราคาที่บันทึกไว้" }));
-    expect(nav.push).toHaveBeenCalledWith("/billing/saved?tab=quotation");
+    expect(nav.push).toHaveBeenCalledWith("/quotation/saved");
   });
 
   it("a failed save says so and stays unsaved", async () => {
@@ -606,7 +606,7 @@ describe("15 · one way back", () => {
     await waitFor(() => expect(drafts().new).toBeDefined(), { timeout: 2000 });
     fireEvent.click(screen.getByRole("button", { name: "ใบเสนอราคาที่บันทึกไว้" }));
     fireEvent.click(screen.getByRole("button", { name: /ออกโดยไม่บันทึก/ }));
-    expect(nav.push).toHaveBeenCalledWith("/billing/saved?tab=quotation");
+    expect(nav.push).toHaveBeenCalledWith("/quotation/saved");
     expect(drafts().new).toBeUndefined();
   });
 });

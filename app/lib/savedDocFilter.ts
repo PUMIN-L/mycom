@@ -1,10 +1,9 @@
 import { bangkokDateString, isValidDateString } from "./dateFormat";
 
-// Filtering and bulk-selection for the saved-documents list (/billing/saved:
-// quotations + invoices + billing notes + receipts in one table). Pure
-// functions, no React and no fetch, so the rules a mistaken bulk delete would
-// hang on are unit-testable: which rows a date range covers, and exactly what
-// "เลือกทั้งหมด" is about to tick.
+// Filtering and bulk-selection for the saved-quotations list (/quotation/saved).
+// Pure functions, no React and no fetch, so the rules a mistaken bulk delete
+// would hang on are unit-testable: which rows a date range covers, and exactly
+// what "เลือกทั้งหมด" is about to tick.
 
 /** What this module needs of a row; the page's own type carries more. */
 export interface SavedDocRow {
