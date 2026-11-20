@@ -13,7 +13,7 @@ import { repairTruncatedRichText } from "./sanitizeHtml";
 // did not lower the 33 already written to `settings`, so the next change to
 // reuse 33 was skipped entirely and its tables were never created in
 // production. Reverting a migration means moving FORWARD to a new number.
-const SCHEMA_VERSION = 54;
+const SCHEMA_VERSION = 55;
 
 type DbPool = ReturnType<typeof mysql.createPool>;
 
@@ -134,8 +134,9 @@ async function bootstrapSchemaOnce(): Promise<void> {
       `);
 
     // Two-factor login (schema v45) — see app/lib/twoFactor.ts. One ALTER per
-    // column with its own try/catch (the billing_documents note below explains
-    // why a multi-column ALTER is not safe to re-run). Every column is nullable
+    // column with its own try/catch: a multi-column ALTER is not safe to re-run
+    // (one column that already exists aborts the rest, and that error is
+    // swallowed as benign on every later run). Every column is nullable
     // or has a literal default, so each is a metadata-only change. totpEnabled
     // defaults to 0: nobody is asked for a code until they turn it on.
     for (const columnDef of [
@@ -359,8 +360,8 @@ async function bootstrapSchemaOnce(): Promise<void> {
     // items, so a separate line-items table would only be a second place for
     // the two to drift apart.
     //
-    // `supersededById`/`cancelledAt` mirror `billing_documents`'s columns of
-    // the same name, not `quotations`' looser "just re-save in place" model:
+    // `supersededById`/`cancelledAt` follow an issued invoice's model, not
+    // `quotations`' looser "just re-save in place" one:
     // a PO is a commitment already sent to a supplier, so once saved it is
     // never mutated in place — correcting one means cancelling it
     // (`cancelledAt`) and issuing a brand-new PO with a brand-new number that
@@ -731,133 +732,6 @@ async function bootstrapSchemaOnce(): Promise<void> {
     } catch (error) {
       if (!isBenignSchemaError(error)) throw error;
     }
-
-    // ── Billing documents (Invoice / Billing Note / Receipt) ────────────────
-    await connection.query(`
-        CREATE TABLE IF NOT EXISTS billing_documents (
-          id VARCHAR(36) PRIMARY KEY,
-          docType VARCHAR(20) NOT NULL DEFAULT 'invoice',
-          docNo VARCHAR(255) NOT NULL DEFAULT '',
-          linkedQuotationId VARCHAR(36) DEFAULT NULL,
-          data JSON NOT NULL,
-          paymentMethod VARCHAR(50) DEFAULT NULL,
-          paymentDate VARCHAR(20) DEFAULT NULL,
-          paymentRef VARCHAR(255) DEFAULT NULL,
-          createdAt VARCHAR(255) NOT NULL,
-          INDEX idx_billing_docType (docType),
-          INDEX idx_billing_docNo (docNo)
-        )
-      `);
-    try {
-      await connection.query(
-        `CREATE INDEX idx_billing_createdAt ON billing_documents (createdAt)`
-      );
-    } catch (error) {
-      if (!isBenignSchemaError(error)) throw error;
-    }
-
-    // v37: ลูกหนี้ค้างชำระ — the columns the receivables ledger, its ageing
-    // buckets and the alert query read WITHOUT touching the JSON blob.
-    //
-    // Why these are denormalised rather than computed from `data` on read:
-    // listBillingDocuments already drags `data JSON` for up to 2000 rows just
-    // to render one total column. The ledger needs strictly more — ORDER BY
-    // outstanding, WHERE dueDate <= today, SUM() per ageing bucket and per
-    // customer — none of which is expressible over a blob whose totals require
-    // per-line discount capping, document-discount ordering and VAT. Rebuilding
-    // that arithmetic in SQL would create a SECOND, drifting source of truth
-    // for money, so the totals stay in computeQuoteTotals and land here as
-    // DECIMAL columns written by saveBillingDocumentAtomic, the table's only
-    // writer, in the same statement that stores the blob.
-    //
-    // ONE ALTER PER COLUMN, each with its own try/catch — the sales_records
-    // reasoning above applies verbatim: a multi-column ALTER that hits
-    // ER_DUP_FIELDNAME on the first already-existing column aborts the rest and
-    // leaves them missing forever, because that error is swallowed as benign on
-    // every future run.
-    //
-    // LOCK/REWRITE SAFETY: every column is nullable or carries a literal
-    // DEFAULT and is appended at the end, so TiDB runs each as a metadata-only
-    // online DDL (and MySQL 8.0.12+ takes ALGORITHM=INSTANT for this shape).
-    // Nothing rewrites the table or holds a long metadata lock.
-    //
-    // NO DATA BACKFILL IN SQL, deliberately — see backfillBillingDerivedColumns
-    // in billingStore.ts. In particular `dueDate` stays NULL for every existing
-    // document, and every overdue predicate carries `dueDate IS NOT NULL`, so
-    // NOT ONE document already in production is overdue on day one and the bell
-    // does not spike. The owner opts documents in from the ledger.
-    for (const columnDef of [
-      "ADD COLUMN IF NOT EXISTS docDate VARCHAR(10) DEFAULT NULL",
-      "ADD COLUMN IF NOT EXISTS dueDate VARCHAR(10) DEFAULT NULL",
-      "ADD COLUMN IF NOT EXISTS totalAmount DECIMAL(12,2) NOT NULL DEFAULT 0",
-      "ADD COLUMN IF NOT EXISTS paidAmount DECIMAL(12,2) NOT NULL DEFAULT 0",
-      "ADD COLUMN IF NOT EXISTS customerName VARCHAR(255) NOT NULL DEFAULT ''",
-      "ADD COLUMN IF NOT EXISTS customerPhone VARCHAR(50) NOT NULL DEFAULT ''",
-      "ADD COLUMN IF NOT EXISTS receivableOverride TINYINT(1) DEFAULT NULL",
-      "ADD COLUMN IF NOT EXISTS settlesDocId VARCHAR(36) DEFAULT NULL",
-      "ADD COLUMN IF NOT EXISTS supersededById VARCHAR(36) DEFAULT NULL",
-      "ADD COLUMN IF NOT EXISTS cancelledAt VARCHAR(255) DEFAULT NULL",
-    ]) {
-      try {
-        await connection.query(`ALTER TABLE billing_documents ${columnDef}`);
-      } catch (error) {
-        if (!isBenignSchemaError(error)) throw error;
-      }
-    }
-
-    for (const indexDef of [
-      // Makes the alert's "invoices due on or before X" an indexed range scan
-      // instead of a scan over every billing document ever issued.
-      `CREATE INDEX idx_billing_receivable ON billing_documents (docType, dueDate)`,
-      // "which receipt settles this invoice" — read when a receipt is saved.
-      `CREATE INDEX idx_billing_settles ON billing_documents (settlesDocId)`,
-    ]) {
-      try {
-        await connection.query(indexDef);
-      } catch (error) {
-        if (!isBenignSchemaError(error)) throw error;
-      }
-    }
-
-    // v37: การรับชำระเงิน. A CHILD TABLE, alongside the cached
-    // `billing_documents.paidAmount` — both, not either.
-    //
-    // `paidAmount` alone cannot answer "when did the deposit arrive, how much,
-    // by what method, and which receipt did we print for it": the second
-    // payment overwrites the first, which for a business that takes deposits is
-    // losing a financial record and makes correcting a mistyped deposit
-    // indistinguishable from a real second payment. This table alone would be
-    // correct but would turn every ledger page load and every bell poll into a
-    // LEFT JOIN + GROUP BY that no index on the outstanding balance can serve.
-    // So the table is the TRUTH and the column is a cache with exactly one
-    // writer, re-summed (never incremented) inside the same transaction.
-    //
-    // NO FOREIGN KEY, per the house rule documented on task_links below and on
-    // sales_records.quotationId above: this app hard-deletes documents, and an
-    // FK would either block that or destroy financial records with a cascade.
-    // The consequence is handled rather than ignored — deleteBillingDocument
-    // now REFUSES while a live payment exists, and cancelling
-    // (`cancelledAt`) is the operation that replaces it.
-    //
-    // A correction NEVER deletes: `voidedAt` + `voidReason` strike the row
-    // through in the history and take it out of the SUM.
-    await connection.query(`
-        CREATE TABLE IF NOT EXISTS billing_payments (
-          id VARCHAR(36) PRIMARY KEY,
-          billingDocumentId VARCHAR(36) NOT NULL,
-          amount DECIMAL(12,2) NOT NULL DEFAULT 0,
-          paidDate VARCHAR(10) NOT NULL,
-          method VARCHAR(50) NOT NULL DEFAULT '',
-          ref VARCHAR(255) NOT NULL DEFAULT '',
-          note TEXT NULL,
-          receiptDocId VARCHAR(36) DEFAULT NULL,
-          voidedAt VARCHAR(255) DEFAULT NULL,
-          voidReason VARCHAR(255) DEFAULT NULL,
-          createdAt VARCHAR(255) NOT NULL,
-          INDEX idx_bp_doc (billingDocumentId),
-          INDEX idx_bp_paidDate (paidDate)
-        )
-      `);
 
     // ── CRM: sold equipment + warranty tracking ──────────────────────────────
     // Document references (quotation / warranty cert / service report) are TEXT
@@ -2025,6 +1899,19 @@ async function bootstrapSchemaOnce(): Promise<void> {
     //   );
     // }
 
+    // v55 — the old billing module is gone. /billing (invoices, billing notes,
+    // receipts and their payments) was replaced by the accounting module (the
+    // acc_* tables) and removed; its documents were test documents only (the
+    // owner, 2026-11-20), so its two tables are dropped, the payments first.
+    // IF EXISTS: a fresh database never had them. Here, near the end, so every
+    // table the clean-up below touches exists: the snoozes of the removed
+    // "ลูกหนี้ค้างชำระ" alert and the old builder's default credit term mean
+    // nothing without them.
+    await connection.query("DROP TABLE IF EXISTS billing_payments");
+    await connection.query("DROP TABLE IF EXISTS billing_documents");
+    await connection.query("DELETE FROM alert_snoozes WHERE alertType = 'receivable'");
+    await connection.query("DELETE FROM settings WHERE name = 'billing_credit_term_days'");
+
     // v46 — rich-text columns hold the WHOLE sanitized HTML (see
     // lib/richTextLimits.ts and widenRichTextColumns below).
     await widenRichTextColumns(connection);
@@ -2100,8 +1987,6 @@ export const PLAIN_TEXT_COLUMNS: Readonly<Record<string, readonly string[]>> = {
   task_topics: ["name", "icon"],
   crm_tasks: ["title", "detail"],
   task_links: ["label"],
-  billing_documents: ["paymentMethod", "paymentRef"],
-  billing_payments: ["ref", "note", "voidReason"],
   product_specs: ["name", "detail"],
   // customEquipments is JSON; its only strings are the plain-text productName
   // and serialNumber, and replacing an entity with its character inside a

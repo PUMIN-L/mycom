@@ -95,7 +95,8 @@ app/
 ├── about/ catalog/ contact/   Public pages.
 ├── create-product/ edit-product/ create-content/   Admin product/content pages.
 ├── document/            PDF document viewer/manager page.
-├── quotation/           Admin quotation builder (client-side PDF export).
+├── quotation/           Admin quotation builder (client-side PDF export);
+│                        saved/ is the list of saved quotations (§8).
 ├── product-specs/       Spec texts per product, picked in the quotation builder
 │                        to fill a line's detail. Grouped by product; pure
 │                        logic (group/search/copy name/checks) in specHelpers.ts.
@@ -215,9 +216,9 @@ export const POST = withRoute("เพิ่มสินค้าไม่สำ�
   anything above 9,999,999,999.99 (the column's ceiling), and anything that is
   not a number or a PLAIN decimal string ("1500", "1500.00", ".5"). Number()
   alone would read "0x10" as 16, "0b101" as 5 and "1e3" as 1000.
-  Used by billing payments, recurring
-  expenses and sale costs. `addBillingPayment` and `syncCostItems` apply the
-  same rounding themselves (`toSatang`). `toSatang`, not quotationTotals'
+  Used by recurring
+  expenses and sale costs. `syncCostItems` applies the
+  same rounding itself (`toSatang`). `toSatang`, not quotationTotals'
   `round2`, whose relative epsilon is a whole satang at the ceiling.
 
 The wrapped handler keeps the native `(request, context)` signature, so dynamic
@@ -678,8 +679,8 @@ catalog carries a **copy** of the product's image URL in `quotations.data`
 (`imageUrl: p.image, imageUploaded: false`), and `uploadedImages` does not
 list it. So `isCloudinaryImageInUse` searches both quotation columns, and
 `getAllUsedImageUrls` collects every URL inside `data`, reading a page of
-quotations at a time. Billing documents copy line items onward and are
-covered the same way (whole `data`). Anything new that stores an image URL
+quotations at a time. (The old billing documents were covered the same way
+until they went, schema v55.) Anything new that stores an image URL
 has to be added to both functions in `app/lib/imageUsageHelper.ts` — and to
 `listImageReferences` below (`__tests__/lib/imageReferences.test.ts` fails when
 the two disagree).
@@ -705,13 +706,12 @@ the app; the scan finds the pages to re-upload them on.
 - [`lib/imageReferences.ts`](./app/lib/imageReferences.ts) `listImageReferences()`
   — every Cloudinary URL the site SHOWS, with its page: content blocks (`imageUrl`,
   `imageUrls[]`), product pictures, catalog covers and PDFs, and what quotations
-  and billing documents print (`data`, a page of rows at a time; line items
+  print (`data`, a page of rows at a time; line items
   labelled by `items[i]`). Not `uploadedImages`: a file only listed there is
   printed nowhere.
 - `GET /api/admin/missing-images` answers it as pages + files, each file once
   (`indexImageReferences`, [`lib/missingImages.ts`](./app/lib/missingImages.ts));
-  `maxDuration` 60 and 10 a minute per admin, since it reads every quotation
-  and billing document.
+  `maxDuration` 60 and 10 a minute per admin, since it reads every quotation.
   `POST …/check { urls }` (1–20, 120 batches a minute per admin, `maxDuration`
   60) answers each file with one **HEAD** request ([`lib/imageCheck.ts`](./app/lib/imageCheck.ts)):
   2xx `ok`, 404/410 `missing`, anything else `error` ("could not tell", never
@@ -817,8 +817,11 @@ raw-text `NumberInput` so sub-1 values (e.g. `0.5%` discount) are enterable.
   the cleanup cron purges by (the page said "30 วัน" long after it became two
   years).
 
-**The saved list (`/billing/saved`)** shows quotations and all three billing
-types in one table, with a tab, a search box and a **date range**. Filtering is
+**The saved list (`/quotation/saved`)** lists the saved quotations, with a
+search box and a **date range** — it was a tab of the old `/billing/saved` until
+that went (schema v55, §8g). Each row shows its last save and, within 30 days
+of the nightly purge, says so (`daysUntilPurge`, `lib/quotationRetention.ts`;
+the old list counted down from 30 days for every row). Filtering is
 [`app/lib/savedDocFilter.ts`](./app/lib/savedDocFilter.ts), not inline in the
 page, because two rules there decide what a bulk delete can reach:
 - **The range is a Bangkok calendar day**, via `savedOnBangkokDate`. `createdAt`
@@ -829,13 +832,13 @@ page, because two rules there decide what a bulk delete can reach:
   sweep up a document that could not be shown to be in it.
 - **A bulk delete only ever touches rows on screen** (`visibleSelection`). The
   tick survives a filter change, so without this an admin who ticked 40 rows,
-  switched tab and pressed ลบที่เลือก would delete documents he was no longer
+  narrowed the dates and pressed ลบที่เลือก would delete documents he was no longer
   looking at. The selection bar says how many ticked rows the filter is hiding.
 
 `เลือกทั้งหมด` ticks the filtered rows up to `BULK_DELETE_MAX_ITEMS` (100) and
 **announces the remainder** rather than trimming quietly — each delete is its
 own sequential request. Deletes run one at a time because partial success is
-normal: a billing document with payments answers 409, and that refusal is
+possible (one already gone, a dropped connection), and a refusal is
 reported **by document number with the server's reason** (a `role="alert"`
 block that stays on screen), not folded into a count. Refused rows stay in the
 table and stay ticked. Images freed across the whole sweep are pooled,
@@ -862,12 +865,12 @@ queries already treat as spent, so no alert can reappear early because of it.
 conversion-rate analytics) are deliberately not swept.
 
 **No PDF of an unsaved document — on every document page.** ⬇️ ดาวน์โหลด PDF
-saves first (quotation, billing, PO, service job), and a save that does not
+saves first (quotation, PO, service job), and a save that does not
 land — an error, no connection, or a number the ledger refused with no free one
 to move to — stops there with a Thai toast; nothing is rasterised. The PDF is
 the copy the customer keeps: made anyway, the customer would hold a number the
-system does not have, free to be issued again to someone else (for billing, a
-tax document). The quotation and billing saves used to be "best-effort".
+system does not have, free to be issued again to someone else. The quotation
+save used to be "best-effort".
 
 **Retention is 2 years (`RETENTION_DAYS = 730`), not 30 days.** This business's
 sales cycle runs for months to years, so the old 30-day window purged the
@@ -896,22 +899,13 @@ is made (each line's gross, every sum, the bill discount, the VAT base, the VAT,
 the total), so each printed row is the number the next one was computed from.
 It is opt-in **per document**, by a `totalsVersion: 2` key in the document's own
 `data` blob:
-- The quotation, billing and PO builders stamp `CURRENT_TOTALS_VERSION` on every
+- The quotation and PO builders stamp `CURRENT_TOTALS_VERSION` on every
   **fresh** document (a new page, `?new=1`, `?type=…`, the reset button).
 - A document that **continues** another keeps that one's arithmetic, because
   the two must agree to the satang — and with a % bill discount the two
   arithmetics differ by a satang on roughly one document in four:
   - "แก้ไข (New Ver.)" (the in-place button and `?action=clone`) and a PO's
     ออกใบใหม่แทนใบนี้ carry the source's `totalsVersion` over untouched.
-  - A **receipt takes the version of the invoice it settles**: choosing the
-    invoice in ชำระให้ใบแจ้งหนี้ sets it (`listOpenInvoices` returns each
-    invoice's `totalsVersion`). The payment a receipt records is its own total,
-    so a receipt a satang off an invoice issued before 2026-10-07 would leave
-    "ค้าง ฿0.01" in the ledger for good.
-  - Importing a quotation into an invoice (นำเข้าจากใบเสนอราคา) does NOT change
-    the invoice's version: a tax invoice must add up on its own paper, so a
-    fresh invoice from an old quotation with a % discount can be a satang off
-    that quotation — the deliberate trade-off.
 - It is **deliberately not in `emptyState()`**: every reopened document is
   spread over `emptyState()`, so putting it there would silently move the
   totals of every document already sent to a customer. A blob without the key
@@ -920,7 +914,7 @@ It is opt-in **per document**, by a `totalsVersion: 2` key in the document's own
   against a frozen copy of the old function over 2,000 random documents.
 - Everything that computes a document's money passes its blob, so it follows
   the document's version without being told: the builders, the saved lists,
-  `deriveBillingColumns`, and the quotation → sale conversion
+  and the quotation → sale conversion
   (`buildLineDrafts({ …, totalsVersion })`).
 - `computeLineTotal(item, totalsVersion?)` takes the version as a 2nd
   argument, so never pass it bare to `.map()` — the index would arrive as the
@@ -1305,9 +1299,9 @@ the product forms that link suppliers said ผู้ผลิต.
   nothing. The cards count in SQL, so they are always whole.
 
 ### 8g. Accounting module (`/accounting`, schema v50–54) — sales side
-The in-house accounting module that replaces `/billing` for issuing
-documents (phase 1: 10 steps, all below; once switched on, the old builder
-issues nothing new — step 10). Files:
+The in-house accounting module that replaced the old `/billing` for issuing
+documents (phase 1: 10 steps, all below; the old module was then removed —
+see "The old /billing is removed" below). Files:
 [`lib/accounting/`](./app/lib/accounting/), routes under
 [`api/accounting/`](./app/api/accounting/), pages under
 [`app/accounting/`](./app/accounting/).
@@ -1439,8 +1433,8 @@ issues nothing new — step 10). Files:
     /api/accounting/payments/[id]`, audited). /accounting/receivables lists the
     ones still to come in.
   - **`paidSatang` is a cache with one writer** (`recomputePaidSatang`): a full
-    re-sum of live payments in the same transaction, never `+= amount` (as
-    `billingPayments.ts`). The sale's `receiptRef` follows the live payments'
+    re-sum of live payments in the same transaction, never `+= amount`. The
+    sale's `receiptRef` follows the live payments'
     receipt numbers (`syncSaleReceiptRef`) — it belongs to the module now.
   - **⚠️ Locks: invoice first, then its payments/receipts** — recording, voiding
     and deleting a receipt all take that order, so they cannot deadlock each
@@ -1680,24 +1674,29 @@ issues nothing new — step 10). Files:
   - **The whole month's tax data in one file**: the month is checked first
     (no password try spent on a slip), then the password again, and the
     download is a line in the audit log (`data.export`).
-- **The old /billing stops issuing (step 10, no schema change)** — tied to
-  the module's own switch (`isAccountingEnabled`, [`flags.ts`](./app/lib/accounting/flags.ts)):
-  turning the module on in production turns new issuing off in the old one,
-  never one without the other. With it on:
-  - `POST /api/billing` saves only over a document it already has
-    (`billingDocumentExists`) — the old builder re-saves one on every PDF
-    download — and answers a NEW one, or a "แก้ไข (New Ver.)" (a new id), with
-    409 `ISSUING_MOVED_MESSAGE`.
-  - `/billing` with no `id`, a `?type=`, or `action=clone` shows where to issue
-    instead (the accounting module's invoice, billing note and invoices list —
-    a receipt comes from receiving a payment there) — the builder never mounts;
-    an old document (`?id=…`, `view=1`) still opens, prints and is edited as
-    before.
-  - `/billing/saved`'s "+ สร้างเอกสารใหม่" points invoices, billing notes and
-    receipts into the module (quotations as before) and offers no "New Ver."
-    on a billing document; `/billing/receivables` says the module's debts are
-    on its own page. Payments on old documents are recorded there as before —
-    their debts still have to be collected; old numbers stay as they are.
+- **The old /billing is removed (schema v55).** Step 10 first stopped it
+  issuing once this module was switched on; with the module live, the old one
+  went entirely (its documents were test documents — the owner's word):
+  - Deleted: its three pages, the nine `/api/billing` routes, and what only
+    they used (`billingStore`, `billingPayments`, `billingNumber`,
+    `receivables`, `paymentMethods`, `ReceivablesGuidePanel`,
+    `RecordPaymentModal`). The saved quotations got their own list,
+    `/quotation/saved` (§8).
+  - The CRM alert "ลูกหนี้ค้างชำระ" (its unpaid invoices) is gone from the
+    feed, the bell, the date search and the guide. Debts are on
+    `/accounting/receivables`.
+  - /settings "เครดิตเทอมเริ่มต้น" (`billing_credit_term_days`) went too: it
+    only pre-filled the old builder. This module keeps its own default credit
+    days (its settings page).
+  - v55 drops `billing_payments` and `billing_documents`, then the alert
+    snoozes and the settings row that belonged to them. `used_docnos` keeps
+    the old numbers — it is shared with quotations and POs.
+  - A bookmark lands on what replaced it (`next.config.ts` redirects, 307):
+    `/billing/saved` → `/quotation/saved`, `/billing/receivables` →
+    `/accounting/receivables`, anything else → `/accounting`.
+  - [`__tests__/billingRemoved.test.ts`](./__tests__/billingRemoved.test.ts)
+    pins that no page, route or library still links to it, fetches it or
+    queries its tables.
 - **A menu or list drawn inside a rounded `overflow-hidden` box is cut off** —
   the lists in this module sit in such a box (for the rounded corners). So the
   invoice list's ⋯ menu (`RowMenu`) is drawn on <body> like
@@ -2163,7 +2162,7 @@ photo (hiding it until a fade-in would delay LCP); the background is dropped
 on load, on error, and for a photo that loaded before hydration. It needs
 `data:` in the CSP's `img-src`. Not for the site's fixed images (hero,
 about, logo, the LINE QR), nor for images on documents printed to PDF
-(quotation, PO, billing, service job), where a half-loaded image would print
+(quotation, PO, service job), where a half-loaded image would print
 the shimmer. `__tests__/components/SkeletonImage.test.tsx` fails if a display
 page goes back to a plain next/image.
 
@@ -2446,15 +2445,14 @@ the public pages follow; `__tests__/components/MobileLayout.test.tsx` pins them:
 - **⚠️ A cached total recomputed in a transaction must lock its parent row
   FIRST and then sum with a locking read (`FOR UPDATE`).** A plain SELECT reads
   the transaction's snapshot (on TiDB, the one taken when it began), which
-  misses rows another transaction committed meanwhile. `recomputePaidAmount`
-  ([`billingPayments.ts`](./app/lib/billingPayments.ts)) summed that way: two
-  payments recorded on one invoice at once each counted only their own, and
-  `paidAmount` (which receivables and open invoices read) lost one of them.
-  It now locks the invoice row, then sums `FOR UPDATE`. `FOR UPDATE` alone is
-  not enough, because it does not wait for another transaction's uncommitted
-  INSERT; the parent lock does. `__tests__/lib/billingPaymentsConcurrency.test.ts`
-  runs the real code, and the real `withTransaction`, against a stand-in pool
-  with those snapshot/lock rules.
+  misses rows another transaction committed meanwhile. The old billing
+  module's `recomputePaidAmount` summed that way: two payments recorded on one
+  invoice at once each counted only their own, and the cached `paidAmount`
+  lost one of them. The fix — lock the invoice row, then sum `FOR UPDATE` — is
+  the rule the accounting module's `recomputePaidSatang` follows
+  ([`paymentLedger.ts`](./app/lib/accounting/paymentLedger.ts)). `FOR UPDATE`
+  alone is not enough, because it does not wait for another transaction's
+  uncommitted INSERT; the parent lock does.
 - **`withTransaction` replays a transaction the database rolled back to break
   a DEADLOCK** (`ER_LOCK_DEADLOCK`), as it does after a dropped connection.
   The sum above locks an invoice and then its payments, while a void locks a
@@ -2500,7 +2498,7 @@ the public pages follow; `__tests__/components/MobileLayout.test.tsx` pins them:
   `products`, `product_specs`, `contents`, `documents`, `settings`, `quotations`,
   `used_docnos`, `contact_messages`, `revisions`, plus the CRM/sales family —
   `customers`, `companies`, `salespeople`, `suppliers`, `product_suppliers`,
-  `billing_documents`, `customer_equipments`, `service_schedules`,
+  `customer_equipments`, `service_schedules`,
   `service_logs`, `sales_records`, **`sales_record_items`** (v33 — one row per
   product line under a sale, see §8a), `sale_cost_items`, `expenses`,
   `recurring_expenses`, `alert_snoozes`, plus the manual task board (v35) —
@@ -2508,7 +2506,9 @@ the public pages follow; `__tests__/components/MobileLayout.test.tsx` pins them:
   has a composite PK and, like the rest of that group, no foreign keys), plus
   the printed service job sheet (v38) — **`service_jobs`**,
   **`service_job_equipments`** (composite PK `(jobId, equipmentId)`, no foreign
-  keys; see §13), plus **`login_events`** (v49 — the login history, §10).
+  keys; see §13), plus **`login_events`** (v49 — the login history, §10), plus
+  the accounting module's `acc_*` tables (§8g). `billing_documents` and
+  `billing_payments` (the old /billing) were dropped in v55.
 
 > ⚠️ The seed inserts an `admin` user (id `admin-001`) from `ADMIN_USERNAME` /
 > `ADMIN_PASSWORD` (env, **not** source) — but only if the row doesn't already
@@ -2585,7 +2585,7 @@ Next.js validates handler signatures via generated types.
   to `thresholds` in `vitest.config.ts` for the exact figures and date — they
   drift as tests are added, so treat that comment as the source of truth, not
   this doc). Several stores/routes genuinely sit at 0% today (e.g.
-  `billingStore.ts`, `expenseStore.ts`, `supplierStore.ts`, the
+  `expenseStore.ts`, `supplierStore.ts`, the
   `/api/suppliers`, `/api/salespeople` and `/api/product-specs` routes) —
   the threshold is deliberately set low enough to pass with that gap still
   open, rather than pretending otherwise. Closing it means adding real tests
@@ -2745,7 +2745,8 @@ feature — do not go looking for a migration.
   (`openspec/changes/add-alert-date-search`) named them `date-search` and
   `bulk-reschedule`; the routes were built under these shorter names instead,
   and the code — not the proposal — is the source of truth.
-- Six sources, each matched on the date that means something for it, never the
+- Five sources (six until the old billing receivables went, v55), each matched
+  on the date that means something for it, never the
   first date column in its table (`DATED_ALERT_KINDS` in `app/lib/alertDateSearch.ts`):
 
   | Kind | Table | Date matched |
@@ -2755,7 +2756,6 @@ feature — do not go looking for a migration.
   | `task` | `tasks` | `dueDate` |
   | `warranty` | `customer_equipments` | `warrantyEndDate` |
   | `calibration` | `customer_equipments` | `calibrationDate + CALIBRATION_VALIDITY_MONTHS` — the due date, not the date of the last calibration |
-  | `receivable` | `billing_documents` | `dueDate`, same `debtCarrier`/not-superseded rule the feed and `listOpenInvoices` use |
 
 - **Calibration searches on 12 months, the feed alerts at 10 — this is not a
   bug.** The feed asks "has the reminder started ringing yet?" (a lead-time
@@ -2770,9 +2770,9 @@ feature — do not go looking for a migration.
   database**, never against what the client claimed — so a stale screen can
   disable the wrong checkbox but can never talk the server into moving a date
   it shouldn't. `schedule` and `customer_call` are movable while `pending`;
-  `task` is movable while `pending` and dated; `warranty`, `calibration` and
-  `receivable` are never movable — their dates are facts, not reminders someone
-  set. Debugging "why won't this date move" starts at `movable`/
+  `task` is movable while `pending` and dated; `warranty` and `calibration`
+  are never movable — their dates are facts, not reminders someone set — and a
+  kind it does not know (an old tab's `receivable` row) is refused like them. Debugging "why won't this date move" starts at `movable`/
   `immovableReason` on that row, not in the UI.
 - The reschedule route writes at most two columns per row inside one
   transaction (the date column plus, for `schedule`/`customer_call`, nothing

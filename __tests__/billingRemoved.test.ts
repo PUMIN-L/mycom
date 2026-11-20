@@ -58,6 +58,15 @@ describe("the old /billing is gone", () => {
     expect(offenders).toEqual([]);
   });
 
+  it("db.ts names the old tables only to drop them (and in comments)", () => {
+    const db = fs.readFileSync(path.join(app, "lib", "db.ts"), "utf8");
+    const mentions = db.split("\n").filter((line) => /\bbilling_(documents|payments)\b/.test(line));
+    expect(mentions.length).toBeGreaterThan(0);
+    for (const line of mentions) {
+      expect(line, line).toMatch(/DROP TABLE IF EXISTS billing_(documents|payments)|^\s*(\/\/|\*)/);
+    }
+  });
+
   it("the login gate and robots.txt no longer list it", () => {
     const matcher = config.matcher as string[];
     expect(matcher).not.toContain("/billing");
