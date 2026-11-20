@@ -143,7 +143,8 @@ describe('a hand-crafted request naming a warranty, a calibration and an invoice
     expect(new Set(reasons).size).toBe(3);
     expect(reasons[0]).toContain('ข้อมูลเครื่อง');
     expect(reasons[1]).toContain('วันสอบเทียบ');
-    expect(reasons[2]).toContain('/billing/receivables');
+    // The old billing receivable is an unknown kind now, with that reason.
+    expect(reasons[2]).toContain('ไม่รู้จักประเภท');
   });
 
   it('does not fail SILENTLY — the refusal is loud and itemised, not a 204', async () => {
@@ -223,7 +224,7 @@ describe('a hand-crafted request naming a warranty, a calibration and an invoice
     // Each refusal still carries its own sentence.
     expect(body.results[1].reason).toBe(IMMOVABLE_REASONS.warranty);
     expect(body.results[3].reason).toBe(IMMOVABLE_REASONS.calibration);
-    expect(body.results[5].reason).toBe(IMMOVABLE_REASONS.receivable);
+    expect(body.results[5].reason).toBe(IMMOVABLE_REASONS.unknown);
   });
 
   it('"moving everything" is impossible: no immovable kind reaches an UPDATE', async () => {

@@ -33,8 +33,6 @@ function payload(over: Record<string, unknown> = {}) {
     missingDocuments: [],
     customerCallFollowUps: [],
     customerCallFollowUpsTotal: 0,
-    overdueReceivables: [],
-    overdueReceivablesTotal: 0,
     dueTaskCount: 0,
     ...over,
   };
@@ -263,12 +261,12 @@ describe('GlobalAdminBell public pages', () => {
   for (const path of PUBLIC_PATHS) {
     it(`renders nothing — and fetches nothing — on the public page ${path}`, () => {
       mockPathname = path;
-      const fetchMock = mockFetchOnce(payload({ overdueReceivablesTotal: 9, dueTaskCount: 4 }));
+      const fetchMock = mockFetchOnce(payload({ missingDocuments: rows(9), dueTaskCount: 4 }));
 
       const { container } = render(<GlobalAdminBell />);
 
       // A logged-in admin browsing the customer-facing site must not be shown
-      // a floating badge of internal overdue-receivable / due-task counts on
+      // a floating badge of internal missing-document / due-task counts on
       // top of the page a customer is looking at.
       expect(container).toBeEmptyDOMElement();
       expect(fetchMock).not.toHaveBeenCalled();
@@ -355,28 +353,10 @@ describe('GlobalAdminBell — ใกล้ถึงกำหนดสอบเ�
   });
 });
 
-describe('GlobalAdminBell — ลูกหนี้ค้างชำระ', () => {
-  it('counts overdue receivables into the badge', async () => {
-    mockFetchOnce(payload({ overdueReceivables: rows(3), overdueReceivablesTotal: 3 }));
-    render(<GlobalAdminBell />);
-    await waitFor(() => expect(badgeText()).toBe('3'));
-  });
-
-  it('uses overdueReceivablesTotal, not the display-capped array length', async () => {
-    // Nothing closes this category but the money arriving, so the backlog can
-    // run well past the 100-row display cap.
-    mockFetchOnce(payload({ overdueReceivables: rows(100), overdueReceivablesTotal: 143 }));
-    render(<GlobalAdminBell />);
-    // 143, not 100 — and capped for display at 99+, like every other category.
-    await waitFor(() => expect(badgeText()).toBe('99+'));
-  });
-
-  it('counts 0, not NaN, when an old build answers without the receivable keys', async () => {
-    // A tab left open across a deploy is still talking to the previous build.
-    const stale = payload();
-    delete (stale as Record<string, unknown>).overdueReceivables;
-    delete (stale as Record<string, unknown>).overdueReceivablesTotal;
-    mockFetchOnce({ ...stale, missingDocuments: rows(2) });
+describe('GlobalAdminBell — the old ลูกหนี้ค้างชำระ', () => {
+  it('no longer counts receivables, even when an older build still sends them', async () => {
+    // A server instance from before the removal may still answer during a deploy.
+    mockFetchOnce({ ...payload({ missingDocuments: rows(2) }), overdueReceivables: rows(3), overdueReceivablesTotal: 143 });
     render(<GlobalAdminBell />);
     await waitFor(() => expect(badgeText()).toBe('2'));
   });

@@ -1761,187 +1761,15 @@ describe('getAlerts — "today" must be Bangkok (UTC+7) time, not server UTC', (
     expect((await getAlerts()).nearingCalibrationTotal).toBe(0);
   });
 
-  // ── ลูกหนี้ค้างชำระ ───────────────────────────────────────────────────────
-  it('opens the receivable alert 7 days BEFORE the due date, with no upper bound', async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date('2026-08-04T19:00:00.000Z')); // Bangkok: Aug 5
-
-    await getAlerts();
-
-    const call = topQuery.mock.calls.find(([sql]) =>
-      String(sql).includes('FROM billing_documents b')
-    )!;
-    // The cutoff is Bangkok today + the lead days, not server-UTC today.
-    expect(call[1]).toEqual(['2026-08-12', '2026-08-04T19:00:00.000Z']);
-    // Nothing closes this but payment, so there is no lower bound on dueDate.
-    expect(String(call[0])).not.toMatch(/b\.dueDate\s*>=/);
-  });
-
-  it('NEVER alerts on a document with no due date — day one must not spike the bell', async () => {
-    await getAlerts();
-    const call = topQuery.mock.calls.find(([sql]) =>
-      String(sql).includes('FROM billing_documents b')
-    )!;
-    expect(String(call[0])).toContain('b.dueDate IS NOT NULL');
-  });
-
-  it('applies the debtCarrier rule: invoices by default, overrides in both directions', async () => {
-    await getAlerts();
-    const sql = String(
-      topQuery.mock.calls.find(([s]) => String(s).includes('FROM billing_documents b'))![0]
-    ).replace(/\s+/g, ' ');
-    expect(sql).toContain(
-      "(b.receivableOverride = 1 OR (b.receivableOverride IS NULL AND b.docType = 'invoice'))"
-    );
-    expect(sql).toContain('b.cancelledAt IS NULL');
-  });
-
-  // ── The bell has to mean what the ledger screen means by "ถูกแทนที่" ───────
-  // `buildReceivablesLedger` revives an invoice whose replacement was later
-  // CANCELLED — it is back in ยอดค้างทั้งหมด, badged, and listed in the
-  // "กลับมาเป็นลูกหนี้" panel — and `listOpenInvoices` lets a receipt be
-  // pointed at it. A plain `b.supersededById IS NULL` here left the BELL as
-  // the one place that could never raise it: an invoice months overdue, on
-  // screen in the ledger, with no alert behind it, forever.
-  //
-  // This bites: against `AND b.supersededById IS NULL` the NOT EXISTS is
-  // absent and the negative assertion fails outright.
-  it('revives a receivable whose replacement was cancelled — "ถูกแทนที่" means replaced by a LIVE row', async () => {
-    await getAlerts();
-    const calls = topQuery.mock.calls.filter(([s]) =>
-      String(s).includes('FROM billing_documents b')
-    );
-    // The list AND its unbounded COUNT twin: fixing one and not the other is
-    // how the badge and the list end up describing different questions.
-    expect(calls.length).toBe(2);
-    for (const [raw] of calls) {
-      const sql = String(raw).replace(/\s+/g, ' ');
-      expect(sql).toContain('NOT EXISTS');
-      expect(sql).toContain('SELECT 1 FROM billing_documents newer');
-      expect(sql).toContain('newer.id = b.supersededById');
-      // The clause that makes a CANCELLED successor stop counting as a
-      // replacement. Without it this is just `supersededById IS NULL` again.
-      expect(sql).toContain('newer.cancelledAt IS NULL');
-      expect(sql).not.toContain('b.supersededById IS NULL');
-    }
-  });
-
-  // ── And it has to know the OTHER way a row can be superseded ──────────────
-  // `supersededById` arrived in v37. Every invoice corrected before that is
-  // known to be superseded ONLY by a sibling docNo carrying a higher version,
-  // which is the fallback `buildReceivablesLedger` has always applied. While
-  // the SQL tested the column alone, a pre-v37 correction left BOTH rows
-  // eligible: the bell counted one debt twice and its alert named an invoice
-  // the ledger screen does not list at all.
-  //
-  // This bites: with the stamp-only clause restored, the base-docNo half is
-  // absent and every one of these assertions fails.
-  it('also recognises the pre-v37 replacement, the one known only by its docNo', async () => {
-    await getAlerts();
-    const calls = topQuery.mock.calls.filter(([s]) =>
-      String(s).includes('FROM billing_documents b')
-    );
-    expect(calls.length).toBe(2);
-    for (const [raw] of calls) {
-      const sql = String(raw).replace(/\s+/g, ' ');
-      // The version suffix, stripped in SQL exactly as `baseDocNo` strips it.
-      expect(sql).toContain("REGEXP_REPLACE(newer.docNo, '-?[vV][0-9]+$', '')");
-      expect(sql).toContain("REGEXP_REPLACE(b.docNo, '-?[vV][0-9]+$', '')");
-      // Only a HIGHER version supersedes — otherwise v2 would hide v3.
-      expect(sql).toContain('REGEXP_SUBSTR');
-      // The prefix LIKE is what keeps this off a full scan of the table for
-      // every candidate row, on a query the dashboard runs on every load.
-      expect(sql).toContain('newer.docNo LIKE CONCAT(');
-      // A row can never supersede itself, by either route.
-      expect(sql).toContain('newer.id <> b.id');
-    }
-  });
-
-  it('compares the balance with a satang tolerance, never float equality', async () => {
-    await getAlerts();
-    const sql = String(
-      topQuery.mock.calls.find(([s]) => String(s).includes('FROM billing_documents b'))![0]
-    );
-    expect(sql).toContain('b.totalAmount - b.paidAmount > 0.005');
-    expect(sql).not.toMatch(/b\.paidAmount\s*=\s*b\.totalAmount/);
-  });
-
-  it('joins alert_snoozes on its OWN alertType with the identical snooze clause', async () => {
-    await getAlerts();
-    const sql = String(
-      topQuery.mock.calls.find(([s]) => String(s).includes('FROM billing_documents b'))![0]
-    ).replace(/\s+/g, ' ');
-    expect(sql).toContain(
-      "LEFT JOIN alert_snoozes sno ON sno.alertType = 'receivable' AND sno.referenceId = b.id"
-    );
-    expect(sql).toContain('(sno.snoozeUntil IS NULL OR sno.snoozeUntil <= ?)');
-  });
-
-  it('never reads the JSON blob for the alert feed', async () => {
-    await getAlerts();
-    const sql = String(
-      topQuery.mock.calls.find(([s]) => String(s).includes('FROM billing_documents b'))![0]
-    );
-    expect(sql).not.toMatch(/b\.data\b/);
-  });
-
-  it('reports the true receivable total separately from the capped list', async () => {
-    topQuery.mockImplementation((sql: string) => {
-      const text = String(sql);
-      if (text.includes('FROM billing_documents b') && text.includes('COUNT(*)')) {
-        return Promise.resolve([[{ cnt: 143 }]]);
-      }
-      if (text.includes('FROM billing_documents b')) {
-        return Promise.resolve([
-          Array.from({ length: 100 }, (_, i) => ({
-            id: `inv-${i}`,
-            docNo: `INV-${i}`,
-            docType: 'invoice',
-            totalAmount: '100.00',
-            paidAmount: '0.00',
-            outstanding: '100.00',
-          })),
-        ]);
-      }
-      return Promise.resolve([[]]);
-    });
-
+  // ── ลูกหนี้ค้างชำระ — gone with the old /billing ──────────────────────────
+  // The old billing module (billing_documents) is removed, and with it the
+  // alert for its unpaid invoices. The feed must not ask for that table at all.
+  it('no longer reads the old billing documents, and has no receivable keys', async () => {
+    topQuery.mockResolvedValue([[]]);
     const alerts = await getAlerts();
-    expect(alerts.overdueReceivables).toHaveLength(100);
-    expect(alerts.overdueReceivablesTotal).toBe(143);
-  });
-
-  it('hands the card NUMBERS, not the DECIMAL strings mysql2 returns, and floors the outstanding', async () => {
-    topQuery.mockImplementation((sql: string) => {
-      const text = String(sql);
-      if (text.includes('FROM billing_documents b') && !text.includes('COUNT(*)')) {
-        return Promise.resolve([
-          [
-            {
-              id: 'inv-1',
-              docNo: 'INV260801-01',
-              docType: 'invoice',
-              docDate: '2026-08-01',
-              dueDate: '2026-08-31',
-              customerName: 'บริษัท ก',
-              customerPhone: '02-1',
-              linkedQuotationId: 'q1',
-              totalAmount: '100000.00',
-              paidAmount: '130000.00',
-              outstanding: '-30000.00',
-            },
-          ],
-        ]);
-      }
-      return Promise.resolve([[]]);
-    });
-
-    const alerts = await getAlerts();
-    const card = alerts.overdueReceivables[0];
-    expect(card.totalAmount).toBe(100000);
-    expect(card.paidAmount).toBe(130000);
-    // An overpaid document must never subtract from the company's total.
-    expect(card.outstanding).toBe(0);
+    for (const [sql] of topQuery.mock.calls) expect(String(sql)).not.toContain('billing_documents');
+    expect(alerts).not.toHaveProperty('overdueReceivables');
+    expect(alerts).not.toHaveProperty('overdueReceivablesTotal');
   });
 
   it('still surfaces a calibration that is already overdue, not just ones approaching', async () => {
@@ -2533,7 +2361,7 @@ describe('getAlerts — warrantyAlertEnabled silences the warranty alert ONLY', 
 });
 
 describe('getAlerts — every pre-existing key survives the split', () => {
-  it('returns all six original keys, the two customer-call keys and the two receivable keys', async () => {
+  it('returns all six original keys and the two customer-call keys', async () => {
     topQuery.mockResolvedValue([[]]);
 
     const alerts = await getAlerts();
@@ -2549,10 +2377,9 @@ describe('getAlerts — every pre-existing key survives the split', () => {
         'nearingCalibration',
         'nearingCalibrationTotal',
         'upcomingSchedules',
-        // Adding a category must never quietly drop one — that is what this
-        // exhaustive assertion is for.
-        'overdueReceivables',
-        'overdueReceivablesTotal',
+        // Adding or removing a category must never happen quietly — that is
+        // what this exhaustive assertion is for. (The two receivable keys went
+        // with the old /billing.)
       ].sort()
     );
   });

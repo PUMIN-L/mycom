@@ -134,28 +134,10 @@ describe('searchDatedAlerts — the search ignores every window the feed uses', 
     expect(sql).toContain('e.status');
   });
 
-  it('the receivable query excludes cancelled/superseded but NOT paid-in-full', async () => {
-    await searchDatedAlerts('2026-06-01', '2026-06-30');
-    const sql = listQuery(/FROM billing_documents b/);
-
-    // A withdrawn document's due date no longer means anything.
-    expect(sql).toContain('b.cancelledAt IS NULL');
-    // "ถูกแทนที่" = replaced by a row that is STILL ALIVE, the same rule the
-    // ledger screen, the feed and listOpenInvoices apply. Raise a correction,
-    // cancel the correction, and a plain `b.supersededById IS NULL` erased the
-    // original invoice from the very day it fell due — while /billing/receivables
-    // was still counting that debt and badging it "เวอร์ชันใหม่ถูกยกเลิก".
-    // Bites: the old clause fails the negative assertion below.
-    expect(sql).toContain('NOT EXISTS');
-    expect(sql).toContain('newer.id = b.supersededById');
-    expect(sql).toContain('newer.cancelledAt IS NULL');
-    expect(sql).not.toContain('b.supersededById IS NULL');
-    // Same debtCarrier rule as the feed.
-    expect(sql).toContain('b.receivableOverride = 1');
-    expect(sql).toContain("b.docType = 'invoice'");
-    // But a fully paid document still genuinely fell due that day — the whole
-    // point of searching a past date is to review what was supposed to happen.
-    expect(sql).not.toMatch(/totalAmount\s*-\s*b\.paidAmount\s*>/);
+  it('no longer reads the old billing documents — the receivable bucket went with /billing', async () => {
+    const result = await searchDatedAlerts('2026-06-01', '2026-06-30');
+    for (const [sql] of topQuery.mock.calls) expect(String(sql)).not.toContain('billing_documents');
+    expect(result).not.toHaveProperty('receivables');
   });
 
   it('the task query drops rows with no due date and does not filter on status', async () => {
@@ -185,8 +167,9 @@ describe('searchDatedAlerts — the search ignores every window the feed uses', 
     await searchDatedAlerts('2026-06-01', '2026-06-30');
     const lists = topSql().filter((s) => !/SELECT COUNT\(\*\)/.test(s));
     const counts = topSql().filter((s) => /SELECT COUNT\(\*\)/.test(s));
-    expect(lists).toHaveLength(6);
-    expect(counts).toHaveLength(6);
+    // Five categories since the old billing receivables went.
+    expect(lists).toHaveLength(5);
+    expect(counts).toHaveLength(5);
     for (const sql of lists) expect(sql).toContain(`LIMIT ${DATE_SEARCH_ROW_CAP}`);
     // The count is the TRUE total, so "และอีก N รายการ" is honest.
     for (const sql of counts) expect(sql).not.toContain('LIMIT');
@@ -249,7 +232,7 @@ describe('searchDatedAlerts — how rows come back', () => {
     expect(result.schedules.rows[2].immovableCode).toBe('closed');
   });
 
-  it('marks warranty, calibration and receivable rows immovable with a way out', async () => {
+  it('marks warranty and calibration rows immovable with a way out', async () => {
     topQuery.mockImplementation((sql: string) => {
       const flat = String(sql).replace(/\s+/g, ' ');
       if (/COUNT\(\*\)/.test(flat)) return Promise.resolve([[]]);
@@ -263,11 +246,6 @@ describe('searchDatedAlerts — how rows come back', () => {
           [{ id: 'e2', calibrationDueDate: '2027-06-12', calibrationDate: '2026-06-12', status: 'Active', productName: 'Balance' }],
         ]);
       }
-      if (/FROM billing_documents b/.test(flat)) {
-        return Promise.resolve([
-          [{ id: 'b1', docNo: 'INV-1', docType: 'invoice', dueDate: '2026-06-12', totalAmount: '100.00', paidAmount: '0.00', outstanding: '100.00' }],
-        ]);
-      }
       return Promise.resolve([[]]);
     });
 
@@ -275,7 +253,6 @@ describe('searchDatedAlerts — how rows come back', () => {
     for (const row of [
       result.warranties.rows[0],
       result.calibrations.rows[0],
-      result.receivables.rows[0],
     ]) {
       expect(row.movable).toBe(false);
       expect(row.immovableCode).toBe('immovable_fact');
@@ -287,26 +264,6 @@ describe('searchDatedAlerts — how rows come back', () => {
     // it so the row can say where that due date came from.
     expect(result.calibrations.rows[0].matchedDate).toBe('2027-06-12');
     expect(result.calibrations.rows[0].calibrationDate).toBe('2026-06-12');
-    // DECIMAL arrives from mysql2 as a string; coerced once, here.
-    expect(result.receivables.rows[0].outstanding).toBe(100);
-    expect(typeof result.receivables.rows[0].outstanding).toBe('number');
-  });
-
-  it('badges a paid-in-full receivable instead of dropping it', async () => {
-    only(/FROM billing_documents b/, [
-      { id: 'b1', docNo: 'INV-1', docType: 'invoice', dueDate: '2026-06-12', totalAmount: '100.00', paidAmount: '100.00', outstanding: '0.00' },
-    ]);
-    const result = await searchDatedAlerts('2026-06-12', '2026-06-12');
-    expect(result.receivables.rows[0].status).toBe('paid');
-    expect(result.receivables.rows[0].outstanding).toBe(0);
-  });
-
-  it('an overpaid document never reports a negative balance', async () => {
-    only(/FROM billing_documents b/, [
-      { id: 'b1', docNo: 'INV-1', docType: 'invoice', dueDate: '2026-06-12', totalAmount: '100.00', paidAmount: '150.00', outstanding: '-50.00' },
-    ]);
-    const result = await searchDatedAlerts('2026-06-12', '2026-06-12');
-    expect(result.receivables.rows[0].outstanding).toBe(0);
   });
 
   it('a task whose topic row is gone still appears, under the fallback heading', async () => {
@@ -566,6 +523,7 @@ describe('rescheduleDatedAlerts — refusals are per item, never per batch', () 
       items: [
         { kind: 'schedule', id: 's1', expectedDate: '2026-06-12' },
         { kind: 'warranty', id: 'e1', expectedDate: '2026-06-12' },
+        // The old billing alert's kind — unknown now, and refused all the same.
         { kind: 'receivable', id: 'b1', expectedDate: '2026-06-12' },
         { kind: 'calibration', id: 'e2', expectedDate: '2026-06-12' },
         { kind: 'schedule', id: 's2', expectedDate: '2026-06-12' },

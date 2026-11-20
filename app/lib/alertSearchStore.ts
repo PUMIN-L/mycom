@@ -3,7 +3,6 @@ import { query, withTransaction } from "./db";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { sanitizePlainText } from "./sanitizeHtml";
 import { bangkokDateString } from "./dateFormat";
-import { sqlNotSupersededByLiveRow } from "./receivables";
 import { CALIBRATION_VALIDITY_MONTHS } from "./types";
 import {
   DATE_SEARCH_ROW_CAP,
@@ -27,8 +26,7 @@ import type {
  *
  * WHY THIS IS A SEPARATE MODULE, not more functions inside `crmStore.ts`:
  * the search deliberately ignores every window the feed is built on. The feed
- * clamps schedules to today+7, warranties to today+30, receivables to
- * today+7 and calibration to the 12−2 month alert-start — all of which exist
+ * clamps schedules to today+7, warranties to today+30 and calibration to the 12−2 month alert-start — all of which exist
  * to keep the DEFAULT feed short, and none of which defines what exists. A
  * search for "12 มิ.ย." must answer with what is on that day, past or future.
  * Sharing a query with `getAlerts()` would mean editing `getAlerts()`, and the
@@ -36,7 +34,7 @@ import type {
  *
  * THE WRITE PATH CAN TOUCH EXACTLY TWO COLUMNS: `service_schedules
  * .scheduledDate` and `crm_tasks.dueDate`. There is NO statement anywhere in
- * this file that writes `customer_equipments` or `billing_documents` — that
+ * this file that writes `customer_equipments` — that
  * absence is the real control. The greyed-out checkbox in the browser is only
  * an advance warning, and `__tests__/api/alertSearch.test.ts` asserts the
  * absence from the SQL actually issued, not from this comment.
@@ -77,29 +75,6 @@ const EQUIPMENT_SEARCH_FROM = `
   LEFT JOIN customers c ON e.customerId = c.id
   LEFT JOIN companies co ON c.companyId = co.id
   LEFT JOIN products p ON e.productId = p.id`;
-
-// The debtCarrier rule from receivables.ts, in SQL, identical to the feed's:
-// an invoice by default, plus anything explicitly overridden IN, minus
-// anything overridden OUT. Cancelled and superseded documents are excluded
-// because the due date of a document that has been withdrawn no longer means
-// anything. There is deliberately NO outstanding-balance clause: a document
-// that has been paid in full still genuinely fell due on that day, and the
-// point of searching a past date is to review what was supposed to happen.
-//
-// "ถูกแทนที่" comes from `sqlNotSupersededByLiveRow`, the same call `getAlerts`,
-// `listOpenInvoices` and `listUndatedReceivables` make. Searching a past date is
-// how the owner reconstructs what that day looked like, so it has to show the
-// same debts the day's ledger did — and every time this clause was written out
-// by hand instead, it stopped doing that: a cancelled correction made the
-// original vanish from the day it fell due, and a pre-v37 correction left both
-// versions in the results.
-const RECEIVABLE_SEARCH_WHERE = `
-  WHERE b.dueDate IS NOT NULL
-    AND b.dueDate BETWEEN ? AND ?
-    AND b.cancelledAt IS NULL
-    AND ${sqlNotSupersededByLiveRow("b")}
-    AND (b.receivableOverride = 1
-         OR (b.receivableOverride IS NULL AND b.docType = 'invoice'))`;
 
 /** Fallback heading for a task whose topic row is gone — the same string
  *  `taskStore.UNASSIGNED_TOPIC_NAME` uses. Duplicated as a literal rather than
@@ -172,8 +147,6 @@ export async function searchDatedAlerts(
     warrantyCount,
     calibrationRows,
     calibrationCount,
-    receivableRows,
-    receivableCount,
     taskRows,
     taskCount,
   ] = await Promise.all([
@@ -268,25 +241,6 @@ export async function searchDatedAlerts(
        WHERE e.calibrationDate IS NOT NULL
          AND DATE_ADD(e.calibrationDate, INTERVAL ? MONTH) BETWEEN ? AND ?`,
       [CALIBRATION_VALIDITY_MONTHS, from, to]
-    ),
-
-    // ── ลูกหนี้ค้างชำระ ──────────────────────────────────────────────────────
-    query<RowDataPacket[]>(
-      `SELECT b.id, b.docNo, b.docType, b.docDate, b.dueDate, b.customerName,
-              b.totalAmount, b.paidAmount,
-              (b.totalAmount - b.paidAmount) AS outstanding,
-              sno.snoozeUntil AS snoozeUntil
-       FROM billing_documents b
-       LEFT JOIN alert_snoozes sno ON sno.alertType = 'receivable' AND sno.referenceId = b.id
-       ${RECEIVABLE_SEARCH_WHERE}
-       ORDER BY b.dueDate ASC, b.id ASC
-       LIMIT ${DATE_SEARCH_ROW_CAP}`,
-      [from, to]
-    ),
-    query<RowDataPacket[]>(
-      `SELECT COUNT(*) AS cnt FROM billing_documents b
-       ${RECEIVABLE_SEARCH_WHERE}`,
-      [from, to]
     ),
 
     // ── สิ่งที่ต้องทำ (กระดานงานที่เจ้าของเขียนเอง) ──────────────────────────
@@ -394,31 +348,6 @@ export async function searchDatedAlerts(
     });
   });
 
-  const receivables = (receivableRows[0] as RowDataPacket[]).map((row) => {
-    const matchedDate = str(row.dueDate);
-    // DECIMAL arrives from mysql2 as a STRING. Coerced once, here, so nothing
-    // downstream concatenates money instead of adding it. Floored at 0 for the
-    // same reason the ledger floors it: an overpaid document must never
-    // subtract from a total.
-    const outstanding = Math.max(0, Number(row.outstanding) || 0);
-    return withMovability({
-      kind: "receivable" as const,
-      id: str(row.id),
-      matchedDate,
-      title: str(row.docNo),
-      subtitle: str(row.docType),
-      customerName: str(row.customerName),
-      companyName: "",
-      // A document with nothing left to pay is badged "ชำระครบแล้ว" rather
-      // than filtered out — it still fell due on the searched day.
-      status: outstanding <= 0.005 ? "paid" : "unpaid",
-      overdue: matchedDate < today && outstanding > 0.005,
-      snoozedUntil: row.snoozeUntil ? str(row.snoozeUntil) : null,
-      docNo: str(row.docNo),
-      outstanding,
-    });
-  });
-
   const tasks = (taskRows[0] as RowDataPacket[]).map((row) => {
     const hasTopic = row.topicName !== null && row.topicName !== undefined;
     const matchedDate = str(row.dueDate);
@@ -451,10 +380,6 @@ export async function searchDatedAlerts(
     calibrations: buildBucket(
       calibrations,
       countOf(calibrationCount[0] as RowDataPacket[])
-    ),
-    receivables: buildBucket(
-      receivables,
-      countOf(receivableCount[0] as RowDataPacket[])
     ),
   };
 }
@@ -547,7 +472,7 @@ export async function rescheduleDatedAlerts(
     const results: RescheduleItemResult[] = [];
 
     // Which ids need reading, split by table. Immovable kinds are classified
-    // before any SQL is composed, so a warranty/calibration/receivable id can
+    // before any SQL is composed, so a warranty/calibration id can
     // never reach a write statement even if a hand-built request lists one.
     const scheduleIds: string[] = [];
     const taskIds: string[] = [];
@@ -607,7 +532,7 @@ export async function rescheduleDatedAlerts(
       const isSchedule = item.kind === "schedule" || item.kind === "customer_call";
       const isTask = item.kind === "task";
 
-      // 1. Kind. Warranty / calibration / receivable / anything unrecognised is
+      // 1. Kind. Warranty / calibration / anything unrecognised is
       //    an immovable fact and is refused here, before any SQL is composed
       //    for it. This check does not consult the database at all — there is
       //    no path from these kinds to a write statement.

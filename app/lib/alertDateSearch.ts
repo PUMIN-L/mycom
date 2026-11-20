@@ -68,7 +68,7 @@ export const BULK_RESCHEDULE_MAX_SHIFT_DAYS = 3650;
 
 // ── Kinds and codes ──────────────────────────────────────────────────────────
 
-/** The six sources a date search draws from. Each is matched on the date that
+/** The five sources a date search draws from. Each is matched on the date that
  *  MEANS something for that source, never the first date column in its table —
  *  see `matchedDate` below. */
 export const DATED_ALERT_KINDS = [
@@ -77,17 +77,16 @@ export const DATED_ALERT_KINDS = [
   "task",
   "warranty",
   "calibration",
-  "receivable",
 ] as const;
 export type DatedAlertKind = (typeof DATED_ALERT_KINDS)[number];
 
 /** The three kinds whose date is a REMINDER the owner set, and may therefore
- *  be moved. The other three are facts about a machine or a contract. */
+ *  be moved. The other two are facts about a machine. */
 export const MOVABLE_ALERT_KINDS = ["schedule", "customer_call", "task"] as const;
 
 export const RESCHEDULE_REFUSAL_CODES = [
-  /** Warranty / calibration / receivable — or a kind this system does not
-   *  know. Their date is a fact, not a reminder. */
+  /** Warranty / calibration — or a kind this system does not know (the old
+   *  billing receivable among them, since /billing went). Their date is a fact, not a reminder. */
   "immovable_fact",
   /** Schedule completed/cancelled, or task done. */
   "closed",
@@ -127,7 +126,6 @@ export interface DatedAlertRow {
    *                              the 12−2 month alert-start date, which is an
    *                              artifact of a lead constant rather than an
    *                              event in anyone's calendar
-   *   receivable               → `billing_documents.dueDate`
    *
    * Always `YYYY-MM-DD`, zero-padded: these columns are compared and sorted
    * LEXICALLY in SQL.
@@ -155,8 +153,6 @@ export interface DatedAlertRow {
   // Category extras, all optional.
   serialNumber?: string;
   productName?: string;
-  docNo?: string;
-  outstanding?: number;
   topicName?: string;
   topicIcon?: string;
   topicColor?: string;
@@ -185,7 +181,6 @@ export interface AlertDateSearchResult {
   tasks: DatedAlertBucket;
   warranties: DatedAlertBucket;
   calibrations: DatedAlertBucket;
-  receivables: DatedAlertBucket;
 }
 
 export interface RescheduleItemInput {
@@ -259,9 +254,6 @@ export const IMMOVABLE_REASONS = {
     "วันครบกำหนดสอบเทียบคำนวณจากวันที่สอบเทียบครั้งล่าสุด " +
     "การเลื่อนที่นี่คือการปิดเสียงเตือนที่ควรดัง ถ้าเพิ่งสอบเทียบไปแล้ว " +
     "ให้บันทึกวันสอบเทียบครั้งใหม่ที่ข้อมูลเครื่อง แล้ววันครบกำหนดจะขยับเอง",
-  receivable:
-    "วันครบกำหนดชำระคือเงื่อนไขเครดิตที่ตกลงกับลูกค้าไว้ " +
-    "การเลื่อนคือการยืดเครดิตให้ลูกค้า ต้องทำที่หน้าลูกหนี้ (/billing/receivables) ไม่ใช่ที่นี่",
   completed:
     "นัดนี้ปิดงานไปแล้ว วันที่ของมันคือหลักฐานว่าเข้าไปเมื่อไหร่ " +
     "ซึ่งประวัติการเข้าบริการอ้างอิงอยู่ ถ้าต้องเข้าไปอีกครั้ง ให้สร้างนัดใหม่",
@@ -283,7 +275,7 @@ export const IMMOVABLE_REASONS = {
  * THE rule. Both the screen and the API ask this question, of the same
  * function, and get the same answer with the same wording.
  *
- * Order matters: kind first, because warranty/calibration/receivable are
+ * Order matters: kind first, because warranty/calibration are
  * immovable no matter what status they carry — their date is a fact, and a
  * "pending" fact is still a fact.
  */
@@ -292,7 +284,6 @@ export function evaluateMovability(row: MovabilityInput): Movability {
 
   if (kind === "warranty") return no("immovable_fact", IMMOVABLE_REASONS.warranty);
   if (kind === "calibration") return no("immovable_fact", IMMOVABLE_REASONS.calibration);
-  if (kind === "receivable") return no("immovable_fact", IMMOVABLE_REASONS.receivable);
 
   const status = String(row.status ?? "").trim();
 

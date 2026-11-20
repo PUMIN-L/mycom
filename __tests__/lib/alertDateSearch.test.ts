@@ -163,7 +163,8 @@ describe('evaluateMovability — the single rule the UI and the API share', () =
   const immovable: Array<[string, Parameters<typeof evaluateMovability>[0], string]> = [
     ['warranty is a fact about the machine', { kind: 'warranty', status: 'Active' }, 'immovable_fact'],
     ['calibration due date is derived from the last calibration', { kind: 'calibration', status: 'Active' }, 'immovable_fact'],
-    ['a receivable due date is a credit term', { kind: 'receivable', status: 'unpaid' }, 'immovable_fact'],
+    // The old billing receivable is a kind this system no longer knows.
+    ['the old billing receivable — an unknown kind now', { kind: 'receivable', status: 'unpaid' }, 'immovable_fact'],
     ['a completed appointment is evidence of a visit', { kind: 'schedule', status: 'completed', matchedDate: '2026-06-12' }, 'closed'],
     ['a cancelled appointment stays cancelled', { kind: 'customer_call', status: 'cancelled', matchedDate: '2026-06-12' }, 'closed'],
     ['a done task must be reopened first', { kind: 'task', status: 'done', matchedDate: '2026-06-12' }, 'closed'],
@@ -221,7 +222,8 @@ describe('evaluateMovability — the single rule the UI and the API share', () =
     // And each one points somewhere specific.
     expect(IMMOVABLE_REASONS.warranty).toContain('ข้อมูลเครื่อง');
     expect(IMMOVABLE_REASONS.calibration).toContain('บันทึกวันสอบเทียบ');
-    expect(IMMOVABLE_REASONS.receivable).toContain('/billing/receivables');
+    // The old billing receivable has no reason of its own any more.
+    expect(IMMOVABLE_REASONS).not.toHaveProperty('receivable');
     expect(IMMOVABLE_REASONS.completed).toContain('สร้างนัดใหม่');
     expect(IMMOVABLE_REASONS.cancelled).toContain('สร้างนัดใหม่');
     expect(IMMOVABLE_REASONS.done).toContain('เปิดใหม่');
@@ -255,7 +257,7 @@ describe('selectableRows / selectAllPlan', () => {
     ),
     ...Array.from({ length: 5 }, (_, i) => row({ kind: 'warranty', id: `w${i}`, status: 'Active' })),
     ...Array.from({ length: 4 }, (_, i) => row({ kind: 'calibration', id: `c${i}`, status: 'Active' })),
-    ...Array.from({ length: 3 }, (_, i) => row({ kind: 'receivable', id: `r${i}`, status: 'unpaid' })),
+    ...Array.from({ length: 3 }, (_, i) => row({ kind: 'calibration', id: `r${i}`, status: 'Active' })),
     ...Array.from({ length: 3 }, (_, i) =>
       row({ kind: 'schedule', id: `sc${i}`, status: 'completed' })
     ),

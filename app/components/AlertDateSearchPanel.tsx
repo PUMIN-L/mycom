@@ -135,7 +135,6 @@ const KIND_META: Record<DatedAlertKind, KindMeta> = {
   task: { label: "สิ่งที่ต้องทำ", icon: "📝", chip: "bg-indigo-50 text-indigo-700 border-indigo-200", order: 2 },
   warranty: { label: "ประกันใกล้หมด", icon: "🛡️", chip: "bg-orange-50 text-orange-700 border-orange-200", order: 3 },
   calibration: { label: "ใกล้ถึงกำหนดสอบเทียบ", icon: "🎯", chip: "bg-cyan-50 text-cyan-700 border-cyan-200", order: 4 },
-  receivable: { label: "ลูกหนี้ค้างชำระ", icon: "💰", chip: "bg-amber-50 text-amber-700 border-amber-200", order: 5 },
 };
 
 /** The row's own `status` verbatim, in Thai. Unknown values fall through
@@ -364,7 +363,6 @@ export default function AlertDateSearchPanel({
             ["task", result.tasks],
             ["warranty", result.warranties],
             ["calibration", result.calibrations],
-            ["receivable", result.receivables],
           ] as const)
         : [],
     [result]

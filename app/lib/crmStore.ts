@@ -2,7 +2,6 @@ import { query, withTransaction } from "./db";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { sanitizePlainText } from "./sanitizeHtml";
 import { bangkokDateString } from "./dateFormat";
-import { sqlNotSupersededByLiveRow } from "./receivables";
 import type {
   CustomerEquipment,
   ServiceSchedule,
@@ -11,7 +10,6 @@ import type {
   ScheduleStatus,
   CrmAlerts,
   SalesRecord,
-  ReceivableAlert,
 } from "./types";
 import {
   SCHEDULE_TYPES,
@@ -26,7 +24,6 @@ import {
   ALERT_LIST_DISPLAY_LIMIT,
   MISSING_DELIVERY_DOC_DAYS,
   MISSING_RECEIPT_DOC_DAYS,
-  RECEIVABLE_ALERT_LEAD_DAYS,
 } from "./alertThresholds";
 
 // Re-exported so callers can keep importing from "./crmStore".
@@ -45,7 +42,6 @@ export {
   ALERT_LIST_DISPLAY_LIMIT,
   MISSING_DELIVERY_DOC_DAYS,
   MISSING_RECEIPT_DOC_DAYS,
-  RECEIVABLE_ALERT_LEAD_DAYS,
 } from "./alertThresholds";
 
 // CRM: sold-equipment + warranty tracking, service/phone-call schedules, and
@@ -1121,7 +1117,7 @@ export async function getAlerts(
   // overdue one must keep alerting indefinitely, not just while approaching.
   //
   // Because nothing closes it, this backlog only ever GROWS — exactly like
-  // incompleteEquipments and overdueReceivables — so the list is capped at
+  // incompleteEquipments — so the list is capped at
   // ALERT_LIST_DISPLAY_LIMIT and the true count is reported separately as
   // `nearingCalibrationTotal`. Without the cap, a few thousand machines
   // carrying an old calibrationDate meant GET /api/admin/alerts shipped a few
@@ -1264,68 +1260,6 @@ export async function getAlerts(
     [today, today, nowIso]
   );
 
-  // ── ลูกหนี้ค้างชำระ ────────────────────────────────────────────────────────
-  // Calibration-shaped, not warranty-shaped: NO upper bound, because nothing
-  // closes a receivable alert except the money arriving. The window only sets
-  // how EARLY it opens — RECEIVABLE_ALERT_LEAD_DAYS before the due date, so the
-  // owner can make the courtesy call before the invoice is actually late.
-  //
-  // `b.dueDate IS NOT NULL` is what stops day-one carnage: the v37 migration
-  // leaves dueDate NULL on every document already in production, so this
-  // category is empty until the owner opts documents in from the ledger, and
-  // the bell does not spike the moment this ships.
-  //
-  // The eligibility clause is the debtCarrier rule from receivables.ts, in SQL:
-  // an invoice by default, plus anything the admin explicitly overrode IN,
-  // minus anything overridden OUT. Every column read here is denormalised, so
-  // the JSON blob is never touched.
-  //
-  // "ถูกแทนที่" MEANS REPLACED BY A ROW THAT IS STILL ALIVE, and it is asked
-  // through `sqlNotSupersededByLiveRow` — never spelled out here. Two separate
-  // rounds of drift came from this clause being hand-copied: first a plain
-  // `supersededById IS NULL` that kept a debt terminal after its correction was
-  // itself CANCELLED, then a stamp-only test that could not see the pre-v37
-  // rows whose only evidence of replacement is a sibling docNo. Both made the
-  // bell disagree with the ledger screen the owner reads — in the first case an
-  // invoice months overdue that no alert would ever raise, in the second the
-  // same debt counted twice. One function, four callers, no copies.
-  const dueCutoff = bangkokDateString(
-    new Date(Date.now() + RECEIVABLE_ALERT_LEAD_DAYS * 86400000)
-  );
-  const RECEIVABLE_WHERE = `
-     WHERE b.cancelledAt IS NULL
-       AND ${sqlNotSupersededByLiveRow("b")}
-       AND (b.receivableOverride = 1
-            OR (b.receivableOverride IS NULL AND b.docType = 'invoice'))
-       AND b.dueDate IS NOT NULL
-       AND b.dueDate <= ?
-       AND b.totalAmount - b.paidAmount > 0.005
-       AND (sno.snoozeUntil IS NULL OR sno.snoozeUntil <= ?)`;
-
-  const [receivableRows] = await query<RowDataPacket[]>(
-    `SELECT b.id, b.docNo, b.docType, b.docDate, b.dueDate,
-            b.customerName, b.customerPhone, b.linkedQuotationId,
-            b.totalAmount, b.paidAmount,
-            (b.totalAmount - b.paidAmount) AS outstanding
-     FROM billing_documents b
-     LEFT JOIN alert_snoozes sno ON sno.alertType = 'receivable' AND sno.referenceId = b.id
-     ${RECEIVABLE_WHERE}
-     ORDER BY b.dueDate ASC LIMIT ${ALERT_LIST_DISPLAY_LIMIT}`,
-    [dueCutoff, nowIso]
-  );
-
-  // Unbounded twin, exactly like incompleteEquipmentsTotal: this backlog grows
-  // with nothing to close it but payment, so the bell must count the real total
-  // rather than the truncated array.
-  const [receivableCountRows] = await query<RowDataPacket[]>(
-    `SELECT COUNT(*) AS cnt
-     FROM billing_documents b
-     LEFT JOIN alert_snoozes sno ON sno.alertType = 'receivable' AND sno.referenceId = b.id
-     ${RECEIVABLE_WHERE}`,
-    [dueCutoff, nowIso]
-  );
-  const overdueReceivablesTotal = Number(receivableCountRows[0]?.cnt) || 0;
-
   return {
     expiringWarranties: warrantyRows as CustomerEquipment[],
     nearingCalibration: calibrationRows as CustomerEquipment[],
@@ -1341,24 +1275,6 @@ export async function getAlerts(
       (s) => ({ ...s, overdue: s.scheduledDate < today })
     ),
     customerCallFollowUpsTotal,
-    // DECIMAL columns arrive from mysql2 as STRINGS. Coerce here, once, so no
-    // card ever concatenates money instead of adding it.
-    overdueReceivables: (receivableRows as RowDataPacket[]).map((r) => ({
-      id: String(r.id),
-      docNo: r.docNo ?? "",
-      docType: r.docType ?? "invoice",
-      docDate: r.docDate ?? null,
-      dueDate: r.dueDate ?? null,
-      customerName: r.customerName ?? "",
-      customerPhone: r.customerPhone ?? "",
-      linkedQuotationId: r.linkedQuotationId ?? null,
-      totalAmount: Number(r.totalAmount) || 0,
-      paidAmount: Number(r.paidAmount) || 0,
-      // Floored for the same reason the ledger floors it: an overpaid document
-      // must never subtract from the company's total ยอดค้าง.
-      outstanding: Math.max(0, Number(r.outstanding) || 0),
-    })) as ReceivableAlert[],
-    overdueReceivablesTotal,
   };
 }
 

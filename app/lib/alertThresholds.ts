@@ -53,9 +53,3 @@ export const MISSING_RECEIPT_DOC_DAYS = 30;
  *  because settingsStore imports the DB driver and this number is rendered by
  *  client components (the billing builder and AlertsGuidePanel) too. */
 export const DEFAULT_CREDIT_TERM_DAYS = 30;
-
-/** How many days BEFORE its due date a receivable starts appearing in the alert
- *  feed, so the owner can make the courtesy call before the invoice is actually
- *  late. Like calibration, this category has NO upper bound: nothing closes a
- *  receivable alert except the money arriving (or a snooze). */
-export const RECEIVABLE_ALERT_LEAD_DAYS = 7;

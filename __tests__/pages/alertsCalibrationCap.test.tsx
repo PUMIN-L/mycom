@@ -53,8 +53,6 @@ function alertsPayload(over: Record<string, unknown> = {}) {
     missingDocuments: [],
     customerCallFollowUps: [],
     customerCallFollowUpsTotal: 0,
-    overdueReceivables: [],
-    overdueReceivablesTotal: 0,
     dueTaskCount: 0,
     ...over,
   };
@@ -80,6 +78,16 @@ async function calibrationTabText() {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+});
+
+describe("หน้าแจ้งเตือน — ไม่มีหมวดลูกหนี้ค้างชำระแล้ว", () => {
+  it("has no ลูกหนี้ค้างชำระ tab — it went with the old /billing", async () => {
+    stubFetch(alertsPayload({}));
+    render(<AlertsPage />);
+    await screen.findByRole("button", { name: /ใกล้ถึงกำหนดสอบเทียบ/ });
+    expect(screen.queryByRole("button", { name: /ลูกหนี้ค้างชำระ/ })).toBeNull();
+    expect(screen.queryByText(/ลูกหนี้ค้างชำระ/)).toBeNull();
+  });
 });
 
 describe("หน้าแจ้งเตือน — แท็บใกล้ถึงกำหนดสอบเทียบ", () => {
@@ -142,7 +150,6 @@ describe("หน้าแจ้งเตือน — แถบแท็บท�
     "ใกล้ถึงกำหนดสอบเทียบ",
     "ข้อมูลไม่ครบ",
     "เอกสารค้าง",
-    "ลูกหนี้ค้างชำระ",
   ];
 
   it("ขึ้นครบทุกแท็บ พร้อมตัวเลขที่รวมยอดจริงของหมวดที่ถูกตัด", async () => {

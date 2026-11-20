@@ -40,8 +40,6 @@ function alertsPayload(over: Record<string, unknown> = {}) {
     missingDocuments: [],
     customerCallFollowUps: [],
     customerCallFollowUpsTotal: 0,
-    overdueReceivables: [],
-    overdueReceivablesTotal: 0,
     dueTaskCount: 0,
     ...over,
   };

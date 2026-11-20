@@ -81,14 +81,14 @@ const WARRANTY = row({
   immovableCode: "immovable_fact",
   immovableReason: IMMOVABLE_REASONS.warranty,
 });
-const RECEIVABLE = row({
-  kind: "receivable",
-  id: "b1",
-  title: "INV-2026-001",
-  status: "unpaid",
+const CALIBRATION = row({
+  kind: "calibration",
+  id: "c1",
+  title: "เครื่องชั่ง B",
+  status: "Active",
   movable: false,
   immovableCode: "immovable_fact",
-  immovableReason: IMMOVABLE_REASONS.receivable,
+  immovableReason: IMMOVABLE_REASONS.calibration,
 });
 
 function searchResult(rows: DatedAlertRow[], from = TODAY, to = TODAY) {
@@ -104,7 +104,6 @@ function searchResult(rows: DatedAlertRow[], from = TODAY, to = TODAY) {
     tasks: bucket("task"),
     warranties: bucket("warranty"),
     calibrations: bucket("calibration"),
-    receivables: bucket("receivable"),
   };
 }
 
@@ -116,7 +115,7 @@ function jsonResponse(body: unknown, status = 200): Response {
   } as unknown as Response;
 }
 
-const DEFAULT_ROWS = [SCHEDULE, TASK, CLOSED_SCHEDULE, WARRANTY, RECEIVABLE];
+const DEFAULT_ROWS = [SCHEDULE, TASK, CLOSED_SCHEDULE, WARRANTY, CALIBRATION];
 
 interface Harness {
   onToast: ReturnType<typeof vi.fn>;
@@ -428,7 +427,7 @@ describe("AlertDateSearchPanel — ช่องติ๊ก และเหต�
     expect(
       screen.getByText(/วันหมดประกันเป็นข้อเท็จจริงของเครื่อง/)
     ).toBeInTheDocument();
-    expect(screen.getByText(/วันครบกำหนดชำระคือเงื่อนไขเครดิต/)).toBeInTheDocument();
+    expect(screen.getByText(/วันครบกำหนดสอบเทียบคำนวณจากวันที่สอบเทียบ/)).toBeInTheDocument();
     expect(screen.getByText(/นัดนี้ปิดงานไปแล้ว/)).toBeInTheDocument();
     for (const box of boxes) expect(box).not.toHaveAttribute("title");
   });

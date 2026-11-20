@@ -55,7 +55,6 @@ describe('AlertsGuidePanel — the required topics', () => {
       'ใกล้ถึงกำหนดสอบเทียบ',
       'ข้อมูลไม่ครบ',
       'เอกสารค้าง',
-      'ลูกหนี้ค้างชำระ',
       'เลื่อนแจ้งเตือน คืออะไร',
       // The date search is a capability of this page, so it is documented here
       // like every other one.
@@ -68,9 +67,10 @@ describe('AlertsGuidePanel — the required topics', () => {
     }
 
     // Every section answers all three questions, in the same order.
-    expect(screen.getAllByText('ขึ้นเมื่อไร').length).toBe(12);
-    expect(screen.getAllByText('เกณฑ์ที่ระบบใช้จริง').length).toBe(12);
-    expect(screen.getAllByText('ทำอย่างไรถึงจะหายไป').length).toBe(12);
+    // Eleven sections since the old ลูกหนี้ค้างชำระ went with /billing.
+    expect(screen.getAllByText('ขึ้นเมื่อไร').length).toBe(11);
+    expect(screen.getAllByText('เกณฑ์ที่ระบบใช้จริง').length).toBe(11);
+    expect(screen.getAllByText('ทำอย่างไรถึงจะหายไป').length).toBe(11);
     expect(text.length).toBeGreaterThan(500);
   });
 });
@@ -128,7 +128,9 @@ describe('AlertsGuidePanel — the date search, and what may be moved', () => {
     expect(text).toContain('ที่เลื่อนวันได้มี 3 อย่างเท่านั้น');
     expect(text).toContain('ค้นหาเจอและเห็นได้ แต่ติ๊กไม่ได้');
     expect(text).toContain('ข้อเท็จจริงของเครื่อง');
-    expect(text).toContain('เงื่อนไขเครดิตที่ตกลงกับลูกค้าไว้');
+    // The old billing receivable is gone from the search, and from its guide.
+    expect(text).not.toContain('เงื่อนไขเครดิตที่ตกลงกับลูกค้าไว้');
+    expect(text).not.toContain('ลูกหนี้ค้างชำระ');
     // The two dateless categories cannot be found by a date search at all.
     expect(text).toContain('ไม่ปรากฏในผลการค้นหาเลย');
   });

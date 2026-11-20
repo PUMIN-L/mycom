@@ -111,10 +111,11 @@ describe('GET /api/admin/alerts/search', () => {
       'tasks',
       'warranties',
       'calibrations',
-      'receivables',
     ]) {
       expect(body[key], key).toEqual({ rows: [], total: 0 });
     }
+    // The receivable bucket went with the old /billing.
+    expect(body).not.toHaveProperty('receivables');
   });
 
   it('finds last month`s appointment — the case the feed cannot show at all', async () => {
@@ -318,7 +319,8 @@ describe('POST /api/admin/alerts/reschedule — the refusal that matters', () =>
     expect(body.results[1]).toMatchObject({ status: 'refused', code: 'immovable_fact' });
     expect(body.results[2]).toMatchObject({ status: 'refused', code: 'immovable_fact' });
     expect(body.results[1].reason).toMatch(/[฀-๿]/);
-    expect(body.results[2].reason).toContain('/billing/receivables');
+    // The old billing receivable is an unknown kind now — refused all the same.
+    expect(body.results[2].reason).toContain('ไม่รู้จักประเภท');
   });
 
   it('PROVES from the issued SQL that neither fact table is ever written', async () => {

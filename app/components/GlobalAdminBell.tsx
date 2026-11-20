@@ -7,7 +7,7 @@ import { useAuth } from "../context/AuthContext";
 /**
  * The admin sections of the app. This is an ALLOW-list on purpose: this
  * component is mounted in app/layout.tsx, which wraps the PUBLIC marketing
- * site too, and the badge it draws is internal data (overdue receivables,
+ * site too, and the badge it draws is internal data (overdue appointments,
  * due tasks). A deny-list of public paths silently leaks that badge onto every
  * public route added afterwards — which is how it ended up floating over
  * /showcase/[id] and the catalog while a customer was looking at them.
@@ -90,10 +90,6 @@ export default function GlobalAdminBell() {
             // True pending follow-up-call count, NOT customerCallFollowUps.length
             // — that array is capped at 100 rows for display.
             (data.customerCallFollowUpsTotal ?? data.customerCallFollowUps?.length ?? 0) +
-            // Same treatment: nothing closes a receivable alert but the money
-            // arriving, so its list is capped at 100 for display and the TRUE
-            // total is what the bell has to count.
-            (data.overdueReceivablesTotal ?? data.overdueReceivables?.length ?? 0) +
             // Board tasks whose due date has ARRIVED. Tasks with no due date and
             // tasks due later are deliberately excluded — that is why the API
             // sends a separate count instead of a task total.

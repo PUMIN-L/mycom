@@ -26,7 +26,7 @@ import type { RescheduleItemInput, RescheduleMode } from "../../../../lib/alertD
  * single transaction to `alertSearchStore.rescheduleDatedAlerts`, whose only
  * write statements touch `service_schedules.scheduledDate` and
  * `crm_tasks.dueDate`. There is no statement anywhere on this path that writes
- * `customer_equipments` or `billing_documents`.
+ * `customer_equipments`.
  *
  * Refusals are PER ITEM, never per batch: every submitted item gets its own
  * entry in `results`, in submission order, with a Thai reason.

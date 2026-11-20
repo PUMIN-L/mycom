@@ -29,11 +29,6 @@ export type AlertEditRoute =
   /** `target.data` IS the equipment row already (ประกัน / สอบเทียบ /
    * ข้อมูลไม่ครบ) — open `EquipmentEditModal` with it as-is. */
   | { kind: "equipment_inline" }
-  /** ลูกหนี้ค้างชำระ — open the billing document itself, read-only. The card's
-   * PRIMARY action is "บันทึกรับชำระ", which opens a modal in place; this is
-   * only the secondary "go and look at the invoice" path, so it navigates
-   * rather than fetching anything first. */
-  | { kind: "billing_document"; billingDocumentId: string }
   /** นัดโทรลูกค้า — navigate to `/customers?customerId=<id>`, which already
    * knows how to switch to the customer-list tab and open that customer's
    * detail modal (and says so in Thai if the id turns out to be gone). What
@@ -50,8 +45,7 @@ export type AlertEditTargetType =
   | "warranty"
   | "calibration"
   | "incomplete"
-  | "missing_doc"
-  | "receivable";
+  | "missing_doc";
 
 export interface AlertEditTarget {
   type?: string | null;
@@ -99,11 +93,6 @@ export function resolveAlertEditRoute(
     return salesRecordId ? { kind: "sales_record", salesRecordId } : { kind: "none" };
   }
 
-  if (target.type === "receivable") {
-    const billingDocumentId = usableId(data.id);
-    return billingDocumentId ? { kind: "billing_document", billingDocumentId } : { kind: "none" };
-  }
-
   if (target.type === "schedule") {
     const equipmentId = usableId(data.equipmentId);
     if (equipmentId) return { kind: "equipment_fetch", equipmentId };
@@ -121,5 +110,12 @@ export function resolveAlertEditRoute(
   }
 
   // warranty / calibration / incomplete — `data` is already the equipment row.
-  return { kind: "equipment_inline" };
+  if (target.type === "warranty" || target.type === "calibration" || target.type === "incomplete") {
+    return { kind: "equipment_inline" };
+  }
+
+  // Anything else has nothing to open — the old billing receivable among them,
+  // which a tab opened before /billing went may still show. Never the
+  // equipment modal: its `data` is not an equipment row.
+  return { kind: "none" };
 }
