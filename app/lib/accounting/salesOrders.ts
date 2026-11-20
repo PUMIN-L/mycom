@@ -9,6 +9,7 @@ import { getVatRate } from "./settings";
 import { computeTotals, formatSatang } from "./money";
 import { columnsOf, getAccDocument, likeEscape, replaceLines, type AccDocument } from "./documents";
 import { depositLedgerOf } from "./depositLedger";
+import type { OrderDay } from "./orderChart";
 import {
   depositLeftSatang,
   planProblems,
@@ -355,6 +356,24 @@ export async function listSalesOrders(opts: { from?: string; to?: string; q?: st
   }
   const rows = await run(null, `SELECT ${ORDER_COLUMNS} FROM acc_documents WHERE ${where.join(" AND ")} ORDER BY issueDate DESC, createdAt DESC LIMIT 1000`, params);
   return withProgress(rows, opts.today);
+}
+
+/**
+ * The dashboard's "ยอดตาม PO ลูกค้า": the open customer POs received each day
+ * of [from, to), by their own PO date — counted as soon as one is recorded,
+ * whatever has been delivered or paid since; a cancelled one (void) is not.
+ * Ex VAT, like every sales figure on the dashboard.
+ */
+export async function ordersByIssueDate(from: string, to: string): Promise<OrderDay[]> {
+  const rows = await run(
+    null,
+    `SELECT issueDate, COUNT(*) AS n, COALESCE(SUM(vatBaseSatang), 0) AS exVat
+       FROM acc_documents
+      WHERE docType = 'SO' AND status = 'issued' AND issueDate >= ? AND issueDate < ?
+      GROUP BY issueDate ORDER BY issueDate`,
+    [from, to]
+  );
+  return rows.map((r) => ({ date: str(r.issueDate).slice(0, 10), count: num(r.n), exVatSatang: num(r.exVat) }));
 }
 
 export interface OrderBacklog {

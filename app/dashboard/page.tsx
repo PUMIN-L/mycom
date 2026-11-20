@@ -39,6 +39,7 @@ import SalesTable from "./SalesTable";
 import SaleFormShell from "./SaleFormShell";
 import { isAccountingEnabled } from "../lib/accounting/flags";
 import BacklogSection from "./BacklogSection";
+import OrdersChartSection from "./OrdersChartSection";
 import { saleFormProblems, saleFormSnapshot } from "./saleFormHelpers";
 import { filterSalesRecords, salesExportFileName, type SalesFocus } from "./salesFilters";
 import type { RecordScope } from "./SalesTable";
@@ -1383,6 +1384,11 @@ export default function DashboardPage() {
             </div>
           );
         })()}
+
+        {/* ── Customer POs received in the period (the owner, 2026-11-20) ───
+            Counted the day a PO is received, by its PO date, before delivery or
+            payment — and never in the sales figures, which count when invoiced. */}
+        {isAccountingEnabled() && <OrdersChartSection periodType={periodType} range={periodRange} label={shownPeriodLabel} />}
 
         {/* ── Backlog: customer POs not delivered yet (§8g, step 5) ─────────
             As of today, whatever the period above, and never in its figures —

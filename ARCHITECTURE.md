@@ -1511,6 +1511,16 @@ see "The old /billing is removed" below). Files:
     section then hides; a bad answer shows an error in the section — it never
     takes the dashboard down (nor does any side panel of this module: they
     check the answer's shape first).
+  - **"ยอดตาม PO ลูกค้า"** on /dashboard (`GET /api/accounting/sales-orders/by-date?from&to`,
+    [`OrdersChartSection.tsx`](./app/dashboard/OrdersChartSection.tsx), buckets in
+    [`orderChart.ts`](./app/lib/accounting/orderChart.ts)): the customer POs RECEIVED
+    in the period on screen, by their own PO date (`issueDate`) — counted the
+    moment one is recorded, not when delivered or paid (the owner, 2026-11-20).
+    Open POs only (a cancelled one is not counted; a delivered one still is),
+    ex VAT (`vatBaseSatang`); by month for a year or a quarter, by day for a
+    month. Its own chart, apart from the sales one — sales count when each
+    delivery is invoiced — so one deal is never in one chart twice. Same gate
+    and same failure rules as the backlog (404 hides it; ≤ 400 days a request).
 - **Deposits and the payment plan (step 6, schema v52)** —
   [`deposits.ts`](./app/lib/accounting/deposits.ts) (context, record), the
   ledger in [`depositLedger.ts`](./app/lib/accounting/depositLedger.ts) (db
