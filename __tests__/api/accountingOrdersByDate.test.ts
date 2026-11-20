@@ -40,6 +40,12 @@ describe("GET /api/accounting/sales-orders/by-date", () => {
     expect(await res.json()).toEqual({ from: "2026-01-01", to: "2027-01-01", days: [{ date: "2026-11-03", count: 2, exVatSatang: 15050000 }] });
   });
 
+  it("answers five years — the chart's yearly view", async () => {
+    const res = await GET(req("/api/accounting/sales-orders/by-date?from=2022-01-01&to=2027-01-01"));
+    expect(res.status).toBe(200);
+    expect(ordersByIssueDate).toHaveBeenCalledWith("2022-01-01", "2027-01-01");
+  });
+
   it("401s anonymous and 403s without two-factor login", async () => {
     vi.mocked(getSession).mockResolvedValue(null);
     expect((await GET(req("/api/accounting/sales-orders/by-date?from=2026-01-01&to=2027-01-01"))).status).toBe(401);

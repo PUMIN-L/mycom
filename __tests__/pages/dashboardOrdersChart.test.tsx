@@ -117,3 +117,90 @@ describe("ยอดตาม PO ลูกค้า", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("ตรวจสอบการเชื่อมต่อ");
   });
 });
+
+// The owner, 2026-11-20: "ทำให้ปรับดูรายปี รายไตรมาส รายอาทิตย์ได้ด้วย".
+describe("ยอดตาม PO ลูกค้า — แบ่งแท่งกราฟ", () => {
+  const group = () => screen.getByRole("group", { name: "แบ่งแท่งกราฟ PO" });
+  const offered = () => within(group()).getAllByRole("button").map((b) => b.textContent);
+  const pressed = () =>
+    within(group())
+      .getAllByRole("button")
+      .filter((b) => b.getAttribute("aria-pressed") === "true")
+      .map((b) => b.textContent);
+  const Q4 = { start: "2026-10-01", end: "2027-01-01" };
+  const FEB = { start: "2026-02-01", end: "2026-03-01" };
+
+  it("for a year: by week, by month (chosen), by quarter, by year", async () => {
+    stub(200, { from: YEAR.start, to: YEAR.end, days: DAYS });
+    render(<OrdersChartSection periodType="year" range={YEAR} label="ปี 2569" />);
+    await screen.findByText(/รวม 4 PO/);
+    expect(offered()).toEqual(["สัปดาห์", "เดือน", "ไตรมาส", "ปี"]);
+    expect(pressed()).toEqual(["เดือน"]);
+  });
+
+  it("never offers a single bar: a quarter has no ไตรมาส, a month opens by day", async () => {
+    stub(200, { from: Q4.start, to: Q4.end, days: [] });
+    const { rerender } = render(<OrdersChartSection periodType="quarter" range={Q4} label="ไตรมาส 4/2569" />);
+    await screen.findByText(/ยังไม่มี PO ลูกค้าในช่วงนี้/);
+    expect(offered()).toEqual(["สัปดาห์", "เดือน", "ปี"]);
+    rerender(<OrdersChartSection periodType="month" range={FEB} label="เดือน ก.พ. 2569" />);
+    await waitFor(() => expect(offered()).toEqual(["วัน", "สัปดาห์", "ปี"]));
+    expect(pressed()).toEqual(["วัน"]);
+  });
+
+  it("ไตรมาส: the year's four quarters, from the answer already there", async () => {
+    const fetchMock = stub(200, { from: YEAR.start, to: YEAR.end, days: DAYS });
+    render(<OrdersChartSection periodType="year" range={YEAR} label="ปี 2569" />);
+    await screen.findByText(/รวม 4 PO/);
+    fireEvent.click(within(group()).getByRole("button", { name: "ไตรมาส" }));
+    expect(pressed()).toEqual(["ไตรมาส"]);
+    expect(values()).toEqual([
+      "ไตรมาส 1: ฿25,000.00 (1 PO)",
+      "ไตรมาส 2: ฿0.00 (0 PO)",
+      "ไตรมาส 3: ฿0.00 (0 PO)",
+      "ไตรมาส 4: ฿150,500.00 (3 PO)",
+    ]);
+    // The same days, divided again — nothing asked twice.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("สัปดาห์: one bar a week, Monday to Sunday", async () => {
+    stub(200, { from: YEAR.start, to: YEAR.end, days: DAYS });
+    render(<OrdersChartSection periodType="year" range={YEAR} label="ปี 2569" />);
+    await screen.findByText(/รวม 4 PO/);
+    fireEvent.click(within(group()).getByRole("button", { name: "สัปดาห์" }));
+    expect(values()).toHaveLength(53);
+    expect(values()).toContain("2 พ.ย.: ฿100,000.00 (1 PO)");
+    expect(values()).toContain("16 พ.ย.: ฿50,500.00 (2 PO)");
+    expect(values()).toContain("9 มี.ค.: ฿25,000.00 (1 PO)");
+    // The total does not change with the way the bars are divided.
+    expect(screen.getByTestId("orders-chart-total").textContent).toContain("฿175,500.00");
+  });
+
+  it("ปี: asks for the five years up to the period's, and the heading says which", async () => {
+    const fetchMock = stub(200, { from: "2022-01-01", to: "2027-01-01", days: DAYS });
+    render(<OrdersChartSection periodType="year" range={YEAR} label="ปี 2569" />);
+    await screen.findByText(/รวม 4 PO/);
+    fireEvent.click(within(group()).getByRole("button", { name: "ปี" }));
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenLastCalledWith("/api/accounting/sales-orders/by-date?from=2022-01-01&to=2027-01-01", { cache: "no-store" })
+    );
+    expect(screen.getByRole("heading", { name: "ยอดตาม PO ลูกค้า ปี 2565–2569" })).toBeInTheDocument();
+    await waitFor(() => expect(values()).toHaveLength(5));
+    expect(values()[0]).toBe("2565: ฿0.00 (0 PO)");
+    expect(values()[4]).toBe("2569: ฿175,500.00 (4 PO)");
+  });
+
+  it("keeps the choice when the period changes — unless there it would be a single bar", async () => {
+    stub(200, { from: YEAR.start, to: YEAR.end, days: [] });
+    const { rerender } = render(<OrdersChartSection periodType="year" range={YEAR} label="ปี 2569" />);
+    await screen.findByText(/ยังไม่มี PO ลูกค้าในช่วงนี้/);
+    fireEvent.click(within(group()).getByRole("button", { name: "สัปดาห์" }));
+    rerender(<OrdersChartSection periodType="quarter" range={Q4} label="ไตรมาส 4/2569" />);
+    await waitFor(() => expect(pressed()).toEqual(["สัปดาห์"]));
+    fireEvent.click(within(group()).getByRole("button", { name: "เดือน" }));
+    rerender(<OrdersChartSection periodType="month" range={FEB} label="เดือน ก.พ. 2569" />);
+    // A month by month is one bar: back to the month's own way, by day.
+    await waitFor(() => expect(pressed()).toEqual(["วัน"]));
+  });
+});

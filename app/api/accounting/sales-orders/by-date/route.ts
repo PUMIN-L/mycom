@@ -3,7 +3,7 @@ import { withRoute, ApiError } from "../../../../lib/apiHelpers";
 import { daysBetweenDateStrings, isValidDateString } from "../../../../lib/dateFormat";
 import { noStoreJson, requireAccountingUser } from "../../../../lib/accounting/guard";
 import { ordersByIssueDate } from "../../../../lib/accounting/salesOrders";
-import { ORDER_CHART_MAX_DAYS } from "../../../../lib/accounting/orderChart";
+import { ORDER_CHART_MAX_DAYS, ORDER_CHART_YEARS } from "../../../../lib/accounting/orderChart";
 
 // GET /api/accounting/sales-orders/by-date?from=YYYY-MM-DD&to=YYYY-MM-DD — the
 // dashboard's "ยอดตาม PO ลูกค้า": the open customer POs received each day of
@@ -17,7 +17,8 @@ export const GET = withRoute("โหลดยอดตาม PO ลูกค้�
   const to = params.get("to") ?? "";
   if (!isValidDateString(from) || !isValidDateString(to) || from >= to) throw new ApiError(400, "ช่วงวันที่ไม่ถูกต้อง");
   if ((daysBetweenDateStrings(from, to) ?? Infinity) > ORDER_CHART_MAX_DAYS) {
-    throw new ApiError(400, `ช่วงวันที่ยาวเกินไป (ไม่เกิน ${ORDER_CHART_MAX_DAYS} วัน)`);
+    // The chart's longest view, by year, is five years.
+    throw new ApiError(400, `ช่วงวันที่ยาวเกินไป (ไม่เกิน ${ORDER_CHART_YEARS} ปี)`);
   }
   return noStoreJson({ from, to, days: await ordersByIssueDate(from, to) });
 });
