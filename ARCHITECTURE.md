@@ -1382,7 +1382,15 @@ see "The old /billing is removed" below). Files:
     makes the file. Nothing is stored. Every paper of the module (invoice,
     receipt, billing note, credit note) puts the website's own logo in front of
     our company's name ([`SellerLogo.tsx`](./app/accounting/SellerLogo.tsx) — a
-    plain `<img>`, 11 mm wide, as on the quotation's paper).
+    plain `<img>`, 11 mm wide, as on the quotation's paper). All four print with
+    ONE stylesheet, [`paperPrint.ts`](./app/accounting/paperPrint.ts): the PAGE has
+    no margin, so the browser has nowhere to print its date, time and page title
+    (the owner, 2026-11-23); the paper keeps its 10 mm inside itself
+    (`box-decoration-break: clone` repeats it on a second page where supported).
+    Addresses — ours and the customer's — are spaced after each label word when
+    drawn ("อำเภอเมือง" → "อำเภอ เมือง",
+    [`thaiAddressSpacing.ts`](./app/lib/thaiAddressSpacing.ts)), never in the stored
+    text, so documents already issued print spaced too.
   - **The dashboard's บันทึกยอดขาย** leads to a new invoice while the module
     is on (so a sale is never typed in twice); with it off (the live site
     before go-live) the old form still records sales.

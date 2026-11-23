@@ -7,6 +7,8 @@ import { formatSatang, satangToBaht } from "../../lib/accounting/money";
 import { methodLabel, receiptTitle } from "../../lib/accounting/paymentRules";
 import type { SellerProfile } from "../../lib/accounting/types";
 import SellerLogo from "../SellerLogo";
+import { PAPER_PRINT_CSS } from "../paperPrint";
+import { spaceAddressLabels } from "../../lib/thaiAddressSpacing";
 
 export interface ReceiptPaperDocument {
   docNo: string | null;
@@ -80,14 +82,7 @@ export default function ReceiptPaper({
       data-print-root=""
       className="relative bg-white text-gray-900 border border-gray-200 shadow-sm mx-auto w-full max-w-[210mm] p-6 sm:p-10 text-[13px] leading-relaxed"
     >
-      <style>{`
-        @media print {
-          @page { size: A4; margin: 10mm; }
-          body * { visibility: hidden !important; }
-          [data-print-root], [data-print-root] * { visibility: visible !important; }
-          [data-print-root] { position: absolute; left: 0; top: 0; width: 100%; max-width: none; border: none !important; box-shadow: none !important; padding: 0 !important; }
-        }
-      `}</style>
+      <style>{PAPER_PRINT_CSS}</style>
       {voided && (
         <div aria-hidden="true" className="pointer-events-none absolute inset-0 flex items-center justify-center overflow-hidden">
           <span className="text-[90px] font-black text-red-200/80 -rotate-12 select-none">ยกเลิก</span>
@@ -99,7 +94,7 @@ export default function ReceiptPaper({
           <SellerLogo />
           <div className="min-w-0">
             <p className="text-base font-bold">{seller.name || "— ยังไม่ได้ตั้งชื่อบริษัท —"}</p>
-            <p className="whitespace-pre-line text-gray-700">{seller.address}</p>
+            <p className="whitespace-pre-line text-gray-700">{spaceAddressLabels(seller.address)}</p>
             <p className="text-gray-700 tabular-nums">
               เลขประจำตัวผู้เสียภาษี {formatTaxId(seller.taxId) || "—"}
               {seller.branchCode && <> · {branchLabel(seller.branchCode)}</>}
@@ -119,7 +114,7 @@ export default function ReceiptPaper({
         <div className="min-w-0">
           <p className="text-gray-500">ได้รับเงินจาก</p>
           <p className="font-semibold">{doc.buyerName || "—"}</p>
-          {doc.buyerAddress && <p className="whitespace-pre-line text-gray-700">{doc.buyerAddress}</p>}
+          {doc.buyerAddress && <p className="whitespace-pre-line text-gray-700">{spaceAddressLabels(doc.buyerAddress)}</p>}
           {(doc.buyerTaxId || doc.buyerBranch) && (
             <p className="text-gray-700 tabular-nums">
               {doc.buyerTaxId && <>เลขประจำตัวผู้เสียภาษี {formatTaxId(doc.buyerTaxId)}</>}
