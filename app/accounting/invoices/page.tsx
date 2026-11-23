@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { createPortal } from "react-dom";
 import AccountingFrame from "../AccountingFrame";
-import StatusBadge, { StatusDot } from "../StatusBadge";
+import StatusBadge, { BillingStateBadge, StatusDot } from "../StatusBadge";
 import DocumentDeleteDialog, { type DeletionImpactView } from "../DocumentDeleteDialog";
 import SearchBox from "../../components/SearchBox";
 import SearchableDropdown from "../../components/SearchableDropdown";
@@ -14,7 +14,7 @@ import { errorMessageOf } from "../../lib/apiErrorMessage";
 import { bangkokDateString, formatDisplayDate } from "../../lib/dateFormat";
 import { RANGES, rangeOf, type RangeKey } from "./listHelpers";
 import { formatSatang } from "../../lib/accounting/money";
-import { STATUS_LABELS, displayStatusOf, type DisplayStatus } from "../../lib/accounting/invoiceRules";
+import { BILLING_STATE_LABELS, STATUS_LABELS, billingStateOf, displayStatusOf, type BillingState, type DisplayStatus } from "../../lib/accounting/invoiceRules";
 
 interface Row {
   id: string;
@@ -31,6 +31,8 @@ interface Row {
   paidSatang: number;
   /** What its credit notes took off it — counts as settled in its status (step 8). */
   creditedSatang?: number;
+  /** An issued billing note carries it — absent from an older answer (= not billed). */
+  onBillingNote?: boolean;
 }
 interface Summary {
   outstandingSatang: number;
@@ -41,6 +43,10 @@ interface Summary {
 }
 
 const STATUS_ORDER: DisplayStatus[] = ["draft", "awaiting", "overdue", "partial", "paid", "void"];
+/** The two tabs of the invoices still owed: is the bill out yet? (the owner, 2026-11-23) */
+const BILLING_ORDER: BillingState[] = ["billed", "unbilled"];
+type Tab = DisplayStatus | BillingState | "all";
+const isBillingTab = (tab: Tab): tab is BillingState => tab === "billed" || tab === "unbilled";
 
 export default function InvoiceListPage() {
   return (
@@ -73,7 +79,7 @@ function InvoiceList() {
   const [loadError, setLoadError] = useState("");
   const [reload, setReload] = useState(0);
   const [search, setSearch] = useState("");
-  const [tab, setTab] = useState<DisplayStatus | "all">("all");
+  const [tab, setTab] = useState<Tab>("all");
   const [deleting, setDeleting] = useState<{ id: string; label: string; impact: DeletionImpactView } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -115,17 +121,27 @@ function InvoiceList() {
     };
   }, [range, reload]);
 
-  const withStatus = useMemo(() => rows.map((r) => ({ ...r, display: displayStatusOf(r, today) })), [rows, today]);
+  const withStatus = useMemo(
+    () =>
+      rows.map((r) => {
+        const display = displayStatusOf(r, today);
+        return { ...r, display, billing: billingStateOf(display, r.onBillingNote === true) };
+      }),
+    [rows, today]
+  );
   const counts = useMemo(() => {
-    const c: Partial<Record<DisplayStatus, number>> = {};
-    for (const r of withStatus) c[r.display] = (c[r.display] ?? 0) + 1;
+    const c: Partial<Record<DisplayStatus | BillingState, number>> = {};
+    for (const r of withStatus) {
+      c[r.display] = (c[r.display] ?? 0) + 1;
+      if (r.billing) c[r.billing] = (c[r.billing] ?? 0) + 1;
+    }
     return c;
   }, [withStatus]);
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
     return withStatus.filter(
       (r) =>
-        (tab === "all" || r.display === tab) &&
+        (tab === "all" || (isBillingTab(tab) ? r.billing === tab : r.display === tab)) &&
         (!q || [r.docNo, r.buyerName, r.projectName, r.customerPoNo].some((v) => String(v ?? "").toLowerCase().includes(q)))
     );
   }, [withStatus, tab, search]);
@@ -153,7 +169,7 @@ function InvoiceList() {
 
       <div className="flex flex-col lg:flex-row lg:items-center gap-3">
         <div className="flex flex-wrap gap-2" role="tablist" aria-label="สถานะเอกสาร">
-          {(["all", ...STATUS_ORDER] as const)
+          {(["all", ...STATUS_ORDER, ...BILLING_ORDER] as Tab[])
             .filter((s) => s === "all" || (counts[s] ?? 0) > 0 || s === tab)
             .map((s) => (
               <button
@@ -166,7 +182,7 @@ function InvoiceList() {
                   tab === s ? "bg-sky-600 text-white border-sky-600" : "bg-white text-gray-600 border-gray-200 hover:border-gray-400"
                 }`}
               >
-                {s === "all" ? "ทั้งหมด" : STATUS_LABELS[s]} {s === "all" ? withStatus.length : counts[s] ?? 0}
+                {s === "all" ? "ทั้งหมด" : isBillingTab(s) ? BILLING_STATE_LABELS[s] : STATUS_LABELS[s]} {s === "all" ? withStatus.length : counts[s] ?? 0}
               </button>
             ))}
         </div>
@@ -246,7 +262,12 @@ function InvoiceList() {
                     {r.dueDate ? formatDisplayDate(r.dueDate) : "—"}
                   </td>
                   <td className="py-3 px-4 text-right tabular-nums font-semibold">{formatSatang(r.totalSatang)}</td>
-                  <td className="py-3 px-4"><StatusBadge status={r.display} /></td>
+                  <td className="py-3 px-4">
+                    <div className="flex flex-col items-start gap-1">
+                      <StatusBadge status={r.display} />
+                      {r.billing && <BillingStateBadge state={r.billing} />}
+                    </div>
+                  </td>
                   <td className="py-3 px-2" onClick={(e) => e.stopPropagation()}>
                     <RowMenu
                       label={r.docNo ?? "ร่าง"}
@@ -271,7 +292,10 @@ function InvoiceList() {
                       {r.docNo ?? "ร่าง"}
                       {r.source === "external" && <ExternalTag />}
                     </span>
-                    <StatusBadge status={r.display} />
+                    <span className="flex flex-col items-end gap-1">
+                      <StatusBadge status={r.display} />
+                      {r.billing && <BillingStateBadge state={r.billing} />}
+                    </span>
                   </div>
                   <div className="text-gray-900">{r.buyerName}</div>
                   <div className="flex justify-between text-sm text-gray-500 tabular-nums">

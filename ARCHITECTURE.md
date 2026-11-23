@@ -1714,6 +1714,11 @@ see "The old /billing is removed" below). Files:
   while the module is off. NB: the CRM feed is not behind two-factor login,
   so an admin without it sees these invoices' numbers, customers and amounts
   there — the owner chose this (2026-11-23).
+- **The invoice list says whether the bill is out** (the owner, 2026-11-23): an
+  invoice still owed (รอเก็บเงิน, เกินกำหนด, ชำระบางส่วน) carries "ออกใบวางบิลแล้ว"
+  or "ยังไม่ได้ออกใบวางบิล" under its status (`billingStateOf` in invoiceRules.ts,
+  from `listAccDocuments`' `onBillingNote` — an ISSUED billing note carries it,
+  the rule `billingNotesOf` reads), and two tabs narrow to them.
 - **The old /billing is removed (schema v55).** Step 10 first stopped it
   issuing once this module was switched on; with the module live, the old one
   went entirely (its documents were test documents — the owner's word):

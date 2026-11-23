@@ -123,6 +123,8 @@ export interface AccListRow {
   relatedDocNo: string | null;
   /** "INV" — or "SO" for a deposit's receipt. */
   relatedDocType: string | null;
+  /** An invoice: an ISSUED billing note carries it (the list's ออกใบวางบิลแล้ว — the rule billingNotesOf reads). */
+  onBillingNote: boolean;
 }
 
 const str = (v: unknown) => (v === null || v === undefined ? "" : String(v));
@@ -281,7 +283,8 @@ export async function listAccDocuments(opts: { type: AccDocType; from?: string; 
     `SELECT id, docType, docNo, status, source, isTaxInvoice, issueDate, dueDate, buyerName, projectName, customerPoNo, totalSatang, paidSatang, creditedSatang,
             relatedDocId,
             (SELECT COALESCE(rel.docNo, CONCAT('PO ', rel.customerPoNo)) FROM acc_documents rel WHERE rel.id = d.relatedDocId) AS relatedDocNo,
-            (SELECT rel.docType FROM acc_documents rel WHERE rel.id = d.relatedDocId) AS relatedDocType
+            (SELECT rel.docType FROM acc_documents rel WHERE rel.id = d.relatedDocId) AS relatedDocType,
+            EXISTS (SELECT 1 FROM acc_billing_items bi JOIN acc_documents bn ON bn.id = bi.billingNoteId WHERE bi.invoiceId = d.id AND bn.status = 'issued') AS onBillingNote
        FROM acc_documents d WHERE ${where.join(" AND ")}
       ORDER BY issueDate DESC, docNo DESC, createdAt DESC LIMIT ${LIST_LIMIT}`,
     params
@@ -304,6 +307,7 @@ export async function listAccDocuments(opts: { type: AccDocType; from?: string; 
     relatedDocId: strOrNull(r.relatedDocId),
     relatedDocNo: strOrNull(r.relatedDocNo),
     relatedDocType: strOrNull(r.relatedDocType),
+    onBillingNote: Number(r.onBillingNote) === 1,
   }));
 }
 

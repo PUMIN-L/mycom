@@ -309,6 +309,29 @@ export const STATUS_STYLES: Record<DisplayStatus, { badge: string; dot: string }
   void: { badge: "bg-gray-100 text-gray-400 line-through", dot: "bg-gray-300" },
 };
 
+/** Whether an invoice still owed has its bill out (the owner, 2026-11-23). */
+export type BillingState = "billed" | "unbilled";
+
+export const BILLING_STATE_LABELS: Record<BillingState, string> = {
+  billed: "ออกใบวางบิลแล้ว",
+  unbilled: "ยังไม่ได้ออกใบวางบิล",
+};
+
+export const BILLING_STATE_STYLES: Record<BillingState, string> = {
+  billed: "bg-sky-50 text-sky-700",
+  unbilled: "bg-gray-100 text-gray-600",
+};
+
+/**
+ * For an invoice still owed — รอเก็บเงิน, เกินกำหนด or ชำระบางส่วน: "billed"
+ * when an ISSUED billing note carries it, "unbilled" otherwise. Null when
+ * there is nothing to collect (a draft, paid, cancelled).
+ */
+export function billingStateOf(display: DisplayStatus, onBillingNote: boolean): BillingState | null {
+  if (display !== "awaiting" && display !== "overdue" && display !== "partial") return null;
+  return onBillingNote ? "billed" : "unbilled";
+}
+
 export function displayStatusOf(
   doc: { status: string; totalSatang: number; paidSatang: number; dueDate: string | null; creditedSatang?: number },
   today: string

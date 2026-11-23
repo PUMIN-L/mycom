@@ -12,6 +12,8 @@ import {
   externalProblems,
   defaultIsTaxInvoice,
   displayStatusOf,
+  billingStateOf,
+  BILLING_STATE_LABELS,
   dueDateOf,
   invoiceProblems,
   invoiceTitle,
@@ -198,5 +200,27 @@ describe("a deposit deducted on the invoice", () => {
     expect(issueProblems(paidAhead, totalsWith(paidAhead))).toEqual([]);
     const free = invoice({ lines: [goods({ unitPriceSatang: 0 })] });
     expect(issueProblems(free, totalsOf(free))).toContain("ยอดรวมต้องมากกว่า 0 บาท");
+  });
+});
+
+// The owner (2026-11-23): an invoice still owed says whether its bill is out —
+// "ออกใบวางบิลแล้ว" or "ยังไม่ได้ออกใบวางบิล".
+describe("billingStateOf", () => {
+  it("an invoice still owed: billed when an issued billing note carries it, else not", () => {
+    for (const display of ["awaiting", "overdue", "partial"] as const) {
+      expect(billingStateOf(display, true)).toBe("billed");
+      expect(billingStateOf(display, false)).toBe("unbilled");
+    }
+  });
+
+  it("nothing to say for a draft, a paid or a cancelled invoice", () => {
+    for (const display of ["draft", "paid", "void"] as const) {
+      expect(billingStateOf(display, true)).toBeNull();
+      expect(billingStateOf(display, false)).toBeNull();
+    }
+  });
+
+  it("is named as the owner said it", () => {
+    expect(BILLING_STATE_LABELS).toEqual({ billed: "ออกใบวางบิลแล้ว", unbilled: "ยังไม่ได้ออกใบวางบิล" });
   });
 });

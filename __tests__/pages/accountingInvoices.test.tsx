@@ -424,3 +424,48 @@ describe("an issued invoice — วันวางบิล", () => {
     expect(within(box()).queryByRole("button")).toBeNull();
   });
 });
+
+// The owner (2026-11-23): an invoice still owed says whether its bill is out,
+// in the status column and as two tabs to narrow by.
+describe("the invoice list — ออกใบวางบิลแล้ว / ยังไม่ได้ออกใบวางบิล", () => {
+  const LIST = [
+    { id: "b1", docNo: "INV2026110003", status: "issued", source: "internal", isTaxInvoice: true, issueDate: "2026-11-15", dueDate: "2026-12-15", buyerName: "บริษัท เจเจบี จำกัด", projectName: "", customerPoNo: "123456", totalSatang: 2140000, paidSatang: 0, onBillingNote: true },
+    { id: "b2", docNo: "INV2026110002", status: "issued", source: "internal", isTaxInvoice: true, issueDate: "2026-11-14", dueDate: "2026-12-14", buyerName: "บริษัท หมีน้อย จำกัด", projectName: "", customerPoNo: "5555", totalSatang: 21400000, paidSatang: 0, onBillingNote: false },
+    { id: "b3", docNo: "INV2026110001", status: "issued", source: "internal", isTaxInvoice: true, issueDate: "2026-11-13", dueDate: "2026-12-13", buyerName: "บริษัท หมีน้อย จำกัด", projectName: "", customerPoNo: "", totalSatang: 5243000, paidSatang: 5243000, onBillingNote: true },
+    { id: "b4", docNo: "INV2026100009", status: "issued", source: "internal", isTaxInvoice: true, issueDate: "2026-10-01", dueDate: "2026-10-31", buyerName: "บริษัท ซี จำกัด", projectName: "", customerPoNo: "", totalSatang: 100000, paidSatang: 0 },
+  ];
+  beforeEach(() => {
+    override = (path) => (path === "/api/accounting/documents" ? json(LIST) : undefined);
+  });
+  const table = () => within(screen.getByTestId("invoice-table"));
+  const rowOf = (docNo: string) => table().getByText(docNo).closest("tr")!;
+
+  it("says it beside รอเก็บเงิน — and beside เกินกำหนด, which is waiting too", async () => {
+    render(<InvoiceListPage />);
+    await screen.findByTestId("invoice-table");
+    expect(rowOf("INV2026110003").textContent).toContain("รอเก็บเงิน");
+    expect(rowOf("INV2026110003").textContent).toContain("ออกใบวางบิลแล้ว");
+    expect(rowOf("INV2026110002").textContent).toContain("ยังไม่ได้ออกใบวางบิล");
+    // An older answer without the field reads as not billed.
+    expect(rowOf("INV2026100009").textContent).toContain("เกินกำหนด");
+    expect(rowOf("INV2026100009").textContent).toContain("ยังไม่ได้ออกใบวางบิล");
+  });
+
+  it("says nothing about it once the money is in", async () => {
+    render(<InvoiceListPage />);
+    await screen.findByTestId("invoice-table");
+    expect(rowOf("INV2026110001").textContent).toContain("เก็บเงินแล้ว");
+    expect(rowOf("INV2026110001").textContent).not.toMatch(/ใบวางบิล/);
+  });
+
+  it("two tabs narrow to them, counting only the invoices still owed", async () => {
+    render(<InvoiceListPage />);
+    await screen.findByTestId("invoice-table");
+    fireEvent.click(screen.getByRole("tab", { name: "ออกใบวางบิลแล้ว 1" }));
+    expect(table().getAllByRole("row")).toHaveLength(2); // header + INV2026110003
+    expect(table().getByText("INV2026110003")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "ยังไม่ได้ออกใบวางบิล 2" }));
+    expect(table().getAllByRole("row")).toHaveLength(3);
+    expect(table().queryByText("INV2026110003")).toBeNull();
+  });
+});
