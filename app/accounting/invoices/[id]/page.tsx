@@ -11,7 +11,9 @@ import InvoiceEditor, { type EditorDocument } from "../InvoiceEditor";
 import InvoicePaper, { type PaperDocument } from "../InvoicePaper";
 import Spinner from "../../../components/Spinner";
 import { errorMessageOf } from "../../../lib/apiErrorMessage";
-import { bangkokDateString, formatDisplayDate, formatDisplayDateTime } from "../../../lib/dateFormat";
+import { bangkokDateString, formatDisplayDate, formatDisplayDateTime, isValidDateString, toLocalDateString } from "../../../lib/dateFormat";
+import { BILLING_REMINDER_LEAD_DAYS } from "../../../lib/alertThresholds";
+import DatePicker from "../../../components/DatePicker";
 import { formatSatang } from "../../../lib/accounting/money";
 import { displayStatusOf } from "../../../lib/accounting/invoiceRules";
 import type { AccountingSettings, AuditEntry, BankAccount, SellerProfile } from "../../../lib/accounting/types";
@@ -37,6 +39,8 @@ type LoadedDocument = EditorDocument &
     createdBy: string;
     source: "internal" | "external";
     externalNote: string;
+    /** วันวางบิล (v56) — absent from an older answer. */
+    billingDate?: string | null;
   };
 
 interface Loaded {
@@ -169,6 +173,116 @@ function InvoiceDocument({ id, onTitle }: { id: string; onTitle: (title: string)
       />
       {deleteDialog}
     </>
+  );
+}
+
+/**
+ * วันวางบิล — the day the bill is handed to the customer (the owner,
+ * 2026-11-23): set here, changed or cleared any time before the invoice is
+ * cancelled. Internal, never printed; the CRM alert "วางบิล" opens
+ * BILLING_REMINDER_LEAD_DAYS before it — said beside it, with a star.
+ */
+function BillingDateField({ doc, onSaved }: { doc: LoadedDocument; onSaved: () => void }) {
+  const current = doc.billingDate ?? null;
+  const editable = doc.status === "issued";
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function save(next: string | null) {
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/accounting/documents/${encodeURIComponent(doc.id)}/billing-date`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ billingDate: next }),
+      });
+      if (!res.ok) {
+        setError(await errorMessageOf(res, "บันทึกวันวางบิลไม่สำเร็จ"));
+        return;
+      }
+      setEditing(false);
+      onSaved();
+    } catch {
+      setError("บันทึกวันวางบิลไม่สำเร็จ ตรวจสอบการเชื่อมต่อแล้วลองใหม่");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div data-testid="invoice-billing-date" className="border-t border-gray-100 pt-3 space-y-2 text-sm">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-gray-500">วันวางบิล</span>
+        {!editing && (
+          <span className={current ? "font-semibold tabular-nums" : "text-gray-400"}>{current ? formatDisplayDate(current) : "ยังไม่ได้กำหนด"}</span>
+        )}
+      </div>
+      {editing ? (
+        <div className="space-y-2">
+          <label htmlFor="invoice-billing-date-input" className="sr-only">
+            วันวางบิล
+          </label>
+          <DatePicker
+            id="invoice-billing-date-input"
+            selected={isValidDateString(value) ? new Date(`${value}T00:00:00`) : null}
+            onChange={(date) => setValue(date ? toLocalDateString(date) : "")}
+            placeholderText="เลือกวันวางบิล"
+          />
+          <div className="flex gap-2">
+            <button
+              type="button"
+              aria-label="บันทึกวันวางบิล"
+              onClick={() => save(value)}
+              disabled={saving || !isValidDateString(value)}
+              className="flex-1 px-3 py-2 rounded-xl bg-sky-600 text-white font-semibold hover:bg-sky-700 disabled:opacity-60"
+            >
+              {saving ? "กำลังบันทึก..." : "บันทึก"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setEditing(false);
+                setError(null);
+              }}
+              disabled={saving}
+              className="px-3 py-2 rounded-xl border border-gray-300 font-semibold hover:bg-gray-50 disabled:opacity-60"
+            >
+              ยกเลิก
+            </button>
+          </div>
+        </div>
+      ) : (
+        editable && (
+          <div className="flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={() => {
+                setValue(current ?? "");
+                setError(null);
+                setEditing(true);
+              }}
+              className="font-semibold text-sky-700 hover:text-sky-800"
+            >
+              {current ? "เปลี่ยนวันวางบิล" : "กำหนดวันวางบิล"}
+            </button>
+            {current && (
+              <button type="button" onClick={() => save(null)} disabled={saving} className="font-semibold text-gray-500 hover:text-gray-700 disabled:opacity-60">
+                ล้างวันวางบิล
+              </button>
+            )}
+          </div>
+        )
+      )}
+      <p className="text-xs text-gray-500">* ระบบจะแจ้งเตือนก่อนถึงวันวางบิล {BILLING_REMINDER_LEAD_DAYS} วัน</p>
+      {error && (
+        <p role="alert" className="text-xs text-red-600">
+          {error}
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -337,6 +451,13 @@ function IssuedView({
               </>
             )}
           </dl>
+          <BillingDateField
+            doc={doc}
+            onSaved={() => {
+              setAuditKey((n) => n + 1);
+              onChanged();
+            }}
+          />
           {doc.status === "issued" && outstanding > 0 && (
             <button
               type="button"

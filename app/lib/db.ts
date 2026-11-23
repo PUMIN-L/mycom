@@ -13,7 +13,7 @@ import { repairTruncatedRichText } from "./sanitizeHtml";
 // did not lower the 33 already written to `settings`, so the next change to
 // reuse 33 was skipped entirely and its tables were never created in
 // production. Reverting a migration means moving FORWARD to a new number.
-const SCHEMA_VERSION = 55;
+const SCHEMA_VERSION = 56;
 
 type DbPool = ReturnType<typeof mysql.createPool>;
 
@@ -1819,6 +1819,21 @@ async function bootstrapSchemaOnce(): Promise<void> {
       "ALTER TABLE acc_documents ADD COLUMN IF NOT EXISTS creditedSatang BIGINT NOT NULL DEFAULT 0",
       "ALTER TABLE acc_documents ADD COLUMN IF NOT EXISTS creditedVatSatang BIGINT NOT NULL DEFAULT 0",
       "ALTER TABLE acc_documents ADD COLUMN IF NOT EXISTS refValueSatang BIGINT DEFAULT NULL",
+    ]) {
+      try {
+        await connection.query(statement);
+      } catch (error) {
+        if (!isBenignSchemaError(error)) throw error;
+      }
+    }
+
+    // ── v56: วันวางบิล (the owner, 2026-11-23) ─────────────────────────────
+    // The day an invoice's bill is to be handed to the customer — internal,
+    // never printed. The CRM alert opens BILLING_REMINDER_LEAD_DAYS before it
+    // and reads the invoices by it on every bell poll, hence the index.
+    for (const statement of [
+      "ALTER TABLE acc_documents ADD COLUMN IF NOT EXISTS billingDate VARCHAR(10) DEFAULT NULL",
+      "CREATE INDEX idx_acc_billing_date ON acc_documents (docType, billingDate)",
     ]) {
       try {
         await connection.query(statement);

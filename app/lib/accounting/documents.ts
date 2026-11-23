@@ -3,7 +3,7 @@ import type { RowDataPacket } from "mysql2";
 import type { PoolConnection } from "mysql2/promise";
 import { query, withTransaction } from "../db";
 import { ApiError } from "../apiHelpers";
-import { addDaysToDateString, addMonthsToDateString } from "../dateFormat";
+import { addDaysToDateString, addMonthsToDateString, formatDisplayDate, isValidDateString } from "../dateFormat";
 import { insertPreparedSaleTx, prepareSaleWithLineItems } from "../salesDashboardStore";
 import type { EquipmentRowInput } from "../crmStore";
 import { allocateDocNo, docPeriod, formatDocNo, parseDocNo, releaseDocNoIfLatest } from "./numbering";
@@ -89,6 +89,8 @@ export interface AccDocument {
   salesRecordId: string | null;
   /** A customer PO: when the customer expects the goods. */
   expectedDeliveryDate: string | null;
+  /** An invoice: วันวางบิล, the day its bill is handed to the customer — internal, never printed (v56). */
+  billingDate: string | null;
   issuedAt: string | null;
   issuedBy: string | null;
   voidedAt: string | null;
@@ -187,6 +189,7 @@ function rowToDoc(r: RowDataPacket, lines: AccDocumentLine[]): AccDocument {
     relatedDocId: strOrNull(r.relatedDocId),
     salesRecordId: strOrNull(r.salesRecordId),
     expectedDeliveryDate: strOrNull(r.expectedDeliveryDate),
+    billingDate: strOrNull(r.billingDate),
     issuedAt: strOrNull(r.issuedAt),
     issuedBy: strOrNull(r.issuedBy),
     voidedAt: strOrNull(r.voidedAt),
@@ -206,6 +209,39 @@ export async function getAccDocument(id: string): Promise<AccDocument | null> {
     [id]
   );
   return rowToDoc(rows[0], lineRows.map(rowToLine));
+}
+
+/**
+ * วันวางบิล — the day an invoice's bill is to be handed to the customer (the
+ * owner, 2026-11-23). Internal: never printed. The CRM alert "วางบิล" opens
+ * BILLING_REMINDER_LEAD_DAYS before it. Changeable on any invoice not
+ * cancelled, never before its own date; null clears it; each change is in the
+ * history. It is not the document's content, so its `updatedAt` — what a
+ * draft's save checks — is left alone.
+ */
+export async function setInvoiceBillingDate(id: string, billingDate: string | null, actor: Actor): Promise<AccDocument> {
+  if (billingDate !== null && !isValidDateString(billingDate)) throw new ApiError(400, "วันวางบิลไม่ถูกต้อง");
+  await withTransaction(async (conn) => {
+    const [rows] = await conn.query<RowDataPacket[]>(
+      "SELECT id, docType, status, docNo, issueDate, billingDate FROM acc_documents WHERE id = ? LIMIT 1 FOR UPDATE",
+      [id]
+    );
+    const row = rows[0];
+    if (!row || row.docType !== "INV") throw new ApiError(404, "ไม่พบใบแจ้งหนี้");
+    if (row.status === "void") throw new ApiError(409, "ใบแจ้งหนี้นี้ยกเลิกแล้ว");
+    if (billingDate !== null && billingDate < str(row.issueDate)) throw new ApiError(400, "วันวางบิลต้องไม่ก่อนวันที่ของใบแจ้งหนี้");
+    const was = strOrNull(row.billingDate);
+    if (was === billingDate) return;
+    await conn.query("UPDATE acc_documents SET billingDate = ? WHERE id = ?", [billingDate, id]);
+    await writeAudit(conn, {
+      ...actor,
+      action: "doc.update",
+      documentId: id,
+      docNo: strOrNull(row.docNo),
+      detail: `วันวางบิล ${was ? formatDisplayDate(was) : "—"} → ${billingDate ? formatDisplayDate(billingDate) : "—"}`,
+    });
+  });
+  return (await getAccDocument(id))!;
 }
 
 /** The billing notes an invoice is on (not cancelled), oldest first. */

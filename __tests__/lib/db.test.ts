@@ -40,14 +40,14 @@ process.env.DB_USER = 'tester';
 process.env.DB_PASSWORD = 'pw';
 process.env.DB_NAME = 'testdb';
 
-// A version SELECT result that MATCHES SCHEMA_VERSION (55) → bootstrap fast-path,
+// A version SELECT result that MATCHES SCHEMA_VERSION (56) → bootstrap fast-path,
 // skipping DDL. Value is a string because settings stores VARCHAR values.
 //
 // ⚠️ This constant only ever goes UP, in step with db.ts. The bootstrap's fast
 // path is `stored >= SCHEMA_VERSION`, so a number the live database has already
 // recorded can never trigger a migration again — reusing one silently skips the
 // entire migration in production (that is how v33 was burned).
-const SCHEMA_VERSION = '55';
+const SCHEMA_VERSION = '56';
 const SCHEMA_MATCH: [Array<{ value: string }>, unknown[]] = [[{ value: SCHEMA_VERSION }], []];
 // An empty result → no schema_version row / no admin row → full bootstrap.
 const EMPTY: [unknown[], unknown[]] = [[], []];
@@ -1624,6 +1624,24 @@ describe('db.ts', () => {
 
       expect(mockConnection.release).toHaveBeenCalled();
     });
+  });
+});
+
+// ── v56: วันวางบิล — the day an invoice's bill is handed to the customer ─────
+// Nullable (most invoices have none), and an index for the CRM alert that
+// reads the invoices by it on every bell poll.
+describe("v56 — an invoice's billing date", () => {
+  it('adds the column, nullable, and the index the alert reads by — after the table exists', async () => {
+    const db = await freshImport();
+    mockConnection.query.mockResolvedValue(EMPTY);
+    await db.getDbConnection();
+    const sql = bootstrapSql().map((s) => s.replace(/\s+/g, ' ').trim());
+    const alter = sql.indexOf('ALTER TABLE acc_documents ADD COLUMN IF NOT EXISTS billingDate VARCHAR(10) DEFAULT NULL');
+    const index = sql.indexOf('CREATE INDEX idx_acc_billing_date ON acc_documents (docType, billingDate)');
+    const create = sql.findIndex((s) => /CREATE TABLE IF NOT EXISTS acc_documents/.test(s));
+    expect(create).toBeGreaterThanOrEqual(0);
+    expect(alter).toBeGreaterThan(create);
+    expect(index).toBeGreaterThan(alter);
   });
 });
 

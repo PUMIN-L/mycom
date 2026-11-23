@@ -46,3 +46,8 @@ export const MISSING_DELIVERY_DOC_DAYS = 20;
  *  receipt number this many days after the sale date. */
 export const MISSING_RECEIPT_DOC_DAYS = 30;
 
+/** "วางบิล": how many days BEFORE an invoice's วันวางบิล its alert opens (the
+ *  owner, 2026-11-23). It stays until a billing note carrying the invoice is
+ *  issued, the invoice is paid in full or cancelled — or it is snoozed. */
+export const BILLING_REMINDER_LEAD_DAYS = 7;
+

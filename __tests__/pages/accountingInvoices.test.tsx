@@ -343,3 +343,84 @@ describe("an issued invoice", () => {
     expect(await screen.findByRole("link", { name: /เปิดรายการขายใน dashboard/ })).toHaveAttribute("href", "/dashboard?edit=sale-9");
   });
 });
+
+// วันวางบิล — the day the bill is handed to the customer (the owner,
+// 2026-11-23). Set on the invoice's page, with a note that the CRM alert
+// comes BILLING_REMINDER_LEAD_DAYS (7) days before it.
+describe("an issued invoice — วันวางบิล", () => {
+  let saved: string | null;
+  let refuse: string | null;
+  let status: string;
+  beforeEach(() => {
+    params = { id: "d3" };
+    saved = null;
+    refuse = null;
+    status = "issued";
+    override = (path, init) => {
+      if (path === "/api/accounting/documents/d3" && !init?.method) {
+        return json({ document: { ...ISSUED_DOC, status, billingDate: saved }, seller: SELLER, impact: IMPACT });
+      }
+      if (path === "/api/accounting/documents/d3/billing-date" && init?.method === "PATCH") {
+        if (refuse) return json({ error: refuse }, 400);
+        saved = JSON.parse(String(init.body)).billingDate;
+        return json({ ...ISSUED_DOC, billingDate: saved });
+      }
+      return undefined;
+    };
+  });
+  const box = () => screen.getByTestId("invoice-billing-date");
+  const sent = () => calls("/api/accounting/documents/d3/billing-date", "PATCH").map(([, i]) => JSON.parse(String((i as RequestInit).body)));
+
+  it("says it is not set yet — and, with a star, that the reminder comes 7 days before", async () => {
+    render(<InvoiceDocumentPage />);
+    await screen.findByTestId("invoice-billing-date");
+    expect(box()).toHaveTextContent("วันวางบิล");
+    expect(box()).toHaveTextContent("ยังไม่ได้กำหนด");
+    expect(box()).toHaveTextContent("* ระบบจะแจ้งเตือนก่อนถึงวันวางบิล 7 วัน");
+  });
+
+  it("sets it, and shows the day saved", async () => {
+    render(<InvoiceDocumentPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "กำหนดวันวางบิล" }));
+    fireEvent.change(screen.getByPlaceholderText("เลือกวันวางบิล"), { target: { value: "2026-11-30" } });
+    fireEvent.click(screen.getByRole("button", { name: "บันทึกวันวางบิล" }));
+    await waitFor(() => expect(sent()).toEqual([{ billingDate: "2026-11-30" }]));
+    await waitFor(() => expect(box()).toHaveTextContent("30 Nov 2026"));
+    expect(screen.getByRole("button", { name: "เปลี่ยนวันวางบิล" })).toBeInTheDocument();
+  });
+
+  it("ยกเลิก leaves it as it was, sending nothing", async () => {
+    render(<InvoiceDocumentPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "กำหนดวันวางบิล" }));
+    fireEvent.click(within(box()).getByRole("button", { name: "ยกเลิก" }));
+    expect(box()).toHaveTextContent("ยังไม่ได้กำหนด");
+    expect(sent()).toEqual([]);
+  });
+
+  it("clears it", async () => {
+    saved = "2026-11-30";
+    render(<InvoiceDocumentPage />);
+    await waitFor(() => expect(box()).toHaveTextContent("30 Nov 2026"));
+    fireEvent.click(screen.getByRole("button", { name: "ล้างวันวางบิล" }));
+    await waitFor(() => expect(sent()).toEqual([{ billingDate: null }]));
+    await waitFor(() => expect(box()).toHaveTextContent("ยังไม่ได้กำหนด"));
+  });
+
+  it("says why when the server refuses, and keeps the form open", async () => {
+    refuse = "วันวางบิลต้องไม่ก่อนวันที่ของใบแจ้งหนี้";
+    render(<InvoiceDocumentPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "กำหนดวันวางบิล" }));
+    fireEvent.change(screen.getByPlaceholderText("เลือกวันวางบิล"), { target: { value: "2026-11-01" } });
+    fireEvent.click(screen.getByRole("button", { name: "บันทึกวันวางบิล" }));
+    expect(await within(box()).findByRole("alert")).toHaveTextContent("วันวางบิลต้องไม่ก่อนวันที่ของใบแจ้งหนี้");
+    expect(screen.getByPlaceholderText("เลือกวันวางบิล")).toBeInTheDocument();
+  });
+
+  it("a cancelled invoice shows its day but offers no change", async () => {
+    saved = "2026-11-30";
+    status = "void";
+    render(<InvoiceDocumentPage />);
+    await waitFor(() => expect(box()).toHaveTextContent("30 Nov 2026"));
+    expect(within(box()).queryByRole("button")).toBeNull();
+  });
+});
