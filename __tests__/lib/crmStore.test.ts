@@ -2361,7 +2361,7 @@ describe('getAlerts — warrantyAlertEnabled silences the warranty alert ONLY', 
 });
 
 describe('getAlerts — every pre-existing key survives the split', () => {
-  it('returns all six original keys and the two customer-call keys', async () => {
+  it('returns all six original keys, the two customer-call keys and the two billing-date keys', async () => {
     topQuery.mockResolvedValue([[]]);
 
     const alerts = await getAlerts();
@@ -2377,10 +2377,76 @@ describe('getAlerts — every pre-existing key survives the split', () => {
         'nearingCalibration',
         'nearingCalibrationTotal',
         'upcomingSchedules',
+        'billingDue',
+        'billingDueTotal',
         // Adding or removing a category must never happen quietly — that is
         // what this exhaustive assertion is for. (The two receivable keys went
         // with the old /billing.)
       ].sort()
     );
+  });
+});
+
+// ── วางบิล (v56) ─────────────────────────────────────────────────────────────
+// An invoice whose วันวางบิล is BILLING_REMINDER_LEAD_DAYS (7) away or past,
+// still owed, not yet on an issued billing note, not snoozed (the owner,
+// 2026-11-23).
+describe('getAlerts — วางบิล', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-11-23T05:00:00.000Z')); // noon in Bangkok
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllEnvs();
+  });
+  const billingCalls = () => topQuery.mock.calls.filter(([s]) => /FROM acc_documents d/.test(String(s)));
+
+  it('opens 7 days before the day and stays while money is owed and no issued billing note carries it', async () => {
+    topQuery.mockResolvedValue([[]]);
+    await getAlerts();
+    const list = billingCalls().find(([s]) => !/COUNT\(\*\)/.test(String(s)))!;
+    const sql = String(list[0]).replace(/\s+/g, ' ');
+    expect(sql).toContain("d.docType = 'INV' AND d.status = 'issued'");
+    expect(sql).toContain('d.billingDate IS NOT NULL AND d.billingDate <= ?');
+    expect(sql).toContain('d.paidSatang + d.creditedSatang < d.totalSatang');
+    expect(sql).toContain(
+      "NOT EXISTS (SELECT 1 FROM acc_billing_items bi JOIN acc_documents bn ON bn.id = bi.billingNoteId WHERE bi.invoiceId = d.id AND bn.status = 'issued')"
+    );
+    expect(sql).toContain("LEFT JOIN alert_snoozes sno ON sno.alertType = 'billing_date' AND sno.referenceId = d.id");
+    expect(sql).toContain('ORDER BY d.billingDate ASC');
+    expect(sql).toContain(`LIMIT ${ALERT_LIST_DISPLAY_LIMIT}`);
+    // Seven days after Bangkok's 23 Nov 2026 — and a snooze until now.
+    expect(list[1]).toEqual(['2026-11-30', '2026-11-23T05:00:00.000Z']);
+    // The counting twin: the same question, no cap.
+    const count = billingCalls().find(([s]) => /COUNT\(\*\)/.test(String(s)))!;
+    expect(String(count[0])).not.toContain('LIMIT');
+    expect(count[1]).toEqual(list[1]);
+  });
+
+  it('answers each card with what is still owed, as a number, and the true total apart from the capped list', async () => {
+    topQuery.mockImplementation((sql: string) => {
+      const text = String(sql);
+      if (/FROM acc_documents d/.test(text) && /COUNT\(\*\)/.test(text)) return Promise.resolve([[{ cnt: '143' }]]);
+      if (/FROM acc_documents d/.test(text)) {
+        return Promise.resolve([[{ id: 'd3', docNo: 'INV2026110033', buyerName: 'บริษัท เอ จำกัด', companyId: 'co1', billingDate: '2026-11-25', owed: '2033000' }]]);
+      }
+      return Promise.resolve([[]]);
+    });
+    const alerts = await getAlerts();
+    expect(alerts.billingDue).toEqual([
+      { id: 'd3', docNo: 'INV2026110033', buyerName: 'บริษัท เอ จำกัด', companyId: 'co1', billingDate: '2026-11-25', owedSatang: 2033000 },
+    ]);
+    expect(alerts.billingDueTotal).toBe(143);
+  });
+
+  it('asks nothing of the accounting tables while the module is switched off', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('NEXT_PUBLIC_ACCOUNTING_ENABLED', '');
+    topQuery.mockResolvedValue([[]]);
+    const alerts = await getAlerts();
+    expect(billingCalls()).toHaveLength(0);
+    expect(alerts.billingDue).toEqual([]);
+    expect(alerts.billingDueTotal).toBe(0);
   });
 });

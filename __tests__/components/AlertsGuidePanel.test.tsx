@@ -55,6 +55,7 @@ describe('AlertsGuidePanel — the required topics', () => {
       'ใกล้ถึงกำหนดสอบเทียบ',
       'ข้อมูลไม่ครบ',
       'เอกสารค้าง',
+      'วางบิล',
       'เลื่อนแจ้งเตือน คืออะไร',
       // The date search is a capability of this page, so it is documented here
       // like every other one.
@@ -67,10 +68,10 @@ describe('AlertsGuidePanel — the required topics', () => {
     }
 
     // Every section answers all three questions, in the same order.
-    // Eleven sections since the old ลูกหนี้ค้างชำระ went with /billing.
-    expect(screen.getAllByText('ขึ้นเมื่อไร').length).toBe(11);
-    expect(screen.getAllByText('เกณฑ์ที่ระบบใช้จริง').length).toBe(11);
-    expect(screen.getAllByText('ทำอย่างไรถึงจะหายไป').length).toBe(11);
+    // Twelve: the old ลูกหนี้ค้างชำระ went with /billing, วางบิล came (v56).
+    expect(screen.getAllByText('ขึ้นเมื่อไร').length).toBe(12);
+    expect(screen.getAllByText('เกณฑ์ที่ระบบใช้จริง').length).toBe(12);
+    expect(screen.getAllByText('ทำอย่างไรถึงจะหายไป').length).toBe(12);
     expect(text.length).toBeGreaterThan(500);
   });
 });
@@ -241,5 +242,16 @@ describe('AlertsGuidePanel — closing', () => {
     expect(
       within(scrollBody as HTMLElement).queryAllByRole('button', { name: 'ปิดคู่มือ' })
     ).toHaveLength(0);
+  });
+});
+
+describe('AlertsGuidePanel — วางบิล', () => {
+  it('says when it comes (7 days before the day set on the invoice) and what clears it', () => {
+    renderGuide();
+    const text = document.body.textContent ?? '';
+    expect(text).toContain('วันวางบิล');
+    expect(text).toContain('7 วัน');
+    expect(text).toContain('ออกใบวางบิล');
+    expect(text).toContain('รับชำระครบ');
   });
 });

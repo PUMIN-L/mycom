@@ -51,7 +51,8 @@ import {
   ALERT_SCHEDULE_DAYS,
   ALERT_LIST_DISPLAY_LIMIT,
 } from "../../lib/alertThresholds";
-import { daysUntil } from "../../lib/dateFormat";
+import { daysBetweenDateStrings, daysUntil } from "../../lib/dateFormat";
+import { formatSatang } from "../../lib/accounting/money";
 
 /** The snooze durations, in the order the old <select> listed them. Module
  *  scope so the array identity never changes between renders. */
@@ -132,7 +133,7 @@ export default function AlertsPage() {
 
   // View Details Modal
   const [selectedAlert, setSelectedAlert] = useState<{
-    type: "schedule" | "customer_call" | "warranty" | "calibration" | "incomplete" | "missing_doc";
+    type: "schedule" | "customer_call" | "warranty" | "calibration" | "incomplete" | "missing_doc" | "billing_due";
     data: any;
   } | null>(null);
 
@@ -435,6 +436,7 @@ export default function AlertsPage() {
         ...(alerts.upcomingSchedules || []).map((data) => ({ type: "schedule" as const, data })),
         ...(callFollowUps || []).map((data) => ({ type: "customer_call" as const, data })),
         ...(alerts.missingDocuments || []).map((data) => ({ type: "missing_doc" as const, data })),
+        ...(alerts.billingDue || []).map((data) => ({ type: "billing_due" as const, data })),
       ]
     : [];
 
@@ -449,9 +451,9 @@ export default function AlertsPage() {
     if (aIsOverdue && !bIsOverdue) return -1;
     if (!aIsOverdue && bIsOverdue) return 1;
 
-    // 2. Missing documents next.
-    const aUrgent = a.type === "missing_doc";
-    const bUrgent = b.type === "missing_doc";
+    // 2. Missing documents next — and a bill whose day has come.
+    const aUrgent = a.type === "missing_doc" || (a.type === "billing_due" && a.data.billingDate <= today);
+    const bUrgent = b.type === "missing_doc" || (b.type === "billing_due" && b.data.billingDate <= today);
     if (aUrgent && !bUrgent) return -1;
     if (!aUrgent && bUrgent) return 1;
 
@@ -463,6 +465,10 @@ export default function AlertsPage() {
 
     return 0;
   });
+
+  // วางบิล: the TRUE count, not the capped list.
+  const billingDueTotal = alerts?.billingDueTotal ?? alerts?.billingDue?.length ?? 0;
+  const billingDueHiddenCount = Math.max(0, billingDueTotal - (alerts?.billingDue?.length || 0));
 
   const incompleteTotal = alerts?.incompleteEquipmentsTotal ?? alerts?.incompleteEquipments?.length ?? 0;
   const incompleteHiddenCount = Math.max(0, incompleteTotal - (alerts?.incompleteEquipments?.length || 0));
@@ -541,6 +547,7 @@ export default function AlertsPage() {
           - (alerts?.incompleteEquipments?.length || 0) + incompleteTotal
           - (callFollowUps?.length || 0) + callFollowUpsTotal
           - (alerts?.nearingCalibration?.length || 0) + calibrationTotal
+          - (alerts?.billingDue?.length || 0) + billingDueTotal
       ),
       color: "bg-gray-100 text-gray-700",
     },
@@ -552,6 +559,7 @@ export default function AlertsPage() {
     { id: "calibration", label: "ใกล้ถึงกำหนดสอบเทียบ", count: countOr(calibrationTotal), color: "bg-cyan-50 text-cyan-700 border-cyan-200" },
     { id: "incomplete", label: "ข้อมูลไม่ครบ", count: countOr(incompleteTotal), color: "bg-rose-50 text-rose-700 border-rose-200" },
     { id: "missing_doc", label: "เอกสารค้าง", count: countOr(alerts?.missingDocuments?.length || 0), color: "bg-red-50 text-red-700 border-red-200" },
+    { id: "billing_due", label: "วางบิล", count: countOr(billingDueTotal), color: "bg-sky-50 text-sky-700 border-sky-200" },
   ];
 
   /** The badge on the "ไปที่หน้าสิ่งที่ต้องทำ" button below (spec:
@@ -1046,6 +1054,48 @@ export default function AlertsPage() {
                 );
               }
 
+              if (alert.type === "billing_due") {
+                // วางบิล (v56): the card opens the invoice; the bill itself is
+                // issued from ออกใบวางบิล, for that customer.
+                const daysLeft = daysBetweenDateStrings(today, alert.data.billingDate) ?? 0;
+                return (
+                  <div
+                    key={idx}
+                    data-testid="billing-due-card"
+                    onClick={() => router.push(`/accounting/invoices/${encodeURIComponent(alert.data.id)}`)}
+                    className="bg-white rounded-2xl p-5 border border-gray-100 hover:border-sky-200 hover:shadow-lg transition-all cursor-pointer group relative overflow-hidden flex flex-col"
+                  >
+                    <div className="absolute top-0 left-0 w-1 h-full bg-sky-500"></div>
+                    <div className="flex justify-between items-start mb-4">
+                      <div className="px-2.5 py-1 rounded-md text-xs font-bold bg-sky-50 text-sky-700 flex items-center gap-1.5">📮 วางบิล</div>
+                      <span className="text-xs font-bold text-gray-400">{formatDisplayDate(alert.data.billingDate)}</span>
+                    </div>
+                    <h4 className="font-bold text-gray-900 mb-1 line-clamp-1">{alert.data.buyerName || "ลูกค้า"}</h4>
+                    <p className="text-sm text-gray-500 mb-3 line-clamp-1">{alert.data.docNo}</p>
+                    <p className="text-2xl font-bold text-gray-900 leading-none tabular-nums">฿{formatSatang(alert.data.owedSatang)}</p>
+                    <p className={`text-xs font-semibold mt-1 ${daysLeft < 0 ? "text-red-600" : daysLeft === 0 ? "text-amber-700" : "text-gray-500"}`}>
+                      {daysLeft > 0 ? `อีก ${daysLeft} วันถึงวันวางบิล` : daysLeft === 0 ? "วางบิลวันนี้" : `เลยวันวางบิลมา ${-daysLeft} วัน`}
+                    </p>
+                    <div className="mt-auto pt-4 flex gap-2 w-full">
+                      <Link
+                        href={`/accounting/billing-notes/new?companyId=${encodeURIComponent(alert.data.companyId)}&buyerName=${encodeURIComponent(alert.data.buyerName)}`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="flex-1 px-3 py-2 bg-sky-600 text-white text-sm font-semibold rounded-xl hover:bg-sky-700 transition-colors flex items-center justify-center gap-1.5"
+                      >
+                        ออกใบวางบิล
+                      </Link>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setSnoozeAlertTarget({ type: "billing_date", id: alert.data.id }); }}
+                        className="px-3 py-2 bg-amber-50 text-amber-700 text-sm font-semibold rounded-xl hover:bg-amber-100 transition-colors flex items-center justify-center gap-1.5"
+                        title="เลื่อนแจ้งเตือน"
+                      >
+                         ⏱️
+                      </button>
+                    </div>
+                  </div>
+                );
+              }
+
               if (alert.type === "missing_doc") {
                 return (
                   <div key={idx} onClick={() => setSelectedAlert(alert)} className="bg-white rounded-2xl p-5 border border-gray-100 hover:border-red-200 hover:shadow-lg transition-all cursor-pointer group relative overflow-hidden flex flex-col">
@@ -1083,6 +1133,11 @@ export default function AlertsPage() {
               }
             })}
           </div>
+        )}
+        {(activeTab === "all" || activeTab === "billing_due") && billingDueHiddenCount > 0 && (
+          <p className="text-center text-sm text-gray-500 mt-6">
+            และอีก {billingDueHiddenCount} รายการที่ถึงวันวางบิล (แสดงผลสูงสุด {ALERT_ROW_CAP} รายการ)
+          </p>
         )}
         {(activeTab === "all" || activeTab === "incomplete") && incompleteHiddenCount > 0 && (
           <p className="text-center text-sm text-gray-500 mt-6">

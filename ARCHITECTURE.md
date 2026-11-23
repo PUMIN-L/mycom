@@ -1699,6 +1699,21 @@ see "The old /billing is removed" below). Files:
   - **The whole month's tax data in one file**: the month is checked first
     (no password try spent on a slip), then the password again, and the
     download is a line in the audit log (`data.export`).
+- **วันวางบิล (schema v56, the owner 2026-11-23)** — `acc_documents.billingDate`:
+  the day an invoice's bill is to be handed to the customer. Set, moved or
+  cleared on the invoice's page (`setInvoiceBillingDate`, `PATCH
+  /api/accounting/documents/[id]/billing-date`; any invoice not cancelled,
+  never before its own date, each change in the history, its `updatedAt` left
+  alone), with "* ระบบจะแจ้งเตือนก่อนถึงวันวางบิล 7 วัน". Internal — never
+  printed. The CRM feed's "วางบิล" (`billingDueAlerts` in crmStore.ts,
+  `CrmAlerts.billingDue` + `billingDueTotal`, counted on the bell) shows it
+  from `BILLING_REMINDER_LEAD_DAYS` (7) before the day until a billing note
+  carrying the invoice is issued, it is paid in full or cancelled, or it is
+  snoozed (`alertType` "billing_date"); its card opens the invoice and offers
+  ออกใบวางบิล for that customer. Nothing is asked of the accounting tables
+  while the module is off. NB: the CRM feed is not behind two-factor login,
+  so an admin without it sees these invoices' numbers, customers and amounts
+  there — the owner chose this (2026-11-23).
 - **The old /billing is removed (schema v55).** Step 10 first stopped it
   issuing once this module was switched on; with the module live, the old one
   went entirely (its documents were test documents — the owner's word):

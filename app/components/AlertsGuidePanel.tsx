@@ -6,6 +6,7 @@ import {
   ALERT_LIST_DISPLAY_LIMIT,
   MISSING_DELIVERY_DOC_DAYS,
   MISSING_RECEIPT_DOC_DAYS,
+  BILLING_REMINDER_LEAD_DAYS,
 } from "../lib/alertThresholds";
 // The date-search caps live in `alertDateSearch.ts` (which imports only
 // `dateFormat`, so a client component can read it) rather than in
@@ -418,6 +419,39 @@ export default function AlertsGuidePanel({
               <>
                 <strong>กรอกเลขที่เอกสารที่ขาด</strong> ลงในใบขายนั้น (กดที่การ์ดเพื่อเปิดใบขายขึ้นมาแก้ได้เลย)
               </>,
+              <>เลื่อนแจ้งเตือน (ชั่วคราว)</>,
+            ]}
+          />
+
+          {/* ── 7. วางบิล (v56) ────────────────────────────────────────── */}
+          <GuideSection
+            icon="📮"
+            title="วางบิล"
+            tone="border-l-sky-500"
+            appears={
+              <>
+                เมื่อ <strong>ใบแจ้งหนี้</strong> ที่ตั้ง <strong>วันวางบิล</strong> ไว้ (ในหน้าใบแจ้งหนี้ของระบบบัญชี)
+                ใกล้ถึงวันนั้น — ขึ้นล่วงหน้า <Val>{BILLING_REMINDER_LEAD_DAYS} วัน</Val> ก่อนวันวางบิล
+              </>
+            }
+            rule={
+              <ul className="space-y-1.5 mt-1">
+                <li className="wrap-break-word">
+                  เฉพาะใบแจ้งหนี้ที่ <strong>ยังมียอดค้าง</strong> และ <strong>ยังไม่อยู่ในใบวางบิล</strong> ที่ออกแล้ว
+                </li>
+                <li className="wrap-break-word">
+                  ถึงวันวางบิลแล้วยังไม่ได้ทำ ก็ยังค้างอยู่ และบอกว่า <strong>เลยมากี่วัน</strong>
+                </li>
+                <li className="wrap-break-word">
+                  ใบที่ไม่ได้ตั้งวันวางบิล จะไม่ขึ้นเตือนเลย
+                </li>
+              </ul>
+            }
+            clears={[
+              <>
+                <strong>ออกใบวางบิล</strong> ที่มีใบแจ้งหนี้นั้น (กดปุ่มบนการ์ดได้เลย)
+              </>,
+              <>รับชำระครบ หรือยกเลิกใบแจ้งหนี้</>,
               <>เลื่อนแจ้งเตือน (ชั่วคราว)</>,
             ]}
           />

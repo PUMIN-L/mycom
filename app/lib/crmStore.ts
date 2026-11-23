@@ -2,6 +2,7 @@ import { query, withTransaction } from "./db";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { sanitizePlainText } from "./sanitizeHtml";
 import { bangkokDateString } from "./dateFormat";
+import { isAccountingEnabled } from "./accounting/flags";
 import type {
   CustomerEquipment,
   ServiceSchedule,
@@ -10,6 +11,7 @@ import type {
   ScheduleStatus,
   CrmAlerts,
   SalesRecord,
+  BillingDueAlert,
 } from "./types";
 import {
   SCHEDULE_TYPES,
@@ -24,6 +26,7 @@ import {
   ALERT_LIST_DISPLAY_LIMIT,
   MISSING_DELIVERY_DOC_DAYS,
   MISSING_RECEIPT_DOC_DAYS,
+  BILLING_REMINDER_LEAD_DAYS,
 } from "./alertThresholds";
 
 // Re-exported so callers can keep importing from "./crmStore".
@@ -1260,6 +1263,8 @@ export async function getAlerts(
     [today, today, nowIso]
   );
 
+  const { billingDue, billingDueTotal } = await billingDueAlerts(nowIso);
+
   return {
     expiringWarranties: warrantyRows as CustomerEquipment[],
     nearingCalibration: calibrationRows as CustomerEquipment[],
@@ -1275,6 +1280,50 @@ export async function getAlerts(
       (s) => ({ ...s, overdue: s.scheduledDate < today })
     ),
     customerCallFollowUpsTotal,
+    billingDue,
+    billingDueTotal,
+  };
+}
+
+/**
+ * "วางบิล" (v56, the owner, 2026-11-23): the invoices whose วันวางบิล is
+ * BILLING_REMINDER_LEAD_DAYS away or already past, still owed (total less
+ * credit notes less payments), not yet on an ISSUED billing note — the same
+ * rule `billingNotesOf` reads — and not snoozed. Nothing closes one but
+ * billing, payment or cancelling, so the list is capped and the true count
+ * travels separately. While the accounting module is switched off nothing is
+ * asked of its tables.
+ */
+async function billingDueAlerts(nowIso: string): Promise<{ billingDue: BillingDueAlert[]; billingDueTotal: number }> {
+  if (!isAccountingEnabled()) return { billingDue: [], billingDueTotal: 0 };
+  const cutoff = bangkokDateString(new Date(Date.now() + BILLING_REMINDER_LEAD_DAYS * 86400000));
+  const FROM = `
+     FROM acc_documents d
+     LEFT JOIN alert_snoozes sno ON sno.alertType = 'billing_date' AND sno.referenceId = d.id
+     WHERE d.docType = 'INV' AND d.status = 'issued'
+       AND d.billingDate IS NOT NULL AND d.billingDate <= ?
+       AND d.paidSatang + d.creditedSatang < d.totalSatang
+       AND NOT EXISTS (SELECT 1 FROM acc_billing_items bi JOIN acc_documents bn ON bn.id = bi.billingNoteId WHERE bi.invoiceId = d.id AND bn.status = 'issued')
+       AND (sno.snoozeUntil IS NULL OR sno.snoozeUntil <= ?)`;
+  const [rows] = await query<RowDataPacket[]>(
+    `SELECT d.id, d.docNo, d.buyerName, d.companyId, d.billingDate,
+            (d.totalSatang - d.creditedSatang - d.paidSatang) AS owed
+     ${FROM}
+     ORDER BY d.billingDate ASC LIMIT ${ALERT_LIST_DISPLAY_LIMIT}`,
+    [cutoff, nowIso]
+  );
+  const [countRows] = await query<RowDataPacket[]>(`SELECT COUNT(*) AS cnt ${FROM}`, [cutoff, nowIso]);
+  return {
+    // BIGINT may arrive as a string: read once, here.
+    billingDue: rows.map((r) => ({
+      id: String(r.id),
+      docNo: r.docNo ? String(r.docNo) : "",
+      buyerName: r.buyerName ? String(r.buyerName) : "",
+      companyId: r.companyId ? String(r.companyId) : "",
+      billingDate: String(r.billingDate),
+      owedSatang: Math.max(0, Number(r.owed) || 0),
+    })),
+    billingDueTotal: Number(countRows[0]?.cnt) || 0,
   };
 }
 

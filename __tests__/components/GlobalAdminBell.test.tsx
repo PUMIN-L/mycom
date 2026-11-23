@@ -362,3 +362,23 @@ describe('GlobalAdminBell — the old ลูกหนี้ค้างชำร
   });
 });
 
+
+describe('GlobalAdminBell — วางบิล', () => {
+  it('counts the invoices to bill into the badge', async () => {
+    mockFetchOnce(payload({ billingDue: rows(3), billingDueTotal: 3 }));
+    render(<GlobalAdminBell />);
+    await waitFor(() => expect(badgeText()).toBe('3'));
+  });
+
+  it('uses billingDueTotal, not the display-capped array length', async () => {
+    mockFetchOnce(payload({ billingDue: rows(100), billingDueTotal: 143 }));
+    render(<GlobalAdminBell />);
+    await waitFor(() => expect(badgeText()).toBe('99+'));
+  });
+
+  it('counts 0, not NaN, when an older build answers without the keys', async () => {
+    mockFetchOnce(payload({ missingDocuments: rows(2) }));
+    render(<GlobalAdminBell />);
+    await waitFor(() => expect(badgeText()).toBe('2'));
+  });
+});

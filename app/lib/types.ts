@@ -368,6 +368,21 @@ export interface CostItem {
   createdAt: string;
 }
 
+/**
+ * One "วางบิล" alert card (v56): an invoice whose วันวางบิล is
+ * BILLING_REMINDER_LEAD_DAYS away or past, still owed, and not yet on an
+ * issued billing note.
+ */
+export interface BillingDueAlert {
+  id: string;
+  docNo: string;
+  buyerName: string;
+  companyId: string;
+  billingDate: string;
+  /** What it still owes: total less credit notes less payments. */
+  owedSatang: number;
+}
+
 export interface CrmAlerts {
   expiringWarranties: CustomerEquipment[];
   nearingCalibration: CustomerEquipment[];
@@ -410,6 +425,12 @@ export interface CrmAlerts {
   /** True count of customer-scoped follow-ups, which can exceed
    * customerCallFollowUps.length since that list is capped. */
   customerCallFollowUpsTotal: number;
+  /** Invoices to bill: วันวางบิล within BILLING_REMINDER_LEAD_DAYS or past,
+   * still owed, not yet on an issued billing note, not snoozed. Nothing closes
+   * them but billing, payment or cancelling, so the list is capped and the
+   * true count travels separately. Empty while the accounting module is off. */
+  billingDue: BillingDueAlert[];
+  billingDueTotal: number;
   /** Pending board tasks whose dueDate has ARRIVED (Bangkok calendar day).
    * Tasks with no due date, and tasks due later, are excluded on purpose —
    * see countDueTasks() in taskStore.ts. */
