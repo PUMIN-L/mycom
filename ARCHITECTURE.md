@@ -559,7 +559,11 @@ lists and which window is open; the windows live beside it.
   to NULL in the same transaction as the delete. Not used to fill in a new
   invoice's salesperson — the owner said not to (2026-11-24). Any query that
   joins `companies` must now prefix `salespersonId` (`sr.`, `d.`) — the bare
-  name is ambiguous there.
+  name is ambiguous there. The customers tab shows each customer's too — their
+  COMPANY's, derived on the page (`caretakersByCompany` → `customerSalespersonName`,
+  by company id), never stored on the customer: a column after บริษัท
+  (sortable: name, then company; nobody last), the search box, and the Excel
+  export.
 - **Loading** — each list has its own status (`loading | ok | error`). A list
   that has never loaded shows "โหลดรายชื่อ…ไม่สำเร็จ" + ลองใหม่ in its table —
   not "ยังไม่มีข้อมูล…", no "0" on its tab or heading, Export off; a reload

@@ -7,6 +7,8 @@ import {
   DEFAULT_CUSTOMER_SORT,
   TAB_PARAM,
   anyRecentlyNoted,
+  caretakersByCompany,
+  customerSalespersonName,
   companyDistrict,
   companyProvince,
   companySalespersonName,
@@ -170,6 +172,60 @@ describe("companySalespersonName", () => {
     expect(companySalespersonName({ name: "a", salespersonId: null }, names)).toBe("");
     expect(companySalespersonName({ name: "a" }, names)).toBe("");
     expect(companySalespersonName({ name: "a", salespersonId: "sp-gone" }, names)).toBe("");
+  });
+});
+
+describe("a customer's เซลล์ผู้ดูแล — their company's", () => {
+  const names = new Map([["sp1", "คุณวิชัย"], ["sp2", "คุณกมล"]]);
+  const companies = [
+    { id: "co1", name: "ก", salespersonId: "sp1" },
+    { id: "co2", name: "ข" },
+    { id: "co3", name: "ค", salespersonId: "sp-gone" },
+    { id: "co4", name: "ง", salespersonId: "sp2" },
+    { name: "no id", salespersonId: "sp1" },
+  ];
+
+  it("caretakersByCompany: the name by company id, only for companies someone looks after", () => {
+    const caretakers = caretakersByCompany(companies, names);
+    expect([...caretakers.entries()]).toEqual([["co1", "คุณวิชัย"], ["co4", "คุณกมล"]]);
+  });
+
+  it("customerSalespersonName: from the customer's company, '' for nobody, no company or a company gone", () => {
+    const caretakers = caretakersByCompany(companies, names);
+    expect(customerSalespersonName({ companyId: "co1" }, caretakers)).toBe("คุณวิชัย");
+    expect(customerSalespersonName({ companyId: "co4" }, caretakers)).toBe("คุณกมล");
+    expect(customerSalespersonName({ companyId: "co2" }, caretakers)).toBe("");
+    expect(customerSalespersonName({ companyId: "co3" }, caretakers)).toBe("");
+    expect(customerSalespersonName({ companyId: "co-gone" }, caretakers)).toBe("");
+    expect(customerSalespersonName({ companyId: "" }, caretakers)).toBe("");
+    expect(customerSalespersonName({}, caretakers)).toBe("");
+  });
+
+  it("matchesCustomerSearch finds a customer by that name, word by word with the rest", () => {
+    const c = customer("c1", { name: "คุณสมชาย", companyName: "บริษัท แล็บ จำกัด" });
+    expect(matchesCustomerSearch(c, "วิชัย", "คุณวิชัย")).toBe(true);
+    expect(matchesCustomerSearch(c, "สมชาย วิชัย", "คุณวิชัย")).toBe(true);
+    expect(matchesCustomerSearch(c, "วิชัย")).toBe(false);
+    expect(matchesCustomerSearch(c, "กมล", "คุณวิชัย")).toBe(false);
+  });
+
+  it("sortCustomers by salesperson: their name, then company — nobody last either way, ties in note order", () => {
+    const caretakers = new Map([["co1", "คุณวิชัย"], ["co4", "คุณกมล"], ["co5", "คุณวิชัย"]]);
+    const list = [
+      customer("x1", { companyId: "co2", companyName: "ข" }),
+      customer("w1", { companyId: "co5", companyName: "ฉ", note: "a", noteUpdatedAt: "2026-01-01T00:00:00Z" }),
+      customer("k1", { companyId: "co4", companyName: "ง" }),
+      customer("w2", { companyId: "co1", companyName: "ก" }),
+      customer("w3", { companyId: "co5", companyName: "ฉ", note: "b", noteUpdatedAt: "2026-02-01T00:00:00Z" }),
+      customer("x2", { companyId: "", companyName: "" }),
+    ];
+    // กมล; วิชัย: company ก before ฉ, and within ฉ the later note (w3) first;
+    // then nobody: x1 (company ข) before x2 (no company).
+    expect(ids(sortCustomers(list, { key: "salesperson", dir: "asc" }, caretakers))).toEqual(["k1", "w2", "w3", "w1", "x1", "x2"]);
+    // Descending flips the names; the companies within one stay ก→ฮ.
+    expect(ids(sortCustomers(list, { key: "salesperson", dir: "desc" }, caretakers))).toEqual(["w2", "w3", "w1", "k1", "x1", "x2"]);
+    // No caretakers given: nobody looks after anyone, so by company, ก→ฮ.
+    expect(ids(sortCustomers(list, { key: "salesperson", dir: "asc" }))).toEqual(["w2", "x1", "k1", "w3", "w1", "x2"]);
   });
 });
 

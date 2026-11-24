@@ -218,6 +218,81 @@ describe("/customers — the customers list", () => {
   });
 });
 
+describe("/customers — the customers list's เซลล์ผู้ดูแล (their company's)", () => {
+  // คุณมานี works at บริษัท ค, which คุณวิชัย looks after; บริษัท ก has nobody.
+  const withManee = () => [
+    ...customersFixture(),
+    {
+      id: "c4", companyId: "co3", companyName: "บริษัท ค", name: "คุณมานี", department: "",
+      phone: "", email: "", note: "", createdAt: "2025-03-01T00:00:00.000Z", noteUpdatedAt: null,
+    },
+  ];
+  const caretaker = (name: string) =>
+    within(screen.getByRole("row", { name: `ดูข้อมูล ${name}` })).getAllByRole("cell")[2].textContent;
+
+  it("a column after บริษัท: the company's salesperson, '-' for nobody or no company", async () => {
+    mockFetch({ customers: withManee() });
+    render(<Customers />);
+    await loaded();
+    const headers = within(customerTable()).getAllByRole("columnheader").map((h) => (h.textContent ?? "").replace(/[↕↑↓]/g, ""));
+    expect(headers).toEqual(["ชื่อลูกค้า", "บริษัท", "เซลล์ผู้ดูแล", "แผนก", "เบอร์โทร", "บันทึกล่าสุด", "จัดการ"]);
+    expect(caretaker("คุณมานี")).toBe("คุณวิชัย");
+    expect(caretaker("คุณสมชาย")).toBe("-");
+    expect(caretaker("คุณกมล")).toBe("-");
+    // The department moved one column along, intact.
+    expect(within(screen.getByRole("row", { name: "ดูข้อมูล คุณสมชาย" })).getAllByRole("cell")[3].textContent).toBe("แล็บ");
+  });
+
+  it("the search box finds customers by that name", async () => {
+    mockFetch({ customers: withManee() });
+    render(<Customers />);
+    await loaded();
+    fireEvent.change(screen.getByRole("textbox", { name: "ค้นหาลูกค้า" }), { target: { value: "วิชัย" } });
+    expect(firstCells(customerTable())).toEqual(["คุณมานี"]);
+  });
+
+  it("sorts by it from the header — nobody last either way", async () => {
+    mockFetch({ customers: withManee() });
+    render(<Customers />);
+    await loaded();
+    fireEvent.click(header(/^เซลล์ผู้ดูแล/));
+    expect(header(/^เซลล์ผู้ดูแล/).closest("th")).toHaveAttribute("aria-sort", "ascending");
+    expect(firstCells(customerTable())[0]).toBe("คุณมานี");
+    fireEvent.click(header(/^เซลล์ผู้ดูแล/));
+    expect(firstCells(customerTable())[0]).toBe("คุณมานี");
+  });
+
+  it("the Excel file has it too, after บริษัท", async () => {
+    mockFetch({ customers: withManee() });
+    render(<Customers />);
+    await loaded();
+    fireEvent.click(screen.getByRole("button", { name: "ส่งออก Excel" }));
+    const { downloadExcel } = await import("@/app/lib/xlsxExport");
+    await waitFor(() => expect(downloadExcel).toHaveBeenCalled());
+    const sheet = (vi.mocked(downloadExcel).mock.calls[0][1] as { rows: Record<string, string>[]; columnWidths: number[] }[])[0];
+    expect(Object.keys(sheet.rows[0]).slice(0, 3)).toEqual(["ชื่อลูกค้า", "บริษัท", "เซลล์ผู้ดูแล"]);
+    expect(sheet.columnWidths).toHaveLength(Object.keys(sheet.rows[0]).length);
+    const byName = new Map(sheet.rows.map((r) => [r["ชื่อลูกค้า"], r["เซลล์ผู้ดูแล"]]));
+    expect(byName.get("คุณมานี")).toBe("คุณวิชัย");
+    expect(byName.get("คุณสมชาย")).toBe("-");
+  });
+
+  it("the nothing-found row spans every column, on both tabs", async () => {
+    mockFetch();
+    render(<Customers />);
+    await loaded();
+    fireEvent.change(screen.getByRole("textbox", { name: "ค้นหาลูกค้า" }), { target: { value: "ไม่มีใครชื่อนี้" } });
+    const columns = within(customerTable()).getAllByRole("columnheader").length;
+    expect((screen.getByText("ไม่พบลูกค้าที่ตรงกับคำค้น").closest("td") as HTMLTableCellElement).colSpan).toBe(columns);
+
+    fireEvent.click(tab(/^บริษัท/));
+    await screen.findByText("ชื่อบริษัท");
+    fireEvent.change(screen.getByRole("textbox", { name: "ค้นหาบริษัท" }), { target: { value: "ไม่มีบริษัทนี้" } });
+    const companyColumns = within(companyTable()).getAllByRole("columnheader").length;
+    expect((screen.getByText("ไม่พบบริษัทที่ตรงกับคำค้น").closest("td") as HTMLTableCellElement).colSpan).toBe(companyColumns);
+  });
+});
+
 describe("/customers — copy a phone or e-mail", () => {
   it("copies on click, says so, and does not open the customer", async () => {
     const writeText = stubClipboard();

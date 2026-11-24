@@ -31,10 +31,12 @@ import { bangkokDateString, displayDateTimeParts } from "../lib/dateFormat";
 import {
   DEFAULT_CUSTOMER_SORT,
   anyRecentlyNoted,
+  caretakersByCompany,
   companyDistrict,
   companyProvince,
   companySalespersonName,
   countCustomersByCompany,
+  customerSalespersonName,
   matchesCompanySearch,
   matchesCustomerSearch,
   matchesSalespersonSearch,
@@ -518,12 +520,21 @@ function CustomersInner() {
   // and re-sorting ~6,000 customers on each of those is tens of milliseconds
   // of typing lag for a list that did not change.
   //
-  // The search box also finds a phone number (digits only) and an e-mail; a
-  // clicked header sorts by name or company instead of the note order.
+  // The search box also finds a phone number (digits only), an e-mail and the
+  // เซลล์ผู้ดูแล's name; a clicked header sorts by name, company or
+  // salesperson instead of the note order.
   const [customerSort, setCustomerSort] = useState<SortState<CustomerSortKey>>(DEFAULT_CUSTOMER_SORT);
+  // A customer's เซลล์ผู้ดูแล is their company's — read from the companies
+  // list, by company id, so a change on the company shows here at once.
+  const caretakers = useMemo(() => caretakersByCompany(companies, salespersonNames), [companies, salespersonNames]);
   const filteredCustomers = useMemo(
-    () => sortCustomers(customers.filter((c) => matchesCustomerSearch(c, searchCustomerName)), customerSort),
-    [customers, searchCustomerName, customerSort]
+    () =>
+      sortCustomers(
+        customers.filter((c) => matchesCustomerSearch(c, searchCustomerName, customerSalespersonName(c, caretakers))),
+        customerSort,
+        caretakers
+      ),
+    [customers, searchCustomerName, customerSort, caretakers]
   );
   const customerSearching = searchCustomerName.trim() !== "";
   const sortCustomersBy = (key: CustomerSortKey) => {
@@ -579,6 +590,7 @@ function CustomersInner() {
       const rows = filteredCustomers.map((c) => ({
         "ชื่อลูกค้า": c.name,
         "บริษัท": c.companyName || "-",
+        "เซลล์ผู้ดูแล": customerSalespersonName(c, caretakers) || "-",
         "แผนก": c.department || "-",
         "เบอร์โทร": c.phone || "-",
         "อีเมล": c.email || "-",
@@ -587,7 +599,7 @@ function CustomersInner() {
 
       // Dated, so a second export does not land as "customers_export (1)".
       await downloadExcel(`customers_${bangkokDateString(new Date())}.xlsx`, [
-        { name: "Customers", rows, columnWidths: [25, 30, 20, 15, 30, 40] },
+        { name: "Customers", rows, columnWidths: [25, 30, 20, 20, 15, 30, 40] },
       ]);
       showToast("ส่งออกไฟล์ลูกค้าสำเร็จ", "success");
     } catch (err) {
@@ -821,7 +833,7 @@ function CustomersInner() {
                     ))}
                     {listStatus.companies === "ok" && filteredCompanies.length === 0 && (
                       <EmptyRows
-                        colSpan={6}
+                        colSpan={8}
                         searching={companySearching}
                         emptyText="ยังไม่มีข้อมูลบริษัท"
                         noMatchText="ไม่พบบริษัทที่ตรงกับคำค้น"
@@ -886,8 +898,8 @@ function CustomersInner() {
                 </div>
               </div>
 
-              {/* The list's one search box — name, company, department,
-                  e-mail or phone — and, beside it, the way into the note
+              {/* The list's one search box — name, company, เซลล์ผู้ดูแล,
+                  department, e-mail or phone — and, beside it, the way into the note
                   search-and-replace. */}
               <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                 <div className="flex flex-wrap items-center gap-3 w-full md:w-auto md:flex-1">
@@ -953,6 +965,8 @@ function CustomersInner() {
                     <tr className="bg-gray-50 text-gray-500 uppercase tracking-wider">
                       <SortableTh className={`${TH} rounded-l-xl`} dir={customerSort.key === "name" ? customerSort.dir : null} onSort={() => sortCustomersBy("name")}>ชื่อลูกค้า</SortableTh>
                       <SortableTh className={TH} dir={customerSort.key === "company" ? customerSort.dir : null} onSort={() => sortCustomersBy("company")}>บริษัท</SortableTh>
+                      {/* Their company's เซลล์ผู้ดูแล — the companies tab's, not a copy. */}
+                      <SortableTh className={TH} dir={customerSort.key === "salesperson" ? customerSort.dir : null} onSort={() => sortCustomersBy("salesperson")}>เซลล์ผู้ดูแล</SortableTh>
                       <th className={TH}>แผนก</th>
                       <th className={TH}>เบอร์โทร</th>
                       <SortableTh className={TH} dir={customerSort.key === "activity" ? customerSort.dir : null} onSort={() => sortCustomersBy("activity")}>บันทึกล่าสุด</SortableTh>
@@ -961,12 +975,13 @@ function CustomersInner() {
                   </thead>
                   <tbody className="divide-y divide-gray-50">
                     {listStatus.customers === "error" ? (
-                      <LoadErrorRow colSpan={6} message={LOAD_FAILED.customers} onRetry={retryLoad} />
+                      <LoadErrorRow colSpan={7} message={LOAD_FAILED.customers} onRetry={retryLoad} />
                     ) : firstLoad("customers") ? (
                       Array.from({ length: 5 }).map((_, i) => (
                         <tr key={i} className="animate-pulse">
                           <td className={TD}><div className="h-5 bg-gray-200 rounded w-28 mb-1.5"></div><div className="h-3.5 bg-gray-200 rounded w-36"></div></td>
                           <td className={TD}><div className="h-5 bg-gray-200 rounded w-32"></div></td>
+                          <td className={TD}><div className="h-5 bg-gray-200 rounded w-24"></div></td>
                           <td className={TD}><div className="h-5 bg-gray-200 rounded w-24"></div></td>
                           <td className={TD}><div className="h-5 bg-gray-200 rounded w-24"></div></td>
                           <td className={TD}><div className="h-5 bg-gray-200 rounded w-32"></div></td>
@@ -993,6 +1008,7 @@ function CustomersInner() {
                           )}
                         </td>
                         <td className={`${TD} text-gray-700 font-medium`}>{c.companyName || "-"}</td>
+                        <td className={`${TD} text-gray-600`}>{customerSalespersonName(c, caretakers) || "-"}</td>
                         <td className={`${TD} text-gray-600`}>{c.department || "-"}</td>
                         <td className={`${TD} text-gray-600 tabular-nums`}>
                           <CopyText value={formatThaiPhone(c.phone)} onCopied={copied} onFailed={copyFailed} />
@@ -1011,7 +1027,7 @@ function CustomersInner() {
                     ))}
                     {listStatus.customers === "ok" && filteredCustomers.length === 0 && (
                       <EmptyRows
-                        colSpan={6}
+                        colSpan={7}
                         searching={customerSearching}
                         emptyText="ยังไม่มีข้อมูลลูกค้า"
                         noMatchText="ไม่พบลูกค้าที่ตรงกับคำค้น"

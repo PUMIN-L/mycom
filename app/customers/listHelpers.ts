@@ -91,15 +91,18 @@ function phoneMatches(q: string, phone: string | null | undefined): boolean {
 
 /**
  * Whether a customer matches the search box: every word in their name,
- * company, department or e-mail — or the phone, by its digits.
+ * company, department or e-mail — or the phone, by its digits. And by the
+ * name of their company's เซลล์ผู้ดูแล (`salespersonName`), so "วิชัย" lists
+ * the customers วิชัย looks after.
  */
 export function matchesCustomerSearch(
   c: Pick<Customer, "name" | "companyName" | "email" | "phone"> & { department?: string | null },
-  query: string
+  query: string,
+  salespersonName?: string
 ): boolean {
   const q = normalizeQuery(query);
   if (!q) return true;
-  if (everyWordIn(q, [c.name, c.companyName, c.department, c.email])) return true;
+  if (everyWordIn(q, [c.name, c.companyName, c.department, c.email, salespersonName])) return true;
   return phoneMatches(q, c.phone);
 }
 
@@ -114,7 +117,7 @@ export function matchesSalespersonSearch(
   return phoneMatches(q, s.phone);
 }
 
-export type CustomerSortKey = "activity" | "name" | "company";
+export type CustomerSortKey = "activity" | "name" | "company" | "salesperson";
 export const DEFAULT_CUSTOMER_SORT: SortState<CustomerSortKey> = { key: "activity", dir: "desc" };
 
 /**
@@ -122,18 +125,54 @@ export const DEFAULT_CUSTOMER_SORT: SortState<CustomerSortKey> = { key: "activit
  * page has always used (most recently noted first); ascending flips the noted
  * customers but keeps those WITHOUT a note last either way — a row with no
  * date has nothing to sort by. Name and company sort Thai-aware (a customer
- * with no company last), ties keeping the note order.
+ * with no company last), ties keeping the note order. Salesperson: their
+ * company's เซลล์ผู้ดูแล (`caretakers`, by company id), nobody last either
+ * way, then by company ก→ฮ — one salesperson's customers grouped by company.
  */
-export function sortCustomers<T extends Customer>(list: readonly T[], sort: SortState<CustomerSortKey>): T[] {
+export function sortCustomers<T extends Customer>(
+  list: readonly T[],
+  sort: SortState<CustomerSortKey>,
+  caretakers: ReadonlyMap<string, string> = new Map()
+): T[] {
   const byActivity = sortCustomersByNoteActivity([...list]);
   if (sort.key === "activity") {
     if (sort.dir === "desc") return byActivity;
     const noted = byActivity.filter(hasCustomerNote).reverse();
     return [...noted, ...byActivity.filter((c) => !hasCustomerNote(c))];
   }
-  const field = sort.key === "name" ? (c: T) => c.name : (c: T) => c.companyName || "";
   const sign = sort.dir === "asc" ? 1 : -1;
+  if (sort.key === "salesperson") {
+    const caretakerOf = (c: T) => customerSalespersonName(c, caretakers);
+    return byActivity.sort(
+      (a, b) => compareBlanksLast(caretakerOf(a), caretakerOf(b), sign) || compareBlanksLast(a.companyName, b.companyName, 1)
+    );
+  }
+  const field = sort.key === "name" ? (c: T) => c.name : (c: T) => c.companyName || "";
   return byActivity.sort((a, b) => compareBlanksLast(field(a), field(b), sign));
+}
+
+/**
+ * เซลล์ผู้ดูแล by company id: the name of whoever looks after each company
+ * (`salespersonNames`, by salesperson id). Companies with nobody — or with
+ * someone no longer on the list — are left out.
+ */
+export function caretakersByCompany(
+  companies: readonly CompanyLike[],
+  salespersonNames: ReadonlyMap<string, string>
+): Map<string, string> {
+  const caretakers = new Map<string, string>();
+  for (const c of companies) {
+    const name = companySalespersonName(c, salespersonNames);
+    if (c.id && name) caretakers.set(c.id, name);
+  }
+  return caretakers;
+}
+
+/** A customer's เซลล์ผู้ดูแล: their company's (`caretakers`, by company id) —
+ *  the same one the companies tab shows, not stored on the customer. "" for
+ *  nobody, or no company. */
+export function customerSalespersonName(c: { companyId?: string | null }, caretakers: ReadonlyMap<string, string>): string {
+  return (c.companyId && caretakers.get(c.companyId)) || "";
 }
 
 export interface CompanyLike {
