@@ -9,6 +9,7 @@ import {
   anyRecentlyNoted,
   companyDistrict,
   companyProvince,
+  companySalespersonName,
   countCustomersByCompany,
   matchesCompanySearch,
   matchesCustomerSearch,
@@ -162,6 +163,26 @@ describe("companyProvince / companyDistrict — the two columns", () => {
   });
 });
 
+describe("companySalespersonName", () => {
+  const names = new Map([["sp1", "คุณวิชัย"]]);
+  it("the name of the one who looks after it, '' for nobody or someone no longer listed", () => {
+    expect(companySalespersonName({ name: "a", salespersonId: "sp1" }, names)).toBe("คุณวิชัย");
+    expect(companySalespersonName({ name: "a", salespersonId: null }, names)).toBe("");
+    expect(companySalespersonName({ name: "a" }, names)).toBe("");
+    expect(companySalespersonName({ name: "a", salespersonId: "sp-gone" }, names)).toBe("");
+  });
+});
+
+describe("matchesCompanySearch — the salesperson's name too", () => {
+  it("finds a company by who looks after it, word by word with the rest", () => {
+    const co = { name: "Profin Lab", province: "ชลบุรี" };
+    expect(matchesCompanySearch(co, "วิชัย", "คุณวิชัย")).toBe(true);
+    expect(matchesCompanySearch(co, "วิชัย ชลบุรี", "คุณวิชัย")).toBe(true);
+    expect(matchesCompanySearch(co, "วิชัย")).toBe(false);
+    expect(matchesCompanySearch(co, "สมศรี", "คุณวิชัย")).toBe(false);
+  });
+});
+
 describe("matchesCompanySearch — one box for name, address and phone", () => {
   const co = {
     name: "Profin Lab",
@@ -304,6 +325,20 @@ describe("sortCompanies", () => {
     // บางกะปิ, บางนา, เมือง; then the two with no district: 5 has a province, 4 has none.
     expect(ids(sortCompanies(list, { key: "district", dir: "asc" }))).toEqual(["3", "2", "1", "5", "4"]);
     expect(ids(sortCompanies(list, { key: "district", dir: "desc" }))).toEqual(["1", "2", "3", "5", "4"]);
+  });
+
+  it("sorts by salesperson name, ties by company name — nobody last either way", () => {
+    const people = [
+      { id: "1", name: "ค", salespersonId: "b" },
+      { id: "2", name: "ก" },
+      { id: "3", name: "ข", salespersonId: "a" },
+      { id: "4", name: "ง", salespersonId: "b" },
+      { id: "5", name: "จ", salespersonId: "gone" },
+    ];
+    const names = new Map([["a", "คุณกมล"], ["b", "คุณวิชัย"]]);
+    // กมล (3); วิชัย: ค (1) before ง (4); then nobody: ก (2), จ (5, not listed).
+    expect(ids(sortCompanies(people, { key: "salesperson", dir: "asc" }, undefined, names))).toEqual(["3", "1", "4", "2", "5"]);
+    expect(ids(sortCompanies(people, { key: "salesperson", dir: "desc" }, undefined, names))).toEqual(["1", "4", "3", "2", "5"]);
   });
 
   it("sorts by how many customers each has, ties by name", () => {

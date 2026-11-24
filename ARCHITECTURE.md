@@ -544,6 +544,22 @@ lists and which window is open; the windows live beside it.
   not foresee (400) is shown in the server's words, a failed check (or one
   slower than 8 s) just asks as before. `deleteBlockers.test.ts` reads the
   DELETE routes' SQL and fails if the counts stop checking the same tables.
+  A salesperson who is เซลล์ผู้ดูแล of companies is NOT refused: the question
+  names those companies (`caretakerNotice`, from the page's own list — five by
+  name, the rest counted) and the delete leaves them with nobody.
+- **เซลล์ผู้ดูแล (schema v57, the owner 2026-11-24)** — `companies.salespersonId`:
+  the salesperson who looks after a company. Optional, one per company, no FK
+  (like `sales_records`). Picked in the company form (`SearchableDropdown`,
+  "— ไม่ระบุ —" first; a saved id not on the loaded list is kept, so opening the
+  form is not an edit); a column on the companies tab (sortable, nobody last),
+  a line in the company window, and the search box finds a company by that
+  name. The API writes it only when sent (`readCompanyInput` → `undefined` =
+  leave alone, `""` / null = nobody) and refuses an id not in `salespeople`
+  (`assertSalespersonExists`, 400). `salesStore.deleteSalesperson` sets it back
+  to NULL in the same transaction as the delete. Not used to fill in a new
+  invoice's salesperson — the owner said not to (2026-11-24). Any query that
+  joins `companies` must now prefix `salespersonId` (`sr.`, `d.`) — the bare
+  name is ambiguous there.
 - **Loading** — each list has its own status (`loading | ok | error`). A list
   that has never loaded shows "โหลดรายชื่อ…ไม่สำเร็จ" + ลองใหม่ in its table —
   not "ยังไม่มีข้อมูล…", no "0" on its tab or heading, Export off; a reload

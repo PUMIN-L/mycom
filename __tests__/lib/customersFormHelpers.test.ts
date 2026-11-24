@@ -32,12 +32,14 @@ describe("drafts", () => {
     expect(toSalespersonDraft({ id: "sp1", name: "ก", createdAt: "x" })).toEqual({ name: "ก", phone: "", email: "", note: "" });
     expect(Object.keys(toCompanyDraft({ id: "co1", name: "บริษัท", companyName: "x" }))).toEqual([
       "name", "addressNo", "moo", "soi", "road", "subDistrict", "district", "province", "postalCode", "phone", "note",
-      "taxId", "branchCode", "whtPercent",
+      "taxId", "branchCode", "whtPercent", "salespersonId",
     ]);
   });
 
   it("an empty form is all empty strings", () => {
-    expect(Object.values(toCompanyDraft())).toEqual(Array(14).fill(""));
+    expect(Object.values(toCompanyDraft())).toEqual(Array(15).fill(""));
+    // No salesperson (NULL) is an empty pick, "— ไม่ระบุ —".
+    expect(toCompanyDraft({ name: "x", salespersonId: null }).salespersonId).toBe("");
     expect(Object.values(toCustomerDraft(null))).toEqual(Array(6).fill(""));
   });
 });

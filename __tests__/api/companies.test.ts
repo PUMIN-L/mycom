@@ -215,3 +215,76 @@ describe('the tax fields', () => {
     expect(query).not.toHaveBeenCalled();
   });
 });
+
+// v57 — เซลล์ผู้ดูแล: the salesperson who looks after the company. Optional,
+// one per company; written only when sent, and only someone on the list.
+describe('the salesperson who looks after it', () => {
+  const found = [[{ id: 'sp1' }]] as never;
+  const none = [[]] as never;
+  const done = [{ affectedRows: 1 }] as never;
+
+  it('POST stores the chosen salesperson, after checking they exist', async () => {
+    vi.mocked(query).mockResolvedValueOnce(found).mockResolvedValueOnce(done);
+    const res = await POST(request('POST', { ...COMPANY, salespersonId: 'sp1' }));
+    expect(res.status).toBe(200);
+    const [lookup, lookupParams] = vi.mocked(query).mock.calls[0];
+    expect(lookup).toContain('FROM salespeople');
+    expect(lookupParams).toEqual(['sp1']);
+    const [sql, params] = vi.mocked(query).mock.calls[1];
+    expect(sql).toContain('salespersonId');
+    expect((params as unknown[]).slice(15, 16)).toEqual(['sp1']);
+  });
+
+  it('POST without one stores NULL and looks nobody up', async () => {
+    vi.mocked(query).mockResolvedValue(done);
+    await POST(request('POST', COMPANY));
+    expect(query).toHaveBeenCalledTimes(1);
+    expect((vi.mocked(query).mock.calls[0][1] as unknown[]).slice(15, 16)).toEqual([null]);
+  });
+
+  it('PUT writes it when sent — and an empty one clears it, with no lookup', async () => {
+    vi.mocked(query).mockResolvedValueOnce(found).mockResolvedValueOnce(done);
+    await PUT(request('PUT', { ...COMPANY, salespersonId: 'sp1' }), ctx);
+    const [sql, params] = vi.mocked(query).mock.calls[1];
+    expect(sql).toContain('salespersonId = ?');
+    expect((params as unknown[]).slice(-2)).toEqual(['sp1', 'c1']);
+
+    vi.mocked(query).mockReset();
+    vi.mocked(query).mockResolvedValue(done);
+    await PUT(request('PUT', { ...COMPANY, salespersonId: '' }), ctx);
+    expect(query).toHaveBeenCalledTimes(1);
+    const [clearSql, clearParams] = vi.mocked(query).mock.calls[0];
+    expect(clearSql).toContain('salespersonId = ?');
+    expect((clearParams as unknown[]).slice(-2)).toEqual([null, 'c1']);
+  });
+
+  it('PUT leaves it alone when not sent (a caller that knows nothing of it)', async () => {
+    vi.mocked(query).mockResolvedValue(done);
+    await PUT(request('PUT', COMPANY), ctx);
+    expect(vi.mocked(query).mock.calls[0][0]).not.toContain('salespersonId');
+  });
+
+  it('refuses someone not on the list with 400, writing nothing', async () => {
+    vi.mocked(query).mockResolvedValueOnce(none);
+    const res = await PUT(request('PUT', { ...COMPANY, salespersonId: 'sp-gone' }), ctx);
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe('ไม่พบพนักงานขายที่เลือก อาจถูกลบไปแล้ว กรุณาเลือกใหม่');
+    expect(query).toHaveBeenCalledTimes(1);
+
+    vi.mocked(query).mockReset();
+    vi.mocked(query).mockResolvedValueOnce(none);
+    const added = await POST(request('POST', { ...COMPANY, salespersonId: 'sp-gone' }));
+    expect(added.status).toBe(400);
+    expect(query).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['a number', 5],
+    ['an object', { id: 'sp1' }],
+  ])('refuses a salesperson that is %s with 400', async (_label, value) => {
+    const res = await PUT(request('PUT', { ...COMPANY, salespersonId: value }), ctx);
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe('ช่อง "เซลล์ผู้ดูแล" ไม่ถูกต้อง');
+    expect(query).not.toHaveBeenCalled();
+  });
+});

@@ -27,7 +27,7 @@ const HOUR = 3600_000;
 const COMPANIES = [
   { id: "co1", name: "บริษัท ก", addressNo: "", moo: "", soi: "", road: "", subDistrict: "", district: "บางนา", province: "กรุงเทพมหานคร", postalCode: "", phone: "021111111", note: "" },
   { id: "co2", name: "บริษัท ข", addressNo: "", moo: "", soi: "", road: "", subDistrict: "", district: "", province: "", postalCode: "", phone: "", note: "" },
-  { id: "co3", name: "บริษัท ค", addressNo: "", moo: "", soi: "", road: "", subDistrict: "", district: "เมือง", province: "ชลบุรี", postalCode: "", phone: "", note: "" },
+  { id: "co3", name: "บริษัท ค", addressNo: "", moo: "", soi: "", road: "", subDistrict: "", district: "เมือง", province: "ชลบุรี", postalCode: "", phone: "", note: "", salespersonId: "s1" },
 ];
 
 function customersFixture({ recent = true } = {}) {
@@ -346,12 +346,34 @@ describe("/customers — companies", () => {
     render(<Customers />);
     await openCompaniesTab();
     const headers = within(companyTable()).getAllByRole("columnheader").map((h) => (h.textContent ?? "").replace(/[↕↑↓]/g, ""));
-    expect(headers.slice(0, 3)).toEqual(["ชื่อบริษัท", "จังหวัด", "อำเภอ"]);
+    expect(headers.slice(0, 4)).toEqual(["ชื่อบริษัท", "จังหวัด", "อำเภอ", "เซลล์ผู้ดูแล"]);
     const cells = (name: string) =>
       within(screen.getByRole("row", { name: `ดูข้อมูล ${name}` })).getAllByRole("cell").slice(1, 3).map((c) => c.textContent);
     expect(cells("บริษัท ก")).toEqual(["กรุงเทพมหานคร", "บางนา"]);
     expect(cells("บริษัท ข")).toEqual(["-", "-"]);
     expect(cells("บริษัท ค")).toEqual(["ชลบุรี", "เมือง"]);
+  });
+
+  it("shows who looks after each company, '-' for nobody — and finds them by that name", async () => {
+    mockFetch();
+    render(<Customers />);
+    await openCompaniesTab();
+    const caretaker = (name: string) => within(screen.getByRole("row", { name: `ดูข้อมูล ${name}` })).getAllByRole("cell")[3].textContent;
+    expect(caretaker("บริษัท ค")).toBe("คุณวิชัย");
+    expect(caretaker("บริษัท ก")).toBe("-");
+
+    fireEvent.change(screen.getByRole("textbox", { name: "ค้นหาบริษัท" }), { target: { value: "วิชัย" } });
+    expect(firstCells(companyTable())).toEqual(["บริษัท ค"]);
+  });
+
+  it("sorts by the salesperson from the header — nobody last", async () => {
+    mockFetch();
+    render(<Customers />);
+    await openCompaniesTab();
+    fireEvent.click(header(/^เซลล์ผู้ดูแล/));
+    expect(firstCells(companyTable())[0]).toBe("บริษัท ค");
+    fireEvent.click(header(/^เซลล์ผู้ดูแล/));
+    expect(firstCells(companyTable())[0]).toBe("บริษัท ค");
   });
 
   it("sorts by name, by province and by district from the headers", async () => {

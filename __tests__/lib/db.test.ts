@@ -40,14 +40,14 @@ process.env.DB_USER = 'tester';
 process.env.DB_PASSWORD = 'pw';
 process.env.DB_NAME = 'testdb';
 
-// A version SELECT result that MATCHES SCHEMA_VERSION (56) → bootstrap fast-path,
+// A version SELECT result that MATCHES SCHEMA_VERSION (57) → bootstrap fast-path,
 // skipping DDL. Value is a string because settings stores VARCHAR values.
 //
 // ⚠️ This constant only ever goes UP, in step with db.ts. The bootstrap's fast
 // path is `stored >= SCHEMA_VERSION`, so a number the live database has already
 // recorded can never trigger a migration again — reusing one silently skips the
 // entire migration in production (that is how v33 was burned).
-const SCHEMA_VERSION = '56';
+const SCHEMA_VERSION = '57';
 const SCHEMA_MATCH: [Array<{ value: string }>, unknown[]] = [[{ value: SCHEMA_VERSION }], []];
 // An empty result → no schema_version row / no admin row → full bootstrap.
 const EMPTY: [unknown[], unknown[]] = [[], []];
@@ -1624,6 +1624,22 @@ describe('db.ts', () => {
 
       expect(mockConnection.release).toHaveBeenCalled();
     });
+  });
+});
+
+// ── v57: เซลล์ผู้ดูแล — the salesperson who looks after a company ─────────────
+// Nullable (most companies have none yet), no FK: deleting the salesperson
+// clears it (salesStore.deleteSalesperson), the way sales_records is loose.
+describe("v57 — a company's salesperson", () => {
+  it('adds the column, nullable, after the companies table exists', async () => {
+    const db = await freshImport();
+    mockConnection.query.mockResolvedValue(EMPTY);
+    await db.getDbConnection();
+    const sql = bootstrapSql().map((s) => s.replace(/\s+/g, ' ').trim());
+    const alter = sql.indexOf('ALTER TABLE companies ADD COLUMN IF NOT EXISTS salespersonId VARCHAR(255) DEFAULT NULL');
+    const create = sql.findIndex((s) => /CREATE TABLE IF NOT EXISTS companies/.test(s));
+    expect(create).toBeGreaterThanOrEqual(0);
+    expect(alter).toBeGreaterThan(create);
   });
 });
 

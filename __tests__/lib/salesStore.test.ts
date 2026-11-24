@@ -1,7 +1,8 @@
 // @vitest-environment node
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-vi.mock('@/app/lib/db', () => ({ query: vi.fn() }));
+const conn = { query: vi.fn() };
+vi.mock('@/app/lib/db', () => ({ query: vi.fn(), withTransaction: vi.fn(async (fn: (c: typeof conn) => unknown) => fn(conn)) }));
 import { query } from '@/app/lib/db';
 
 import {
@@ -68,10 +69,20 @@ describe('salesStore', () => {
     });
 
     it('deleteSalesperson reports success/failure by affected rows', async () => {
-      vi.mocked(query).mockResolvedValue([{ affectedRows: 1 }] as any);
+      conn.query.mockResolvedValue([{ affectedRows: 1 }]);
       expect(await deleteSalesperson('sp1')).toBe(true);
-      vi.mocked(query).mockResolvedValue([{ affectedRows: 0 }] as any);
+      conn.query.mockResolvedValue([{ affectedRows: 0 }]);
       expect(await deleteSalesperson('missing')).toBe(false);
+    });
+
+    it('deleteSalesperson leaves the companies they looked after with nobody, in the same transaction', async () => {
+      conn.query.mockResolvedValue([{ affectedRows: 1 }]);
+      await deleteSalesperson('sp1');
+      const sql = conn.query.mock.calls.map(([s]) => String(s).replace(/\s+/g, ' '));
+      expect(sql[0]).toBe('UPDATE companies SET salespersonId = NULL WHERE salespersonId = ?');
+      expect(conn.query.mock.calls[0][1]).toEqual(['sp1']);
+      expect(sql[1]).toBe('DELETE FROM salespeople WHERE id = ?');
+      expect(query).not.toHaveBeenCalled();
     });
   });
 });

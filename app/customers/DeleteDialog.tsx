@@ -30,12 +30,15 @@ export default function DeleteDialog({
   kind,
   id,
   name,
+  notice,
   onClose,
   onDeleted,
 }: {
   kind: DeleteKind;
   id: string;
   name: string;
+  /** What the delete will also change, shown with the question — not a reason to refuse (a salesperson's companies). */
+  notice?: string | null;
   onClose: () => void;
   /** It is gone (the dialog is done; the host closes it). */
   onDeleted: () => void;
@@ -182,6 +185,11 @@ export default function DeleteDialog({
               <p>
                 ลบ <strong className="text-gray-900">{name}</strong>? ลบแล้วกู้คืนไม่ได้
               </p>
+              {notice && (
+                <p className="text-sm text-amber-800 bg-amber-50 border border-amber-100 rounded-xl px-4 py-3 text-left" data-testid="delete-notice">
+                  {notice}
+                </p>
+              )}
               {phase.kind === "checking" && (
                 <p className="text-sm text-gray-400" role="status">
                   กำลังตรวจสอบข้อมูลที่ผูกอยู่...

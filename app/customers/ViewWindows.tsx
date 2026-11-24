@@ -15,6 +15,7 @@ const SECTION_TITLE = "text-sm font-semibold text-gray-400 uppercase tracking-wi
 
 export function CompanyWindow({
   company,
+  salespersonName,
   customers,
   customersLoaded,
   onClose,
@@ -25,6 +26,8 @@ export function CompanyWindow({
   onCopyFailed,
 }: {
   company: Company;
+  /** Its เซลล์ผู้ดูแล's name, "" for nobody. */
+  salespersonName: string;
   /** Every customer the page holds — the company's own are picked out here. */
   customers: readonly Customer[];
   /** Whether that list has loaded: an empty one that has not is not "none". */
@@ -87,6 +90,15 @@ export function CompanyWindow({
           <p className="text-gray-800 font-medium tabular-nums">
             <CopyText value={formatThaiPhone(company.phone)} onCopied={onCopied} onFailed={onCopyFailed} />
           </p>
+        </div>
+
+        <div className="bg-gray-50 rounded-2xl p-5 border border-gray-100" data-testid="company-salesperson">
+          <h3 className={`${SECTION_TITLE} mb-1`}>เซลล์ผู้ดูแล</h3>
+          {salespersonName ? (
+            <p className="text-gray-800 font-medium">{salespersonName}</p>
+          ) : (
+            <p className="text-gray-400 italic">ไม่ระบุ</p>
+          )}
         </div>
 
         {(!!company.taxId || !!company.branchCode || hasWht) && (

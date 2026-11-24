@@ -3,6 +3,7 @@
 import { useRef, useState, type ReactNode } from "react";
 import SearchableDropdown from "../components/SearchableDropdown";
 import { errorMessageOf } from "../lib/apiErrorMessage";
+import { thCompare } from "../lib/thCompare";
 import { taxIdWarning } from "../lib/thaiTaxId";
 import FormModal from "./FormModal";
 import type { Company, Salesperson } from "./types";
@@ -214,6 +215,18 @@ const WHT_OPTIONS = [
 ];
 
 /** The branch picker's three states, read from the draft (formHelpers.branchDraftOf). */
+/** The เซลล์ผู้ดูแล picker: nobody first, then everyone ก→ฮ — and the saved
+ *  one kept, named as unknown, when the list does not have them (it failed
+ *  to load), so opening the form is not an edit. */
+function caretakerOptions(salespeople: readonly Salesperson[], current: string) {
+  const options = [
+    { value: "", label: "— ไม่ระบุ —" },
+    ...[...salespeople].sort((a, b) => thCompare(a.name, b.name)).map((s) => ({ value: s.id, label: s.name })),
+  ];
+  if (current && !salespeople.some((s) => s.id === current)) options.push({ value: current, label: "(ไม่พบในรายชื่อพนักงานขาย)" });
+  return options;
+}
+
 function branchModeOf(branchCode: string): "" | "head" | "branch" {
   if (!branchCode.trim()) return "";
   return branchCode === "สำนักงานใหญ่" ? "head" : "branch";
@@ -222,6 +235,7 @@ function branchModeOf(branchCode: string): "" | "head" | "branch" {
 export function CompanyForm({
   company,
   companies,
+  salespeople,
   onClose,
   onSaved,
 }: {
@@ -229,6 +243,8 @@ export function CompanyForm({
   company: Partial<Company> | null;
   /** Every company, to say when the name is already one of them. */
   companies: readonly Company[];
+  /** Who can be its เซลล์ผู้ดูแล. */
+  salespeople: readonly Salesperson[];
   onClose: () => void;
   onSaved: (saved: Company, isNew: boolean) => void;
 }) {
@@ -249,6 +265,7 @@ export function CompanyForm({
     ? WHT_OPTIONS
     : [...WHT_OPTIONS, { value: draft.whtPercent, label: `${draft.whtPercent}%` }];
   const sameName = sameNameAs(companies, draft.name, editId);
+  const salespersonOptions = caretakerOptions(salespeople, draft.salespersonId);
 
   const save = async () => {
     if (savingRef.current) return;
@@ -355,6 +372,18 @@ export function CompanyForm({
           <PhoneInput id="company-phone" value={draft.phone} onChange={(phone) => set({ phone })} placeholder="เช่น 02-123-4567 ต่อ 105" />
         </div>
 
+        <div>
+          <label htmlFor="company-salespersonId" className={LABEL}>เซลล์ผู้ดูแล</label>
+          {/* Optional, one per company (v57). The list is the พนักงานขาย tab's. */}
+          <SearchableDropdown
+            id="company-salespersonId"
+            value={draft.salespersonId}
+            onChange={(salespersonId) => set({ salespersonId })}
+            options={salespersonOptions}
+            buttonClassName={dropdownClass()}
+          />
+        </div>
+
         {/* What a tax invoice prints for this buyer, and what it usually
             withholds when it pays — the accounting module fills both in. */}
         <div className="bg-gray-50/50 p-6 rounded-2xl border border-gray-100 space-y-4" data-testid="company-tax">
@@ -446,6 +475,7 @@ export function CustomerForm({
   customer,
   companies,
   customers,
+  salespeople,
   onClose,
   onSaved,
   onCompanyCreated,
@@ -456,6 +486,8 @@ export function CustomerForm({
   companies: readonly Company[];
   /** Every customer, to say when this looks like one of them. */
   customers: readonly Customer[];
+  /** For the company form it can open: who can be the new company's เซลล์ผู้ดูแล. */
+  salespeople: readonly Salesperson[];
   onClose: () => void;
   onSaved: (saved: CustomerDraft & { id: string }, isNew: boolean) => void;
   /** A company was added from inside this form: the host puts it on its list. */
@@ -609,6 +641,7 @@ export function CustomerForm({
         <CompanyForm
           company={{ name: newCompanyName }}
           companies={companies}
+          salespeople={salespeople}
           onClose={() => setNewCompanyName(null)}
           onSaved={(saved) => {
             setNewCompanyName(null);

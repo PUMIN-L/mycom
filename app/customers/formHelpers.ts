@@ -33,6 +33,8 @@ export interface CompanyDraft {
   branchCode: string;
   /** The percent this company usually withholds ("3"), or "" for none. */
   whtPercent: string;
+  /** เซลล์ผู้ดูแล: a salesperson's id, or "" for nobody (the API stores NULL). */
+  salespersonId: string;
 }
 
 export interface CustomerDraft {
@@ -63,7 +65,7 @@ type Source = Record<string, unknown> | null | undefined;
 
 const COMPANY_FIELDS = [
   "name", "addressNo", "moo", "soi", "road", "subDistrict", "district", "province", "postalCode", "phone", "note",
-  "taxId", "branchCode", "whtPercent",
+  "taxId", "branchCode", "whtPercent", "salespersonId",
 ] as const;
 const CUSTOMER_FIELDS = ["name", "companyId", "department", "phone", "email", "note"] as const;
 const SALESPERSON_FIELDS = ["name", "phone", "email", "note"] as const;

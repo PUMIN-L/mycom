@@ -1,4 +1,4 @@
-import { query } from "./db";
+import { query, withTransaction } from "./db";
 import { sanitizePlainText } from "./sanitizeHtml";
 
 export interface Salesperson {
@@ -89,7 +89,15 @@ export async function updateSalesperson(id: string, data: Partial<Salesperson>):
   return await getSalesperson(id);
 }
 
+/**
+ * Deletes the salesperson. The companies they looked after (เซลล์ผู้ดูแล, v57)
+ * are left with nobody, in the same transaction — a dangling id would name no
+ * one and could not be picked again in the form.
+ */
 export async function deleteSalesperson(id: string): Promise<boolean> {
-  const [result] = await query<any>("DELETE FROM salespeople WHERE id = ?", [id]);
-  return result.affectedRows > 0;
+  return withTransaction(async (conn) => {
+    await conn.query("UPDATE companies SET salespersonId = NULL WHERE salespersonId = ?", [id]);
+    const [result] = await conn.query<any>("DELETE FROM salespeople WHERE id = ?", [id]);
+    return result.affectedRows > 0;
+  });
 }

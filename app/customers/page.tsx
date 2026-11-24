@@ -8,7 +8,7 @@ import EquipmentTab from "./EquipmentTab";
 import DeleteDialog from "./DeleteDialog";
 import { CompanyForm, CustomerForm, SalespersonForm } from "./EntityForms";
 import { CompanyWindow, SalespersonWindow } from "./ViewWindows";
-import { KIND_NOUN, type DeleteKind } from "./linkHelpers";
+import { KIND_NOUN, caretakerNotice, type DeleteKind } from "./linkHelpers";
 import type { Company, Salesperson } from "./types";
 // ค้นหา–แทนที่ใน "บันทึกลูกค้า" — an ADDITION to this tab, never a replacement.
 // It owns its own data and its own network calls, and it does not touch the
@@ -33,6 +33,7 @@ import {
   anyRecentlyNoted,
   companyDistrict,
   companyProvince,
+  companySalespersonName,
   countCustomersByCompany,
   matchesCompanySearch,
   matchesCustomerSearch,
@@ -481,9 +482,17 @@ function CustomersInner() {
   const [companyPage, setCompanyPage] = useState(1);
   // How many customers each company has — a column, and a sort.
   const customerCounts = useMemo(() => countCustomersByCompany(customers), [customers]);
+  // เซลล์ผู้ดูแล by salesperson id — a column, a sort, and the search box.
+  const salespersonNames = useMemo(() => new Map(salespeople.map((s) => [s.id, s.name])), [salespeople]);
   const filteredCompanies = useMemo(
-    () => sortCompanies(companies.filter((c) => matchesCompanySearch(c, searchCompany)), companySort, customerCounts),
-    [companies, searchCompany, companySort, customerCounts]
+    () =>
+      sortCompanies(
+        companies.filter((c) => matchesCompanySearch(c, searchCompany, companySalespersonName(c, salespersonNames))),
+        companySort,
+        customerCounts,
+        salespersonNames
+      ),
+    [companies, searchCompany, companySort, customerCounts, salespersonNames]
   );
   const sortCompaniesBy = (key: CompanySortKey) => {
     // A count starts with the most; names and places start ก→ฮ.
@@ -753,6 +762,7 @@ function CustomersInner() {
                       {/* The province and the district — each sorts on its own; the search box matches both. */}
                       <SortableTh className={TH} dir={companySort?.key === "province" ? companySort.dir : null} onSort={() => sortCompaniesBy("province")}>จังหวัด</SortableTh>
                       <SortableTh className={TH} dir={companySort?.key === "district" ? companySort.dir : null} onSort={() => sortCompaniesBy("district")}>อำเภอ</SortableTh>
+                      <SortableTh className={TH} dir={companySort?.key === "salesperson" ? companySort.dir : null} onSort={() => sortCompaniesBy("salesperson")}>เซลล์ผู้ดูแล</SortableTh>
                       {/* How many of its people are on the customers tab. */}
                       <SortableTh className={TH} dir={companySort?.key === "customers" ? companySort.dir : null} onSort={() => sortCompaniesBy("customers")}>ลูกค้า</SortableTh>
                       <th className={TH}>เบอร์โทร</th>
@@ -762,13 +772,14 @@ function CustomersInner() {
                   </thead>
                   <tbody className="divide-y divide-gray-50">
                     {listStatus.companies === "error" ? (
-                      <LoadErrorRow colSpan={7} message={LOAD_FAILED.companies} onRetry={retryLoad} />
+                      <LoadErrorRow colSpan={8} message={LOAD_FAILED.companies} onRetry={retryLoad} />
                     ) : firstLoad("companies") ? (
                       Array.from({ length: 5 }).map((_, i) => (
                         <tr key={i} className="animate-pulse">
                           <td className={TD}><div className="h-5 bg-gray-200 rounded w-40"></div></td>
                           <td className={TD}><div className="h-5 bg-gray-200 rounded w-24"></div></td>
                           <td className={TD}><div className="h-5 bg-gray-200 rounded w-20"></div></td>
+                          <td className={TD}><div className="h-5 bg-gray-200 rounded w-24"></div></td>
                           <td className={TD}><div className="h-5 bg-gray-200 rounded w-8"></div></td>
                           <td className={TD}><div className="h-5 bg-gray-200 rounded w-24"></div></td>
                           <td className={TD}><div className="h-5 bg-gray-200 rounded w-48"></div></td>
@@ -789,6 +800,7 @@ function CustomersInner() {
                         </td>
                         <td className={`${TD} text-gray-600 text-sm`}>{companyProvince(c) || "-"}</td>
                         <td className={`${TD} text-gray-600 text-sm`}>{companyDistrict(c) || "-"}</td>
+                        <td className={`${TD} text-gray-600 text-sm`}>{companySalespersonName(c, salespersonNames) || "-"}</td>
                         <td className={`${TD} text-gray-600 tabular-nums`} data-testid="company-customer-count">
                           {listStatus.customers === "ok" ? (customerCounts.get(c.id) || 0).toLocaleString("th-TH") : "-"}
                         </td>
@@ -1135,6 +1147,7 @@ function CustomersInner() {
       {viewingCompany && (
         <CompanyWindow
           company={viewingCompany}
+          salespersonName={companySalespersonName(viewingCompany, salespersonNames)}
           customers={customers}
           customersLoaded={customersLoaded}
           onClose={() => setViewingCompany(null)}
@@ -1206,6 +1219,7 @@ function CustomersInner() {
         <CompanyForm
           company={companyForm}
           companies={companies}
+          salespeople={salespeople}
           onClose={() => setCompanyForm(null)}
           onSaved={onCompanySaved}
         />
@@ -1215,6 +1229,7 @@ function CustomersInner() {
           customer={customerForm}
           companies={companies}
           customers={customers}
+          salespeople={salespeople}
           onClose={() => setCustomerForm(null)}
           onSaved={onCustomerSaved}
           onCompanyCreated={onCompanyCreated}
@@ -1236,6 +1251,11 @@ function CustomersInner() {
           kind={deleteTarget.kind}
           id={deleteTarget.id}
           name={deleteTarget.name}
+          notice={
+            deleteTarget.kind === "salesperson"
+              ? caretakerNotice(companies.filter((c) => c.salespersonId === deleteTarget.id).map((c) => c.name))
+              : null
+          }
           onClose={() => setDeleteTarget(null)}
           onDeleted={onDeleted}
         />

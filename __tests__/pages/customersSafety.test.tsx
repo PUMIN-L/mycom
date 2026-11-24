@@ -266,6 +266,29 @@ describe("/customers — delete says what still points at the record", () => {
     expect(within(alertDialog()).getByTestId("delete-blockers")).toHaveTextContent("รายการขาย 3 รายการ");
   });
 
+  it("a salesperson who looks after companies: names them before ลบ, and still deletes", async () => {
+    lists.companies = [{ ...(lists.companies[0] as object), salespersonId: "sp1" }, lists.companies[1]];
+    render(<Customers />);
+    await loaded();
+    fireEvent.click(tab(/^พนักงานขาย/));
+    await openDelete("คุณวิชัย");
+    const button = await confirmButton();
+    expect(within(alertDialog()).getByTestId("delete-notice")).toHaveTextContent(
+      "ดูแลบริษัทอยู่ 1 บริษัท: บริษัท ก — ลบแล้วบริษัทเหล่านี้จะเป็น เซลล์ผู้ดูแล: ไม่ระบุ"
+    );
+    fireEvent.click(button);
+    expect(await screen.findByText(/ลบพนักงานขายสำเร็จ/)).toBeInTheDocument();
+  });
+
+  it("a salesperson who looks after none: no notice", async () => {
+    render(<Customers />);
+    await loaded();
+    fireEvent.click(tab(/^พนักงานขาย/));
+    await openDelete("คุณวิชัย");
+    await confirmButton();
+    expect(within(alertDialog()).queryByTestId("delete-notice")).not.toBeInTheDocument();
+  });
+
   it("deleting a company and a salesperson goes to their own routes and says so", async () => {
     render(<Customers />);
     await loaded();

@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { query } from "../../../lib/db";
 import { withRoute, requireAuth, jsonError } from "../../../lib/apiHelpers";
-import { readCompanyInput } from "../companyInput";
+import { assertSalespersonExists, readCompanyInput } from "../companyInput";
 
 export const PUT = withRoute(
   "แก้ไขบริษัทไม่สำเร็จ",
@@ -10,16 +10,18 @@ export const PUT = withRoute(
     await requireAuth();
 
     const { id } = await params;
-    const { name, addressNo, moo, soi, road, subDistrict, district, province, postalCode, phone, note, taxId, branchCode, whtPercent } =
+    const { name, addressNo, moo, soi, road, subDistrict, district, province, postalCode, phone, note, taxId, branchCode, whtPercent, salespersonId } =
       readCompanyInput(await request.json());
+    await assertSalespersonExists(salespersonId);
 
-    // The tax fields are written only when the request sent them: a caller
-    // that knows nothing of tax IDs must not wipe one out.
+    // The tax fields and เซลล์ผู้ดูแล are written only when the request sent
+    // them: a caller that knows nothing of them must not wipe one out.
     const taxSets: string[] = [];
     const taxValues: unknown[] = [];
     if (taxId !== undefined) { taxSets.push("taxId = ?"); taxValues.push(taxId); }
     if (branchCode !== undefined) { taxSets.push("branchCode = ?"); taxValues.push(branchCode); }
     if (whtPercent !== undefined) { taxSets.push("whtPercent = ?"); taxValues.push(whtPercent); }
+    if (salespersonId !== undefined) { taxSets.push("salespersonId = ?"); taxValues.push(salespersonId); }
 
     const [result] = await query<ResultSetHeader>(
       `UPDATE companies SET

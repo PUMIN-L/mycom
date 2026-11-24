@@ -144,6 +144,7 @@ export interface CompanyLike {
   subDistrict?: string;
   postalCode?: string;
   phone?: string;
+  salespersonId?: string | null;
 }
 
 /** The จังหวัด column: the province by its official name — "กทม." and
@@ -157,41 +158,54 @@ export function companyDistrict(c: CompanyLike): string {
   return (c.district || "").trim();
 }
 
+/** The เซลล์ผู้ดูแล column: their name (`names`, by salesperson id), "" for
+ *  nobody — or for an id no longer on the list. */
+export function companySalespersonName(c: CompanyLike, names: ReadonlyMap<string, string>): string {
+  return (c.salespersonId && names.get(c.salespersonId)) || "";
+}
+
 /**
  * Whether a company matches the search box: every word in its name or
  * address (ตำบล, อำเภอ, จังหวัด, รหัสไปรษณีย์) — "แล็บ ชลบุรี" — or the phone,
  * by its digits. One box: there used to be three (name / province /
- * district), side by side.
+ * district), side by side. And by the name of its เซลล์ผู้ดูแล
+ * (`salespersonName`), so "วิชัย" lists the companies วิชัย looks after.
  */
-export function matchesCompanySearch(c: CompanyLike, query: string): boolean {
+export function matchesCompanySearch(c: CompanyLike, query: string, salespersonName?: string): boolean {
   const q = normalizeQuery(query);
   if (!q) return true;
   // The province under every name it goes by: "กทม" finds กรุงเทพมหานคร.
-  if (everyWordIn(q, [c.name, c.subDistrict, c.district, provinceSearchText(c.province), c.postalCode])) return true;
+  if (everyWordIn(q, [c.name, c.subDistrict, c.district, provinceSearchText(c.province), c.postalCode, salespersonName])) return true;
   return phoneMatches(q, c.phone);
 }
 
-export type CompanySortKey = "name" | "province" | "district" | "customers";
+export type CompanySortKey = "name" | "province" | "district" | "salesperson" | "customers";
 
 /**
  * Sorted as asked, or left in the order given (newest first, from the API).
  * By province: province, then district within it; by district: district, then
  * province — blanks last either way. By customers:
- * how many each has (`customerCounts`, by company id), ties by name.
+ * how many each has (`customerCounts`, by company id), ties by name. By
+ * salesperson: their name (`salespersonNames`, by salesperson id), nobody
+ * last either way, ties by name.
  */
 export function sortCompanies<T extends CompanyLike>(
   list: readonly T[],
   sort: SortState<CompanySortKey> | null,
-  customerCounts?: ReadonlyMap<string, number>
+  customerCounts?: ReadonlyMap<string, number>,
+  salespersonNames: ReadonlyMap<string, string> = new Map()
 ): T[] {
   if (!sort) return [...list];
   const sign = sort.dir === "asc" ? 1 : -1;
   const countOf = (c: T) => (c.id && customerCounts?.get(c.id)) || 0;
+  const caretakerOf = (c: T) => companySalespersonName(c, salespersonNames);
   const compare = (a: T, b: T) =>
     sort.key === "name"
       ? compareBlanksLast(a.name, b.name, sign)
       : sort.key === "customers"
         ? sign * (countOf(a) - countOf(b)) || thCompare(a.name, b.name)
+        : sort.key === "salesperson"
+          ? compareBlanksLast(caretakerOf(a), caretakerOf(b), sign) || thCompare(a.name, b.name)
         : sort.key === "district"
           ? compareBlanksLast(a.district, b.district, sign) || compareBlanksLast(provinceName(a.province), provinceName(b.province), sign)
           : compareBlanksLast(provinceName(a.province), provinceName(b.province), sign) || compareBlanksLast(a.district, b.district, sign);

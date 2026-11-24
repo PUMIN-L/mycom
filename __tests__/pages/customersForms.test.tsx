@@ -381,6 +381,28 @@ describe("/customers forms — a company added from inside the customer form", (
   });
 });
 
+describe("/customers company form — เซลล์ผู้ดูแล", () => {
+  it("picks the salesperson from the list, and sends nobody as empty", async () => {
+    const dialog = await openCompanyForm("add");
+    expect(within(dialog).getByLabelText("เซลล์ผู้ดูแล")).toHaveTextContent("— ไม่ระบุ —");
+    fireEvent.change(within(dialog).getByLabelText(/ชื่อบริษัท/), { target: { value: "บริษัท ใหม่ จำกัด" } });
+    await pickOption(/เซลล์ผู้ดูแล/, "คุณวิชัย");
+    fireEvent.click(saveButton());
+    await waitFor(() => expect(callsOf("POST", "/api/companies")).toHaveLength(1));
+    expect(bodyOf(callsOf("POST", "/api/companies")[0]).salespersonId).toBe("sp1");
+  });
+
+  it("opens with the saved one, and clears it back to nobody", async () => {
+    lists.companies = [{ ...companiesFixture()[0], salespersonId: "sp1" }, companiesFixture()[1]];
+    await openCompanyForm("บริษัท ไทยแล็บ จำกัด");
+    expect(screen.getByLabelText("เซลล์ผู้ดูแล")).toHaveTextContent("คุณวิชัย");
+    await pickOption(/เซลล์ผู้ดูแล/, "— ไม่ระบุ —");
+    fireEvent.click(saveButton());
+    await screen.findByText(/บันทึกข้อมูลบริษัทสำเร็จ/);
+    expect(bodyOf(callsOf("PUT", "/api/companies/co1")[0]).salespersonId).toBe("");
+  });
+});
+
 describe("/customers forms — the province is picked from the 77", () => {
   it("a company stored as กทม. opens as กรุงเทพมหานคร, unchanged until something is, and is saved by that name", async () => {
     await openCompanyForm("บริษัท ไทยแล็บ จำกัด");

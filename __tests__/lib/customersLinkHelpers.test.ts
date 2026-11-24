@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { linkLines, linksUrl, deleteUrl, KIND_NOUN, BLOCKED_HINT } from "@/app/customers/linkHelpers";
+import { linkLines, linksUrl, deleteUrl, KIND_NOUN, BLOCKED_HINT, caretakerNotice } from "@/app/customers/linkHelpers";
 
 describe("linkLines", () => {
   it("a customer: one line per kind of record still pointing at it, in a fixed order", () => {
@@ -54,5 +54,24 @@ describe("wording", () => {
       expect(KIND_NOUN[kind].done).toMatch(/^ลบ.+สำเร็จ$/);
       expect(BLOCKED_HINT[kind]).toMatch(/ก่อน/);
     }
+  });
+});
+
+describe("caretakerNotice — deleting a salesperson who looks after companies", () => {
+  it("nothing to say when they look after none", () => {
+    expect(caretakerNotice([])).toBeNull();
+  });
+
+  it("names them, ก→ฮ, and says they will have nobody", () => {
+    expect(caretakerNotice(["บริษัท ข", "บริษัท ก"])).toBe(
+      "ดูแลบริษัทอยู่ 2 บริษัท: บริษัท ก, บริษัท ข — ลบแล้วบริษัทเหล่านี้จะเป็น เซลล์ผู้ดูแล: ไม่ระบุ"
+    );
+  });
+
+  it("names five and counts the rest", () => {
+    const many = ["ก", "ข", "ค", "ง", "จ", "ฉ", "ช"].map((c) => `บริษัท ${c}`);
+    expect(caretakerNotice(many)).toBe(
+      "ดูแลบริษัทอยู่ 7 บริษัท: บริษัท ก, บริษัท ข, บริษัท ค, บริษัท ง, บริษัท จ และอีก 2 บริษัท — ลบแล้วบริษัทเหล่านี้จะเป็น เซลล์ผู้ดูแล: ไม่ระบุ"
+    );
   });
 });

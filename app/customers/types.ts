@@ -21,6 +21,8 @@ export interface Company {
   branchCode?: string | null;
   /** DECIMAL — arrives as text ("3.00"). */
   whtPercent?: string | number | null;
+  /** เซลล์ผู้ดูแล (v57): the salesperson who looks after it, NULL for nobody. */
+  salespersonId?: string | null;
 }
 
 export interface Salesperson {

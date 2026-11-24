@@ -1,3 +1,5 @@
+import type { RowDataPacket } from "mysql2";
+import { query } from "../../lib/db";
 import { sanitizePlainText } from "../../lib/sanitizeHtml";
 import { ApiError } from "../../lib/apiHelpers";
 import { normalizeBranchCode, normalizeTaxId } from "../../lib/thaiTaxId";
@@ -47,7 +49,11 @@ export interface CompanyTaxInput {
   whtPercent: number | null | undefined;
 }
 
-export type CompanyInput = { name: string } & Record<keyof typeof TEXT_FIELDS, string> & CompanyTaxInput;
+export type CompanyInput = { name: string } & Record<keyof typeof TEXT_FIELDS, string> &
+  CompanyTaxInput & {
+    /** เซลล์ผู้ดูแล (v57): an id, null for nobody, undefined = not sent (an update leaves it alone). */
+    salespersonId: string | null | undefined;
+  };
 
 export const TAX_ID_MAX = 30;
 export const WHT_PERCENT_MAX = 15;
@@ -93,6 +99,24 @@ function readTaxFields(body: Record<string, unknown>): CompanyTaxInput {
   return out;
 }
 
+function readSalespersonId(value: unknown): string | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null || value === "") return null;
+  if (typeof value !== "string" || value.length > 255) throw new ApiError(400, 'ช่อง "เซลล์ผู้ดูแล" ไม่ถูกต้อง');
+  return value;
+}
+
+/**
+ * The chosen เซลล์ผู้ดูแล must be on the list — or ApiError(400): a stale
+ * form (the salesperson deleted meanwhile) must not store an id that names
+ * nobody. Nothing to check for none, or when the field was not sent.
+ */
+export async function assertSalespersonExists(salespersonId: string | null | undefined): Promise<void> {
+  if (!salespersonId) return;
+  const [rows] = await query<RowDataPacket[]>("SELECT id FROM salespeople WHERE id = ? LIMIT 1", [salespersonId]);
+  if (rows.length === 0) throw new ApiError(400, "ไม่พบพนักงานขายที่เลือก อาจถูกลบไปแล้ว กรุณาเลือกใหม่");
+}
+
 /**
  * The submitted company, cleaned — or ApiError(400) for a missing name or a
  * field that is not text. A number (a house number or postal code sent as
@@ -104,7 +128,11 @@ export function readCompanyInput(data: unknown): CompanyInput {
   if (typeof body.name !== "string" || body.name.trim() === "") {
     throw new ApiError(400, "กรุณากรอกชื่อบริษัท");
   }
-  const input = { name: sanitizePlainText(body.name).substring(0, 255), ...readTaxFields(body) } as CompanyInput;
+  const input = {
+    name: sanitizePlainText(body.name).substring(0, 255),
+    ...readTaxFields(body),
+    salespersonId: readSalespersonId(body.salespersonId),
+  } as CompanyInput;
   for (const [field, max] of Object.entries(TEXT_FIELDS) as [keyof typeof TEXT_FIELDS, number][]) {
     const value = body[field];
     if (value === undefined || value === null) {

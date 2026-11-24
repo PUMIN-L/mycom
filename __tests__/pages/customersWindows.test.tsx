@@ -24,7 +24,7 @@ vi.mock("@/app/lib/xlsxExport", () => ({ downloadExcel: vi.fn(async () => {}) })
 const C = { addressNo: "", moo: "", soi: "", road: "", subDistrict: "", district: "", province: "", postalCode: "", phone: "", note: "" };
 const COMPANIES = [
   { ...C, id: "co1", name: "บริษัท กรุงเทพแล็บ จำกัด", addressNo: "1", road: "บางนา-ตราด", subDistrict: "บางนาเหนือ", district: "บางนา", province: "กรุงเทพมหานคร", postalCode: "10260", phone: "021234567", note: "วางบิลทุกวันที่ 25" },
-  { ...C, id: "co2", name: "บริษัท ชลบุรีเทส จำกัด", moo: "3", subDistrict: "บ่อวิน", district: "ศรีราชา", province: "ชลบุรี", postalCode: "20230" },
+  { ...C, id: "co2", name: "บริษัท ชลบุรีเทส จำกัด", moo: "3", subDistrict: "บ่อวิน", district: "ศรีราชา", province: "ชลบุรี", postalCode: "20230", salespersonId: "sp1" },
   { ...C, id: "co3", name: "ร้าน มีแต่อำเภอ", district: "ปลวกแดง" },
   { ...C, id: "co4", name: "ร้าน ไม่มีที่อยู่" },
 ];
@@ -75,6 +75,17 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.clearAllMocks();
   Object.defineProperty(navigator, "clipboard", { configurable: true, value: undefined });
+});
+
+describe("/customers — the company window: เซลล์ผู้ดูแล", () => {
+  it("says who looks after it, or ไม่ระบุ", async () => {
+    const { dialog } = await openCompany("บริษัท ชลบุรีเทส จำกัด");
+    expect(within(dialog).getByTestId("company-salesperson")).toHaveTextContent("เซลล์ผู้ดูแลคุณวิชัย");
+    esc();
+    fireEvent.click(row("บริษัท กรุงเทพแล็บ จำกัด"));
+    const other = await screen.findByRole("dialog", { name: "บริษัท กรุงเทพแล็บ จำกัด" });
+    expect(within(other).getByTestId("company-salesperson")).toHaveTextContent("เซลล์ผู้ดูแลไม่ระบุ");
+  });
 });
 
 describe("/customers — the company window", () => {

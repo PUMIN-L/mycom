@@ -3,6 +3,8 @@
 // it, the tests pin it. The counts come from GET /api/{kind}/[id]/links
 // (app/lib/deleteBlockers.ts).
 
+import { thCompare } from "../lib/thCompare";
+
 export type DeleteKind = "customer" | "company" | "salesperson";
 
 /** Each count the links route answers, in the order it is listed, with how
@@ -47,6 +49,24 @@ export function linkLines(kind: DeleteKind, counts: unknown): string[] {
     const n = Number(record[key]);
     return Number.isFinite(n) && n > 0 ? [`${label} ${Math.floor(n).toLocaleString("th-TH")} ${unit}`] : [];
   });
+}
+
+/** How many of the companies a salesperson looks after the notice names. */
+const CARETAKER_NAMED = 5;
+
+/**
+ * Deleting a salesperson who is เซลล์ผู้ดูแล of companies is not refused —
+ * those companies are left with nobody (salesStore.deleteSalesperson). The
+ * confirm question says which first, ก→ฮ, five by name and the rest counted.
+ * Null when they look after none.
+ */
+export function caretakerNotice(companyNames: readonly string[]): string | null {
+  if (companyNames.length === 0) return null;
+  const sorted = [...companyNames].sort(thCompare);
+  const named = sorted.slice(0, CARETAKER_NAMED).join(", ");
+  const rest = sorted.length - CARETAKER_NAMED;
+  const more = rest > 0 ? ` และอีก ${rest.toLocaleString("th-TH")} บริษัท` : "";
+  return `ดูแลบริษัทอยู่ ${sorted.length.toLocaleString("th-TH")} บริษัท: ${named}${more} — ลบแล้วบริษัทเหล่านี้จะเป็น เซลล์ผู้ดูแล: ไม่ระบุ`;
 }
 
 /** The links route of each kind. */
