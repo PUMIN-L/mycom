@@ -457,7 +457,10 @@ which read as "the row was last saved" — a phone fix moves nobody.)
   "+66" reads as "0" on both sides. A clicked header sorts by name / company
   (blank values last either way, ties keep the note order); "บันทึกล่าสุด" is
   the default note order and flips to oldest-first. Companies also sort by
-  their customer count (`countCustomersByCompany`, most first).
+  their customer count (`countCustomersByCompany`, most first), and by จังหวัด
+  or by อำเภอ — two columns since 2026-11-24 (`companyProvince` shows the
+  official name, so กทม. sits with กรุงเทพมหานคร; each sort breaks ties on the
+  other).
   `thCompare` ([`lib/thCompare.ts`](./app/lib/thCompare.ts), shared with
   /product-specs) uses one `Intl.Collator` — `localeCompare` with a locale
   builds a new one per call, ~80,000 calls for one sort of 6,000 customers.

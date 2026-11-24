@@ -31,7 +31,8 @@ import { bangkokDateString, displayDateTimeParts } from "../lib/dateFormat";
 import {
   DEFAULT_CUSTOMER_SORT,
   anyRecentlyNoted,
-  companyLocation,
+  companyDistrict,
+  companyProvince,
   countCustomersByCompany,
   matchesCompanySearch,
   matchesCustomerSearch,
@@ -749,8 +750,9 @@ function CustomersInner() {
                   <thead>
                     <tr className="bg-gray-50 text-gray-500 uppercase tracking-wider">
                       <SortableTh className={`${TH} rounded-l-xl`} dir={companySort?.key === "name" ? companySort.dir : null} onSort={() => sortCompaniesBy("name")}>ชื่อบริษัท</SortableTh>
-                      {/* The province / district the search box matches on. */}
-                      <SortableTh className={TH} dir={companySort?.key === "location" ? companySort.dir : null} onSort={() => sortCompaniesBy("location")}>อำเภอ / จังหวัด</SortableTh>
+                      {/* The province and the district — each sorts on its own; the search box matches both. */}
+                      <SortableTh className={TH} dir={companySort?.key === "province" ? companySort.dir : null} onSort={() => sortCompaniesBy("province")}>จังหวัด</SortableTh>
+                      <SortableTh className={TH} dir={companySort?.key === "district" ? companySort.dir : null} onSort={() => sortCompaniesBy("district")}>อำเภอ</SortableTh>
                       {/* How many of its people are on the customers tab. */}
                       <SortableTh className={TH} dir={companySort?.key === "customers" ? companySort.dir : null} onSort={() => sortCompaniesBy("customers")}>ลูกค้า</SortableTh>
                       <th className={TH}>เบอร์โทร</th>
@@ -760,12 +762,13 @@ function CustomersInner() {
                   </thead>
                   <tbody className="divide-y divide-gray-50">
                     {listStatus.companies === "error" ? (
-                      <LoadErrorRow colSpan={6} message={LOAD_FAILED.companies} onRetry={retryLoad} />
+                      <LoadErrorRow colSpan={7} message={LOAD_FAILED.companies} onRetry={retryLoad} />
                     ) : firstLoad("companies") ? (
                       Array.from({ length: 5 }).map((_, i) => (
                         <tr key={i} className="animate-pulse">
                           <td className={TD}><div className="h-5 bg-gray-200 rounded w-40"></div></td>
-                          <td className={TD}><div className="h-5 bg-gray-200 rounded w-32"></div></td>
+                          <td className={TD}><div className="h-5 bg-gray-200 rounded w-24"></div></td>
+                          <td className={TD}><div className="h-5 bg-gray-200 rounded w-20"></div></td>
                           <td className={TD}><div className="h-5 bg-gray-200 rounded w-8"></div></td>
                           <td className={TD}><div className="h-5 bg-gray-200 rounded w-24"></div></td>
                           <td className={TD}><div className="h-5 bg-gray-200 rounded w-48"></div></td>
@@ -784,7 +787,8 @@ function CustomersInner() {
                         <td className={TD}>
                           <p className="font-semibold text-gray-900">{c.name}</p>
                         </td>
-                        <td className={`${TD} text-gray-600 text-sm`}>{companyLocation(c) || "-"}</td>
+                        <td className={`${TD} text-gray-600 text-sm`}>{companyProvince(c) || "-"}</td>
+                        <td className={`${TD} text-gray-600 text-sm`}>{companyDistrict(c) || "-"}</td>
                         <td className={`${TD} text-gray-600 tabular-nums`} data-testid="company-customer-count">
                           {listStatus.customers === "ok" ? (customerCounts.get(c.id) || 0).toLocaleString("th-TH") : "-"}
                         </td>

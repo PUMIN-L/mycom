@@ -341,17 +341,20 @@ describe("/customers — rows", () => {
 });
 
 describe("/customers — companies", () => {
-  it("shows the district and province, '-' when unknown", async () => {
+  it("shows จังหวัด and อำเภอ in two columns, '-' when unknown", async () => {
     mockFetch();
     render(<Customers />);
     await openCompaniesTab();
-    const location = (name: string) => within(screen.getByRole("row", { name: `ดูข้อมูล ${name}` })).getAllByRole("cell")[1].textContent;
-    expect(location("บริษัท ก")).toBe("บางนา, กรุงเทพมหานคร");
-    expect(location("บริษัท ข")).toBe("-");
-    expect(location("บริษัท ค")).toBe("เมือง, ชลบุรี");
+    const headers = within(companyTable()).getAllByRole("columnheader").map((h) => (h.textContent ?? "").replace(/[↕↑↓]/g, ""));
+    expect(headers.slice(0, 3)).toEqual(["ชื่อบริษัท", "จังหวัด", "อำเภอ"]);
+    const cells = (name: string) =>
+      within(screen.getByRole("row", { name: `ดูข้อมูล ${name}` })).getAllByRole("cell").slice(1, 3).map((c) => c.textContent);
+    expect(cells("บริษัท ก")).toEqual(["กรุงเทพมหานคร", "บางนา"]);
+    expect(cells("บริษัท ข")).toEqual(["-", "-"]);
+    expect(cells("บริษัท ค")).toEqual(["ชลบุรี", "เมือง"]);
   });
 
-  it("sorts by name and by location from the headers", async () => {
+  it("sorts by name, by province and by district from the headers", async () => {
     mockFetch({ companies: [COMPANIES[2], COMPANIES[0], COMPANIES[1]] });
     render(<Customers />);
     await openCompaniesTab();
@@ -363,9 +366,17 @@ describe("/customers — companies", () => {
     fireEvent.click(header(/ชื่อบริษัท/));
     expect(firstCells(companyTable())).toEqual(["บริษัท ค", "บริษัท ข", "บริษัท ก"]);
 
-    fireEvent.click(header(/อำเภอ \/ จังหวัด/));
-    // กรุงเทพมหานคร, ชลบุรี, then the one with no location.
+    fireEvent.click(header(/^จังหวัด/));
+    // กรุงเทพมหานคร, ชลบุรี, then the one with no province.
     expect(firstCells(companyTable())).toEqual(["บริษัท ก", "บริษัท ค", "บริษัท ข"]);
+    fireEvent.click(header(/^จังหวัด/));
+    expect(firstCells(companyTable())).toEqual(["บริษัท ค", "บริษัท ก", "บริษัท ข"]);
+
+    fireEvent.click(header(/^อำเภอ/));
+    // บางนา before เมือง; no district last.
+    expect(firstCells(companyTable())).toEqual(["บริษัท ก", "บริษัท ค", "บริษัท ข"]);
+    fireEvent.click(header(/^อำเภอ/));
+    expect(firstCells(companyTable())).toEqual(["บริษัท ค", "บริษัท ก", "บริษัท ข"]);
   });
 
   it("a search that still leaves two pages starts from page 1", async () => {

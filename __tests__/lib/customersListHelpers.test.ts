@@ -7,7 +7,8 @@ import {
   DEFAULT_CUSTOMER_SORT,
   TAB_PARAM,
   anyRecentlyNoted,
-  companyLocation,
+  companyDistrict,
+  companyProvince,
   countCustomersByCompany,
   matchesCompanySearch,
   matchesCustomerSearch,
@@ -150,12 +151,14 @@ describe("sortCustomers", () => {
   });
 });
 
-describe("companyLocation", () => {
-  it("joins district and province, skipping what is missing", () => {
-    expect(companyLocation({ name: "a", district: "บางรัก", province: "กรุงเทพมหานคร" })).toBe("บางรัก, กรุงเทพมหานคร");
-    expect(companyLocation({ name: "a", district: " ", province: "ชลบุรี" })).toBe("ชลบุรี");
-    expect(companyLocation({ name: "a", district: "เมือง" })).toBe("เมือง");
-    expect(companyLocation({ name: "a" })).toBe("");
+describe("companyProvince / companyDistrict — the two columns", () => {
+  it("each on its own, trimmed, '' when missing", () => {
+    const co = { name: "a", district: " บางรัก ", province: "กรุงเทพมหานคร" };
+    expect(companyProvince(co)).toBe("กรุงเทพมหานคร");
+    expect(companyDistrict(co)).toBe("บางรัก");
+    expect(companyProvince({ name: "a", district: "เมือง" })).toBe("");
+    expect(companyDistrict({ name: "a", district: " ", province: "ชลบุรี" })).toBe("");
+    expect(companyDistrict({ name: "a" })).toBe("");
   });
 });
 
@@ -293,8 +296,14 @@ describe("sortCompanies", () => {
   });
 
   it("sorts by province, then district within it — blanks last either way", () => {
-    expect(ids(sortCompanies(list, { key: "location", dir: "asc" }))).toEqual(["3", "2", "5", "1", "4"]);
-    expect(ids(sortCompanies(list, { key: "location", dir: "desc" }))).toEqual(["1", "2", "3", "5", "4"]);
+    expect(ids(sortCompanies(list, { key: "province", dir: "asc" }))).toEqual(["3", "2", "5", "1", "4"]);
+    expect(ids(sortCompanies(list, { key: "province", dir: "desc" }))).toEqual(["1", "2", "3", "5", "4"]);
+  });
+
+  it("sorts by district, then province — blanks last either way", () => {
+    // บางกะปิ, บางนา, เมือง; then the two with no district: 5 has a province, 4 has none.
+    expect(ids(sortCompanies(list, { key: "district", dir: "asc" }))).toEqual(["3", "2", "1", "5", "4"]);
+    expect(ids(sortCompanies(list, { key: "district", dir: "desc" }))).toEqual(["1", "2", "3", "5", "4"]);
   });
 
   it("sorts by how many customers each has, ties by name", () => {
@@ -372,15 +381,15 @@ describe("provinces by any of their names", () => {
   });
 
   it("the list shows the official name", () => {
-    expect(companyLocation(bkk)).toBe("บางนา, กรุงเทพมหานคร");
-    expect(companyLocation(chon)).toBe("ศรีราชา, ชลบุรี");
-    expect(companyLocation({ name: "x", province: "Osaka" })).toBe("Osaka");
+    expect(companyProvince(bkk)).toBe("กรุงเทพมหานคร");
+    expect(companyProvince(chon)).toBe("ชลบุรี");
+    expect(companyProvince({ name: "x", province: "Osaka" })).toBe("Osaka");
   });
 
-  it("sorting by location puts the same province together, however it was typed", () => {
+  it("sorting by province puts the same province together, however it was typed", () => {
     const krabi = { id: "4", name: "บริษัท สี่", district: "เมือง", province: "กระบี่" };
     // กระบี่, then both Bangkok rows (บางนา before ลาดพร้าว), then ชลบุรี. By the
     // stored text, "กทม." would sort ahead of กระบี่ and apart from กรุงเทพมหานคร.
-    expect(ids(sortCompanies([chon, official, krabi, bkk], { key: "location", dir: "asc" }))).toEqual(["4", "1", "2", "3"]);
+    expect(ids(sortCompanies([chon, official, krabi, bkk], { key: "province", dir: "asc" }))).toEqual(["4", "1", "2", "3"]);
   });
 });

@@ -146,10 +146,15 @@ export interface CompanyLike {
   phone?: string;
 }
 
-/** "อำเภอ/เขต, จังหวัด", or "" when neither is known. The province by its
- *  official name: "กทม." and "กรุงเทพฯ" are both shown as กรุงเทพมหานคร. */
-export function companyLocation(c: CompanyLike): string {
-  return [c.district, provinceName(c.province)].map((s) => (s || "").trim()).filter(Boolean).join(", ");
+/** The จังหวัด column: the province by its official name — "กทม." and
+ *  "กรุงเทพฯ" are both shown as กรุงเทพมหานคร. "" when unknown. */
+export function companyProvince(c: CompanyLike): string {
+  return provinceName(c.province).trim();
+}
+
+/** The อำเภอ column: the district as typed, "" when unknown. */
+export function companyDistrict(c: CompanyLike): string {
+  return (c.district || "").trim();
 }
 
 /**
@@ -166,11 +171,12 @@ export function matchesCompanySearch(c: CompanyLike, query: string): boolean {
   return phoneMatches(q, c.phone);
 }
 
-export type CompanySortKey = "name" | "location" | "customers";
+export type CompanySortKey = "name" | "province" | "district" | "customers";
 
 /**
  * Sorted as asked, or left in the order given (newest first, from the API).
- * By location: province, then district within it — blanks last. By customers:
+ * By province: province, then district within it; by district: district, then
+ * province — blanks last either way. By customers:
  * how many each has (`customerCounts`, by company id), ties by name.
  */
 export function sortCompanies<T extends CompanyLike>(
@@ -186,7 +192,9 @@ export function sortCompanies<T extends CompanyLike>(
       ? compareBlanksLast(a.name, b.name, sign)
       : sort.key === "customers"
         ? sign * (countOf(a) - countOf(b)) || thCompare(a.name, b.name)
-        : compareBlanksLast(provinceName(a.province), provinceName(b.province), sign) || compareBlanksLast(a.district, b.district, sign);
+        : sort.key === "district"
+          ? compareBlanksLast(a.district, b.district, sign) || compareBlanksLast(provinceName(a.province), provinceName(b.province), sign)
+          : compareBlanksLast(provinceName(a.province), provinceName(b.province), sign) || compareBlanksLast(a.district, b.district, sign);
   return [...list].sort(compare);
 }
 

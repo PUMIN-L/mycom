@@ -419,7 +419,9 @@ describe("/customers forms — the province is picked from the 77", () => {
     await loaded();
     fireEvent.click(tab(/^บริษัท/));
     const cells = within(screen.getByRole("row", { name: "ดูข้อมูล บริษัท ไทยแล็บ จำกัด" })).getAllByRole("cell");
-    expect(cells[1].textContent).toBe("บางนา, กรุงเทพมหานคร");
+    // จังหวัด and อำเภอ, each in its own column.
+    expect(cells[1].textContent).toBe("กรุงเทพมหานคร");
+    expect(cells[2].textContent).toBe("บางนา");
     fireEvent.change(screen.getByRole("textbox", { name: "ค้นหาบริษัท" }), { target: { value: "กรุงเทพมหานคร" } });
     expect(screen.getAllByRole("row", { name: /^ดูข้อมูล / })).toHaveLength(1);
   });
