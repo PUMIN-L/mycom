@@ -19,6 +19,7 @@ import { bangkokDateString, formatDisplayDate, formatDisplayDateTime, toLocalDat
 import { formatSatang, parseBahtToSatang } from "../../../lib/accounting/money";
 import { ORDER_LIMITS, isOrderLate, remainingQty } from "../../../lib/accounting/orderRules";
 import { PLAN_LIMITS, PLAN_STAGES, PLAN_STATUS_LABELS, planProblems, type PlanStage } from "../../../lib/accounting/depositRules";
+import { COMMISSION_KIND_LABELS } from "../../../lib/accounting/commission";
 import type { AuditEntry } from "../../../lib/accounting/types";
 import { useAccountingLookups } from "../../useAccountingLookups";
 import { useAccountingSettings } from "../../useAccountingSettings";
@@ -42,7 +43,9 @@ function SalesOrder({ id, onTitle }: { id: string; onTitle: (title: string) => v
   const lookups = useAccountingLookups();
   const settings = useAccountingSettings();
   const [editing, setEditing] = useState(false);
-  const [dialog, setDialog] = useState<"schedule" | "cancel" | "delete" | "plan" | null>(null);
+  const [dialog, setDialog] = useState<"schedule" | "cancel" | "delete" | "plan" | "commission" | null>(null);
+  // What saving ค่าคอมของ did — said above the PO until the next one.
+  const [commissionNotice, setCommissionNotice] = useState<{ text: string; warn: boolean } | null>(null);
   const deposits = useOrderDeposits(id);
   // A deposit dialog open, with the amount of a plan item (null: typed by hand).
   const [depositFor, setDepositFor] = useState<{ amountSatang: number | null } | null>(null);
@@ -136,6 +139,16 @@ function SalesOrder({ id, onTitle }: { id: string; onTitle: (title: string) => v
           </div>
         )}
 
+        {commissionNotice && (
+          <p
+            role="status"
+            data-testid="commission-notice"
+            className={`rounded-xl border px-4 py-2 text-sm ${commissionNotice.warn ? "border-amber-200 bg-amber-50 text-amber-900" : "border-green-200 bg-green-50 text-green-800"}`}
+          >
+            {commissionNotice.text}
+          </p>
+        )}
+
         <section className="bg-white rounded-2xl border border-gray-200 p-5 grid grid-cols-1 md:grid-cols-2 gap-4" aria-label="ข้อมูล PO">
           <div className="min-w-0">
             <p className="text-sm text-gray-500">ลูกค้า</p>
@@ -152,6 +165,22 @@ function SalesOrder({ id, onTitle }: { id: string; onTitle: (title: string) => v
             <dd className={late ? "text-red-600 font-semibold" : ""}>{o.expectedDeliveryDate ? formatDisplayDate(o.expectedDeliveryDate) : "—"}</dd>
             <dt className="text-gray-500">เครดิต</dt>
             <dd>{o.creditDays} วัน</dd>
+            {/* Whose commission it is — chosen by hand, not the salesperson on the PO (§8h). */}
+            <dt className="text-gray-500">ค่าคอมของ</dt>
+            <dd data-testid="order-commission" className="flex flex-wrap items-center gap-2">
+              {o.commissionOf ? (
+                <span className="font-semibold text-gray-900">{COMMISSION_KIND_LABELS[o.commissionOf]}</span>
+              ) : (
+                <span className="text-xs font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-0.5">ยังไม่เลือก</span>
+              )}
+              <button
+                type="button"
+                onClick={() => setDialog("commission")}
+                className="text-xs font-semibold text-sky-700 hover:text-sky-800 hover:underline"
+              >
+                {o.commissionOf ? "เปลี่ยน" : "เลือก"}
+              </button>
+            </dd>
             {o.externalNote && (
               <>
                 <dt className="text-gray-500">เก็บ PO ไว้ที่</dt>
@@ -347,6 +376,21 @@ function SalesOrder({ id, onTitle }: { id: string; onTitle: (title: string) => v
       </aside>
 
       {dialog === "schedule" && <ScheduleDialog detail={detail} onCancel={() => setDialog(null)} onSaved={() => { setDialog(null); reload(); }} />}
+      {dialog === "commission" && (
+        <CommissionDialog
+          detail={detail}
+          onCancel={() => setDialog(null)}
+          onSaved={(emailSent) => {
+            setDialog(null);
+            setCommissionNotice(
+              emailSent === false
+                ? { text: "บันทึกค่าคอมของ PO แล้ว แต่ส่งอีเมลแจ้งไม่สำเร็จ", warn: true }
+                : { text: emailSent ? "บันทึกค่าคอมของ PO แล้ว · ส่งอีเมลแจ้งเจ้าของแล้ว" : "บันทึกค่าคอมของ PO แล้ว", warn: false }
+            );
+            reload();
+          }}
+        />
+      )}
       {dialog === "plan" && <PlanDialog detail={detail} onCancel={() => setDialog(null)} onSaved={() => { setDialog(null); reload(); }} />}
       {depositFor && depositCtx && (
         <PaymentDialog
@@ -461,6 +505,91 @@ function ScheduleDialog({ detail, onCancel, onSaved }: { detail: OrderDetailView
       <div className="flex gap-3 pt-2">
         <button type="button" onClick={onCancel} disabled={busy} className="flex-1 px-4 py-2.5 rounded-xl border border-gray-300 font-semibold hover:bg-gray-50 disabled:opacity-60">ยกเลิก</button>
         <button type="button" onClick={() => void save()} disabled={busy} className="flex-1 px-4 py-2.5 rounded-xl bg-sky-600 text-white font-semibold hover:bg-sky-700 disabled:opacity-60">
+          {busy ? "กำลังบันทึก…" : "บันทึก"}
+        </button>
+      </div>
+    </DialogShell>
+  );
+}
+
+const COMMISSION_KIND_OPTIONS = [
+  { value: "ford", label: COMMISSION_KIND_LABELS.ford },
+  { value: "tor", label: COMMISSION_KIND_LABELS.tor },
+];
+
+/**
+ * Whose commission the PO is (§8h) — ลูกค้าฟอร์ด / ลูกค้าพี่ต่อ, chosen by hand.
+ * A switch from one person to the other emails the owner, and the window says
+ * so before it is saved; `emailSent` is null when no email was due.
+ */
+function CommissionDialog({
+  detail,
+  onCancel,
+  onSaved,
+}: {
+  detail: OrderDetailView;
+  onCancel: () => void;
+  onSaved: (emailSent: boolean | null) => void;
+}) {
+  const current = detail.order.commissionOf ?? null;
+  const [choice, setChoice] = useState<string>(current ?? "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const unchanged = choice === "" || choice === current;
+  const switching = current !== null && !unchanged;
+  const save = async () => {
+    if (busy || unchanged) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/accounting/sales-orders/${encodeURIComponent(detail.order.id)}/commission`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ commissionOf: choice }),
+      });
+      if (!res.ok) {
+        setError(await errorMessageOf(res, "บันทึกไม่สำเร็จ"));
+        return;
+      }
+      const body = (await res.json().catch(() => null)) as { emailSent?: unknown } | null;
+      onSaved(typeof body?.emailSent === "boolean" ? body.emailSent : null);
+    } catch {
+      setError("บันทึกไม่สำเร็จ ตรวจสอบการเชื่อมต่อแล้วลองใหม่");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <DialogShell title="ค่าคอมของ PO นี้" busy={busy} onCancel={onCancel}>
+      <p className="text-sm text-gray-600">
+        เลือกว่า PO {detail.order.customerPoNo} เป็นค่าคอมของใคร — ไม่เกี่ยวกับเซลล์ที่ระบุใน PO
+      </p>
+      <div>
+        <label htmlFor="commission-kind" className="block text-sm font-semibold text-gray-700 mb-1">ค่าคอมของ</label>
+        <SearchableDropdown
+          id="commission-kind"
+          value={choice}
+          onChange={setChoice}
+          options={COMMISSION_KIND_OPTIONS}
+          placeholder="— เลือก —"
+          searchable={false}
+          buttonClassName="h-[42px] rounded-xl !border-gray-200"
+        />
+      </div>
+      {switching && (
+        <p className="text-sm text-amber-900 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
+          เปลี่ยนเป็นอีกคน ระบบจะส่งอีเมลแจ้งเจ้าของ
+        </p>
+      )}
+      {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
+      <div className="flex gap-3 pt-2">
+        <button type="button" onClick={onCancel} disabled={busy} className="flex-1 px-4 py-2.5 rounded-xl border border-gray-300 font-semibold hover:bg-gray-50 disabled:opacity-60">ยกเลิก</button>
+        <button
+          type="button"
+          onClick={() => void save()}
+          disabled={busy || unchanged}
+          className="flex-1 px-4 py-2.5 rounded-xl bg-sky-600 text-white font-semibold hover:bg-sky-700 disabled:opacity-60"
+        >
           {busy ? "กำลังบันทึก…" : "บันทึก"}
         </button>
       </div>

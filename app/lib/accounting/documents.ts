@@ -26,6 +26,7 @@ import {
   type InvoiceInput,
 } from "./invoiceRules";
 import type { AccDocSource, AccDocStatus, AccDocType } from "./types";
+import { commissionKindOf, type CommissionKind } from "./commission";
 
 // Documents of the accounting module (ARCHITECTURE.md §8g). This file: the
 // invoice's life — draft (no number, editable, deletable), issue (number,
@@ -91,6 +92,8 @@ export interface AccDocument {
   expectedDeliveryDate: string | null;
   /** An invoice: วันวางบิล, the day its bill is handed to the customer — internal, never printed (v56). */
   billingDate: string | null;
+  /** A customer PO: whose commission it is — ลูกค้าฟอร์ด / ลูกค้าพี่ต่อ, chosen by hand (v58, §8h); null until chosen. */
+  commissionOf: CommissionKind | null;
   issuedAt: string | null;
   issuedBy: string | null;
   voidedAt: string | null;
@@ -192,6 +195,7 @@ function rowToDoc(r: RowDataPacket, lines: AccDocumentLine[]): AccDocument {
     salesRecordId: strOrNull(r.salesRecordId),
     expectedDeliveryDate: strOrNull(r.expectedDeliveryDate),
     billingDate: strOrNull(r.billingDate),
+    commissionOf: commissionKindOf(r.commissionOf),
     issuedAt: strOrNull(r.issuedAt),
     issuedBy: strOrNull(r.issuedBy),
     voidedAt: strOrNull(r.voidedAt),

@@ -314,6 +314,81 @@ describe("one customer PO", () => {
   });
 });
 
+describe("whose commission a customer PO is (ค่าคอมของ)", () => {
+  beforeEach(() => {
+    params = { id: "so1" };
+  });
+  const row = () => screen.getByTestId("order-commission");
+  const PUT_PATH = "/api/accounting/sales-orders/so1/commission";
+  const withChoice = (commissionOf: "ford" | "tor" | null, emailSent: boolean | null = null) => {
+    override = (path, init) => {
+      if (path === PUT_PATH && init?.method === "PUT") {
+        const to = JSON.parse(String(init.body)).commissionOf;
+        return json({ order: { ...ORDER, commissionOf: to }, emailSent });
+      }
+      if (path === "/api/accounting/sales-orders/so1" && (init?.method ?? "GET") === "GET") return json({ ...DETAIL, order: { ...ORDER, commissionOf } });
+      return undefined;
+    };
+  };
+  async function loaded() {
+    render(<SalesOrderPage />);
+    await screen.findByTestId("order-lines");
+  }
+
+  it("not chosen yet: says so; the first choice is saved (no email for it) and the PO reloaded", async () => {
+    withChoice(null);
+    await loaded();
+    expect(row()).toHaveTextContent("ยังไม่เลือก");
+    fireEvent.click(within(row()).getByRole("button", { name: "เลือก" }));
+    const dialog = screen.getByRole("dialog", { name: "ค่าคอมของ PO นี้" });
+    // Nothing to save until a choice is made.
+    expect(within(dialog).getByRole("button", { name: "บันทึก" })).toBeDisabled();
+    choose("commission-kind", "ลูกค้าฟอร์ด");
+    fireEvent.click(within(dialog).getByRole("button", { name: "บันทึก" }));
+    await waitFor(() => expect(calls(PUT_PATH, "PUT")).toHaveLength(1));
+    expect(bodyOf(PUT_PATH, "PUT")).toEqual({ commissionOf: "ford" });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "ค่าคอมของ PO นี้" })).not.toBeInTheDocument());
+    // Reloaded — the notice shows again once the PO is back on screen.
+    await waitFor(() => expect(calls("/api/accounting/sales-orders/so1").length).toBeGreaterThanOrEqual(2));
+    expect(await screen.findByTestId("commission-notice")).toHaveTextContent("บันทึกค่าคอมของ PO แล้ว");
+  });
+
+  it("chosen: shows whose, and a switch to the other person says the owner will be emailed — then that it was", async () => {
+    withChoice("ford", true);
+    await loaded();
+    expect(row()).toHaveTextContent("ลูกค้าฟอร์ด");
+    fireEvent.click(within(row()).getByRole("button", { name: "เปลี่ยน" }));
+    const dialog = screen.getByRole("dialog", { name: "ค่าคอมของ PO นี้" });
+    // The same person again is nothing to save.
+    expect(within(dialog).getByRole("button", { name: "บันทึก" })).toBeDisabled();
+    choose("commission-kind", "ลูกค้าพี่ต่อ");
+    expect(within(dialog).getByText(/ระบบจะส่งอีเมลแจ้งเจ้าของ/)).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "บันทึก" }));
+    await waitFor(() => expect(bodyOf(PUT_PATH, "PUT")).toEqual({ commissionOf: "tor" }));
+    expect(await screen.findByTestId("commission-notice")).toHaveTextContent("ส่งอีเมลแจ้งเจ้าของแล้ว");
+  });
+
+  it("says when the email could not go — the change is kept", async () => {
+    withChoice("ford", false);
+    await loaded();
+    fireEvent.click(within(row()).getByRole("button", { name: "เปลี่ยน" }));
+    choose("commission-kind", "ลูกค้าพี่ต่อ");
+    fireEvent.click(within(screen.getByRole("dialog", { name: "ค่าคอมของ PO นี้" })).getByRole("button", { name: "บันทึก" }));
+    expect(await screen.findByTestId("commission-notice")).toHaveTextContent("ส่งอีเมลแจ้งไม่สำเร็จ");
+  });
+
+  it("keeps the window open with the server's reason when it is refused", async () => {
+    override = (path, init) =>
+      path === PUT_PATH && init?.method === "PUT" ? json({ error: "จ่ายค่าคอมของ PO นี้แล้ว — ยกเลิกการบันทึกจ่ายก่อน" }, 409) : undefined;
+    await loaded();
+    fireEvent.click(within(row()).getByRole("button", { name: "เลือก" }));
+    const dialog = screen.getByRole("dialog", { name: "ค่าคอมของ PO นี้" });
+    choose("commission-kind", "ลูกค้าพี่ต่อ");
+    fireEvent.click(within(dialog).getByRole("button", { name: "บันทึก" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("จ่ายค่าคอมของ PO นี้แล้ว — ยกเลิกการบันทึกจ่ายก่อน");
+  });
+});
+
 describe("a delivery from a customer PO", () => {
   beforeEach(() => {
     search = new URLSearchParams("fromOrder=so1");

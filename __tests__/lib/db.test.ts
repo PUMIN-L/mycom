@@ -40,14 +40,14 @@ process.env.DB_USER = 'tester';
 process.env.DB_PASSWORD = 'pw';
 process.env.DB_NAME = 'testdb';
 
-// A version SELECT result that MATCHES SCHEMA_VERSION (57) → bootstrap fast-path,
+// A version SELECT result that MATCHES SCHEMA_VERSION (58) → bootstrap fast-path,
 // skipping DDL. Value is a string because settings stores VARCHAR values.
 //
 // ⚠️ This constant only ever goes UP, in step with db.ts. The bootstrap's fast
 // path is `stored >= SCHEMA_VERSION`, so a number the live database has already
 // recorded can never trigger a migration again — reusing one silently skips the
 // entire migration in production (that is how v33 was burned).
-const SCHEMA_VERSION = '57';
+const SCHEMA_VERSION = '58';
 const SCHEMA_MATCH: [Array<{ value: string }>, unknown[]] = [[{ value: SCHEMA_VERSION }], []];
 // An empty result → no schema_version row / no admin row → full bootstrap.
 const EMPTY: [unknown[], unknown[]] = [[], []];
@@ -1638,6 +1638,22 @@ describe("v57 — a company's salesperson", () => {
     const sql = bootstrapSql().map((s) => s.replace(/\s+/g, ' ').trim());
     const alter = sql.indexOf('ALTER TABLE companies ADD COLUMN IF NOT EXISTS salespersonId VARCHAR(255) DEFAULT NULL');
     const create = sql.findIndex((s) => /CREATE TABLE IF NOT EXISTS companies/.test(s));
+    expect(create).toBeGreaterThanOrEqual(0);
+    expect(alter).toBeGreaterThan(create);
+  });
+});
+
+// ── v58: ค่าคอมมิชชั่น — whose commission a customer PO is ─────────────────────
+// 'ford' | 'tor', chosen by hand on the PO (the owner, 2026-11-25); NULL until
+// chosen. Added after acc_documents exists.
+describe("v58 — whose commission a customer PO is", () => {
+  it('adds the column, nullable, after the accounting tables exist', async () => {
+    const db = await freshImport();
+    mockConnection.query.mockResolvedValue(EMPTY);
+    await db.getDbConnection();
+    const sql = bootstrapSql().map((s) => s.replace(/\s+/g, ' ').trim());
+    const alter = sql.indexOf('ALTER TABLE acc_documents ADD COLUMN IF NOT EXISTS commissionOf VARCHAR(10) DEFAULT NULL');
+    const create = sql.findIndex((s) => /CREATE TABLE IF NOT EXISTS acc_documents/.test(s));
     expect(create).toBeGreaterThanOrEqual(0);
     expect(alter).toBeGreaterThan(create);
   });

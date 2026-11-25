@@ -39,6 +39,8 @@ export interface OrderDetailView {
     voidReason: string | null;
     updatedAt: string;
     isTaxInvoice: boolean;
+    /** Whose commission it is (§8h) — absent from an older answer, null until chosen. */
+    commissionOf?: "ford" | "tor" | null;
     lines: (DocLineInput & { id: string; amountSatang: number; deliveredQty: number })[];
   };
   orderStatus: OrderStatus;

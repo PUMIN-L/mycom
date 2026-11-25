@@ -1,6 +1,7 @@
 import "server-only";
 import nodemailer from "nodemailer";
 import { formatDisplayDateTime } from "./dateFormat";
+import { escapeHtml } from "./emailHtml";
 
 // Outbound email via SMTP (nodemailer). Defaults target Gmail — create an App
 // Password (Google Account → Security → 2-Step Verification → App passwords)
@@ -58,15 +59,6 @@ export async function sendContactRecipientChangedEmail(
       `เป็น: ${newEmail}\n\n` +
       `หากคุณไม่ได้เป็นผู้เปลี่ยนแปลงนี้ กรุณาตรวจสอบความปลอดภัยของบัญชีผู้ดูแลระบบทันที`,
   });
-}
-
-function escapeHtml(unsafe: string | undefined | null): string {
-  return String(unsafe ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
 }
 
 /** Send a contact-form submission to `to`. Throws on SMTP failure. */
@@ -153,6 +145,22 @@ async function sendOtpNotification(to: string, subject: string, text: string): P
     to: { name: "", address: to },
     subject,
     text,
+  });
+}
+
+/**
+ * A designed system email (lib/emailHtml.ts renders it): the HTML, and the
+ * same facts as plain text for a mail app that shows no HTML. Same sender as
+ * the OTP notifications. Throws on SMTP failure.
+ */
+export async function sendSystemHtmlEmail(to: string, subject: string, html: string, text: string): Promise<void> {
+  const transport = createTransport();
+  await transport.sendMail({
+    from: { name: "ระบบเว็บไซต์ (Profin Lab Scale)", address: process.env.SMTP_USER ?? "" },
+    to: { name: "", address: to },
+    subject,
+    text,
+    html,
   });
 }
 

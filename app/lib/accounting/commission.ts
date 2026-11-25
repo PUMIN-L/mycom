@@ -30,6 +30,13 @@ export const COMMISSION_KIND_LABELS: Record<CommissionKind, string> = {
   tor: "ลูกค้าพี่ต่อ",
 };
 
+export const COMMISSION_KIND_REQUIRED = "กรุณาเลือกว่าเป็นค่าคอมของลูกค้าฟอร์ดหรือลูกค้าพี่ต่อ";
+
+/** A stored or sent choice, or null for anything else. */
+export function commissionKindOf(value: unknown): CommissionKind | null {
+  return value === "ford" || value === "tor" ? value : null;
+}
+
 export interface LadderStep {
   /** Where this step ends on the month's running profit, in satang; null for the last ("เกิน …"). */
   upToSatang: number | null;

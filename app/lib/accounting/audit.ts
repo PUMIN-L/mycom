@@ -26,7 +26,9 @@ export type AuditAction =
   | "payment.update"
   | "payment.void"
   /** The accountant's workbook downloaded (step 9) — everything declared, in one file. */
-  | "data.export";
+  | "data.export"
+  /** Whose commission a customer PO is — ลูกค้าฟอร์ด / ลูกค้าพี่ต่อ (§8h). */
+  | "commission.owner";
 
 export const AUDIT_DETAIL_MAX = 1000;
 

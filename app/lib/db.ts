@@ -13,7 +13,7 @@ import { repairTruncatedRichText } from "./sanitizeHtml";
 // did not lower the 33 already written to `settings`, so the next change to
 // reuse 33 was skipped entirely and its tables were never created in
 // production. Reverting a migration means moving FORWARD to a new number.
-const SCHEMA_VERSION = 57;
+const SCHEMA_VERSION = 58;
 
 type DbPool = ReturnType<typeof mysql.createPool>;
 
@@ -1848,6 +1848,19 @@ async function bootstrapSchemaOnce(): Promise<void> {
     // NULL (salesStore.deleteSalesperson).
     for (const statement of [
       "ALTER TABLE companies ADD COLUMN IF NOT EXISTS salespersonId VARCHAR(255) DEFAULT NULL",
+    ]) {
+      try {
+        await connection.query(statement);
+      } catch (error) {
+        if (!isBenignSchemaError(error)) throw error;
+      }
+    }
+
+    // ── v58: ค่าคอมมิชชั่น — whose commission a customer PO is (§8h) ─────────
+    // 'ford' | 'tor' (ลูกค้าฟอร์ด / ลูกค้าพี่ต่อ), chosen by hand on the PO —
+    // the owner, 2026-11-25. NULL until chosen.
+    for (const statement of [
+      "ALTER TABLE acc_documents ADD COLUMN IF NOT EXISTS commissionOf VARCHAR(10) DEFAULT NULL",
     ]) {
       try {
         await connection.query(statement);

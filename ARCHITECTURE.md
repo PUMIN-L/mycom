@@ -1799,6 +1799,21 @@ once the customer has paid the whole PO.
   month** (the owner's rule), so a month is one set; `rateRulesProblems` says
   in Thai what stops a table being saved. `accountingCommission.test.ts` runs
   the owner's own example table (profit 50,000 … 600,000) row by row.
+- **Whose commission a PO is (schema v58)** — `acc_documents.commissionOf`
+  ('ford' | 'tor', NULL until chosen), a "ค่าคอมของ" row on the PO's page with a
+  window to choose (SearchableDropdown); `PUT
+  /api/accounting/sales-orders/[id]/commission` → `setSalesOrderCommission`
+  ([`commissionOwner.ts`](./app/lib/accounting/commissionOwner.ts)): the PO
+  locked, a history line (`commission.owner`), its `updatedAt` left alone; a
+  cancelled PO may still be chosen (what it delivered still counts).
+- **The commission emails go to the owner's fixed inbox only**
+  ([`commissionEmails.ts`](./app/lib/accounting/commissionEmails.ts) —
+  `COMMISSION_EMAIL` = `PASSWORD_OTP_EMAIL`, the owner's choice): never the
+  contact email, which an admin session can change. A PO **switched** from one
+  person to the other is emailed (PO, customer, PO date, from → to, who, when —
+  no money); the first choice is not. The email goes after the change is
+  saved; a failed one never undoes it (`emailSent: false`, the page says so).
+  The look is the shared designed email (§9).
 
 ### 9. Email (contact form) + lead persistence
 [`app/lib/mailer.ts`](./app/lib/mailer.ts) sends via SMTP (`nodemailer`, Gmail by
@@ -1821,6 +1836,15 @@ serverless instance — past 30 leads an hour, leads are still stored but no
 longer emailed one by one.
 Changing the recipient notifies **both** the old and new addresses. Visitor
 fields go into structured `{name,address}` objects to prevent header injection.
+
+**Designed system emails** ([`emailHtml.ts`](./app/lib/emailHtml.ts),
+`renderEmail` → `sendSystemHtmlEmail`): one look for the alerts the owner is
+sent — the contact email's navy header bar, a white card, at most 600px, inline
+CSS only, no picture fetched from the web — built from blocks (facts, from → to,
+a big code, tables with right-aligned numbers and highlighted changes, a warning
+box). Every value is escaped (`escapeHtml` lives here now; mailer.ts imports
+it), and the same facts go as plain text for a mail app that shows no HTML. The
+OTP notifications are still plain text.
 
 ### 9a. Edit history (revisions)
 Every `updateProduct` / `updateContent` / `updateDocument` that actually changes
