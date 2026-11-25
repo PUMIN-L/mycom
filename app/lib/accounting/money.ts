@@ -21,6 +21,20 @@ export function parseBahtToSatang(text: string | number | null | undefined): num
   return Number.isSafeInteger(satang) ? satang : null;
 }
 
+/**
+ * A DECIMAL(…,2) column as mysql2 gives it (text) → satang, a minus sign kept —
+ * a credit note's sale is negative. Read from the text, not through a float;
+ * a number is rounded at the satang; nothing or garbage is 0.
+ */
+export function signedDecimalToSatang(value: unknown): number {
+  if (value === null || value === undefined || value === "") return 0;
+  if (typeof value === "number") return Number.isFinite(value) ? Math.round(value * 100) : 0;
+  const m = /^\s*(-)?(\d+)(?:\.(\d*))?\s*$/.exec(String(value));
+  if (!m) return 0;
+  const satang = Number(m[2]) * 100 + Number(((m[3] ?? "") + "00").slice(0, 2));
+  return m[1] ? -satang : satang;
+}
+
 /** 123450 → "1,234.50"; negative with a leading "-". */
 export function formatSatang(satang: number): string {
   const sign = satang < 0 ? "-" : "";

@@ -1,5 +1,12 @@
 /**
- * /accounting/commission — the tab "ตารางอัตรา", through the real page:
+ * /accounting/commission, through the real page.
+ * The tab "สรุปรายเดือน" (the default):
+ *  • the month's POs (by PO date) in the ladder's order — whose, profit, place
+ *    on the ladder, ฟอร์ด / พี่ต่อ / บริษัท, and where each stands;
+ *  • the month's totals per person — payable now and waiting;
+ *  • a PO nobody chose yet can be chosen right there;
+ *  • each PO's costs open and close, loaded once.
+ * The tab "ตารางอัตรา":
  *  • the tables in force, as the owner's table writes them (0 – 100,000 …
  *    เกิน 500,000, ฟอร์ด / พี่ต่อ / บริษัท), the first "ตั้งแต่เริ่มต้น";
  *  • editing one: the company's share follows; what is wrong stops the save;
@@ -28,6 +35,70 @@ const LATER = {
   savedBy: "admin",
 };
 
+const row = (o: Record<string, unknown>) => ({
+  customerPoNo: `PO-${o.id}`,
+  buyerName: `ลูกค้า ${o.id}`,
+  status: "issued",
+  orderStatus: "complete",
+  salesSatang: 0,
+  costSatang: 0,
+  costMissing: false,
+  paidInFull: true,
+  owedSatang: 0,
+  slices: [],
+  countedSatang: 0,
+  ladderFromSatang: null,
+  ladderToSatang: null,
+  fordSatang: 0,
+  torSatang: 0,
+  companySatang: 0,
+  profitSatang: null,
+  ...o,
+});
+const MONTH = {
+  month: "2026-11",
+  rateSet: { id: null, effectiveMonth: "0000-00", rules: DEFAULT_COMMISSION_RULES },
+  rows: [
+    row({ id: "A", issueDate: "2026-11-03", kind: "ford", profitSatang: 8_000_000, countedSatang: 8_000_000, ladderFromSatang: 0, ladderToSatang: 8_000_000, fordSatang: 2_160_000, torSatang: 1_840_000, companySatang: 4_000_000, commissionStatus: "payable" }),
+    row({ id: "T", issueDate: "2026-11-05", kind: "tor", profitSatang: 10_000_000, countedSatang: 10_000_000, fordSatang: 1_500_000, torSatang: 3_500_000, companySatang: 5_000_000, commissionStatus: "payable" }),
+    row({ id: "N", issueDate: "2026-11-06", kind: null, profitSatang: 5_000_000, commissionStatus: "unassigned" }),
+    row({ id: "B", issueDate: "2026-11-10", kind: "ford", profitSatang: 15_000_000, countedSatang: 15_000_000, ladderFromSatang: 8_000_000, ladderToSatang: 23_000_000, fordSatang: 4_700_000, torSatang: 2_800_000, companySatang: 7_500_000, paidInFull: false, commissionStatus: "awaiting-payment" }),
+    row({ id: "C", issueDate: "2026-11-20", kind: "ford", profitSatang: 40_000_000, countedSatang: 40_000_000, ladderFromSatang: 23_000_000, ladderToSatang: 63_000_000, fordSatang: 13_850_000, torSatang: 6_150_000, companySatang: 20_000_000, commissionStatus: "payable" }),
+    row({ id: "G", issueDate: "2026-11-25", kind: "ford", costMissing: true, ladderFromSatang: 63_000_000, ladderToSatang: 63_000_000, commissionStatus: "cost-missing" }),
+    row({ id: "H", issueDate: "2026-11-28", kind: "ford", orderStatus: "open", ladderFromSatang: 63_000_000, ladderToSatang: 63_000_000, commissionStatus: "not-delivered" }),
+  ],
+  totals: {
+    ford: { totalSatang: 22_210_000, payableSatang: 17_510_000, waitingSatang: 4_700_000 },
+    tor: { totalSatang: 14_290_000, payableSatang: 11_490_000, waitingSatang: 2_800_000 },
+    companySatang: 36_500_000,
+    profitSatang: 73_000_000,
+    unassigned: 1,
+  },
+  invoicesWithoutPo: 2,
+};
+const COSTS_C = {
+  poId: "C",
+  customerPoNo: "PO-C",
+  deliveries: [
+    {
+      saleId: "c1", saleDate: "2026-12-10", invoiceRef: "INV2026120003", credit: false, salesSatang: 70_000_000, costSatang: 40_750_000, profitSatang: 29_250_000, costMissing: false,
+      items: [{ productName: "เครื่องชั่ง A", qty: 2, costSatang: 40_000_000 }],
+      costs: [
+        { costType: "shipping", typeLabel: "ค่าขนส่ง", label: "Kerry", note: "", amountSatang: 600_000, counted: true },
+        { costType: "commission", typeLabel: "ค่าคอมมิชชั่น", label: "", note: "", amountSatang: 1_000_000, counted: false },
+      ],
+    },
+    { saleId: "c2", saleDate: "2026-12-20", invoiceRef: "INV2026120010", credit: false, salesSatang: 30_000_000, costSatang: 0, profitSatang: 30_000_000, costMissing: true, items: [], costs: [] },
+  ],
+  totals: { salesSatang: 70_000_000, costSatang: 40_750_000, profitSatang: 29_250_000, notCountedSatang: 1_000_000, waitingCostSalesSatang: 30_000_000 },
+};
+const EMPTY_COSTS = (id: string) => ({
+  poId: id,
+  customerPoNo: `PO-${id}`,
+  deliveries: [],
+  totals: { salesSatang: 0, costSatang: 0, profitSatang: 0, notCountedSatang: 0, waitingCostSalesSatang: 0 },
+});
+
 const json = (body: unknown, status = 200) => ({ ok: status < 400, status, json: async () => body, headers: new Headers() });
 let rates: { sets: unknown[]; history: unknown[] };
 let override: ((path: string, init?: RequestInit) => unknown) | null;
@@ -50,7 +121,12 @@ beforeEach(() => {
     const custom = override?.(url.pathname, init);
     if (custom !== undefined) return custom;
     const method = init?.method ?? "GET";
+    const costs = /^\/api\/accounting\/commission\/orders\/([^/]+)\/costs$/.exec(url.pathname);
+    if (method === "GET" && costs) return json(costs[1] === "C" ? COSTS_C : EMPTY_COSTS(costs[1]));
+    const owner = /^\/api\/accounting\/sales-orders\/([^/]+)\/commission$/.exec(url.pathname);
+    if (method === "PUT" && owner) return json({ order: { id: owner[1] }, emailSent: null });
     switch (`${method} ${url.pathname}`) {
+      case "GET /api/accounting/commission": return json({ ...MONTH, month: url.searchParams.get("month") });
       case "GET /api/accounting/status": return json({ twoFactorEnabled: true, username: "admin" });
       case "GET /api/accounting/commission/rates": return json(rates);
       case "POST /api/accounting/commission/rates/otp": return json({ sent: true, email: "am****@gmail.com", minutes: 15 });
@@ -66,10 +142,99 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+/** The page, on the tab "ตารางอัตรา". */
 async function loaded() {
   render(<CommissionPage />);
+  fireEvent.click(await screen.findByRole("tab", { name: "ตารางอัตรา" }));
   await screen.findByTestId("rate-set-0000-00");
 }
+
+/** The page as it opens: the month. */
+async function monthLoaded() {
+  render(<CommissionPage />);
+  await screen.findByTestId("po-row-C");
+}
+const poRow = (id: string) => screen.getByTestId(`po-row-${id}`);
+
+describe("the month (the tab that opens)", () => {
+  it("each PO in the ladder's order: whose, profit, place on the ladder, the three shares, where it stands", async () => {
+    await monthLoaded();
+    expect(screen.getByRole("tab", { name: "สรุปรายเดือน" })).toHaveAttribute("aria-selected", "true");
+    expect(calls("/api/accounting/commission")[0][0]).toContain("month=2026-11");
+    const ids = screen.getAllByTestId(/^po-row-/).map((r) => r.getAttribute("data-testid"));
+    expect(ids).toEqual(["po-row-A", "po-row-T", "po-row-N", "po-row-B", "po-row-C", "po-row-G", "po-row-H"]);
+    const c = poRow("C");
+    for (const text of ["PO-C", "ลูกค้า C", "ลูกค้าฟอร์ด", "400,000.00", "230,000 – 630,000", "138,500.00", "61,500.00", "200,000.00", "จ่ายได้"]) {
+      expect(c).toHaveTextContent(text);
+    }
+    expect(within(c).getByRole("link", { name: "PO-C" })).toHaveAttribute("href", "/accounting/sales-orders/C");
+    expect(poRow("T")).toHaveTextContent("ลูกค้าพี่ต่อ");
+    expect(poRow("B")).toHaveTextContent("รอลูกค้าจ่าย");
+    expect(poRow("G")).toHaveTextContent("ยังไม่กรอกต้นทุน");
+    expect(poRow("H")).toHaveTextContent("ยังส่งของไม่ครบ");
+    expect(poRow("N")).toHaveTextContent("ยังไม่เลือกค่าคอมของใคร");
+    expect(screen.getByText(/คิดตามตารางอัตรา ตั้งแต่เริ่มต้น/)).toBeInTheDocument();
+  });
+
+  it("the month's totals per person — payable now and waiting — and what is not counted", async () => {
+    await monthLoaded();
+    expect(screen.getByTestId("total-ford")).toHaveTextContent("222,100.00");
+    expect(screen.getByTestId("payable-ford")).toHaveTextContent("175,100.00");
+    expect(screen.getByTestId("waiting-ford")).toHaveTextContent("47,000.00");
+    expect(screen.getByTestId("total-tor")).toHaveTextContent("142,900.00");
+    expect(screen.getByTestId("payable-tor")).toHaveTextContent("114,900.00");
+    expect(screen.getByTestId("total-company")).toHaveTextContent("365,000.00");
+    expect(screen.getByText(/มี PO ที่ยังไม่เลือกค่าคอมของใคร 1 ใบ/)).toBeInTheDocument();
+    expect(screen.getByText(/ใบแจ้งหนี้ที่ไม่ได้ออกจาก PO ในเดือนนี้ 2 ใบ/)).toBeInTheDocument();
+  });
+
+  it("a PO nobody chose yet is chosen right there — then the month is read again", async () => {
+    await monthLoaded();
+    choose("assign-N", "ลูกค้าฟอร์ด");
+    fireEvent.click(within(poRow("N")).getByRole("button", { name: "บันทึก" }));
+    await waitFor(() => expect(calls("/api/accounting/sales-orders/N/commission", "PUT")).toHaveLength(1));
+    expect(bodyOf("/api/accounting/sales-orders/N/commission", "PUT")).toEqual({ commissionOf: "ford" });
+    await waitFor(() => expect(calls("/api/accounting/commission").length).toBeGreaterThanOrEqual(2));
+  });
+
+  it("a PO's costs open and close — loaded once", async () => {
+    await monthLoaded();
+    fireEvent.click(within(poRow("C")).getByRole("button", { name: "ดูต้นทุน" }));
+    const panel = await screen.findByTestId("costs-C");
+    for (const text of [
+      "ส่งของครั้งที่ 1",
+      "INV2026120003",
+      "ต้นทุนสินค้า: เครื่องชั่ง A × 2",
+      "ค่าขนส่ง: Kerry",
+      "ค่าคอมมิชชั่น",
+      "ไม่นำมาหัก",
+      "ยังไม่กรอกต้นทุน",
+      "ยอดขาย 700,000.00 − ต้นทุน 407,500.00 = กำไร 292,500.00",
+    ]) {
+      expect(panel).toHaveTextContent(text);
+    }
+    expect(within(panel).getAllByRole("link", { name: "แก้ต้นทุน" })[0]).toHaveAttribute("href", "/dashboard?edit=c1");
+    fireEvent.click(within(poRow("C")).getByRole("button", { name: "ซ่อนต้นทุน" }));
+    expect(screen.queryByTestId("costs-C")).not.toBeInTheDocument();
+    fireEvent.click(within(poRow("C")).getByRole("button", { name: "ดูต้นทุน" }));
+    expect(await screen.findByTestId("costs-C")).toBeInTheDocument();
+    expect(calls("/api/accounting/commission/orders/C/costs")).toHaveLength(1);
+  });
+
+  it("opens every PO's costs at once, and closes them", async () => {
+    await monthLoaded();
+    fireEvent.click(screen.getByRole("button", { name: "เปิดต้นทุนทั้งหมด" }));
+    await waitFor(() => expect(screen.getAllByTestId(/^costs-/)).toHaveLength(7));
+    fireEvent.click(screen.getByRole("button", { name: "ปิดต้นทุนทั้งหมด" }));
+    expect(screen.queryAllByTestId(/^costs-/)).toHaveLength(0);
+  });
+
+  it("another month is read when picked", async () => {
+    await monthLoaded();
+    choose("commission-month", "ตุลาคม 2569");
+    await waitFor(() => expect(calls("/api/accounting/commission").some(([u]) => String(u).includes("month=2026-10"))).toBe(true));
+  });
+});
 const cells = (row: HTMLElement) => within(row).getAllByRole("cell").map((c) => c.textContent);
 
 describe("the tables in force", () => {

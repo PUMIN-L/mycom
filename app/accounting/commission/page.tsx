@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import AccountingFrame from "../AccountingFrame";
+import MonthView from "./MonthView";
 import RatesView from "./RatesView";
 
 export default function CommissionPage() {
@@ -12,13 +13,16 @@ export default function CommissionPage() {
   );
 }
 
-type View = "rates";
+type View = "month" | "rates";
 
-const VIEWS: { key: View; label: string }[] = [{ key: "rates", label: "ตารางอัตรา" }];
+const VIEWS: { key: View; label: string }[] = [
+  { key: "month", label: "สรุปรายเดือน" },
+  { key: "rates", label: "ตารางอัตรา" },
+];
 
-/** ค่าคอมมิชชั่น of ฟอร์ด and พี่ต่อ (ARCHITECTURE.md §8h), one view at a time. */
+/** ค่าคอมมิชชั่น of ฟอร์ด and พี่ต่อ (ARCHITECTURE.md §8h), one view at a time — the month first. */
 function CommissionBody() {
-  const [view, setView] = useState<View>("rates");
+  const [view, setView] = useState<View>("month");
   return (
     <div className="space-y-4">
       <div role="tablist" aria-label="ค่าคอมมิชชั่น" className="flex flex-wrap gap-2">
@@ -37,6 +41,7 @@ function CommissionBody() {
           </button>
         ))}
       </div>
+      {view === "month" && <MonthView />}
       {view === "rates" && <RatesView />}
     </div>
   );

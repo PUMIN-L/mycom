@@ -1842,6 +1842,33 @@ once the customer has paid the whole PO.
   save once; the company-profile route only blanks its row). Then the latest
   tables are emailed — who, when, what changed, every set in force — and
   `summaryEmailSent: false` when that email did not go (the save stands).
+- **The month (no schema change)** — `GET /api/accounting/commission?month=`
+  → `commissionMonth` ([`commissionData.ts`](./app/lib/accounting/commissionData.ts)):
+  the customer POs dated in the month (one cancelled before anything went is
+  left out; one cancelled after a delivery counts for what it delivered).
+  A PO's profit = its sales by `sr.dealId` (every delivery, a credit note's
+  negative) less `sr.costAmount` minus its "ค่าคอมมิชชั่น" cost rows; a sale with
+  something to charge and no cost typed is not known yet and is left out
+  (`costMissing`). DECIMALs are read as text (`signedDecimalToSatang`, a
+  minus sign kept). The month's set (`rateSetForMonth`) and `monthCommission`
+  give each its place and shares; its status, in this order: ยังไม่เลือก
+  (`unassigned`) → ยังส่งของไม่ครบ → ยังไม่กรอกต้นทุน → รอลูกค้าจ่าย (every
+  issued invoice owes 0 by `owedSatang`) → จ่ายได้. Totals per person split into
+  payable now and waiting; invoices of the month not from a PO are counted
+  and said (no commission).
+- **The month's screen** — sub-tab "สรุปรายเดือน", the page's first
+  ([`MonthView.tsx`](./app/accounting/commission/MonthView.tsx)): a month
+  picker (by PO date), cards per person, the rows in the ladder's order with a
+  link to each PO, a chooser in the row of a PO nobody chose yet, and each
+  PO's costs on a click — `GET /api/accounting/commission/orders/[id]/costs`
+  (`commissionCosts`), loaded the first time only: by delivery, each product's
+  cost on its lines and the other costs by kind (`COST_TYPE_LABELS`, now in
+  [`lib/costTypes.ts`](./app/lib/costTypes.ts), shared with the dashboard; the
+  old `product_cost` rows left out as the dashboard leaves them), the
+  "ค่าคอมมิชชั่น" rows shown but not deducted, a delivery with no cost flagged,
+  then ยอดขาย − ต้นทุน = กำไร as the commission counts it, and "แก้ต้นทุน"
+  to `/dashboard?edit=<saleId>` (the dashboard opens it when the sale is in
+  its loaded list, the newest 1,000).
 
 ### 9. Email (contact form) + lead persistence
 [`app/lib/mailer.ts`](./app/lib/mailer.ts) sends via SMTP (`nodemailer`, Gmail by

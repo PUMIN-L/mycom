@@ -1,4 +1,5 @@
 import type { SalesRecord } from "../lib/types";
+import { COST_TYPE_LABELS } from "../lib/costTypes";
 
 // ── Dashboard shared types ──────────────────────────────────────────────────
 
@@ -44,15 +45,7 @@ export interface CostItemLocal {
   note: string;
 }
 
-export const COST_TYPE_LABELS: Record<string, string> = {
-  product_cost: "ต้นทุนสินค้า",
-  transport: "ค่ารถ / ค่าเดินทาง",
-  shipping: "ค่าขนส่ง",
-  service_visit: "ค่าเซอร์วิส / ค่าติดตั้ง",
-  repair: "ค่าซ่อม",
-  commission: "ค่าคอมมิชชั่น",
-  other: "อื่นๆ",
-};
+export { COST_TYPE_LABELS };
 export const COST_TYPE_OPTIONS = Object.entries(COST_TYPE_LABELS).map(([value, label]) => ({ value, label }));
 
 export interface Product { id: string; title_th: string; title_en: string; categoryId: number }

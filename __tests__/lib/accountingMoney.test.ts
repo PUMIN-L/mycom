@@ -14,8 +14,28 @@ import {
   lineGrossSatang,
   parseBahtToSatang,
   satangToBaht,
+  signedDecimalToSatang,
   withVatOverride,
 } from "@/app/lib/accounting/money";
+
+describe("signedDecimalToSatang — a DECIMAL column as the driver gives it", () => {
+  it("reads the text exactly, a minus sign too (a credit note's sale)", () => {
+    expect(signedDecimalToSatang("1234.50")).toBe(123450);
+    expect(signedDecimalToSatang("-1234.50")).toBe(-123450);
+    expect(signedDecimalToSatang("0.07")).toBe(7);
+    expect(signedDecimalToSatang("-0.07")).toBe(-7);
+    expect(signedDecimalToSatang("100")).toBe(10000);
+    expect(signedDecimalToSatang("19999999999.99")).toBe(1999999999999);
+  });
+  it("a number, nothing, or garbage", () => {
+    expect(signedDecimalToSatang(12.34)).toBe(1234);
+    expect(signedDecimalToSatang(-0.1)).toBe(-10);
+    expect(signedDecimalToSatang(null)).toBe(0);
+    expect(signedDecimalToSatang(undefined)).toBe(0);
+    expect(signedDecimalToSatang("")).toBe(0);
+    expect(signedDecimalToSatang("abc")).toBe(0);
+  });
+});
 
 const line = (qty: number, baht: number, discountBaht = 0) => ({
   qty,
