@@ -13,7 +13,7 @@ import { repairTruncatedRichText } from "./sanitizeHtml";
 // did not lower the 33 already written to `settings`, so the next change to
 // reuse 33 was skipped entirely and its tables were never created in
 // production. Reverting a migration means moving FORWARD to a new number.
-const SCHEMA_VERSION = 58;
+const SCHEMA_VERSION = 59;
 
 type DbPool = ReturnType<typeof mysql.createPool>;
 
@@ -1867,6 +1867,27 @@ async function bootstrapSchemaOnce(): Promise<void> {
       } catch (error) {
         if (!isBenignSchemaError(error)) throw error;
       }
+    }
+
+    // ── v59: the commission rate table (§8h) ───────────────────────────────
+    // Sets by the month they start (the 1st). Append-only: every save, and
+    // every removal (removed = 1), is a row; the newest row of a month is that
+    // month's set. Changed only with the owner's emailed code.
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS acc_commission_rates (
+        id VARCHAR(36) PRIMARY KEY,
+        effectiveMonth VARCHAR(7) NOT NULL,
+        rulesJson TEXT NOT NULL,
+        removed TINYINT(1) NOT NULL DEFAULT 0,
+        createdAt VARCHAR(30) NOT NULL,
+        createdBy VARCHAR(255) NOT NULL,
+        INDEX idx_acr_month (effectiveMonth, createdAt)
+      )
+    `);
+    try {
+      await connection.query("CREATE INDEX idx_acr_month ON acc_commission_rates (effectiveMonth, createdAt)");
+    } catch (error) {
+      if (!isBenignSchemaError(error)) throw error;
     }
 
     // ── Seed default admin user ────────────────────────────────────────────

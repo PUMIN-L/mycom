@@ -224,8 +224,9 @@ function ratesProblems(where: string, rates: Partial<FlatRates> | null | undefin
 /**
  * What is wrong with a rate table, in Thai, step by step — nothing when it can
  * be saved. At least one step and at most MAX_LADDER_STEPS; every step but the
- * last ends higher than the one before; the last has no ceiling; each
- * percentage 0–100 with at most 2 decimals; ฟอร์ด + พี่ต่อ not over 100%.
+ * last ends on a whole baht, higher than the one before; the last has no
+ * ceiling; each percentage 0–100 with at most 2 decimals; ฟอร์ด + พี่ต่อ not
+ * over 100%.
  */
 export function rateRulesProblems(rules: unknown): string[] {
   if (!rules || typeof rules !== "object") return ["ตารางอัตราไม่ถูกต้อง"];
@@ -248,6 +249,7 @@ export function rateRulesProblems(rules: unknown): string[] {
     } else if (typeof step.upToSatang !== "number" || !Number.isSafeInteger(step.upToSatang) || step.upToSatang <= 0) {
       problems.push(`${where}: ต้องระบุกำไรสูงสุดของขั้น`);
     } else {
+      if (step.upToSatang % 100 !== 0) problems.push(`${where}: กำไรสูงสุดของขั้นต้องเป็นจำนวนเต็มบาท`);
       if (i > 0 && step.upToSatang <= previous) problems.push(`${where}: ต้องมากกว่าขั้นที่ ${i}`);
       previous = Math.max(previous, step.upToSatang);
     }

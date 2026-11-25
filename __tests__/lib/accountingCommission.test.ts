@@ -250,6 +250,9 @@ describe("rateRulesProblems", () => {
     const zero = valid();
     zero.ladder[0].upToSatang = 0;
     expect(rateRulesProblems(zero)).toContain("ขั้นที่ 1: ต้องระบุกำไรสูงสุดของขั้น");
+    const satang = valid();
+    satang.ladder[2].upToSatang = 50_000_050;
+    expect(rateRulesProblems(satang)).toEqual(["ขั้นที่ 3: กำไรสูงสุดของขั้นต้องเป็นจำนวนเต็มบาท"]);
   });
 
   it("percentages between 0 and 100, at most 2 decimals, ฟอร์ด + พี่ต่อ not over 100", () => {

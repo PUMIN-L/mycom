@@ -40,14 +40,14 @@ process.env.DB_USER = 'tester';
 process.env.DB_PASSWORD = 'pw';
 process.env.DB_NAME = 'testdb';
 
-// A version SELECT result that MATCHES SCHEMA_VERSION (58) → bootstrap fast-path,
+// A version SELECT result that MATCHES SCHEMA_VERSION (59) → bootstrap fast-path,
 // skipping DDL. Value is a string because settings stores VARCHAR values.
 //
 // ⚠️ This constant only ever goes UP, in step with db.ts. The bootstrap's fast
 // path is `stored >= SCHEMA_VERSION`, so a number the live database has already
 // recorded can never trigger a migration again — reusing one silently skips the
 // entire migration in production (that is how v33 was burned).
-const SCHEMA_VERSION = '58';
+const SCHEMA_VERSION = '59';
 const SCHEMA_MATCH: [Array<{ value: string }>, unknown[]] = [[{ value: SCHEMA_VERSION }], []];
 // An empty result → no schema_version row / no admin row → full bootstrap.
 const EMPTY: [unknown[], unknown[]] = [[], []];
@@ -1656,6 +1656,26 @@ describe("v58 — whose commission a customer PO is", () => {
     const create = sql.findIndex((s) => /CREATE TABLE IF NOT EXISTS acc_documents/.test(s));
     expect(create).toBeGreaterThanOrEqual(0);
     expect(alter).toBeGreaterThan(create);
+  });
+});
+
+// ── v59: the commission rate table — sets by the month they start ─────────────
+// Append-only: every save (and every removal) is a row; the newest row of a
+// month is that month's set. Read by the month, newest first.
+describe("v59 — the commission rate table", () => {
+  it('creates acc_commission_rates with the month index — no foreign key', async () => {
+    const db = await freshImport();
+    mockConnection.query.mockResolvedValue(EMPTY);
+    await db.getDbConnection();
+    const sql = bootstrapSql().map((s) => s.replace(/\s+/g, ' ').trim());
+    const create = sql.find((s) => s.startsWith('CREATE TABLE IF NOT EXISTS acc_commission_rates'));
+    expect(create).toBeDefined();
+    for (const column of ['id VARCHAR(36) PRIMARY KEY', 'effectiveMonth VARCHAR(7) NOT NULL', 'rulesJson TEXT NOT NULL', 'removed TINYINT(1) NOT NULL DEFAULT 0', 'createdAt VARCHAR(30) NOT NULL', 'createdBy VARCHAR(255) NOT NULL']) {
+      expect(create).toContain(column);
+    }
+    expect(create).toContain('INDEX idx_acr_month (effectiveMonth, createdAt)');
+    expect(create).not.toMatch(/FOREIGN KEY/i);
+    expect(sql).toContain('CREATE INDEX idx_acr_month ON acc_commission_rates (effectiveMonth, createdAt)');
   });
 });
 

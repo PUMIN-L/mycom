@@ -12,7 +12,14 @@ vi.mock("@/app/lib/db", () => ({ query: vi.fn(), withTransaction: vi.fn() }));
 vi.mock("@/app/lib/mailer", () => ({ isMailConfigured: vi.fn(() => true), sendSystemHtmlEmail: vi.fn(async () => {}) }));
 import { isMailConfigured, sendSystemHtmlEmail } from "@/app/lib/mailer";
 import { PASSWORD_OTP_EMAIL } from "@/app/lib/passwordReset";
-import { COMMISSION_EMAIL, commissionOwnerChangedEmail, notifyCommissionOwnerChanged } from "@/app/lib/accounting/commissionEmails";
+import {
+  COMMISSION_EMAIL,
+  commissionOwnerChangedEmail,
+  commissionRatesChangedEmail,
+  commissionRatesCodeEmail,
+  notifyCommissionOwnerChanged,
+} from "@/app/lib/accounting/commissionEmails";
+import { DEFAULT_COMMISSION_RULES, FIRST_EFFECTIVE_MONTH, type RateRules, type RateSet } from "@/app/lib/accounting/commission";
 
 const CHANGE = {
   customerPoNo: "PO-6611",
@@ -60,6 +67,46 @@ describe("commissionOwnerChangedEmail", () => {
     expect(email.text).toContain("เลขที่ PO ลูกค้า: PO-6611");
     expect(email.text).toContain("ลูกค้า: บริษัท <เอ> จำกัด");
     expect(email.text).toContain("เปลี่ยนโดย: admin");
+  });
+});
+
+describe("the rate table's two emails", () => {
+  const before: RateSet[] = [{ id: "r0", effectiveMonth: FIRST_EFFECTIVE_MONTH, rules: JSON.parse(JSON.stringify(DEFAULT_COMMISSION_RULES)) }];
+  const rules: RateRules = JSON.parse(JSON.stringify(DEFAULT_COMMISSION_RULES));
+  rules.ladder[1].fordBp = 3300;
+  rules.ladder[1].torBp = 1700;
+  const change = { kind: "save" as const, effectiveMonth: FIRST_EFFECTIVE_MONTH, rules };
+  const after: RateSet[] = [
+    { id: "r1", effectiveMonth: FIRST_EFFECTIVE_MONTH, rules },
+    { id: "r2", effectiveMonth: "2029-04", rules: JSON.parse(JSON.stringify(DEFAULT_COMMISSION_RULES)) },
+  ];
+
+  it("the code: big, how long it lasts, exactly what it approves, and never to be passed on", () => {
+    const email = commissionRatesCodeEmail({ otp: "482913", change, before, username: "admin", at: "2026-11-25T08:30:00.000Z", minutes: 15 });
+    expect(email.subject).toBe("[รหัสยืนยัน] แก้ตารางอัตราค่าคอมมิชชั่น");
+    expect(email.html).toContain("482913");
+    expect(email.html).toContain("ใช้ได้ 15 นาที และใช้ได้ครั้งเดียว");
+    expect(email.html).toContain("ตั้งแต่เริ่มต้น — แก้ชุดนี้");
+    expect(email.html).toMatch(/background-color: #fef3c7[^>]*>32% → 33%/);
+    expect(email.html).toContain("admin");
+    expect(email.html).toMatch(/อย่าบอกรหัสนี้กับใคร/);
+    expect(email.text).toContain("รหัสยืนยัน: 482913");
+    expect(email.text).toContain("100,001 – 300,000 | 32% → 33% | 18% → 17% | 50%");
+  });
+
+  it("after the change: who, when, what changed — and every table now in force", () => {
+    const email = commissionRatesChangedEmail({ change, before, after, username: "admin", at: "2026-11-25T08:30:00.000Z" });
+    expect(email.subject).toBe("แจ้งเตือน: ตารางอัตราค่าคอมมิชชั่นถูกแก้แล้ว");
+    expect(email.html).toContain("32% → 33%");
+    expect(email.html).toContain("ตารางที่ใช้อยู่ตอนนี้");
+    expect(email.html).toContain("ตั้งแต่เริ่มต้น");
+    expect(email.html).toContain("ตั้งแต่เดือนเมษายน 2572");
+    expect(email.html).toContain("เกิน 500,000");
+    expect(email.html).toContain("ดีลลูกค้าพี่ต่อ");
+    expect(email.html).toContain("ยอดค่าคอมที่บันทึกว่าจ่ายแล้ว ไม่เปลี่ยนตามตารางใหม่");
+    expect(email.html).toContain("ถ้าไม่ใช่คุณเป็นคนเปลี่ยน");
+    expect(email.text).toContain("แก้โดย: admin");
+    expect(email.text).toContain("ตั้งแต่เดือนเมษายน 2572");
   });
 });
 

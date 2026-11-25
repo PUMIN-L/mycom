@@ -1814,6 +1814,34 @@ once the customer has paid the whole PO.
   no money); the first choice is not. The email goes after the change is
   saved; a failed one never undoes it (`emailSent: false`, the page says so).
   The look is the shared designed email (§9).
+- **The rate table (schema v59)** — `acc_commission_rates` (`effectiveMonth`
+  "YYYY-MM" or "0000-00" = from the beginning, `rulesJson`, `removed`),
+  **append-only**: every save and every removal is a row; the newest row of a
+  month is that month's set, so the history is the table itself
+  ([`commissionRates.ts`](./app/lib/accounting/commissionRates.ts) `loadRates`;
+  nothing stored = the owner's table). Changes are pure in
+  [`commissionRateChange.ts`](./app/lib/accounting/commissionRateChange.ts): a
+  save of one month's set or the removal of a later one (the first never);
+  the same figures as already apply to that month are refused ("ไม่มีอะไรเปลี่ยน");
+  steps end on whole baht; `rateChangeTable` draws before → after for the
+  emails. Page `/accounting/commission` (tab "ค่าคอมมิชชั่น"), sub-tab "ตารางอัตรา"
+  ([`RatesView.tsx`](./app/accounting/commission/RatesView.tsx)): the sets as
+  the owner's table writes them, an editor (the company's share follows; a new
+  set picks its starting month), the code window, the history.
+- **A change is saved ONLY with a 6-digit code emailed to the owner** (the
+  owner's rule — no password): `POST /api/accounting/commission/rates/otp
+  { change }` validates it, takes an issue (`claimOtpIssue`, one a minute, five
+  an hour), stores `{ otp, expiresAt +15 min, pending, userId }` in ONE settings
+  row and emails the code with the before → after table (a failed email
+  withdraws the code, 502). `PUT /api/accounting/commission/rates { otp }`
+  saves the change STORED with the code — never anything the request carries:
+  the guess is taken before it is compared (five, the fifth wipes it), the
+  change is checked again against the tables as they are now (409 when
+  overtaken), and the code is spent IN the transaction that inserts the row
+  (`UPDATE settings … WHERE value = <the row read>` — two tabs with one code
+  save once; the company-profile route only blanks its row). Then the latest
+  tables are emailed — who, when, what changed, every set in force — and
+  `summaryEmailSent: false` when that email did not go (the save stands).
 
 ### 9. Email (contact form) + lead persistence
 [`app/lib/mailer.ts`](./app/lib/mailer.ts) sends via SMTP (`nodemailer`, Gmail by

@@ -28,7 +28,9 @@ export type AuditAction =
   /** The accountant's workbook downloaded (step 9) — everything declared, in one file. */
   | "data.export"
   /** Whose commission a customer PO is — ลูกค้าฟอร์ด / ลูกค้าพี่ต่อ (§8h). */
-  | "commission.owner";
+  | "commission.owner"
+  /** The commission rate table changed, with the owner's emailed code (§8h). */
+  | "commission.rates";
 
 export const AUDIT_DETAIL_MAX = 1000;
 
