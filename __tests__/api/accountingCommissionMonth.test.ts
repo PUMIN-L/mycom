@@ -13,10 +13,13 @@ import { getSession } from "@/app/lib/session";
 vi.mock("@/app/lib/twoFactor", () => ({ getTwoFactorUser: vi.fn() }));
 import { getTwoFactorUser } from "@/app/lib/twoFactor";
 vi.mock("@/app/lib/accounting/commissionData", () => ({
-  commissionMonth: vi.fn(async (month: string) => (month === "2026-11" ? { month, rows: [] } : null)),
+  commissionMonth: vi.fn(async (month: string) =>
+    month === "2026-11" ? { month, rows: [] } : month === "2026-12" ? { month, rows: [{ id: "so1", customerPoNo: "PO-1", fordSatang: 100 }] } : null
+  ),
   commissionCosts: vi.fn(async (id: string) => (id === "so1" ? { poId: id, deliveries: [] } : null)),
+  commissionCostsFor: vi.fn(async (pos: { id: string }[]) => Object.fromEntries(pos.map((p) => [p.id, { poId: p.id, deliveries: [] }]))),
 }));
-import { commissionCosts, commissionMonth } from "@/app/lib/accounting/commissionData";
+import { commissionCosts, commissionCostsFor, commissionMonth } from "@/app/lib/accounting/commissionData";
 
 import { GET as monthGET } from "@/app/api/accounting/commission/route";
 import { GET as costsGET } from "@/app/api/accounting/commission/orders/[id]/costs/route";
@@ -39,6 +42,18 @@ describe("GET /api/accounting/commission", () => {
     expect(res.headers.get("Cache-Control")).toBe("no-store");
     expect(commissionMonth).toHaveBeenCalledWith("2026-11");
     expect(await res.json()).toEqual({ month: "2026-11", rows: [] });
+    expect(commissionCostsFor).not.toHaveBeenCalled();
+  });
+
+  it("with every PO's costs when asked — for the Excel", async () => {
+    const res = await monthGET(get("/api/accounting/commission?month=2026-12&withCosts=1"));
+    expect(res.status).toBe(200);
+    expect(commissionCostsFor).toHaveBeenCalledWith([{ id: "so1", customerPoNo: "PO-1" }]);
+    expect(await res.json()).toEqual({
+      month: "2026-12",
+      rows: [{ id: "so1", customerPoNo: "PO-1", fordSatang: 100 }],
+      costs: { so1: { poId: "so1", deliveries: [] } },
+    });
   });
 
   it("400 in Thai for a month that is not one, or none", async () => {

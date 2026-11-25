@@ -16,7 +16,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("@/app/lib/db", () => ({ query: vi.fn(), withTransaction: vi.fn() }));
 import { query } from "@/app/lib/db";
-import { commissionCosts, commissionMonth } from "@/app/lib/accounting/commissionData";
+import { commissionCosts, commissionCostsFor, commissionMonth } from "@/app/lib/accounting/commissionData";
 
 const baht = (n: number) => Math.round(n * 100);
 const po = (id: string, issueDate: string, commissionOf: string | null, status = "issued") => ({
@@ -257,5 +257,56 @@ describe("commissionCosts — what a PO's profit is made of", () => {
     expect(await commissionCosts("X")).toBeNull();
     vi.mocked(query).mockImplementation(route([]) as never);
     expect(await commissionCosts("nope")).toBeNull();
+  });
+});
+
+describe("commissionCostsFor — many POs' costs in one go (the Excel, the PDF)", () => {
+  it("every PO's sales at once, then their lines and costs at once — grouped by PO, each as commissionCosts reads it", async () => {
+    vi.mocked(query).mockImplementation(
+      route([
+        [
+          /FROM sales_records sr WHERE sr\.dealId IN/,
+          () => [
+            { id: "a1", dealId: "A", saleDate: "2026-11-10", invoiceRef: "INV2026110001", totalAmount: "100000.00", costAmount: "20000.00" },
+            { id: "c1", dealId: "C", saleDate: "2026-12-10", invoiceRef: "INV2026120003", totalAmount: "700000.00", costAmount: "417500.00" },
+          ],
+        ],
+        [/FROM sales_record_items/, () => [
+          { salesRecordId: "c1", productName: "เครื่องชั่ง A", qty: 2, costAmount: "400000.00" },
+          { salesRecordId: "a1", productName: "เครื่องชั่ง B", qty: 1, costAmount: "20000.00" },
+        ]],
+        [/FROM sale_cost_items/, () => [
+          { salesRecordId: "c1", costType: "shipping", label: "Kerry", note: "", amount: "7500.00" },
+          { salesRecordId: "c1", costType: "commission", label: "", note: "", amount: "10000.00" },
+        ]],
+      ]) as never
+    );
+    const out = await commissionCostsFor([
+      { id: "A", customerPoNo: "PO-A" },
+      { id: "C", customerPoNo: "PO-C" },
+      { id: "Z", customerPoNo: "PO-Z" },
+    ]);
+    expect(Object.keys(out)).toEqual(["A", "C", "Z"]);
+    expect(out.C.customerPoNo).toBe("PO-C");
+    expect(out.C.deliveries).toHaveLength(1);
+    expect(out.C.deliveries[0]).toMatchObject({ saleId: "c1", salesSatang: baht(700_000), costSatang: baht(407_500), profitSatang: baht(292_500) });
+    expect(out.C.totals.notCountedSatang).toBe(baht(10_000));
+    expect(out.A.totals).toMatchObject({ salesSatang: baht(100_000), costSatang: baht(20_000), profitSatang: baht(80_000) });
+    expect(out.Z).toEqual({
+      poId: "Z",
+      customerPoNo: "PO-Z",
+      deliveries: [],
+      totals: { salesSatang: 0, costSatang: 0, profitSatang: 0, notCountedSatang: 0, waitingCostSalesSatang: 0 },
+    });
+    for (const table of [/FROM sales_records sr/, /FROM sales_record_items/, /FROM sale_cost_items/]) {
+      expect(calls.filter((c) => table.test(c.sql))).toHaveLength(1);
+    }
+    expect(calls.find((c) => /FROM sales_records sr/.test(c.sql))!.params).toEqual(["A", "C", "Z"]);
+    expect(calls.find((c) => /FROM sale_cost_items/.test(c.sql))!.sql).toMatch(/costType <> 'product_cost'/);
+  });
+
+  it("no PO, no question to the database", async () => {
+    expect(await commissionCostsFor([])).toEqual({});
+    expect(calls).toHaveLength(0);
   });
 });

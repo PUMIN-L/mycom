@@ -5,7 +5,10 @@
  *    on the ladder, ฟอร์ด / พี่ต่อ / บริษัท, and where each stands;
  *  • the month's totals per person — payable now and waiting;
  *  • a PO nobody chose yet can be chosen right there;
- *  • each PO's costs open and close, loaded once.
+ *  • each PO's costs open and close, loaded once;
+ *  • the month as an Excel workbook (with every PO's costs).
+ * The tab "สรุปการจ่าย": what was paid in a range of paid dates (this month
+ * first) and the one-click PDF, the costs in it only when switched on.
  * The tab "ตารางอัตรา":
  *  • the tables in force, as the owner's table writes them (0 – 100,000 …
  *    เกิน 500,000, ฟอร์ด / พี่ต่อ / บริษัท), the first "ตั้งแต่เริ่มต้น";
@@ -21,6 +24,20 @@ vi.mock("next/navigation", () => ({
   usePathname: () => "/accounting/commission",
   useSearchParams: () => new URLSearchParams(),
   useParams: () => ({}),
+}));
+
+vi.mock("@/app/lib/xlsxExport", async (original) => ({ ...(await original<typeof import("@/app/lib/xlsxExport")>()), downloadExcel: vi.fn(async () => {}) }));
+import { downloadExcel } from "@/app/lib/xlsxExport";
+// The PDF is drawn in the browser: html2canvas-pro paints each page, jsPDF saves the file.
+const pdf = vi.hoisted(() => ({ addImage: vi.fn(), addPage: vi.fn(), save: vi.fn() }));
+vi.mock("html2canvas-pro", () => ({ default: vi.fn(async () => ({ toDataURL: () => "data:image/jpeg;base64,AAAA" })) }));
+import html2canvas from "html2canvas-pro";
+vi.mock("jspdf", () => ({
+  jsPDF: class {
+    addImage = pdf.addImage;
+    addPage = pdf.addPage;
+    save = pdf.save;
+  },
 }));
 
 import CommissionPage from "@/app/accounting/commission/page";
@@ -105,6 +122,25 @@ const EMPTY_COSTS = (id: string) => ({
   deliveries: [],
   totals: { salesSatang: 0, costSatang: 0, profitSatang: 0, notCountedSatang: 0, waitingCostSalesSatang: 0 },
 });
+const PAYOUTS = {
+  rows: [
+    {
+      id: "pay-A", salesOrderId: "A", customerPoNo: "PO-A", buyerName: "ลูกค้า A", issueDate: "2026-11-03", kind: "ford",
+      profitSatang: 8_000_000, ladderFromSatang: 0, ladderToSatang: 8_000_000, fordSatang: 2_160_000, torSatang: 1_840_000, companySatang: 4_000_000,
+      rateSetId: null, paidDate: "2026-11-24", createdBy: "admin", changedSince: false,
+    },
+    {
+      id: "pay-T", salesOrderId: "T", customerPoNo: "PO-T", buyerName: "ลูกค้า T", issueDate: "2026-11-05", kind: "tor",
+      profitSatang: 10_000_000, ladderFromSatang: null, ladderToSatang: null, fordSatang: 1_500_000, torSatang: 3_500_000, companySatang: 5_000_000,
+      rateSetId: null, paidDate: "2026-11-25", createdBy: "admin", changedSince: true,
+    },
+  ],
+  rateSets: [{ id: null, effectiveMonth: "0000-00", rules: DEFAULT_COMMISSION_RULES }],
+  changedSince: 1,
+  seller: { name: "บริษัท ทดสอบ จำกัด", address: "กรุงเทพฯ", taxId: "0105555000000", branchCode: "00000", phone: "", email: "" },
+  exportedBy: "admin",
+  exportedAt: "2026-11-25T03:00:00.000Z",
+};
 
 const json = (body: unknown, status = 200) => ({ ok: status < 400, status, json: async () => body, headers: new Headers() });
 let rates: { sets: unknown[]; history: unknown[] };
@@ -119,6 +155,7 @@ const choose = (id: string, label: string) => {
 };
 
 beforeEach(() => {
+  vi.clearAllMocks();
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date("2026-11-25T03:00:00Z"));
   rates = { sets: [FIRST], history: [] };
@@ -134,8 +171,11 @@ beforeEach(() => {
     if (method === "PUT" && owner) return json({ order: { id: owner[1] }, emailSent: null });
     if (method === "POST" && /^\/api\/accounting\/commission\/payouts\/[^/]+\/void$/.test(url.pathname)) return json({ ok: true });
     if (method === "POST" && url.pathname === "/api/accounting/commission/payouts") return json({ id: "payX" });
+    const withCosts = url.searchParams.get("withCosts") === "1";
     switch (`${method} ${url.pathname}`) {
-      case "GET /api/accounting/commission": return json({ ...MONTH, month: url.searchParams.get("month") });
+      case "GET /api/accounting/commission": return json({ ...MONTH, month: url.searchParams.get("month"), ...(withCosts ? { costs: { C: COSTS_C } } : {}) });
+      case "GET /api/accounting/commission/payouts":
+        return json({ ...PAYOUTS, from: url.searchParams.get("from"), to: url.searchParams.get("to"), ...(withCosts ? { costs: { A: EMPTY_COSTS("A") } } : {}) });
       case "GET /api/accounting/status": return json({ twoFactorEnabled: true, username: "admin" });
       case "GET /api/accounting/commission/rates": return json(rates);
       case "POST /api/accounting/commission/rates/otp": return json({ sent: true, email: "am****@gmail.com", minutes: 15 });
@@ -279,6 +319,77 @@ describe("the month (the tab that opens)", () => {
     await monthLoaded();
     choose("commission-month", "ตุลาคม 2569");
     await waitFor(() => expect(calls("/api/accounting/commission").some(([u]) => String(u).includes("month=2026-10"))).toBe(true));
+  });
+
+  it("the month as an Excel workbook — with every PO's costs, asked for then", async () => {
+    await monthLoaded();
+    fireEvent.click(screen.getByRole("button", { name: "ดาวน์โหลด Excel" }));
+    await waitFor(() => expect(downloadExcel).toHaveBeenCalledTimes(1));
+    const [file, sheets] = vi.mocked(downloadExcel).mock.calls[0];
+    expect(file).toBe("commission_2026-11.xlsx");
+    expect(sheets.map((s) => s.name)).toEqual(["สรุปรายเดือน", "ขั้นบันได", "รายละเอียดต้นทุน"]);
+    expect(calls("/api/accounting/commission").some(([u]) => String(u).includes("withCosts=1"))).toBe(true);
+    expect(await screen.findByText(/ดาวน์โหลดแล้ว — ไฟล์ commission_2026-11\.xlsx/)).toBeInTheDocument();
+  });
+});
+
+describe("the payouts (tab สรุปการจ่าย) and the PDF", () => {
+  async function payoutsLoaded() {
+    render(<CommissionPage />);
+    fireEvent.click(await screen.findByRole("tab", { name: "สรุปการจ่าย" }));
+    await screen.findByTestId("payout-row-pay-A");
+  }
+  const payoutCalls = () => calls("/api/accounting/commission/payouts").map(([u]) => String(u));
+
+  it("this month's payouts by paid date — what each person got, every PO paid", async () => {
+    await payoutsLoaded();
+    expect(payoutCalls()[0]).toContain("from=2026-11-01");
+    expect(payoutCalls()[0]).toContain("to=2026-11-30");
+    expect(screen.getByTestId("payout-ford")).toHaveTextContent("36,600.00");
+    expect(screen.getByTestId("payout-tor")).toHaveTextContent("53,400.00");
+    expect(screen.getByTestId("payout-both")).toHaveTextContent("90,000.00");
+    const a = screen.getByTestId("payout-row-pay-A");
+    for (const text of ["24 Nov 2026", "PO-A", "ลูกค้า A", "ลูกค้าฟอร์ด", "80,000.00", "21,600.00", "18,400.00", "40,000.00"]) {
+      expect(a).toHaveTextContent(text);
+    }
+    expect(screen.getByTestId("payout-row-pay-T")).toHaveTextContent("ลูกค้าพี่ต่อ");
+    expect(screen.getByText(/ข้อมูลเปลี่ยนหลังบันทึกจ่าย 1 รายการ/)).toBeInTheDocument();
+  });
+
+  it("last month in one click", async () => {
+    await payoutsLoaded();
+    fireEvent.click(screen.getByRole("button", { name: "เดือนที่แล้ว" }));
+    await waitFor(() => expect(payoutCalls().some((u) => u.includes("from=2026-10-01") && u.includes("to=2026-10-31"))).toBe(true));
+  });
+
+  it("the PDF in one click — named for the range, the costs left out unless switched on", async () => {
+    await payoutsLoaded();
+    expect(screen.getByRole("switch", { name: "แสดงรายละเอียดต้นทุน" })).not.toBeChecked();
+    fireEvent.click(screen.getByRole("button", { name: "ส่งออก PDF" }));
+    await waitFor(() => expect(pdf.save).toHaveBeenCalledWith("commission-payout_2026-11-01_2026-11-30.pdf"));
+    expect(html2canvas).toHaveBeenCalledTimes(1);
+    expect(pdf.addImage).toHaveBeenCalledTimes(1);
+    expect(payoutCalls().every((u) => !u.includes("withCosts"))).toBe(true);
+    expect(await screen.findByText(/ดาวน์โหลดแล้ว — ไฟล์ commission-payout_2026-11-01_2026-11-30\.pdf/)).toBeInTheDocument();
+  });
+
+  it("with the costs switched on, the PDF asks for them", async () => {
+    await payoutsLoaded();
+    fireEvent.click(screen.getByRole("switch", { name: "แสดงรายละเอียดต้นทุน" }));
+    fireEvent.click(screen.getByRole("button", { name: "ส่งออก PDF" }));
+    await waitFor(() => expect(pdf.save).toHaveBeenCalledTimes(1));
+    expect(payoutCalls().some((u) => u.includes("withCosts=1"))).toBe(true);
+  });
+
+  it("nothing paid in the range: said so, and no PDF to make", async () => {
+    override = (path, init) =>
+      path === "/api/accounting/commission/payouts" && (init?.method ?? "GET") === "GET"
+        ? json({ ...PAYOUTS, rows: [], changedSince: 0, from: "2026-11-01", to: "2026-11-30" })
+        : undefined;
+    render(<CommissionPage />);
+    fireEvent.click(await screen.findByRole("tab", { name: "สรุปการจ่าย" }));
+    expect(await screen.findByText("ไม่มีการจ่ายค่าคอมในช่วงวันที่นี้")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "ส่งออก PDF" })).toBeDisabled();
   });
 });
 const cells = (row: HTMLElement) => within(row).getAllByRole("cell").map((c) => c.textContent);

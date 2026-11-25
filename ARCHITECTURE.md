@@ -1896,6 +1896,42 @@ once the customer has paid the whole PO.
   with the three amounts and the paid date, today by default), "จ่ายแล้ว
   <date>" plus "ส่วนต่างหลังจ่าย" on a paid row, "ยกเลิกการบันทึกจ่าย" with a
   reason, and the cards add จ่ายแล้ว and ส่วนต่างหลังจ่าย.
+- **The Excel and the PDF (no schema change).** The shapes live in
+  [`commissionTypes.ts`](./app/lib/accounting/commissionTypes.ts) (pure — the
+  browser draws them; `commissionData.ts` re-exports them) with
+  `COMMISSION_STATUS_LABELS`, the one set of status words. **Excel** — the
+  month screen's "ดาวน์โหลด Excel" reads `GET /api/accounting/commission?month=
+  &withCosts=1` (`costs` by PO id from `commissionCostsFor`: every PO's sales,
+  lines and cost rows in three reads, the way `commissionCosts` reads one) and
+  [`commissionExport.ts`](./app/lib/accounting/commissionExport.ts) builds three
+  sheets for `downloadExcel`: สรุปรายเดือน (every PO, what was paid and the
+  difference, a รวม row, the totals per person above), ขั้นบันได (slice by
+  slice at each step's rates; ลูกค้าพี่ต่อ flat), รายละเอียดต้นทุน (line by line).
+  **PDF** — sub-tab "สรุปการจ่าย"
+  ([`PayoutsView.tsx`](./app/accounting/commission/PayoutsView.tsx)): a range of
+  PAID dates (this month first; เดือนนี้ / เดือนที่แล้ว), what was paid in it,
+  and "ส่งออก PDF" with a "แสดงรายละเอียดต้นทุน" switch, off by default (the paper
+  may be handed to the two). `GET /api/accounting/commission/payouts?from&to
+  [&withCosts=1]` → `payoutReport`
+  ([`commissionReport.ts`](./app/lib/accounting/commissionReport.ts)): the live
+  marks paid in the range with their PO (the LOCKED amounts), `changedSince`
+  per mark (against its PO's month as it stands now, by the PO's date now), the
+  rate sets used (`rateSetId` null = the owner's table; a saved set by its id —
+  append-only, so still there), the seller, who exported it and when; at most
+  a year and 2,000 marks. The paper
+  ([`CommissionPayoutPaper.tsx`](./app/accounting/commission/CommissionPayoutPaper.tsx),
+  the logic pure in
+  [`commissionPayoutPaper.ts`](./app/lib/accounting/commissionPayoutPaper.ts)) is
+  made in the browser the quotation's way (html2canvas-pro + jsPDF, nothing
+  stored): every part drawn once off-screen in `<body>` and measured after the
+  fonts and the logo are ready, `paginatePaper` places them (a part never
+  splits, a PO's row stays with its cost detail, the totals + rates + notes +
+  signatures stay together on the last page), then each A4 page is painted —
+  the company and the range, three cards (ฟอร์ดได้รับ / พี่ต่อได้รับ from which
+  deals, รวมจ่าย), the table (navy head on every page, zebra rows, the ladder
+  range under the customer), รวม, อัตราที่ใช้คิด, the notes, three signatures,
+  and "หน้า x/y · ส่งออกโดย … · when" on every page. File
+  `commission-payout_<from>_<to>.pdf`.
 
 ### 9. Email (contact form) + lead persistence
 [`app/lib/mailer.ts`](./app/lib/mailer.ts) sends via SMTP (`nodemailer`, Gmail by

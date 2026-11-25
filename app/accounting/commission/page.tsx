@@ -3,6 +3,7 @@
 import { useState } from "react";
 import AccountingFrame from "../AccountingFrame";
 import MonthView from "./MonthView";
+import PayoutsView from "./PayoutsView";
 import RatesView from "./RatesView";
 
 export default function CommissionPage() {
@@ -13,10 +14,11 @@ export default function CommissionPage() {
   );
 }
 
-type View = "month" | "rates";
+type View = "month" | "payouts" | "rates";
 
 const VIEWS: { key: View; label: string }[] = [
   { key: "month", label: "สรุปรายเดือน" },
+  { key: "payouts", label: "สรุปการจ่าย" },
   { key: "rates", label: "ตารางอัตรา" },
 ];
 
@@ -42,6 +44,7 @@ function CommissionBody() {
         ))}
       </div>
       {view === "month" && <MonthView />}
+      {view === "payouts" && <PayoutsView />}
       {view === "rates" && <RatesView />}
     </div>
   );

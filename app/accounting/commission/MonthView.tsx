@@ -12,6 +12,10 @@ import { monthLabel } from "../../lib/accounting/exportRules";
 import { formatSatang } from "../../lib/accounting/money";
 import { COMMISSION_KIND_LABELS, type CommissionKind } from "../../lib/accounting/commission";
 import { effectiveMonthLabel, formatWholeBaht } from "../../lib/accounting/commissionRateChange";
+import { commissionMonthFilename, commissionMonthSheets } from "../../lib/accounting/commissionExport";
+import { deliveryTitles } from "../../lib/accounting/commissionPayoutPaper";
+import { COMMISSION_STATUS_LABELS, type CommissionMonth, type PoCosts } from "../../lib/accounting/commissionTypes";
+import { downloadExcel } from "../../lib/xlsxExport";
 
 // The commission month (ARCHITECTURE.md §8h): the customer POs of the month (by
 // PO date) in the ladder's order — whose, profit, place on the ladder, the
@@ -84,14 +88,17 @@ const isMonth = (v: unknown): v is MonthAnswer =>
   !!v && typeof v === "object" && Array.isArray((v as MonthAnswer).rows) && !!(v as MonthAnswer).totals && !!(v as MonthAnswer).rateSet;
 const isCosts = (v: unknown): v is CostsAnswer => !!v && typeof v === "object" && Array.isArray((v as CostsAnswer).deliveries) && !!(v as CostsAnswer).totals;
 
-const STATUS: Record<Status, { text: string; tone: string }> = {
-  paid: { text: "จ่ายแล้ว", tone: "border-sky-200 bg-sky-50 text-sky-800" },
-  payable: { text: "จ่ายได้", tone: "border-green-200 bg-green-50 text-green-800" },
-  "awaiting-payment": { text: "รอลูกค้าจ่าย", tone: "border-amber-200 bg-amber-50 text-amber-800" },
-  "not-delivered": { text: "ยังส่งของไม่ครบ", tone: "border-gray-200 bg-gray-50 text-gray-700" },
-  "cost-missing": { text: "ยังไม่กรอกต้นทุน", tone: "border-amber-200 bg-amber-50 text-amber-800" },
-  unassigned: { text: "ยังไม่เลือกค่าคอมของใคร", tone: "border-red-200 bg-red-50 text-red-700" },
+const TONES: Record<Status, string> = {
+  paid: "border-sky-200 bg-sky-50 text-sky-800",
+  payable: "border-green-200 bg-green-50 text-green-800",
+  "awaiting-payment": "border-amber-200 bg-amber-50 text-amber-800",
+  "not-delivered": "border-gray-200 bg-gray-50 text-gray-700",
+  "cost-missing": "border-amber-200 bg-amber-50 text-amber-800",
+  unassigned: "border-red-200 bg-red-50 text-red-700",
 };
+const STATUS = Object.fromEntries(
+  (Object.keys(TONES) as Status[]).map((s) => [s, { text: COMMISSION_STATUS_LABELS[s], tone: TONES[s] }])
+) as Record<Status, { text: string; tone: string }>;
 
 const KIND_OPTIONS = [
   { value: "ford", label: COMMISSION_KIND_LABELS.ford },
@@ -127,6 +134,7 @@ export default function MonthView() {
   const [notice, setNotice] = useState<{ text: string; warn: boolean } | null>(null);
   const [paying, setPaying] = useState<MonthRow | null>(null);
   const [undoing, setUndoing] = useState<MonthRow | null>(null);
+  const [exporting, setExporting] = useState(false);
   /** A dialog saved: say so, read the month again. */
   const saved = (text: string) => {
     setPaying(null);
@@ -185,6 +193,33 @@ export default function MonthView() {
       return n;
     });
 
+  /** The month as an Excel workbook — read afresh with every PO's costs, written in this browser. */
+  const exportExcel = async () => {
+    if (exporting) return;
+    setExporting(true);
+    setNotice(null);
+    try {
+      const res = await fetch(`/api/accounting/commission?month=${encodeURIComponent(month)}&withCosts=1`, { cache: "no-store" });
+      if (!res.ok) {
+        setNotice({ text: await errorMessageOf(res, "ส่งออก Excel ไม่สำเร็จ"), warn: true });
+        return;
+      }
+      const body = await res.json().catch(() => null);
+      if (!isMonth(body)) {
+        setNotice({ text: "ส่งออก Excel ไม่สำเร็จ", warn: true });
+        return;
+      }
+      const data = body as unknown as CommissionMonth & { costs?: Record<string, PoCosts> };
+      const file = commissionMonthFilename(month);
+      await downloadExcel(file, commissionMonthSheets(data, data.costs ?? null));
+      setNotice({ text: `ดาวน์โหลดแล้ว — ไฟล์ ${file}`, warn: false });
+    } catch {
+      setNotice({ text: "ส่งออก Excel ไม่สำเร็จ ลองใหม่อีกครั้ง", warn: true });
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const assign = async (id: string) => {
     const choice = choices[id];
     if (!choice || assigning) return;
@@ -224,7 +259,15 @@ export default function MonthView() {
           />
         </div>
         {load.status === "ok" && load.data.rows.length > 0 && (
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => void exportExcel()}
+              disabled={exporting}
+              className="px-3 py-2 rounded-xl bg-green-600 text-white text-sm font-semibold hover:bg-green-700 disabled:opacity-60"
+            >
+              {exporting ? "กำลังสร้าง Excel…" : "ดาวน์โหลด Excel"}
+            </button>
             <button type="button" onClick={() => load.data.rows.forEach((r) => void openCosts(r.id))} className="px-3 py-2 rounded-xl border border-gray-300 text-sm font-semibold hover:bg-gray-50">
               เปิดต้นทุนทั้งหมด
             </button>
@@ -665,11 +708,7 @@ function CostsPanel({ id, load, onRetry }: { id: string; load: Load<CostsAnswer>
     );
   }
   const { deliveries, totals } = load.data;
-  // Deliveries are numbered; a credit note is not one.
-  const titles = deliveries.reduce<string[]>(
-    (acc, d) => [...acc, d.credit ? "ใบลดหนี้" : `ส่งของครั้งที่ ${acc.filter((t) => t !== "ใบลดหนี้").length + 1}`],
-    []
-  );
+  const titles = deliveryTitles(deliveries);
   return (
     <div data-testid={`costs-${id}`} className="space-y-3 text-sm">
       {deliveries.length === 0 && <p className="text-gray-500">ยังไม่มีการส่งของจาก PO นี้ จึงยังไม่มีต้นทุน</p>}

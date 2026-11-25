@@ -6,8 +6,31 @@ import { monthRange } from "./exportRules";
 import { orderStatusOf, type OrderStatus } from "./orderRules";
 import { owedSatang } from "./creditRules";
 import { signedDecimalToSatang } from "./money";
-import { commissionKindOf, monthCommission, rateSetForMonth, type CommissionKind, type CommissionPoResult, type RateRules } from "./commission";
+import { commissionKindOf, monthCommission, rateSetForMonth, type CommissionKind } from "./commission";
 import { currentRateSets } from "./commissionRates";
+import type {
+  CommissionMonth,
+  CommissionMonthRow,
+  CommissionStatus,
+  CommissionTotals,
+  DeliveryCosts,
+  PayoutInfo,
+  PersonTotals,
+  PoCosts,
+} from "./commissionTypes";
+
+export type {
+  CommissionMonth,
+  CommissionMonthRow,
+  CommissionStatus,
+  CommissionTotals,
+  CostLine,
+  DeliveryCosts,
+  OtherCost,
+  PayoutInfo,
+  PersonTotals,
+  PoCosts,
+} from "./commissionTypes";
 
 // The commission month, read from the real tables (ARCHITECTURE.md §8h).
 //
@@ -21,78 +44,7 @@ import { currentRateSets } from "./commissionRates";
 // delivered in full, paid in full and every cost is typed.
 //
 // Every joined column carries its table: companies has a salespersonId too.
-
-export type CommissionStatus = "unassigned" | "not-delivered" | "cost-missing" | "awaiting-payment" | "payable" | "paid";
-
-/** A live paid-out mark: what was LOCKED when it was paid (schema v60). */
-export interface PayoutInfo {
-  id: string;
-  paidDate: string;
-  profitSatang: number;
-  fordSatang: number;
-  torSatang: number;
-  companySatang: number;
-  createdBy: string;
-}
-
-export interface CommissionMonthRow extends CommissionPoResult {
-  customerPoNo: string;
-  buyerName: string;
-  issueDate: string;
-  status: string;
-  orderStatus: OrderStatus;
-  /** Its sales so far, ex VAT (a credit note negative). */
-  salesSatang: number;
-  /** The costs typed on them, the "ค่าคอมมิชชั่น" rows left out. */
-  costSatang: number;
-  /** The profit known so far — null when nothing is. */
-  profitSatang: number | null;
-  /** A delivery with something to charge has no cost typed yet. */
-  costMissing: boolean;
-  paidInFull: boolean;
-  /** What its issued invoices still owe. */
-  owedSatang: number;
-  commissionStatus: CommissionStatus;
-  /** Marked paid — what was locked then; null when it was not. */
-  payout: PayoutInfo | null;
-  /** Worked out now less what was paid — a change since (0 when not paid). */
-  differenceFordSatang: number;
-  differenceTorSatang: number;
-  /** Paid, but as it stands now it could not be (a refund, a cost taken away…) — why; else null. */
-  paidButNot: Exclude<CommissionStatus, "payable" | "paid"> | null;
-}
-
-export interface PersonTotals {
-  /** Everything worked out for the month, as it stands now. */
-  totalSatang: number;
-  /** Marked paid — the amounts locked then. */
-  paidSatang: number;
-  /** On POs that may be paid now. */
-  payableSatang: number;
-  /** On the others — waiting for the customer, a delivery or a cost. */
-  waitingSatang: number;
-  /** On the paid ones: as it stands now less what was paid. */
-  differenceSatang: number;
-}
-
-export interface CommissionTotals {
-  ford: PersonTotals;
-  tor: PersonTotals;
-  companySatang: number;
-  /** The profit the month counts (chosen POs, a loss as 0). */
-  profitSatang: number;
-  /** POs nobody chose yet. */
-  unassigned: number;
-}
-
-export interface CommissionMonth {
-  month: string;
-  rateSet: { id: string | null; effectiveMonth: string; rules: RateRules };
-  rows: CommissionMonthRow[];
-  totals: CommissionTotals;
-  /** Invoices of the month not delivered from a PO — no commission, but not lost from sight. */
-  invoicesWithoutPo: number;
-}
+// The shapes are in commissionTypes.ts (the browser draws them too).
 
 const marks = (n: number) => Array.from({ length: n }, () => "?").join(", ");
 const num = (v: unknown) => Number(v) || 0;
@@ -300,60 +252,11 @@ export async function commissionMonth(month: string): Promise<CommissionMonth | 
 
 // ── What a PO's profit is made of (decision 12) ──────────────────────────────
 
-export interface CostLine {
-  productName: string;
-  qty: number;
-  costSatang: number;
-}
+const noCosts = () => ({ salesSatang: 0, costSatang: 0, profitSatang: 0, notCountedSatang: 0, waitingCostSalesSatang: 0 });
 
-export interface OtherCost {
-  costType: string;
-  typeLabel: string;
-  label: string;
-  note: string;
-  amountSatang: number;
-  /** False for a "ค่าคอมมิชชั่น" row — shown, never deducted. */
-  counted: boolean;
-}
-
-export interface DeliveryCosts {
-  saleId: string;
-  saleDate: string;
-  invoiceRef: string;
-  /** A credit note's sale — negative. */
-  credit: boolean;
-  salesSatang: number;
-  costSatang: number;
-  profitSatang: number;
-  costMissing: boolean;
-  items: CostLine[];
-  costs: OtherCost[];
-}
-
-export interface PoCosts {
-  poId: string;
-  customerPoNo: string;
-  deliveries: DeliveryCosts[];
-  /** What the commission counts — a delivery with no cost yet left out (its sales apart). */
-  totals: { salesSatang: number; costSatang: number; profitSatang: number; notCountedSatang: number; waitingCostSalesSatang: number };
-}
-
-/**
- * A customer PO's costs by delivery: each product's cost on its lines, the
- * other costs typed on the sale by kind — read the way the dashboard counts
- * them (the old "product_cost" rows left out: their money is on the lines).
- * Null for anything but a customer PO.
- */
-export async function commissionCosts(id: string): Promise<PoCosts | null> {
-  const [po] = await rows("SELECT id, docType, customerPoNo FROM acc_documents WHERE id = ? LIMIT 1", [id]);
-  if (!po || po.docType !== "SO") return null;
-  const totals = { salesSatang: 0, costSatang: 0, profitSatang: 0, notCountedSatang: 0, waitingCostSalesSatang: 0 };
-  const sales = await rows(
-    "SELECT sr.id, DATE_FORMAT(sr.saleDate, '%Y-%m-%d') AS saleDate, sr.invoiceRef, sr.totalAmount, sr.costAmount FROM sales_records sr WHERE sr.dealId = ? ORDER BY sr.saleDate ASC, sr.createdAt ASC",
-    [id]
-  );
-  if (sales.length === 0) return { poId: id, customerPoNo: String(po.customerPoNo ?? ""), deliveries: [], totals };
-  const saleIds = sales.map((s) => String(s.id));
+/** The product lines and the other costs of these sales, by sale — two reads whatever the number. */
+async function saleDetails(saleIds: string[]): Promise<{ itemsOf: Map<string, RowDataPacket[]>; costsOf: Map<string, RowDataPacket[]> }> {
+  if (saleIds.length === 0) return { itemsOf: new Map(), costsOf: new Map() };
   const itemsOf = groupBy(
     await rows(`SELECT salesRecordId, productName, qty, costAmount FROM sales_record_items WHERE salesRecordId IN (${marks(saleIds.length)}) ORDER BY sortOrder ASC`, saleIds),
     "salesRecordId"
@@ -365,6 +268,55 @@ export async function commissionCosts(id: string): Promise<PoCosts | null> {
     ),
     "salesRecordId"
   );
+  return { itemsOf, costsOf };
+}
+
+/**
+ * A customer PO's costs by delivery: each product's cost on its lines, the
+ * other costs typed on the sale by kind — read the way the dashboard counts
+ * them (the old "product_cost" rows left out: their money is on the lines).
+ * Null for anything but a customer PO.
+ */
+export async function commissionCosts(id: string): Promise<PoCosts | null> {
+  const [po] = await rows("SELECT id, docType, customerPoNo FROM acc_documents WHERE id = ? LIMIT 1", [id]);
+  if (!po || po.docType !== "SO") return null;
+  const sales = await rows(
+    "SELECT sr.id, DATE_FORMAT(sr.saleDate, '%Y-%m-%d') AS saleDate, sr.invoiceRef, sr.totalAmount, sr.costAmount FROM sales_records sr WHERE sr.dealId = ? ORDER BY sr.saleDate ASC, sr.createdAt ASC",
+    [id]
+  );
+  const { itemsOf, costsOf } = await saleDetails(sales.map((s) => String(s.id)));
+  return poCostsOf(id, String(po.customerPoNo ?? ""), sales, itemsOf, costsOf);
+}
+
+/**
+ * Many customer POs' costs at once (the month's Excel, the payout PDF) — the
+ * same as commissionCosts gives each, in three reads whatever the number. A
+ * PO with no sales has no deliveries.
+ */
+export async function commissionCostsFor(pos: { id: string; customerPoNo: string }[]): Promise<Record<string, PoCosts>> {
+  if (pos.length === 0) return {};
+  const ids = pos.map((p) => p.id);
+  const salesOf = groupBy(
+    await rows(
+      `SELECT sr.id, sr.dealId, DATE_FORMAT(sr.saleDate, '%Y-%m-%d') AS saleDate, sr.invoiceRef, sr.totalAmount, sr.costAmount FROM sales_records sr WHERE sr.dealId IN (${marks(ids.length)}) ORDER BY sr.saleDate ASC, sr.createdAt ASC`,
+      ids
+    ),
+    "dealId"
+  );
+  const { itemsOf, costsOf } = await saleDetails([...salesOf.values()].flat().map((s) => String(s.id)));
+  const out: Record<string, PoCosts> = {};
+  for (const p of pos) out[p.id] = poCostsOf(p.id, p.customerPoNo, salesOf.get(p.id) ?? [], itemsOf, costsOf);
+  return out;
+}
+
+function poCostsOf(
+  poId: string,
+  customerPoNo: string,
+  sales: RowDataPacket[],
+  itemsOf: Map<string, RowDataPacket[]>,
+  costsOf: Map<string, RowDataPacket[]>
+): PoCosts {
+  const totals = noCosts();
   const deliveries: DeliveryCosts[] = sales.map((s) => {
     const saleId = String(s.id);
     const total = signedDecimalToSatang(s.totalAmount);
@@ -402,5 +354,5 @@ export async function commissionCosts(id: string): Promise<PoCosts | null> {
       costs,
     };
   });
-  return { poId: id, customerPoNo: String(po.customerPoNo ?? ""), deliveries, totals };
+  return { poId, customerPoNo, deliveries, totals };
 }

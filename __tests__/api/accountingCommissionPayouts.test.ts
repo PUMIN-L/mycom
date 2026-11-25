@@ -1,8 +1,10 @@
 // @vitest-environment node
 /**
- * Marking a PO's commission paid, and undoing the mark — behind the module's gate:
+ * Marking a PO's commission paid, undoing the mark, and the payout summary —
+ * behind the module's gate:
  *  • POST /api/accounting/commission/payouts { salesOrderId, paidDate }
  *  • POST /api/accounting/commission/payouts/[id]/void { reason }
+ *  • GET  /api/accounting/commission/payouts?from&to[&withCosts=1] (the PDF's data)
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
@@ -17,8 +19,12 @@ vi.mock("@/app/lib/accounting/commissionPayouts", () => ({
   voidPayout: vi.fn(async () => {}),
 }));
 import { recordPayout, voidPayout } from "@/app/lib/accounting/commissionPayouts";
+vi.mock("@/app/lib/accounting/commissionReport", () => ({
+  payoutReport: vi.fn(async (from: string, to: string) => ({ from, to, rows: [] })),
+}));
+import { payoutReport } from "@/app/lib/accounting/commissionReport";
 
-import { POST as record } from "@/app/api/accounting/commission/payouts/route";
+import { GET as report, POST as record } from "@/app/api/accounting/commission/payouts/route";
 import { POST as undo } from "@/app/api/accounting/commission/payouts/[id]/void/route";
 
 const admin = { userId: "admin-001", username: "admin", expiresAt: new Date() } as never;
@@ -31,6 +37,7 @@ const post = (path: string, body: unknown) =>
     body: JSON.stringify(body),
   });
 const ctx = { params: Promise.resolve({ id: "pay1" }) };
+const get = (path: string) => new NextRequest(`http://localhost:3000${path}`);
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -67,16 +74,34 @@ describe("POST /api/accounting/commission/payouts/[id]/void", () => {
   });
 });
 
+describe("GET /api/accounting/commission/payouts", () => {
+  it("what was paid in the range — for the PDF — as the admin who asked, never cached", async () => {
+    const res = await report(get("/api/accounting/commission/payouts?from=2026-11-01&to=2026-11-30"));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Cache-Control")).toBe("no-store");
+    expect(payoutReport).toHaveBeenCalledWith("2026-11-01", "2026-11-30", { withCosts: false, exportedBy: "admin" });
+    expect(await res.json()).toEqual({ from: "2026-11-01", to: "2026-11-30", rows: [] });
+  });
+
+  it("with each PO's costs when asked", async () => {
+    await report(get("/api/accounting/commission/payouts?from=2026-11-01&to=2026-11-30&withCosts=1"));
+    expect(payoutReport).toHaveBeenCalledWith("2026-11-01", "2026-11-30", { withCosts: true, exportedBy: "admin" });
+  });
+});
+
 describe("the gate", () => {
   it("401s anonymous and 403s without two-factor login", async () => {
     vi.mocked(getSession).mockResolvedValue(null);
     expect((await record(post("/api/accounting/commission/payouts", { salesOrderId: "C", paidDate: "2026-11-25" }))).status).toBe(401);
     expect((await undo(post("/api/accounting/commission/payouts/pay1/void", { reason: "x" }), ctx)).status).toBe(401);
+    expect((await report(get("/api/accounting/commission/payouts?from=2026-11-01&to=2026-11-30"))).status).toBe(401);
     vi.mocked(getSession).mockResolvedValue(admin);
     vi.mocked(getTwoFactorUser).mockResolvedValue({ ...user, totpEnabled: false } as never);
     expect((await record(post("/api/accounting/commission/payouts", { salesOrderId: "C", paidDate: "2026-11-25" }))).status).toBe(403);
     expect((await undo(post("/api/accounting/commission/payouts/pay1/void", { reason: "x" }), ctx)).status).toBe(403);
+    expect((await report(get("/api/accounting/commission/payouts?from=2026-11-01&to=2026-11-30"))).status).toBe(403);
     expect(recordPayout).not.toHaveBeenCalled();
     expect(voidPayout).not.toHaveBeenCalled();
+    expect(payoutReport).not.toHaveBeenCalled();
   });
 });
