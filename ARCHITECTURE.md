@@ -1773,6 +1773,33 @@ see "The old /billing is removed" below). Files:
   while it scrolls, marked `data-dropdown-panel`. Anything new that pops out of
   a list row must do the same.
 
+### 8h. Commission — ฟอร์ด and พี่ต่อ (ค่าคอมมิชชั่น, the owner 2026-11-25)
+Part of the accounting module (same gate: admin + two-factor, no-store). The
+owner's rules: the company always keeps 50% of a deal's profit; the other 50%
+goes to ฟอร์ด and พี่ต่อ by the kind of deal **chosen by hand on each PO**
+(ลูกค้าฟอร์ด / ลูกค้าพี่ต่อ — not the PO's salesperson, not the company's
+เซลล์ผู้ดูแล). Everything runs by the PO's date; a commission may be PAID only
+once the customer has paid the whole PO.
+
+- **The calculator** ([`commission.ts`](./app/lib/accounting/commission.ts),
+  pure — server and browser alike): money in satang, rates in basis points
+  (2700 = 27%). `monthCommission(pos, rules)` puts one month's POs in PO-date
+  order (then the one recorded first, then id) and runs ONE ladder over the
+  ลูกค้าฟอร์ด POs — **unpaid ones too**: a customer paying decides when a
+  commission may be paid, never how much. Each takes the slice of the running
+  profit it spans, every slice at its own step's rates (`ladderSlices` —
+  "100,000 แรก × 27% + 200,000 ถัดมา × 32%"). ลูกค้าพี่ต่อ POs are flat
+  (`torFlat`) and do not move the ladder; a PO not chosen yet, a loss, or a
+  profit not known yet takes nothing. Each share is its percentage rounded
+  half up (`mulDivRound`) and the company keeps the rest, so the three add up
+  to the profit exactly (`splitAmount`).
+- `DEFAULT_COMMISSION_RULES` is the owner's table (27/23 up to 100,000, 32/18
+  up to 300,000, 34/16 up to 500,000, 37/13 beyond; ลูกค้าพี่ต่อ 15/35).
+  `rateSetForMonth` picks a month's set — **a set starts on the 1st of a
+  month** (the owner's rule), so a month is one set; `rateRulesProblems` says
+  in Thai what stops a table being saved. `accountingCommission.test.ts` runs
+  the owner's own example table (profit 50,000 … 600,000) row by row.
+
 ### 9. Email (contact form) + lead persistence
 [`app/lib/mailer.ts`](./app/lib/mailer.ts) sends via SMTP (`nodemailer`, Gmail by
 default). Addresses go to nodemailer as structured `{ name, address }` objects,
