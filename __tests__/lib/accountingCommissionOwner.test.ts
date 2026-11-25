@@ -27,7 +27,14 @@ const router = (handlers: Handler[]) => async (sql: string, params: unknown[] = 
   for (const [pattern, answer] of handlers) if (pattern.test(sql)) return [answer(params), []];
   return [[], []];
 };
-const locked = (over: Partial<typeof LOCKED> = {}) => conn.query.mockImplementation(router([[/FOR UPDATE/, () => [{ ...LOCKED, ...over }]]]));
+/** The PO, locked — and `payouts` live commission marks on it. */
+const locked = (over: Partial<typeof LOCKED> = {}, payouts: { id: string }[] = []) =>
+  conn.query.mockImplementation(
+    router([
+      [/FROM acc_documents WHERE id = \? .*FOR UPDATE/, () => [{ ...LOCKED, ...over }]],
+      [/FROM acc_commission_payouts WHERE salesOrderId = \? AND voidedAt IS NULL .*FOR UPDATE/, () => payouts],
+    ])
+  );
 const updates = () => conn.query.mock.calls.filter(([sql]) => String(sql).startsWith("UPDATE"));
 
 beforeEach(() => {
@@ -85,6 +92,17 @@ describe("setSalesOrderCommission", () => {
     locked({ status: "void" });
     await setSalesOrderCommission("so1", "ford", actor);
     expect(updates()).toHaveLength(1);
+  });
+
+  it("not while its commission is marked paid — the mark is undone first (read with a lock)", async () => {
+    locked({ commissionOf: "ford" }, [{ id: "pay1" }]);
+    await expect(setSalesOrderCommission("so1", "tor", actor)).rejects.toMatchObject({
+      status: 409,
+      message: "จ่ายค่าคอมของ PO นี้แล้ว — ยกเลิกการบันทึกจ่ายก่อน",
+    });
+    expect(updates()).toHaveLength(0);
+    // The check is a locking read: a plain one would read the transaction's starting snapshot.
+    expect(conn.query.mock.calls.some(([sql]) => /FROM acc_commission_payouts .*FOR UPDATE/.test(String(sql)))).toBe(true);
   });
 
   it("only a customer PO: anything else, or nothing, is not found", async () => {

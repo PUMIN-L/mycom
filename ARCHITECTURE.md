@@ -1869,6 +1869,33 @@ once the customer has paid the whole PO.
   then ยอดขาย − ต้นทุน = กำไร as the commission counts it, and "แก้ต้นทุน"
   to `/dashboard?edit=<saleId>` (the dashboard opens it when the sale is in
   its loaded list, the newest 1,000).
+- **Paid-out marks (schema v60)** — `acc_commission_payouts`, one row per
+  mark with the amounts **LOCKED** as they were when it was paid (kind, PO
+  month, profit counted, ladder range, the three shares, rate set id, paid
+  date, who); undone with a reason (`voidedAt` / `voidedBy` / `voidReason`),
+  never deleted. `POST /api/accounting/commission/payouts { salesOrderId,
+  paidDate }` → `recordPayout`
+  ([`commissionPayouts.ts`](./app/lib/accounting/commissionPayouts.ts)): the
+  date a real day and not in the future; worked out by `commissionMonth`
+  exactly as the screen shows it; only a PO that is `payable`, only once
+  (409 in Thai with the reason otherwise). Then under the PO's lock (the PO
+  only, never an invoice — the module's order is invoice → PO) it checks the
+  choice has not just been switched and re-reads the PO's live marks with a
+  LOCKING read (a plain one in a TiDB transaction reads its start snapshot),
+  inserts the mark and a history line (`commission.payout`). `POST
+  …/payouts/[id]/void { reason }` → `voidPayout`: the PO then the mark
+  locked, a reason required, `commission.payout.void`. In the month a marked
+  PO is `paid` (`payout` — what was locked); a change since (a cost fixed, a
+  credit note) shows as `differenceFordSatang` / `differenceTorSatang`
+  (as it stands now − locked) and never rewrites what was paid, and
+  `paidButNot` says when it could no longer be paid as it stands now. Per
+  person: total = paid (locked) + difference + payable + waiting. While a PO
+  has a live mark its choice cannot be switched (409 — undo the mark first);
+  a PO with any mark, live or undone, cannot be deleted (`impactOf` — cancel
+  it instead). The screen: a "จ่ายค่าคอมแล้ว" button on a payable row (a window
+  with the three amounts and the paid date, today by default), "จ่ายแล้ว
+  <date>" plus "ส่วนต่างหลังจ่าย" on a paid row, "ยกเลิกการบันทึกจ่าย" with a
+  reason, and the cards add จ่ายแล้ว and ส่วนต่างหลังจ่าย.
 
 ### 9. Email (contact form) + lead persistence
 [`app/lib/mailer.ts`](./app/lib/mailer.ts) sends via SMTP (`nodemailer`, Gmail by

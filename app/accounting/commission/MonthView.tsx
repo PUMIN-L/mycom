@@ -2,10 +2,12 @@
 
 import Link from "next/link";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import DatePicker from "../../components/DatePicker";
 import SearchableDropdown from "../../components/SearchableDropdown";
 import Spinner from "../../components/Spinner";
+import { useModalEscape } from "../../components/useModalEscape";
 import { errorMessageOf } from "../../lib/apiErrorMessage";
-import { bangkokCurrentMonth, formatDisplayDate } from "../../lib/dateFormat";
+import { bangkokCurrentMonth, bangkokDateString, formatDisplayDate, isValidDateString, toLocalDateString } from "../../lib/dateFormat";
 import { monthLabel } from "../../lib/accounting/exportRules";
 import { formatSatang } from "../../lib/accounting/money";
 import { COMMISSION_KIND_LABELS, type CommissionKind } from "../../lib/accounting/commission";
@@ -14,10 +16,20 @@ import { effectiveMonthLabel, formatWholeBaht } from "../../lib/accounting/commi
 // The commission month (ARCHITECTURE.md §8h): the customer POs of the month (by
 // PO date) in the ladder's order — whose, profit, place on the ladder, the
 // three shares, where each stands — the month's totals per person, a chooser
-// for a PO nobody chose yet, and each PO's costs on a click (loaded once).
+// for a PO nobody chose yet, and each PO's costs on a click (loaded once). A
+// PO that may be paid is marked paid here (its amounts locked), and a mark is
+// undone here with a reason; a change after the mark shows as a difference.
 
-type Status = "unassigned" | "not-delivered" | "cost-missing" | "awaiting-payment" | "payable";
+type Status = "unassigned" | "not-delivered" | "cost-missing" | "awaiting-payment" | "payable" | "paid";
+type NowStatus = Exclude<Status, "payable" | "paid">;
 
+interface Payout {
+  id: string;
+  paidDate: string;
+  fordSatang: number;
+  torSatang: number;
+  companySatang: number;
+}
 interface MonthRow {
   id: string;
   customerPoNo: string;
@@ -31,11 +43,17 @@ interface MonthRow {
   torSatang: number;
   companySatang: number;
   commissionStatus: Status;
+  payout?: Payout | null;
+  differenceFordSatang?: number;
+  differenceTorSatang?: number;
+  paidButNot?: NowStatus | null;
 }
 interface PersonTotals {
   totalSatang: number;
+  paidSatang?: number;
   payableSatang: number;
   waitingSatang: number;
+  differenceSatang?: number;
 }
 interface MonthAnswer {
   month: string;
@@ -67,6 +85,7 @@ const isMonth = (v: unknown): v is MonthAnswer =>
 const isCosts = (v: unknown): v is CostsAnswer => !!v && typeof v === "object" && Array.isArray((v as CostsAnswer).deliveries) && !!(v as CostsAnswer).totals;
 
 const STATUS: Record<Status, { text: string; tone: string }> = {
+  paid: { text: "จ่ายแล้ว", tone: "border-sky-200 bg-sky-50 text-sky-800" },
   payable: { text: "จ่ายได้", tone: "border-green-200 bg-green-50 text-green-800" },
   "awaiting-payment": { text: "รอลูกค้าจ่าย", tone: "border-amber-200 bg-amber-50 text-amber-800" },
   "not-delivered": { text: "ยังส่งของไม่ครบ", tone: "border-gray-200 bg-gray-50 text-gray-700" },
@@ -92,6 +111,9 @@ function recentMonths(): { value: string; label: string }[] {
 const TH = "px-3 py-2 text-left text-xs font-semibold text-gray-500 whitespace-nowrap";
 const TD = "px-3 py-2 align-top";
 
+/** A difference with its sign: "+100.00", "-100.00", "0.00". */
+const signedSatang = (satang: number) => (satang > 0 ? `+${formatSatang(satang)}` : formatSatang(satang));
+
 export default function MonthView() {
   const months = useMemo(() => recentMonths(), []);
   const [month, setMonth] = useState(months[0].value);
@@ -103,6 +125,15 @@ export default function MonthView() {
   const [choices, setChoices] = useState<Record<string, string>>({});
   const [assigning, setAssigning] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ text: string; warn: boolean } | null>(null);
+  const [paying, setPaying] = useState<MonthRow | null>(null);
+  const [undoing, setUndoing] = useState<MonthRow | null>(null);
+  /** A dialog saved: say so, read the month again. */
+  const saved = (text: string) => {
+    setPaying(null);
+    setUndoing(null);
+    setNotice({ text, warn: false });
+    setReloadKey((n) => n + 1);
+  };
 
   const key = `${month}|${reloadKey}`;
   useEffect(() => {
@@ -234,8 +265,18 @@ export default function MonthView() {
           onAssign={(id) => void assign(id)}
           onOpen={(id) => void openCosts(id)}
           onClose={closeCosts}
+          onPay={(r) => {
+            setNotice(null);
+            setPaying(r);
+          }}
+          onUndo={(r) => {
+            setNotice(null);
+            setUndoing(r);
+          }}
         />
       )}
+      {paying && <PayDialog row={paying} onCancel={() => setPaying(null)} onSaved={saved} />}
+      {undoing?.payout && <UndoDialog row={undoing} payout={undoing.payout} onCancel={() => setUndoing(null)} onSaved={saved} />}
     </div>
   );
 }
@@ -250,6 +291,8 @@ function MonthBody({
   onAssign,
   onOpen,
   onClose,
+  onPay,
+  onUndo,
 }: {
   data: MonthAnswer;
   open: Set<string>;
@@ -260,6 +303,8 @@ function MonthBody({
   onAssign: (id: string) => void;
   onOpen: (id: string) => void;
   onClose: (id: string) => void;
+  onPay: (row: MonthRow) => void;
+  onUndo: (row: MonthRow) => void;
 }) {
   const { totals } = data;
   return (
@@ -359,7 +404,7 @@ function MonthBody({
                       <td className={`${TD} text-right`}>{formatSatang(r.torSatang)}</td>
                       <td className={`${TD} text-right text-gray-500`}>{formatSatang(r.companySatang)}</td>
                       <td className={TD}>
-                        <span className={`inline-block whitespace-nowrap rounded-full border px-2 py-0.5 text-xs font-semibold ${status.tone}`}>{status.text}</span>
+                        <StatusCell row={r} status={status} onPay={() => onPay(r)} onUndo={() => onUndo(r)} />
                       </td>
                       <td className={TD}>
                         <button
@@ -390,17 +435,220 @@ function MonthBody({
   );
 }
 
+/** Where a PO stands — and, on it, marking it paid or undoing the mark. */
+function StatusCell({ row, status, onPay, onUndo }: { row: MonthRow; status: { text: string; tone: string }; onPay: () => void; onUndo: () => void }) {
+  const chip = `inline-block whitespace-nowrap rounded-full border px-2 py-0.5 text-xs font-semibold ${status.tone}`;
+  const payout = row.commissionStatus === "paid" ? row.payout : null;
+  if (payout) {
+    const ford = row.differenceFordSatang ?? 0;
+    const tor = row.differenceTorSatang ?? 0;
+    return (
+      <div className="flex flex-col items-start gap-1">
+        <span className={chip}>{`${status.text} ${formatDisplayDate(payout.paidDate)}`}</span>
+        {(ford !== 0 || tor !== 0) && (
+          <p className="text-xs text-amber-800 whitespace-nowrap">{`ส่วนต่างหลังจ่าย ฟอร์ด ${signedSatang(ford)} · พี่ต่อ ${signedSatang(tor)}`}</p>
+        )}
+        {row.paidButNot && <p className="text-xs text-amber-800">{`ตอนนี้: ${STATUS[row.paidButNot]?.text ?? ""} — ตรวจสอบอีกครั้ง`}</p>}
+        <button type="button" onClick={onUndo} className="whitespace-nowrap text-xs font-semibold text-red-700 hover:underline">
+          ยกเลิกการบันทึกจ่าย
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div className="flex flex-col items-start gap-1">
+      <span className={chip}>{status.text}</span>
+      {row.commissionStatus === "payable" && (
+        <button type="button" onClick={onPay} className="whitespace-nowrap px-2.5 py-1 rounded-lg bg-green-600 text-white text-xs font-semibold hover:bg-green-700">
+          จ่ายค่าคอมแล้ว
+        </button>
+      )}
+    </div>
+  );
+}
+
 function PersonCard({ who, name, t }: { who: "ford" | "tor"; name: string; t: PersonTotals }) {
+  const difference = t.differenceSatang ?? 0;
   return (
     <div className="bg-white rounded-2xl border border-gray-200 p-4 space-y-1">
       <p className="text-sm font-semibold text-gray-500">{name} · ทั้งเดือน</p>
       <p className="text-2xl font-bold text-gray-900 tabular-nums" data-testid={`total-${who}`}>{formatSatang(t.totalSatang)}</p>
+      <p className="text-sm text-sky-800 tabular-nums">
+        จ่ายแล้ว <span data-testid={`paid-${who}`}>{formatSatang(t.paidSatang ?? 0)}</span>
+      </p>
       <p className="text-sm text-green-800 tabular-nums">
         จ่ายได้ตอนนี้ <span data-testid={`payable-${who}`}>{formatSatang(t.payableSatang)}</span>
       </p>
       <p className="text-sm text-amber-800 tabular-nums">
         รอ <span data-testid={`waiting-${who}`}>{formatSatang(t.waitingSatang)}</span>
       </p>
+      {difference !== 0 && (
+        <p className="text-xs text-amber-800 tabular-nums">
+          ส่วนต่างหลังจ่าย <span data-testid={`difference-${who}`}>{signedSatang(difference)}</span>
+        </p>
+      )}
+    </div>
+  );
+}
+
+const DIALOG_BUTTON = "px-4 py-2.5 rounded-xl font-semibold disabled:opacity-60";
+
+/** Marks a PO's commission paid — the amounts as they are now are locked. */
+function PayDialog({ row, onCancel, onSaved }: { row: MonthRow; onCancel: () => void; onSaved: (text: string) => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [date, setDate] = useState(() => bangkokDateString(new Date()));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useModalEscape(ref, () => {
+    if (!busy) onCancel();
+  });
+
+  const save = async () => {
+    if (busy) return;
+    if (!isValidDateString(date)) {
+      setError("กรุณาเลือกวันที่จ่าย");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/accounting/commission/payouts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ salesOrderId: row.id, paidDate: date }),
+      });
+      if (!res.ok) {
+        setError(await errorMessageOf(res, "บันทึกจ่ายค่าคอมไม่สำเร็จ"));
+        return;
+      }
+      onSaved(`บันทึกจ่ายค่าคอม ${row.customerPoNo} แล้ว`);
+    } catch {
+      setError("บันทึกจ่ายค่าคอมไม่สำเร็จ ตรวจสอบการเชื่อมต่อแล้วลองใหม่");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const label = `บันทึกจ่ายค่าคอม ${row.customerPoNo}`;
+  return (
+    <div className="fixed inset-0 z-110 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => !busy && onCancel()}></div>
+      <div ref={ref} role="dialog" aria-modal="true" aria-label={label} className="relative bg-white rounded-2xl shadow-2xl p-6 w-full max-w-md space-y-3">
+        <h2 className="text-lg font-bold text-gray-900">{label}</h2>
+        <p className="text-sm text-gray-600">
+          {row.buyerName} · {row.kind ? COMMISSION_KIND_LABELS[row.kind] : ""} · PO วันที่ {formatDisplayDate(row.issueDate)}
+        </p>
+        <dl className="grid grid-cols-3 gap-2 text-center tabular-nums">
+          <div className="rounded-xl bg-gray-50 p-2">
+            <dt className="text-xs text-gray-500">ฟอร์ด</dt>
+            <dd className="font-bold text-gray-900">{formatSatang(row.fordSatang)}</dd>
+          </div>
+          <div className="rounded-xl bg-gray-50 p-2">
+            <dt className="text-xs text-gray-500">พี่ต่อ</dt>
+            <dd className="font-bold text-gray-900">{formatSatang(row.torSatang)}</dd>
+          </div>
+          <div className="rounded-xl bg-gray-50 p-2">
+            <dt className="text-xs text-gray-500">บริษัท</dt>
+            <dd className="font-bold text-gray-500">{formatSatang(row.companySatang)}</dd>
+          </div>
+        </dl>
+        <div>
+          <label htmlFor="payout-date" className="block text-sm font-semibold text-gray-700 mb-1">วันที่จ่าย</label>
+          <DatePicker id="payout-date" selected={date ? new Date(`${date}T00:00:00`) : null} onChange={(d) => setDate(d ? toLocalDateString(d) : "")} />
+        </div>
+        <p className="text-xs text-gray-500">
+          ยอดนี้จะถูกล็อกไว้ตามที่จ่าย ถ้าภายหลังข้อมูลเปลี่ยน (เช่น แก้ต้นทุน ออกใบลดหนี้) จะแสดงเป็น &quot;ส่วนต่างหลังจ่าย&quot; โดยไม่แก้ยอดที่จ่ายไปแล้ว
+        </p>
+        {error && (
+          <p role="alert" className="text-sm text-red-600">
+            {error}
+          </p>
+        )}
+        <div className="flex flex-wrap gap-3 pt-2">
+          <button type="button" onClick={onCancel} disabled={busy} className={`${DIALOG_BUTTON} border border-gray-300 hover:bg-gray-50`}>
+            ปิด
+          </button>
+          <button type="button" onClick={() => void save()} disabled={busy} className={`${DIALOG_BUTTON} bg-green-600 text-white hover:bg-green-700`}>
+            {busy ? "กำลังบันทึก…" : "บันทึกว่าจ่ายแล้ว"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Undoes a paid-out mark — only with a reason; the mark is kept, never deleted. */
+function UndoDialog({ row, payout, onCancel, onSaved }: { row: MonthRow; payout: Payout; onCancel: () => void; onSaved: (text: string) => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useModalEscape(ref, () => {
+    if (!busy) onCancel();
+  });
+
+  const confirm = async () => {
+    if (busy) return;
+    const why = reason.trim();
+    if (!why) {
+      setError("กรุณาบอกเหตุผลที่ยกเลิกการบันทึกจ่าย");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/accounting/commission/payouts/${encodeURIComponent(payout.id)}/void`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: why }),
+      });
+      if (!res.ok) {
+        setError(await errorMessageOf(res, "ยกเลิกการบันทึกจ่ายค่าคอมไม่สำเร็จ"));
+        return;
+      }
+      onSaved(`ยกเลิกการบันทึกจ่ายค่าคอม ${row.customerPoNo} แล้ว`);
+    } catch {
+      setError("ยกเลิกการบันทึกจ่ายค่าคอมไม่สำเร็จ ตรวจสอบการเชื่อมต่อแล้วลองใหม่");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const label = `ยกเลิกการบันทึกจ่ายค่าคอม ${row.customerPoNo}`;
+  return (
+    <div className="fixed inset-0 z-110 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => !busy && onCancel()}></div>
+      <div ref={ref} role="dialog" aria-modal="true" aria-label={label} className="relative bg-white rounded-2xl shadow-2xl p-6 w-full max-w-md space-y-3">
+        <h2 className="text-lg font-bold text-gray-900">{label}</h2>
+        <p className="text-sm text-gray-600 tabular-nums">
+          {`จ่ายเมื่อ ${formatDisplayDate(payout.paidDate)} · ฟอร์ด ${formatSatang(payout.fordSatang)} · พี่ต่อ ${formatSatang(payout.torSatang)}`}
+        </p>
+        <p className="text-xs text-gray-500">รายการนี้จะไม่ถูกลบ ระบบเก็บไว้ว่าใครยกเลิก เมื่อไร เพราะอะไร แล้ว PO นี้บันทึกจ่ายใหม่ได้</p>
+        <div>
+          <label htmlFor="payout-undo-reason" className="block text-sm font-semibold text-gray-700 mb-1">เหตุผล</label>
+          <textarea
+            id="payout-undo-reason"
+            rows={3}
+            maxLength={500}
+            className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-sky-500 resize-none"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+          />
+        </div>
+        {error && (
+          <p role="alert" className="text-sm text-red-600">
+            {error}
+          </p>
+        )}
+        <div className="flex flex-wrap gap-3 pt-2">
+          <button type="button" onClick={onCancel} disabled={busy} className={`${DIALOG_BUTTON} border border-gray-300 hover:bg-gray-50`}>
+            ปิด
+          </button>
+          <button type="button" onClick={() => void confirm()} disabled={busy} className={`${DIALOG_BUTTON} bg-red-600 text-white hover:bg-red-700`}>
+            {busy ? "กำลังยกเลิก…" : "ยืนยันยกเลิก"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

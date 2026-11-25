@@ -121,8 +121,8 @@ describe("commissionMonth", () => {
 
   it("the month's totals for ฟอร์ด and พี่ต่อ — payable now and waiting — the company's, and what is not counted", async () => {
     const m = (await commissionMonth("2026-11"))!;
-    expect(m.totals.ford).toEqual({ totalSatang: baht(225_800), payableSatang: baht(178_800), waitingSatang: baht(47_000) });
-    expect(m.totals.tor).toEqual({ totalSatang: baht(144_200), payableSatang: baht(116_200), waitingSatang: baht(28_000) });
+    expect(m.totals.ford).toEqual({ totalSatang: baht(225_800), paidSatang: 0, payableSatang: baht(178_800), waitingSatang: baht(47_000), differenceSatang: 0 });
+    expect(m.totals.tor).toEqual({ totalSatang: baht(144_200), paidSatang: 0, payableSatang: baht(116_200), waitingSatang: baht(28_000), differenceSatang: 0 });
     expect(m.totals.companySatang).toBe(baht(370_000));
     expect(m.totals.profitSatang).toBe(baht(740_000));
     expect(m.totals.unassigned).toBe(1);
@@ -135,6 +135,62 @@ describe("commissionMonth", () => {
     const m = (await commissionMonth("2026-10"))!;
     expect(m.rows).toEqual([]);
     expect(calls.some((c) => /FROM sales_records/.test(c.sql))).toBe(false);
+  });
+});
+
+describe("commissionMonth — POs whose commission was marked paid", () => {
+  const payout = (salesOrderId: string, ford: number, tor: number) => ({
+    id: `pay-${salesOrderId}`,
+    salesOrderId,
+    kind: "ford",
+    profitSatang: baht(80_000),
+    fordSatang: baht(ford),
+    torSatang: baht(tor),
+    companySatang: baht(40_000),
+    paidDate: "2026-11-24",
+    createdBy: "admin",
+  });
+  const withPayouts = (rows: unknown[]) =>
+    vi.mocked(query).mockImplementation(
+      route([
+        [/FROM acc_commission_rates/, () => []],
+        [/FROM acc_documents WHERE docType = 'SO' AND issueDate >= \?/, () => PO_ROWS],
+        [/FROM acc_document_lines/, () => LINES],
+        [/docType = 'INV' AND status = 'issued' AND salesOrderId IN/, () => INVOICES],
+        [/FROM sales_records sr/, () => SALES],
+        [/salesOrderId IS NULL/, () => [{ n: 2 }]],
+        [/FROM acc_commission_payouts WHERE salesOrderId IN .* AND voidedAt IS NULL/, () => rows],
+      ]) as never
+    );
+
+  it("paid: what was locked, when, and the difference since — the totals split paid from payable", async () => {
+    // A was paid 21,000 / 19,000; as it stands now it comes to 21,600 / 18,400.
+    withPayouts([payout("A", 21_000, 19_000)]);
+    const m = (await commissionMonth("2026-11"))!;
+    const a = m.rows.find((r) => r.id === "A")!;
+    expect(a.commissionStatus).toBe("paid");
+    expect(a.payout).toMatchObject({ id: "pay-A", paidDate: "2026-11-24", fordSatang: baht(21_000), torSatang: baht(19_000) });
+    expect([a.differenceFordSatang, a.differenceTorSatang]).toEqual([baht(600), baht(-600)]);
+    expect(a.paidButNot).toBeNull();
+    expect(m.totals.ford).toEqual({ totalSatang: baht(225_800), paidSatang: baht(21_000), payableSatang: baht(157_200), waitingSatang: baht(47_000), differenceSatang: baht(600) });
+    expect(m.totals.tor).toMatchObject({ paidSatang: baht(19_000), payableSatang: baht(97_800), differenceSatang: baht(-600) });
+  });
+
+  it("paid, but as it stands now it could not be — a refund, a cost taken away — says so", async () => {
+    // B's customer has not paid in full (any more).
+    withPayouts([{ ...payout("B", 47_000, 28_000), profitSatang: baht(150_000) }]);
+    const m = (await commissionMonth("2026-11"))!;
+    const b = m.rows.find((r) => r.id === "B")!;
+    expect(b.commissionStatus).toBe("paid");
+    expect(b.paidButNot).toBe("awaiting-payment");
+    expect([b.differenceFordSatang, b.differenceTorSatang]).toEqual([0, 0]);
+  });
+
+  it("reads only the live marks — an undone one is no payout", async () => {
+    withPayouts([]);
+    await commissionMonth("2026-11");
+    const q = calls.find((c) => /FROM acc_commission_payouts/.test(c.sql))!;
+    expect(q.sql).toMatch(/voidedAt IS NULL/);
   });
 });
 

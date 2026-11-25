@@ -66,10 +66,17 @@ const MONTH = {
     row({ id: "C", issueDate: "2026-11-20", kind: "ford", profitSatang: 40_000_000, countedSatang: 40_000_000, ladderFromSatang: 23_000_000, ladderToSatang: 63_000_000, fordSatang: 13_850_000, torSatang: 6_150_000, companySatang: 20_000_000, commissionStatus: "payable" }),
     row({ id: "G", issueDate: "2026-11-25", kind: "ford", costMissing: true, ladderFromSatang: 63_000_000, ladderToSatang: 63_000_000, commissionStatus: "cost-missing" }),
     row({ id: "H", issueDate: "2026-11-28", kind: "ford", orderStatus: "open", ladderFromSatang: 63_000_000, ladderToSatang: 63_000_000, commissionStatus: "not-delivered" }),
+    // Paid 3,600 / 1,400 on the 24th; as it stands now it comes to 3,700 / 1,300.
+    row({
+      id: "P", issueDate: "2026-11-29", kind: "ford", profitSatang: 1_000_000, countedSatang: 1_000_000, ladderFromSatang: 63_000_000, ladderToSatang: 64_000_000,
+      fordSatang: 370_000, torSatang: 130_000, companySatang: 500_000, commissionStatus: "paid",
+      payout: { id: "pay1", paidDate: "2026-11-24", fordSatang: 360_000, torSatang: 140_000, companySatang: 500_000 },
+      differenceFordSatang: 10_000, differenceTorSatang: -10_000, paidButNot: null,
+    }),
   ],
   totals: {
-    ford: { totalSatang: 22_210_000, payableSatang: 17_510_000, waitingSatang: 4_700_000 },
-    tor: { totalSatang: 14_290_000, payableSatang: 11_490_000, waitingSatang: 2_800_000 },
+    ford: { totalSatang: 22_210_000, paidSatang: 360_000, payableSatang: 17_510_000, waitingSatang: 4_700_000, differenceSatang: 10_000 },
+    tor: { totalSatang: 14_290_000, paidSatang: 140_000, payableSatang: 11_490_000, waitingSatang: 2_800_000, differenceSatang: -10_000 },
     companySatang: 36_500_000,
     profitSatang: 73_000_000,
     unassigned: 1,
@@ -125,6 +132,8 @@ beforeEach(() => {
     if (method === "GET" && costs) return json(costs[1] === "C" ? COSTS_C : EMPTY_COSTS(costs[1]));
     const owner = /^\/api\/accounting\/sales-orders\/([^/]+)\/commission$/.exec(url.pathname);
     if (method === "PUT" && owner) return json({ order: { id: owner[1] }, emailSent: null });
+    if (method === "POST" && /^\/api\/accounting\/commission\/payouts\/[^/]+\/void$/.test(url.pathname)) return json({ ok: true });
+    if (method === "POST" && url.pathname === "/api/accounting/commission/payouts") return json({ id: "payX" });
     switch (`${method} ${url.pathname}`) {
       case "GET /api/accounting/commission": return json({ ...MONTH, month: url.searchParams.get("month") });
       case "GET /api/accounting/status": return json({ twoFactorEnabled: true, username: "admin" });
@@ -162,7 +171,7 @@ describe("the month (the tab that opens)", () => {
     expect(screen.getByRole("tab", { name: "สรุปรายเดือน" })).toHaveAttribute("aria-selected", "true");
     expect(calls("/api/accounting/commission")[0][0]).toContain("month=2026-11");
     const ids = screen.getAllByTestId(/^po-row-/).map((r) => r.getAttribute("data-testid"));
-    expect(ids).toEqual(["po-row-A", "po-row-T", "po-row-N", "po-row-B", "po-row-C", "po-row-G", "po-row-H"]);
+    expect(ids).toEqual(["po-row-A", "po-row-T", "po-row-N", "po-row-B", "po-row-C", "po-row-G", "po-row-H", "po-row-P"]);
     const c = poRow("C");
     for (const text of ["PO-C", "ลูกค้า C", "ลูกค้าฟอร์ด", "400,000.00", "230,000 – 630,000", "138,500.00", "61,500.00", "200,000.00", "จ่ายได้"]) {
       expect(c).toHaveTextContent(text);
@@ -224,9 +233,46 @@ describe("the month (the tab that opens)", () => {
   it("opens every PO's costs at once, and closes them", async () => {
     await monthLoaded();
     fireEvent.click(screen.getByRole("button", { name: "เปิดต้นทุนทั้งหมด" }));
-    await waitFor(() => expect(screen.getAllByTestId(/^costs-/)).toHaveLength(7));
+    await waitFor(() => expect(screen.getAllByTestId(/^costs-/)).toHaveLength(8));
     fireEvent.click(screen.getByRole("button", { name: "ปิดต้นทุนทั้งหมด" }));
     expect(screen.queryAllByTestId(/^costs-/)).toHaveLength(0);
+  });
+
+  it("a PO that may be paid is marked paid: its amounts, the date (today), then the month again", async () => {
+    await monthLoaded();
+    fireEvent.click(within(poRow("C")).getByRole("button", { name: "จ่ายค่าคอมแล้ว" }));
+    const dialog = screen.getByRole("dialog", { name: "บันทึกจ่ายค่าคอม PO-C" });
+    expect(dialog).toHaveTextContent("138,500.00");
+    expect(dialog).toHaveTextContent("61,500.00");
+    fireEvent.click(within(dialog).getByRole("button", { name: "บันทึกว่าจ่ายแล้ว" }));
+    await waitFor(() => expect(calls("/api/accounting/commission/payouts", "POST")).toHaveLength(1));
+    expect(bodyOf("/api/accounting/commission/payouts", "POST")).toEqual({ salesOrderId: "C", paidDate: "2026-11-25" });
+    await waitFor(() => expect(calls("/api/accounting/commission").length).toBeGreaterThanOrEqual(2));
+  });
+
+  it("only a PO that may be paid has the button", async () => {
+    await monthLoaded();
+    for (const id of ["B", "N", "G", "H", "P"]) {
+      expect(within(poRow(id)).queryByRole("button", { name: "จ่ายค่าคอมแล้ว" })).not.toBeInTheDocument();
+    }
+  });
+
+  it("a paid PO says when and the difference since; the mark is undone only with a reason", async () => {
+    await monthLoaded();
+    const p = poRow("P");
+    expect(p).toHaveTextContent("จ่ายแล้ว 24 Nov 2026");
+    expect(p).toHaveTextContent("ส่วนต่างหลังจ่าย ฟอร์ด +100.00 · พี่ต่อ -100.00");
+    expect(screen.getByTestId("paid-ford")).toHaveTextContent("3,600.00");
+    expect(screen.getByTestId("difference-ford")).toHaveTextContent("+100.00");
+    fireEvent.click(within(p).getByRole("button", { name: "ยกเลิกการบันทึกจ่าย" }));
+    const dialog = screen.getByRole("dialog", { name: "ยกเลิกการบันทึกจ่ายค่าคอม PO-P" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "ยืนยันยกเลิก" }));
+    expect(within(dialog).getByRole("alert")).toHaveTextContent("กรุณาบอกเหตุผลที่ยกเลิกการบันทึกจ่าย");
+    expect(calls("/api/accounting/commission/payouts/pay1/void", "POST")).toHaveLength(0);
+    fireEvent.change(within(dialog).getByLabelText("เหตุผล"), { target: { value: "จ่ายผิดคน" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "ยืนยันยกเลิก" }));
+    await waitFor(() => expect(calls("/api/accounting/commission/payouts/pay1/void", "POST")).toHaveLength(1));
+    expect(bodyOf("/api/accounting/commission/payouts/pay1/void", "POST")).toEqual({ reason: "จ่ายผิดคน" });
   });
 
   it("another month is read when picked", async () => {

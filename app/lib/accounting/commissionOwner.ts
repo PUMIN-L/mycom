@@ -42,6 +42,14 @@ export async function setSalesOrderCommission(id: string, kind: CommissionKind, 
     if (!row || row.docType !== "SO") throw new ApiError(404, "ไม่พบ PO ลูกค้านี้");
     seen.from = commissionKindOf(row.commissionOf);
     if (seen.from === kind) return;
+    // Not while its commission is marked paid: those amounts were worked out
+    // for this person's customer. A LOCKING read — a plain one in a TiDB
+    // transaction reads the snapshot it began with.
+    const [live] = await conn.query<RowDataPacket[]>(
+      "SELECT id FROM acc_commission_payouts WHERE salesOrderId = ? AND voidedAt IS NULL LIMIT 1 FOR UPDATE",
+      [id]
+    );
+    if (live.length > 0) throw new ApiError(409, "จ่ายค่าคอมของ PO นี้แล้ว — ยกเลิกการบันทึกจ่ายก่อน");
     await conn.query("UPDATE acc_documents SET commissionOf = ? WHERE id = ?", [kind, id]);
     await writeAudit(conn, {
       ...actor,

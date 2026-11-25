@@ -13,7 +13,7 @@ import { repairTruncatedRichText } from "./sanitizeHtml";
 // did not lower the 33 already written to `settings`, so the next change to
 // reuse 33 was skipped entirely and its tables were never created in
 // production. Reverting a migration means moving FORWARD to a new number.
-const SCHEMA_VERSION = 59;
+const SCHEMA_VERSION = 60;
 
 type DbPool = ReturnType<typeof mysql.createPool>;
 
@@ -1888,6 +1888,44 @@ async function bootstrapSchemaOnce(): Promise<void> {
       await connection.query("CREATE INDEX idx_acr_month ON acc_commission_rates (effectiveMonth, createdAt)");
     } catch (error) {
       if (!isBenignSchemaError(error)) throw error;
+    }
+
+    // ── v60: commission paid-out marks (§8h) ───────────────────────────────
+    // One row per mark, the amounts LOCKED as they were when it was paid (a
+    // later change shows as a difference, never rewrites them). Undone with a
+    // reason (voidedAt), never deleted. Read by PO, and by the day it was paid.
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS acc_commission_payouts (
+        id VARCHAR(36) PRIMARY KEY,
+        salesOrderId VARCHAR(36) NOT NULL,
+        kind VARCHAR(10) NOT NULL,
+        poMonth VARCHAR(7) NOT NULL,
+        profitSatang BIGINT NOT NULL,
+        ladderFromSatang BIGINT DEFAULT NULL,
+        ladderToSatang BIGINT DEFAULT NULL,
+        fordSatang BIGINT NOT NULL,
+        torSatang BIGINT NOT NULL,
+        companySatang BIGINT NOT NULL,
+        rateSetId VARCHAR(36) DEFAULT NULL,
+        paidDate VARCHAR(10) NOT NULL,
+        createdAt VARCHAR(30) NOT NULL,
+        createdBy VARCHAR(255) NOT NULL,
+        voidedAt VARCHAR(30) DEFAULT NULL,
+        voidedBy VARCHAR(255) DEFAULT NULL,
+        voidReason VARCHAR(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+        INDEX idx_acp_so (salesOrderId),
+        INDEX idx_acp_paid (paidDate)
+      )
+    `);
+    for (const statement of [
+      "CREATE INDEX idx_acp_so ON acc_commission_payouts (salesOrderId)",
+      "CREATE INDEX idx_acp_paid ON acc_commission_payouts (paidDate)",
+    ]) {
+      try {
+        await connection.query(statement);
+      } catch (error) {
+        if (!isBenignSchemaError(error)) throw error;
+      }
     }
 
     // ── Seed default admin user ────────────────────────────────────────────

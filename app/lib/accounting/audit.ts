@@ -30,7 +30,11 @@ export type AuditAction =
   /** Whose commission a customer PO is — ลูกค้าฟอร์ด / ลูกค้าพี่ต่อ (§8h). */
   | "commission.owner"
   /** The commission rate table changed, with the owner's emailed code (§8h). */
-  | "commission.rates";
+  | "commission.rates"
+  /** A PO's commission marked paid — the amounts locked (§8h). */
+  | "commission.payout"
+  /** …and that mark undone, with the reason. */
+  | "commission.payout.void";
 
 export const AUDIT_DETAIL_MAX = 1000;
 

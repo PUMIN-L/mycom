@@ -728,15 +728,25 @@ describe("delivering from a customer PO", () => {
       id: "so1", docType: "SO", status: "issued", docNo: null, salesRecordId: null, relatedDocId: null, salesOrderId: null,
       customerPoNo: "PO-6611", buyerName: "บริษัท เอ", totalSatang: 10700000,
     };
-    /** `invoices` delivered from it, `receipts` of its deposits (voided ones too), `deposits` live. */
-    const soDb = (invoices: number, receipts = 0, deposits = 0) =>
+    /** `invoices` delivered from it, `receipts` of its deposits (voided ones too), `deposits` live, commission `payouts` marked (undone ones too). */
+    const soDb = (invoices: number, receipts = 0, deposits = 0, payouts = 0) =>
       conn.query.mockImplementation(router([
         [/SELECT docType, relatedDocId FROM acc_documents WHERE id = \?$/, () => [{ docType: "SO", relatedDocId: null }]],
         [/SELECT id, docType, status, docNo, salesRecordId, relatedDocId, .*FROM acc_documents WHERE id = \? FOR UPDATE/, () => [soRow]],
         [/COUNT\(\*\) AS n FROM acc_payments/, () => [{ n: deposits }]],
         [/WHERE relatedDocId = \? OR salesOrderId = \?/, () => [{ n: invoices + receipts }]],
         [/COUNT\(\*\) AS n FROM acc_documents WHERE salesOrderId = \? FOR UPDATE/, () => [{ n: invoices }]],
+        [/COUNT\(\*\) AS n FROM acc_commission_payouts WHERE salesOrderId = \? FOR UPDATE/, () => [{ n: payouts }]],
       ]));
+
+    it("cannot be deleted once a commission was marked paid on it — undone or not, its history stays", async () => {
+      soDb(0, 0, 0, 1);
+      await expect(deleteAccDocument("so1", actor, { passwordChecked: true })).rejects.toMatchObject({
+        status: 409,
+        message: "มีประวัติการจ่ายค่าคอมของ PO นี้ — ลบไม่ได้ กด ยกเลิก PO แทน",
+      });
+      expect(statements()).not.toContain("DELETE FROM acc_documents WHERE id = ?");
+    });
 
     it("cannot be deleted while an invoice delivers from it — cancelling is the way", async () => {
       soDb(1);

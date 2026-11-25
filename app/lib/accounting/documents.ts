@@ -769,6 +769,8 @@ async function impactOf(
   } else if (doc.docType === "SO") {
     // A PO's dependents: the invoices delivered from it, and its deposits' receipts.
     const deliveries = dependentDocs > 0 ? num((await run(conn, `SELECT COUNT(*) AS n FROM acc_documents WHERE salesOrderId = ?${current}`, [doc.id]))[0]?.n) : 0;
+    // A commission marked paid on it (undone ones too) keeps it: the marks are its history (§8h).
+    const payouts = num((await run(conn, `SELECT COUNT(*) AS n FROM acc_commission_payouts WHERE salesOrderId = ?${current}`, [doc.id]))[0]?.n);
     blockedReason =
       livePayments > 0
         ? "PO นี้มีเงินมัดจำแล้ว — ยกเลิกรายการมัดจำก่อนจึงจะลบได้"
@@ -776,7 +778,9 @@ async function impactOf(
           ? "มีใบแจ้งหนี้ที่ส่งของจาก PO นี้แล้ว — ลบใบแจ้งหนี้นั้นก่อน หรือกด ยกเลิก PO แทน"
           : dependentDocs > 0
             ? "มีใบเสร็จมัดจำของ PO นี้ (ที่ยกเลิกแล้ว) — ลบใบเสร็จนั้นก่อน หรือกด ยกเลิก PO แทน"
-            : null;
+            : payouts > 0
+              ? "มีประวัติการจ่ายค่าคอมของ PO นี้ — ลบไม่ได้ กด ยกเลิก PO แทน"
+              : null;
   } else {
     blockedReason =
       livePayments > 0

@@ -40,14 +40,14 @@ process.env.DB_USER = 'tester';
 process.env.DB_PASSWORD = 'pw';
 process.env.DB_NAME = 'testdb';
 
-// A version SELECT result that MATCHES SCHEMA_VERSION (59) → bootstrap fast-path,
+// A version SELECT result that MATCHES SCHEMA_VERSION (60) → bootstrap fast-path,
 // skipping DDL. Value is a string because settings stores VARCHAR values.
 //
 // ⚠️ This constant only ever goes UP, in step with db.ts. The bootstrap's fast
 // path is `stored >= SCHEMA_VERSION`, so a number the live database has already
 // recorded can never trigger a migration again — reusing one silently skips the
 // entire migration in production (that is how v33 was burned).
-const SCHEMA_VERSION = '59';
+const SCHEMA_VERSION = '60';
 const SCHEMA_MATCH: [Array<{ value: string }>, unknown[]] = [[{ value: SCHEMA_VERSION }], []];
 // An empty result → no schema_version row / no admin row → full bootstrap.
 const EMPTY: [unknown[], unknown[]] = [[], []];
@@ -1676,6 +1676,42 @@ describe("v59 — the commission rate table", () => {
     expect(create).toContain('INDEX idx_acr_month (effectiveMonth, createdAt)');
     expect(create).not.toMatch(/FOREIGN KEY/i);
     expect(sql).toContain('CREATE INDEX idx_acr_month ON acc_commission_rates (effectiveMonth, createdAt)');
+  });
+});
+
+// ── v60: commission paid-out marks ───────────────────────────────────────────
+// One row per mark: the amounts LOCKED when it was paid; undone with a reason
+// (voidedAt) rather than deleted. Read by PO and by the day it was paid.
+describe("v60 — commission paid-out marks", () => {
+  it('creates acc_commission_payouts with its two indexes — no foreign key', async () => {
+    const db = await freshImport();
+    mockConnection.query.mockResolvedValue(EMPTY);
+    await db.getDbConnection();
+    const sql = bootstrapSql().map((s) => s.replace(/\s+/g, ' ').trim());
+    const create = sql.find((s) => s.startsWith('CREATE TABLE IF NOT EXISTS acc_commission_payouts'));
+    expect(create).toBeDefined();
+    for (const column of [
+      'id VARCHAR(36) PRIMARY KEY',
+      'salesOrderId VARCHAR(36) NOT NULL',
+      'kind VARCHAR(10) NOT NULL',
+      'poMonth VARCHAR(7) NOT NULL',
+      'profitSatang BIGINT NOT NULL',
+      'ladderFromSatang BIGINT DEFAULT NULL',
+      'ladderToSatang BIGINT DEFAULT NULL',
+      'fordSatang BIGINT NOT NULL',
+      'torSatang BIGINT NOT NULL',
+      'companySatang BIGINT NOT NULL',
+      'rateSetId VARCHAR(36) DEFAULT NULL',
+      'paidDate VARCHAR(10) NOT NULL',
+      'voidedAt VARCHAR(30) DEFAULT NULL',
+    ]) {
+      expect(create).toContain(column);
+    }
+    expect(create).toContain('INDEX idx_acp_so (salesOrderId)');
+    expect(create).toContain('INDEX idx_acp_paid (paidDate)');
+    expect(create).not.toMatch(/FOREIGN KEY/i);
+    expect(sql).toContain('CREATE INDEX idx_acp_so ON acc_commission_payouts (salesOrderId)');
+    expect(sql).toContain('CREATE INDEX idx_acp_paid ON acc_commission_payouts (paidDate)');
   });
 });
 

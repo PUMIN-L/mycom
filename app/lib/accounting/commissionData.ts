@@ -22,7 +22,18 @@ import { currentRateSets } from "./commissionRates";
 //
 // Every joined column carries its table: companies has a salespersonId too.
 
-export type CommissionStatus = "unassigned" | "not-delivered" | "cost-missing" | "awaiting-payment" | "payable";
+export type CommissionStatus = "unassigned" | "not-delivered" | "cost-missing" | "awaiting-payment" | "payable" | "paid";
+
+/** A live paid-out mark: what was LOCKED when it was paid (schema v60). */
+export interface PayoutInfo {
+  id: string;
+  paidDate: string;
+  profitSatang: number;
+  fordSatang: number;
+  torSatang: number;
+  companySatang: number;
+  createdBy: string;
+}
 
 export interface CommissionMonthRow extends CommissionPoResult {
   customerPoNo: string;
@@ -42,14 +53,26 @@ export interface CommissionMonthRow extends CommissionPoResult {
   /** What its issued invoices still owe. */
   owedSatang: number;
   commissionStatus: CommissionStatus;
+  /** Marked paid — what was locked then; null when it was not. */
+  payout: PayoutInfo | null;
+  /** Worked out now less what was paid — a change since (0 when not paid). */
+  differenceFordSatang: number;
+  differenceTorSatang: number;
+  /** Paid, but as it stands now it could not be (a refund, a cost taken away…) — why; else null. */
+  paidButNot: Exclude<CommissionStatus, "payable" | "paid"> | null;
 }
 
 export interface PersonTotals {
+  /** Everything worked out for the month, as it stands now. */
   totalSatang: number;
+  /** Marked paid — the amounts locked then. */
+  paidSatang: number;
   /** On POs that may be paid now. */
   payableSatang: number;
   /** On the others — waiting for the customer, a delivery or a cost. */
   waitingSatang: number;
+  /** On the paid ones: as it stands now less what was paid. */
+  differenceSatang: number;
 }
 
 export interface CommissionTotals {
@@ -89,7 +112,7 @@ function groupBy(list: RowDataPacket[], key: string): Map<string, RowDataPacket[
   return out;
 }
 
-const person = (): PersonTotals => ({ totalSatang: 0, payableSatang: 0, waitingSatang: 0 });
+const person = (): PersonTotals => ({ totalSatang: 0, paidSatang: 0, payableSatang: 0, waitingSatang: 0, differenceSatang: 0 });
 
 interface PoFacts {
   id: string;
@@ -110,7 +133,8 @@ interface PoFacts {
   owedSatang: number;
 }
 
-function statusOf(f: PoFacts): CommissionStatus {
+/** Where it stands as it is now — leaving any paid-out mark aside. */
+function statusOf(f: PoFacts): Exclude<CommissionStatus, "paid"> {
   if (!f.kind) return "unassigned";
   if (!f.complete) return "not-delivered";
   if (f.costMissing || f.saleCount === 0) return "cost-missing";
@@ -156,6 +180,22 @@ export async function commissionMonth(month: string): Promise<CommissionMonth | 
     ),
     "dealId"
   );
+  const payoutOf = new Map<string, PayoutInfo>();
+  for (const p of await rows(
+    `SELECT id, salesOrderId, profitSatang, fordSatang, torSatang, companySatang, paidDate, createdBy
+       FROM acc_commission_payouts WHERE salesOrderId IN (${marks(ids.length)}) AND voidedAt IS NULL`,
+    ids
+  )) {
+    payoutOf.set(String(p.salesOrderId), {
+      id: String(p.id),
+      paidDate: String(p.paidDate),
+      profitSatang: num(p.profitSatang),
+      fordSatang: num(p.fordSatang),
+      torSatang: num(p.torSatang),
+      companySatang: num(p.companySatang),
+      createdBy: String(p.createdBy ?? ""),
+    });
+  }
 
   const facts: PoFacts[] = [];
   for (const r of poRows) {
@@ -213,6 +253,8 @@ export async function commissionMonth(month: string): Promise<CommissionMonth | 
   );
   const out: CommissionMonthRow[] = results.map((r) => {
     const f = factOf.get(r.id)!;
+    const now = statusOf(f);
+    const payout = payoutOf.get(r.id) ?? null;
     return {
       ...r,
       customerPoNo: f.customerPoNo,
@@ -226,21 +268,30 @@ export async function commissionMonth(month: string): Promise<CommissionMonth | 
       costMissing: f.costMissing,
       paidInFull: f.paidInFull,
       owedSatang: f.owedSatang,
-      commissionStatus: statusOf(f),
+      commissionStatus: payout ? "paid" : now,
+      payout,
+      differenceFordSatang: payout ? r.fordSatang - payout.fordSatang : 0,
+      differenceTorSatang: payout ? r.torSatang - payout.torSatang : 0,
+      paidButNot: payout && now !== "payable" ? now : null,
     };
   });
 
   for (const row of out) {
-    if (!row.kind) {
+    if (!row.kind && !row.payout) {
       totals.unassigned += 1;
       continue;
     }
     totals.companySatang += row.companySatang;
     totals.profitSatang += row.countedSatang;
-    const payable = row.commissionStatus === "payable";
-    for (const [who, amount] of [["ford", row.fordSatang], ["tor", row.torSatang]] as const) {
+    for (const [who, amount, locked] of [
+      ["ford", row.fordSatang, row.payout?.fordSatang ?? 0],
+      ["tor", row.torSatang, row.payout?.torSatang ?? 0],
+    ] as const) {
       totals[who].totalSatang += amount;
-      if (payable) totals[who].payableSatang += amount;
+      if (row.commissionStatus === "paid") {
+        totals[who].paidSatang += locked;
+        totals[who].differenceSatang += amount - locked;
+      } else if (row.commissionStatus === "payable") totals[who].payableSatang += amount;
       else totals[who].waitingSatang += amount;
     }
   }
