@@ -126,12 +126,15 @@ function SummaryCard({ label, amount, note, strong = false }: { label: string; a
 }
 
 function NextHeader({ report }: { report: PayoutReport }) {
+  // The gap under it is padding, not margin: a measured height leaves a margin out.
   return (
-    <div data-paper-next-header="" className="flex justify-between items-end gap-4" style={{ borderBottom: `1px solid #cbd5e1`, paddingBottom: "2mm", marginBottom: "2.5mm" }}>
-      <p className="text-[11px] font-bold">{report.seller.name || "—"}</p>
-      <p className="text-[11px] font-bold" style={{ color: NAVY }}>
-        สรุปการจ่ายค่าคอมมิชชั่น (ต่อ) <span className="font-normal" style={{ color: GREY }}>{`· วันที่จ่าย ${payoutRangeLabel(report.from, report.to)}`}</span>
-      </p>
+    <div data-paper-next-header="" style={{ paddingBottom: "2.5mm" }}>
+      <div className="flex justify-between items-end gap-4" style={{ borderBottom: `1px solid #cbd5e1`, paddingBottom: "2mm" }}>
+        <p className="text-[11px] font-bold">{report.seller.name || "—"}</p>
+        <p className="text-[11px] font-bold" style={{ color: NAVY }}>
+          สรุปการจ่ายค่าคอมมิชชั่น (ต่อ) <span className="font-normal" style={{ color: GREY }}>{`· วันที่จ่าย ${payoutRangeLabel(report.from, report.to)}`}</span>
+        </p>
+      </div>
     </div>
   );
 }

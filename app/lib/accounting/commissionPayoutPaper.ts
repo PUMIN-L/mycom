@@ -100,7 +100,8 @@ export interface PaperPage {
  * table's parts on the first page (under the summary) and on the others;
  * `tailHeight`: the totals + rates + notes + signatures, kept together. A part
  * never splits; one taller than a page takes a page of its own; a part kept
- * with the next is never left last on a page.
+ * with the next goes over to the next page with it — when the two fit there
+ * together (never a page overfilled: what does not fit is cut off the PDF).
  */
 export function paginatePaper(units: readonly { height: number; keepWithNext: boolean }[], firstCapacity: number, nextCapacity: number, tailHeight: number): PaperPage[] {
   const pages: PaperPage[] = [{ units: [], tail: false }];
@@ -110,11 +111,17 @@ export function paginatePaper(units: readonly { height: number; keepWithNext: bo
   units.forEach((unit, i) => {
     if (used + unit.height > capacity && page.units.length > 0) {
       const carried: number[] = [];
-      while (page.units.length > 1 && units[page.units[page.units.length - 1]].keepWithNext) carried.unshift(page.units.pop()!);
+      let carriedHeight = 0;
+      while (page.units.length > 1) {
+        const last = page.units[page.units.length - 1];
+        if (!units[last].keepWithNext || carriedHeight + units[last].height + unit.height > nextCapacity) break;
+        carried.unshift(page.units.pop()!);
+        carriedHeight += units[last].height;
+      }
       page = { units: carried, tail: false };
       pages.push(page);
       capacity = nextCapacity;
-      used = carried.reduce((sum, k) => sum + units[k].height, 0);
+      used = carriedHeight;
     }
     page.units.push(i);
     used += unit.height;

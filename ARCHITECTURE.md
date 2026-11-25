@@ -1889,7 +1889,11 @@ once the customer has paid the whole PO.
   credit note) shows as `differenceFordSatang` / `differenceTorSatang`
   (as it stands now − locked) and never rewrites what was paid, and
   `paidButNot` says when it could no longer be paid as it stands now. Per
-  person: total = paid (locked) + difference + payable + waiting. While a PO
+  person: total = paid (locked) + difference + payable + waiting. A PO
+  cancelled with nothing delivered is left out of its month — unless it has a
+  live mark (its deliveries taken back after it was paid): it stays, at 0 on
+  the ladder, `paidButNot` "not-delivered", so the mark shows and can be
+  undone. While a PO
   has a live mark its choice cannot be switched (409 — undo the mark first);
   a PO with any mark, live or undone, cannot be deleted (`impactOf` — cancel
   it instead). The screen: a "จ่ายค่าคอมแล้ว" button on a payable row (a window
@@ -1925,8 +1929,13 @@ once the customer has paid the whole PO.
   made in the browser the quotation's way (html2canvas-pro + jsPDF, nothing
   stored): every part drawn once off-screen in `<body>` and measured after the
   fonts and the logo are ready, `paginatePaper` places them (a part never
-  splits, a PO's row stays with its cost detail, the totals + rates + notes +
-  signatures stay together on the last page), then each A4 page is painted —
+  splits; a PO's row goes over with its cost detail only when the two fit the
+  next page together — a page is never overfilled, as `overflow: hidden` would
+  cut rows off the PDF; the totals + rates + notes + signatures stay together
+  on the last page; heights are measured, so a gap under a measured block is
+  padding, never margin; `accountingCommissionProperties.test.ts` checks the
+  breaks and the calculator against a separate reference on random months),
+  then each A4 page is painted —
   the company and the range, three cards (ฟอร์ดได้รับ / พี่ต่อได้รับ from which
   deals, รวมจ่าย), the table (navy head on every page, zebra rows, the ladder
   range under the customer), รวม, อัตราที่ใช้คิด, the notes, three signatures,

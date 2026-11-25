@@ -186,6 +186,20 @@ describe("commissionMonth — POs whose commission was marked paid", () => {
     expect([b.differenceFordSatang, b.differenceTorSatang]).toEqual([0, 0]);
   });
 
+  it("a PO cancelled with nothing delivered — but marked paid before — stays in the month, so the mark shows and can be undone", async () => {
+    // V's deliveries were taken back and V cancelled after its commission was paid 1,000 / 500.
+    withPayouts([{ ...payout("V", 1_000, 500), companySatang: baht(1_500), profitSatang: baht(3_000) }]);
+    const m = (await commissionMonth("2026-11"))!;
+    expect(m.rows.map((r) => r.id)).toEqual(["A", "T", "N", "V", "B", "C", "G", "H", "W"]);
+    const v = m.rows.find((r) => r.id === "V")!;
+    expect(v).toMatchObject({ commissionStatus: "paid", paidButNot: "not-delivered", countedSatang: 0, fordSatang: 0, torSatang: 0 });
+    expect([v.differenceFordSatang, v.differenceTorSatang]).toEqual([baht(-1_000), baht(-500)]);
+    // It takes no place on the ladder: the others are as they were.
+    expect(m.rows.find((r) => r.id === "B")).toMatchObject({ ladderFromSatang: baht(80_000), fordSatang: baht(47_000) });
+    expect(m.totals.ford).toEqual({ totalSatang: baht(225_800), paidSatang: baht(1_000), payableSatang: baht(178_800), waitingSatang: baht(47_000), differenceSatang: baht(-1_000) });
+    expect(m.totals.tor).toMatchObject({ paidSatang: baht(500), differenceSatang: baht(-500) });
+  });
+
   it("reads only the live marks — an undone one is no payout", async () => {
     withPayouts([]);
     await commissionMonth("2026-11");

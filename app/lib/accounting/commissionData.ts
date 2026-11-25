@@ -155,8 +155,10 @@ export async function commissionMonth(month: string): Promise<CommissionMonth | 
     const status = String(r.status);
     const lines = (linesOf.get(id) ?? []).map((l) => ({ qty: num(l.qty), deliveredQty: num(l.deliveredQty) }));
     const delivered = lines.some((l) => l.deliveredQty > 0);
-    // Cancelled before anything went: not part of the month.
-    if (status === "void" && !delivered) continue;
+    // Cancelled before anything went: not part of the month — unless its
+    // commission was marked paid before (its deliveries taken back since): it
+    // stays, at 0 on the ladder, so the mark shows and can be undone.
+    if (status === "void" && !delivered && !payoutOf.has(id)) continue;
     const orderStatus = orderStatusOf({ status, lines });
     const complete = orderStatus === "complete" || (status === "void" && delivered);
     const invoices = (invoicesOf.get(id) ?? []).map((i) =>

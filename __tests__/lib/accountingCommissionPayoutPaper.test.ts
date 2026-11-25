@@ -115,6 +115,14 @@ describe("paginatePaper", () => {
     ]);
   });
 
+  it("a row moves with its detail only when the two fit on the next page together — a page is never overfilled", () => {
+    // Row 1 + its detail (60) would not fit a page of 54: the row stays, the detail starts the next page.
+    expect(paginatePaper([u(10), u(10, true), u(50)], 30, 54, 0)).toEqual([
+      { units: [0, 1], tail: false },
+      { units: [2], tail: true },
+    ]);
+  });
+
   it("a part taller than a page takes a page of its own — and the pages still end", () => {
     expect(paginatePaper([u(10), u(50), u(10)], 30, 30, 0)).toEqual([
       { units: [0], tail: false },
