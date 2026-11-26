@@ -260,12 +260,12 @@ const noCosts = () => ({ salesSatang: 0, costSatang: 0, profitSatang: 0, notCoun
 async function saleDetails(saleIds: string[]): Promise<{ itemsOf: Map<string, RowDataPacket[]>; costsOf: Map<string, RowDataPacket[]> }> {
   if (saleIds.length === 0) return { itemsOf: new Map(), costsOf: new Map() };
   const itemsOf = groupBy(
-    await rows(`SELECT salesRecordId, productName, qty, costAmount FROM sales_record_items WHERE salesRecordId IN (${marks(saleIds.length)}) ORDER BY sortOrder ASC`, saleIds),
+    await rows(`SELECT id, salesRecordId, productName, qty, costAmount FROM sales_record_items WHERE salesRecordId IN (${marks(saleIds.length)}) ORDER BY sortOrder ASC`, saleIds),
     "salesRecordId"
   );
   const costsOf = groupBy(
     await rows(
-      `SELECT salesRecordId, costType, label, note, amount FROM sale_cost_items WHERE salesRecordId IN (${marks(saleIds.length)}) AND costType <> 'product_cost' ORDER BY createdAt ASC`,
+      `SELECT id, salesRecordId, costType, label, note, amount FROM sale_cost_items WHERE salesRecordId IN (${marks(saleIds.length)}) AND costType <> 'product_cost' ORDER BY createdAt ASC`,
       saleIds
     ),
     "salesRecordId"
@@ -322,10 +322,16 @@ function poCostsOf(
   const deliveries: DeliveryCosts[] = sales.map((s) => {
     const saleId = String(s.id);
     const total = signedDecimalToSatang(s.totalAmount);
-    const items = (itemsOf.get(saleId) ?? []).map((i) => ({ productName: String(i.productName ?? ""), qty: num(i.qty), costSatang: signedDecimalToSatang(i.costAmount) }));
+    const items = (itemsOf.get(saleId) ?? []).map((i) => ({
+      id: String(i.id),
+      productName: String(i.productName ?? ""),
+      qty: num(i.qty),
+      costSatang: signedDecimalToSatang(i.costAmount),
+    }));
     const costs = (costsOf.get(saleId) ?? []).map((c) => {
       const costType = String(c.costType ?? "other");
       return {
+        id: String(c.id),
         costType,
         typeLabel: COST_TYPE_LABELS[costType] ?? COST_TYPE_LABELS.other,
         label: String(c.label ?? ""),
@@ -352,6 +358,7 @@ function poCostsOf(
       costSatang: cost,
       profitSatang: total - cost,
       costMissing,
+      storedCostSatang: signedDecimalToSatang(s.costAmount),
       items,
       costs,
     };

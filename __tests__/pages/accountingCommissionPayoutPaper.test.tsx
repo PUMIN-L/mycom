@@ -41,11 +41,11 @@ const COSTS_A: PoCosts = {
   customerPoNo: "PO-A",
   deliveries: [
     {
-      saleId: "a1", saleDate: "2026-11-10", invoiceRef: "INV2026110001", credit: false, salesSatang: 10_000_000, costSatang: 2_000_000, profitSatang: 8_000_000, costMissing: false,
-      items: [{ productName: "เครื่องชั่ง A", qty: 1, costSatang: 1_500_000 }],
+      saleId: "a1", saleDate: "2026-11-10", invoiceRef: "INV2026110001", credit: false, salesSatang: 10_000_000, costSatang: 2_000_000, profitSatang: 8_000_000, costMissing: false, storedCostSatang: 0,
+      items: [{ id: "a1-i1", productName: "เครื่องชั่ง A", qty: 1, costSatang: 1_500_000 }],
       costs: [
-        { costType: "shipping", typeLabel: "ค่าขนส่ง", label: "Kerry", note: "", amountSatang: 500_000, counted: true },
-        { costType: "commission", typeLabel: "ค่าคอมมิชชั่น", label: "", note: "", amountSatang: 200_000, counted: false },
+        { id: "a1-ship", costType: "shipping", typeLabel: "ค่าขนส่ง", label: "Kerry", note: "", amountSatang: 500_000, counted: true },
+        { id: "a1-comm", costType: "commission", typeLabel: "ค่าคอมมิชชั่น", label: "", note: "", amountSatang: 200_000, counted: false },
       ],
     },
   ],

@@ -34,7 +34,9 @@ export type AuditAction =
   /** A PO's commission marked paid — the amounts locked (§8h). */
   | "commission.payout"
   /** …and that mark undone, with the reason. */
-  | "commission.payout.void";
+  | "commission.payout.void"
+  /** A delivery's costs edited on the commission screen — before → after (§8h). */
+  | "commission.cost";
 
 export const AUDIT_DETAIL_MAX = 1000;
 

@@ -1989,3 +1989,136 @@ export async function syncCostItems(
     return insertedItems;
   });
 }
+
+// ── One delivery's costs edited at once (the commission screen, §8h) ─────────
+
+export interface SaleCostRowEdit {
+  costType: string;
+  label: string;
+  note: string;
+  /** Baht. */
+  amount: number;
+}
+
+export interface SaleCostEdit {
+  /** Product lines' cost — ABSOLUTE, baht. */
+  lines: { id: string; costAmount: number }[];
+  add: SaleCostRowEdit[];
+  update: (SaleCostRowEdit & { id: string })[];
+  remove: string[];
+}
+
+type CostRowFigures = { costType: string; label: string; note: string; amount: number };
+
+export interface SaleCostEditResult {
+  /** The lines whose cost changed. */
+  lines: { id: string; productName: string; before: number; after: number }[];
+  added: { costType: string; label: string; amount: number }[];
+  /** The rows that changed (one sent back as it was is not listed). */
+  updated: { id: string; before: CostRowFigures; after: CostRowFigures }[];
+  removed: { id: string; costType: string; label: string; amount: number }[];
+  costAmountBefore: number;
+  costAmountAfter: number;
+}
+
+const COST_ROW_GONE = "รายการต้นทุนนี้ถูกแก้หรือลบจากที่อื่นแล้ว — กรุณาโหลดใหม่แล้วแก้อีกครั้ง";
+
+/** A DECIMAL(12,2) as whole satang — compared and summed without float dust. */
+const satangOf = (v: unknown) => Math.round((Number(v) || 0) * 100);
+
+/** The sale's lines and bill-level rows — LOCKING reads (see applySaleCostEditTx). */
+async function lockedCostsTx(conn: TxConnection, salesRecordId: string): Promise<{ lines: RowDataPacket[]; rows: RowDataPacket[] }> {
+  const [lines] = (await conn.query(
+    "SELECT id, productName, costAmount FROM sales_record_items WHERE salesRecordId = ? ORDER BY sortOrder ASC, createdAt ASC FOR UPDATE",
+    [salesRecordId]
+  )) as [RowDataPacket[], unknown];
+  const [rows] = (await conn.query("SELECT id, costType, label, note, amount FROM sale_cost_items WHERE salesRecordId = ? FOR UPDATE", [
+    salesRecordId,
+  ])) as [RowDataPacket[], unknown];
+  return { lines: Array.isArray(lines) ? lines : [], rows: Array.isArray(rows) ? rows : [] };
+}
+
+/** COST_AMOUNT_SUM_SQL's definition, over rows read under lock: lines + every bill-level row but legacy product_cost. */
+const lockedTotalSatang = ({ lines, rows }: { lines: RowDataPacket[]; rows: RowDataPacket[] }) =>
+  lines.reduce((s, l) => s + satangOf(l.costAmount), 0) + rows.reduce((s, r) => s + (String(r.costType) === "product_cost" ? 0 : satangOf(r.amount)), 0);
+
+/**
+ * One delivery's costs edited at once — the commission screen's editor (§8h):
+ * each named product line's cost set to an ABSOLUTE amount (written only when
+ * it changes), the bill-level rows added / changed / removed, then costAmount
+ * re-derived from the rows as they are after it. The caller holds the sale's
+ * lock (SELECT … FOR UPDATE) on `conn`, its transaction.
+ *
+ * Every read is a LOCKING read: in a TiDB transaction a plain SELECT reads the
+ * snapshot the transaction began with, which would miss a cost another tab
+ * saved while this waited for the lock — and the sum written back would drop it.
+ *
+ * Only this sale's own lines and rows; a legacy `product_cost` row is never
+ * touched (history, not counted); ต้นทุนสินค้า never becomes a bill-level row.
+ * An id that is not one of them (another sale's, or gone since) refuses the
+ * whole edit before anything is written. Text is cleaned as every other cost
+ * write cleans it (cleanCostInput).
+ */
+export async function applySaleCostEditTx(conn: TxConnection, salesRecordId: string, edit: SaleCostEdit): Promise<SaleCostEditResult> {
+  for (const row of [...edit.add, ...edit.update]) {
+    if (normalizeCostType(row.costType) === "product_cost") throw new ProductCostIsPerLineError();
+  }
+  const before = await lockedCostsTx(conn, salesRecordId);
+  const lineOf = new Map(before.lines.map((l) => [String(l.id), l]));
+  const rowOf = new Map(before.rows.filter((r) => String(r.costType) !== "product_cost").map((r) => [String(r.id), r]));
+  if (edit.lines.some((l) => !lineOf.has(l.id)) || [...edit.update.map((u) => u.id), ...edit.remove].some((id) => !rowOf.has(id))) {
+    throw new ApiError(409, COST_ROW_GONE);
+  }
+
+  const result: SaleCostEditResult = {
+    lines: [],
+    added: [],
+    updated: [],
+    removed: [],
+    costAmountBefore: lockedTotalSatang(before) / 100,
+    costAmountAfter: 0,
+  };
+  for (const l of edit.lines) {
+    const line = lineOf.get(l.id)!;
+    const target = toSatang(Math.max(0, Math.min(MAX_MONEY_AMOUNT, Number(l.costAmount) || 0)));
+    const was = satangOf(line.costAmount);
+    if (satangOf(target) === was) continue;
+    await conn.query("UPDATE sales_record_items SET costAmount = ? WHERE id = ? AND salesRecordId = ?", [target, l.id, salesRecordId]);
+    result.lines.push({ id: l.id, productName: String(line.productName ?? ""), before: was / 100, after: target });
+  }
+  for (const id of edit.remove) {
+    const row = rowOf.get(id)!;
+    await conn.query("DELETE FROM sale_cost_items WHERE id = ? AND salesRecordId = ?", [id, salesRecordId]);
+    result.removed.push({ id, costType: String(row.costType), label: String(row.label ?? ""), amount: satangOf(row.amount) / 100 });
+  }
+  for (const u of edit.update) {
+    const row = rowOf.get(u.id)!;
+    const was: CostRowFigures = { costType: String(row.costType), label: String(row.label ?? ""), note: String(row.note ?? ""), amount: satangOf(row.amount) / 100 };
+    const v = cleanCostInput({ costType: u.costType, label: u.label, note: u.note, amount: u.amount });
+    const now: CostRowFigures = { costType: v.costType, label: v.label, note: v.note, amount: v.amount };
+    if (was.costType === now.costType && was.label === now.label && was.note === now.note && satangOf(was.amount) === satangOf(now.amount)) continue;
+    await conn.query("UPDATE sale_cost_items SET costType = ?, label = ?, amount = ?, note = ? WHERE id = ? AND salesRecordId = ?", [
+      v.costType,
+      v.label,
+      v.amount,
+      v.note,
+      u.id,
+      salesRecordId,
+    ]);
+    result.updated.push({ id: u.id, before: was, after: now });
+  }
+  for (const a of edit.add) {
+    const v = cleanCostInput({ costType: a.costType, label: a.label, note: a.note, amount: a.amount });
+    await conn.query(
+      `INSERT INTO sale_cost_items (id, salesRecordId, costType, label, amount, note, createdAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [crypto.randomUUID(), salesRecordId, v.costType, v.label, v.amount, v.note, new Date().toISOString()]
+    );
+    result.added.push({ costType: v.costType, label: v.label, amount: v.amount });
+  }
+
+  // The sum as the rows are now — read again under lock, after the writes.
+  result.costAmountAfter = lockedTotalSatang(await lockedCostsTx(conn, salesRecordId)) / 100;
+  await conn.query("UPDATE sales_records SET costAmount = ? WHERE id = ?", [result.costAmountAfter, salesRecordId]);
+  return result;
+}

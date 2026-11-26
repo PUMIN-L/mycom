@@ -1866,9 +1866,35 @@ once the customer has paid the whole PO.
   [`lib/costTypes.ts`](./app/lib/costTypes.ts), shared with the dashboard; the
   old `product_cost` rows left out as the dashboard leaves them), the
   "ค่าคอมมิชชั่น" rows shown but not deducted, a delivery with no cost flagged,
-  then ยอดขาย − ต้นทุน = กำไร as the commission counts it, and "แก้ต้นทุน"
-  to `/dashboard?edit=<saleId>` (the dashboard opens it when the sale is in
-  its loaded list, the newest 1,000).
+  then ยอดขาย − ต้นทุน = กำไร as the commission counts it, and "แก้ต้นทุน" on
+  each delivery (not a credit note) — edited right there, see below.
+- **Costs edited on the commission screen (the owner, 2026-11-26; no schema
+  change)** — the delivery's editor
+  ([`CostEditor.tsx`](./app/accounting/commission/CostEditor.tsx)): each product
+  line's cost (the whole line's, as the dashboard stores it), the other costs
+  added / changed / removed (SearchableDropdown for the kind; ต้นทุนสินค้า is
+  not one — it lives on the lines), a live "ต้นทุนครั้งนี้ · กำไรครั้งนี้", a
+  warning when the PO's commission is already paid (what was paid stays; the
+  change shows as ส่วนต่างหลังจ่าย), then ONE save of only what changed.
+  The rules are pure and shared
+  ([`costEditRules.ts`](./app/lib/accounting/costEditRules.ts) — what an edit is,
+  what is wrong in Thai, the history line). `PUT
+  /api/accounting/commission/orders/[id]/costs { saleId, expectedCostSatang,
+  lines, add, update, remove }` → `editDeliveryCosts`
+  ([`commissionCostEdit.ts`](./app/lib/accounting/commissionCostEdit.ts)): the
+  sale LOCKED (locking read), one of THIS PO's deliveries, not a credit note,
+  its stored cost (`storedCostSatang`, ค่าคอม rows included) still what the
+  editor opened with (else 409 — never overwrite an edit made meanwhile on the
+  dashboard); written through the dashboard's own store,
+  `applySaleCostEditTx` ([`salesDashboardStore.ts`](./app/lib/salesDashboardStore.ts)
+  — absolute line costs, rows by id, only the sale's own, never a legacy
+  `product_cost` row, text cleaned by `cleanCostInput`, EVERY read a locking
+  read and `costAmount` re-summed from the rows after the writes: a plain
+  SELECT in a TiDB transaction reads its start snapshot and would drop a cost
+  saved while this waited); a `commission.cost` line in the PO's history (each
+  change before → after, the delivery's cost before → after). Answers the PO's
+  costs; the month is read again, the screen keeping what it shows until then
+  (no jump to the top). The same figures sent back are "ไม่มีอะไรเปลี่ยน".
 - **Paid-out marks (schema v60)** — `acc_commission_payouts`, one row per
   mark with the amounts **LOCKED** as they were when it was paid (kind, PO
   month, profit counted, ladder range, the three shares, rate set id, paid

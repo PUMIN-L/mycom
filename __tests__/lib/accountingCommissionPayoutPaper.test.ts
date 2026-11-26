@@ -51,6 +51,7 @@ const costs = (poId: string, deliveries: { credit: boolean }[]): PoCosts => ({
     costSatang: 0,
     profitSatang: 0,
     costMissing: false,
+    storedCostSatang: 0,
     items: [],
     costs: [],
   })),

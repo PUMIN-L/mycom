@@ -3,6 +3,7 @@
  * The commission month and a PO's cost breakdown — behind the module's gate:
  *  • GET /api/accounting/commission?month=YYYY-MM
  *  • GET /api/accounting/commission/orders/[id]/costs
+ *  • PUT /api/accounting/commission/orders/[id]/costs — one delivery's costs edited
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
@@ -20,13 +21,24 @@ vi.mock("@/app/lib/accounting/commissionData", () => ({
   commissionCostsFor: vi.fn(async (pos: { id: string }[]) => Object.fromEntries(pos.map((p) => [p.id, { poId: p.id, deliveries: [] }]))),
 }));
 import { commissionCosts, commissionCostsFor, commissionMonth } from "@/app/lib/accounting/commissionData";
+vi.mock("@/app/lib/accounting/commissionCostEdit", () => ({
+  editDeliveryCosts: vi.fn(async (id: string) => ({ poId: id, deliveries: [] })),
+}));
+import { editDeliveryCosts } from "@/app/lib/accounting/commissionCostEdit";
 
 import { GET as monthGET } from "@/app/api/accounting/commission/route";
-import { GET as costsGET } from "@/app/api/accounting/commission/orders/[id]/costs/route";
+import { GET as costsGET, PUT as costsPUT } from "@/app/api/accounting/commission/orders/[id]/costs/route";
 
 const admin = { userId: "admin-001", username: "admin", expiresAt: new Date() } as never;
 const user = { id: "admin-001", username: "admin", passwordHash: "x", totpEnabled: true };
+const ACTOR = { userId: "admin-001", username: "admin" };
 const get = (path: string) => new NextRequest(`http://localhost:3000${path}`);
+const put = (path: string, body: unknown) =>
+  new NextRequest(`http://localhost:3000${path}`, {
+    method: "PUT",
+    headers: { host: "localhost:3000", origin: "http://localhost:3000", "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
 const ctx = (id: string) => ({ params: Promise.resolve({ id }) });
 
 beforeEach(() => {
@@ -81,16 +93,30 @@ describe("GET /api/accounting/commission/orders/[id]/costs", () => {
   });
 });
 
+describe("PUT /api/accounting/commission/orders/[id]/costs", () => {
+  it("one delivery's costs saved as the admin who did it — answers the PO's costs as they are now, never cached", async () => {
+    const body = { saleId: "s1", expectedCostSatang: 0, lines: [{ id: "l1", costSatang: 100 }] };
+    const res = await costsPUT(put("/api/accounting/commission/orders/so1/costs", body), ctx("so1"));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Cache-Control")).toBe("no-store");
+    expect(editDeliveryCosts).toHaveBeenCalledWith("so1", body, ACTOR);
+    expect(await res.json()).toEqual({ poId: "so1", deliveries: [] });
+  });
+});
+
 describe("the gate", () => {
   it("401s anonymous and 403s without two-factor login", async () => {
     vi.mocked(getSession).mockResolvedValue(null);
     expect((await monthGET(get("/api/accounting/commission?month=2026-11"))).status).toBe(401);
     expect((await costsGET(get("/api/accounting/commission/orders/so1/costs"), ctx("so1"))).status).toBe(401);
+    expect((await costsPUT(put("/api/accounting/commission/orders/so1/costs", { saleId: "s1" }), ctx("so1"))).status).toBe(401);
     vi.mocked(getSession).mockResolvedValue(admin);
     vi.mocked(getTwoFactorUser).mockResolvedValue({ ...user, totpEnabled: false } as never);
     expect((await monthGET(get("/api/accounting/commission?month=2026-11"))).status).toBe(403);
     expect((await costsGET(get("/api/accounting/commission/orders/so1/costs"), ctx("so1"))).status).toBe(403);
+    expect((await costsPUT(put("/api/accounting/commission/orders/so1/costs", { saleId: "s1" }), ctx("so1"))).status).toBe(403);
     expect(commissionMonth).not.toHaveBeenCalled();
     expect(commissionCosts).not.toHaveBeenCalled();
+    expect(editDeliveryCosts).not.toHaveBeenCalled();
   });
 });

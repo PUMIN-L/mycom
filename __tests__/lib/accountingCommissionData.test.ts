@@ -222,28 +222,30 @@ describe("commissionCosts — what a PO's profit is made of", () => {
           ],
         ],
         [/FROM sales_record_items/, () => [
-          { salesRecordId: "c1", productName: "เครื่องชั่ง A", qty: 2, costAmount: "400000.00" },
-          { salesRecordId: "c2", productName: "เครื่องชั่ง B", qty: 1, costAmount: "0.00" },
+          { id: "i1", salesRecordId: "c1", productName: "เครื่องชั่ง A", qty: 2, costAmount: "400000.00" },
+          { id: "i2", salesRecordId: "c2", productName: "เครื่องชั่ง B", qty: 1, costAmount: "0.00" },
         ]],
         [/FROM sale_cost_items/, () => [
-          { salesRecordId: "c1", costType: "shipping", label: "Kerry", note: "", amount: "6000.00" },
-          { salesRecordId: "c1", costType: "transport", label: "", note: "รถบริษัท", amount: "1500.00" },
-          { salesRecordId: "c1", costType: "commission", label: "", note: "", amount: "10000.00" },
+          { id: "k1", salesRecordId: "c1", costType: "shipping", label: "Kerry", note: "", amount: "6000.00" },
+          { id: "k2", salesRecordId: "c1", costType: "transport", label: "", note: "รถบริษัท", amount: "1500.00" },
+          { id: "k3", salesRecordId: "c1", costType: "commission", label: "", note: "", amount: "10000.00" },
         ]],
       ]) as never
     );
   });
 
-  it("by delivery: sales, each product's cost, the other costs by type — the commission row shown but not counted", async () => {
+  it("by delivery: sales, each product's cost, the other costs by type — the commission row shown but not counted; ids to edit them by", async () => {
     const c = (await commissionCosts("C"))!;
     expect(c.customerPoNo).toBe("PO-C");
     const [d1, d2, cn] = c.deliveries;
     expect(d1).toMatchObject({ saleId: "c1", saleDate: "2026-12-10", invoiceRef: "INV2026120003", credit: false, salesSatang: baht(700_000), costSatang: baht(407_500), profitSatang: baht(292_500), costMissing: false });
-    expect(d1.items).toEqual([{ productName: "เครื่องชั่ง A", qty: 2, costSatang: baht(400_000) }]);
+    // The cost as the sale stores it (ค่าคอม included) — what an edit checks nobody changed meanwhile.
+    expect(d1.storedCostSatang).toBe(baht(417_500));
+    expect(d1.items).toEqual([{ id: "i1", productName: "เครื่องชั่ง A", qty: 2, costSatang: baht(400_000) }]);
     expect(d1.costs).toEqual([
-      { costType: "shipping", typeLabel: "ค่าขนส่ง", label: "Kerry", note: "", amountSatang: baht(6_000), counted: true },
-      { costType: "transport", typeLabel: "ค่ารถ / ค่าเดินทาง", label: "", note: "รถบริษัท", amountSatang: baht(1_500), counted: true },
-      { costType: "commission", typeLabel: "ค่าคอมมิชชั่น", label: "", note: "", amountSatang: baht(10_000), counted: false },
+      { id: "k1", costType: "shipping", typeLabel: "ค่าขนส่ง", label: "Kerry", note: "", amountSatang: baht(6_000), counted: true },
+      { id: "k2", costType: "transport", typeLabel: "ค่ารถ / ค่าเดินทาง", label: "", note: "รถบริษัท", amountSatang: baht(1_500), counted: true },
+      { id: "k3", costType: "commission", typeLabel: "ค่าคอมมิชชั่น", label: "", note: "", amountSatang: baht(10_000), counted: false },
     ]);
     // Nothing typed for the second delivery yet.
     expect(d2).toMatchObject({ costSatang: 0, costMissing: true });
@@ -260,10 +262,12 @@ describe("commissionCosts — what a PO's profit is made of", () => {
     });
   });
 
-  it("reads the costs the way the dashboard counts them — the old product_cost rows left out", async () => {
+  it("reads the costs the way the dashboard counts them — the old product_cost rows left out — with their ids", async () => {
     await commissionCosts("C");
     const costQuery = calls.find((c) => /FROM sale_cost_items/.test(c.sql))!;
     expect(costQuery.sql).toMatch(/costType <> 'product_cost'/);
+    expect(costQuery.sql).toMatch(/^SELECT id, salesRecordId,/);
+    expect(calls.find((c) => /FROM sales_record_items/.test(c.sql))!.sql).toMatch(/^SELECT id, salesRecordId,/);
   });
 
   it("only a customer PO", async () => {

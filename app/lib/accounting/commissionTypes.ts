@@ -91,12 +91,16 @@ export interface CommissionMonth {
 // ── What a PO's profit is made of (decision 12) ──────────────────────────────
 
 export interface CostLine {
+  /** The sale line (sales_record_items.id) — what the editor sets the cost of. */
+  id: string;
   productName: string;
   qty: number;
   costSatang: number;
 }
 
 export interface OtherCost {
+  /** The cost row (sale_cost_items.id). */
+  id: string;
   costType: string;
   typeLabel: string;
   label: string;
@@ -116,6 +120,8 @@ export interface DeliveryCosts {
   costSatang: number;
   profitSatang: number;
   costMissing: boolean;
+  /** The cost as the sale stores it (ค่าคอม rows included) — an edit checks nobody changed it meanwhile. */
+  storedCostSatang: number;
   items: CostLine[];
   costs: OtherCost[];
 }

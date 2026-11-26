@@ -16,6 +16,7 @@ import { commissionMonthFilename, commissionMonthSheets } from "../../lib/accoun
 import { deliveryTitles } from "../../lib/accounting/commissionPayoutPaper";
 import { COMMISSION_STATUS_LABELS, type CommissionMonth, type PoCosts } from "../../lib/accounting/commissionTypes";
 import { downloadExcel } from "../../lib/xlsxExport";
+import CostEditor from "./CostEditor";
 
 // The commission month (ARCHITECTURE.md §8h): the customer POs of the month (by
 // PO date) in the ladder's order — whose, profit, place on the ladder, the
@@ -66,21 +67,7 @@ interface MonthAnswer {
   totals: { ford: PersonTotals; tor: PersonTotals; companySatang: number; profitSatang: number; unassigned: number };
   invoicesWithoutPo: number;
 }
-interface DeliveryCosts {
-  saleId: string;
-  saleDate: string;
-  invoiceRef: string;
-  credit: boolean;
-  salesSatang: number;
-  costMissing: boolean;
-  items: { productName: string; qty: number; costSatang: number }[];
-  costs: { costType: string; typeLabel: string; label: string; note: string; amountSatang: number; counted: boolean }[];
-}
-interface CostsAnswer {
-  poId: string;
-  deliveries: DeliveryCosts[];
-  totals: { salesSatang: number; costSatang: number; profitSatang: number; notCountedSatang: number; waitingCostSalesSatang: number };
-}
+type CostsAnswer = PoCosts;
 
 type Load<T> = { status: "loading" } | { status: "error"; message: string } | { status: "ok"; data: T };
 
@@ -135,11 +122,20 @@ export default function MonthView() {
   const [paying, setPaying] = useState<MonthRow | null>(null);
   const [undoing, setUndoing] = useState<MonthRow | null>(null);
   const [exporting, setExporting] = useState(false);
+  /** The delivery (sale) whose costs are being edited, if any. */
+  const [editingSale, setEditingSale] = useState<string | null>(null);
   /** A dialog saved: say so, read the month again. */
   const saved = (text: string) => {
     setPaying(null);
     setUndoing(null);
     setNotice({ text, warn: false });
+    setReloadKey((n) => n + 1);
+  };
+  /** A delivery's costs saved: the PO's costs as they are now, and the month worked out again. */
+  const costsSaved = (poId: string, data: CostsAnswer) => {
+    setCosts((c) => ({ ...c, [poId]: { status: "ok", data } }));
+    setEditingSale(null);
+    setNotice({ text: "บันทึกต้นทุนแล้ว — คำนวณกำไรและค่าคอมใหม่แล้ว", warn: false });
     setReloadKey((n) => n + 1);
   };
 
@@ -164,7 +160,12 @@ export default function MonthView() {
       cancelled = true;
     };
   }, [month, reloadKey]);
-  const load: Load<MonthAnswer> = state.key === key ? state.load : { status: "loading" };
+  const fresh = state.key === key;
+  const load: Load<MonthAnswer> = fresh ? state.load : { status: "loading" };
+  // The same month read again (after a save): what is on screen stays until the
+  // new answer comes, so the page does not jump back to the top.
+  const stale = !fresh && state.key.startsWith(`${month}|`) && state.load.status === "ok" ? state.load.data : null;
+  const shown: MonthAnswer | null = load.status === "ok" ? load.data : stale;
 
   /** Opens a PO's costs — fetched the first time only (again after a failure). */
   const openCosts = async (id: string) => {
@@ -258,7 +259,7 @@ export default function MonthView() {
             buttonClassName="h-[42px] rounded-xl !border-gray-200"
           />
         </div>
-        {load.status === "ok" && load.data.rows.length > 0 && (
+        {shown && shown.rows.length > 0 && (
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
@@ -268,7 +269,7 @@ export default function MonthView() {
             >
               {exporting ? "กำลังสร้าง Excel…" : "ดาวน์โหลด Excel"}
             </button>
-            <button type="button" onClick={() => load.data.rows.forEach((r) => void openCosts(r.id))} className="px-3 py-2 rounded-xl border border-gray-300 text-sm font-semibold hover:bg-gray-50">
+            <button type="button" onClick={() => shown.rows.forEach((r) => void openCosts(r.id))} className="px-3 py-2 rounded-xl border border-gray-300 text-sm font-semibold hover:bg-gray-50">
               เปิดต้นทุนทั้งหมด
             </button>
             <button type="button" onClick={() => setOpen(new Set())} className="px-3 py-2 rounded-xl border border-gray-300 text-sm font-semibold hover:bg-gray-50">
@@ -284,10 +285,15 @@ export default function MonthView() {
         </p>
       )}
 
-      {load.status === "loading" && (
+      {load.status === "loading" && !shown && (
         <div className="flex justify-center py-16">
           <Spinner className="h-6 w-6 text-sky-600" />
         </div>
+      )}
+      {load.status === "loading" && shown && (
+        <p className="flex items-center gap-2 text-xs text-gray-500">
+          <Spinner className="h-3.5 w-3.5 text-sky-600" /> กำลังคำนวณใหม่…
+        </p>
       )}
       {load.status === "error" && (
         <div role="alert" className="bg-white rounded-2xl border border-red-100 p-6 text-center space-y-3">
@@ -297,13 +303,16 @@ export default function MonthView() {
           </button>
         </div>
       )}
-      {load.status === "ok" && (
+      {shown && load.status !== "error" && (
         <MonthBody
-          data={load.data}
+          data={shown}
           open={open}
           costs={costs}
           choices={choices}
           assigning={assigning}
+          editingSale={editingSale}
+          onEditCosts={setEditingSale}
+          onCostsSaved={costsSaved}
           onChoose={(id, v) => setChoices((c) => ({ ...c, [id]: v }))}
           onAssign={(id) => void assign(id)}
           onOpen={(id) => void openCosts(id)}
@@ -330,6 +339,9 @@ function MonthBody({
   costs,
   choices,
   assigning,
+  editingSale,
+  onEditCosts,
+  onCostsSaved,
   onChoose,
   onAssign,
   onOpen,
@@ -342,6 +354,9 @@ function MonthBody({
   costs: Record<string, Load<CostsAnswer>>;
   choices: Record<string, string>;
   assigning: string | null;
+  editingSale: string | null;
+  onEditCosts: (saleId: string | null) => void;
+  onCostsSaved: (poId: string, costs: CostsAnswer) => void;
   onChoose: (id: string, value: string) => void;
   onAssign: (id: string) => void;
   onOpen: (id: string) => void;
@@ -463,7 +478,15 @@ function MonthBody({
                     {isOpen && (
                       <tr>
                         <td colSpan={10} className="bg-gray-50/70 px-4 py-3">
-                          <CostsPanel id={r.id} load={costs[r.id] ?? { status: "loading" }} onRetry={() => onOpen(r.id)} />
+                          <CostsPanel
+                            id={r.id}
+                            load={costs[r.id] ?? { status: "loading" }}
+                            paid={r.commissionStatus === "paid"}
+                            editingSale={editingSale}
+                            onEdit={onEditCosts}
+                            onSaved={(saved) => onCostsSaved(r.id, saved)}
+                            onRetry={() => onOpen(r.id)}
+                          />
                         </td>
                       </tr>
                     )}
@@ -696,8 +719,24 @@ function UndoDialog({ row, payout, onCancel, onSaved }: { row: MonthRow; payout:
   );
 }
 
-/** What a PO's profit is made of — by delivery, the totals the commission counts. */
-function CostsPanel({ id, load, onRetry }: { id: string; load: Load<CostsAnswer>; onRetry: () => void }) {
+/** What a PO's profit is made of — by delivery, the totals the commission counts; each delivery's costs edited right here. */
+function CostsPanel({
+  id,
+  load,
+  paid,
+  editingSale,
+  onEdit,
+  onSaved,
+  onRetry,
+}: {
+  id: string;
+  load: Load<CostsAnswer>;
+  paid: boolean;
+  editingSale: string | null;
+  onEdit: (saleId: string | null) => void;
+  onSaved: (costs: CostsAnswer) => void;
+  onRetry: () => void;
+}) {
   if (load.status === "loading") return <Spinner className="h-4 w-4 text-sky-600" />;
   if (load.status === "error") {
     return (
@@ -714,13 +753,23 @@ function CostsPanel({ id, load, onRetry }: { id: string; load: Load<CostsAnswer>
       {deliveries.length === 0 && <p className="text-gray-500">ยังไม่มีการส่งของจาก PO นี้ จึงยังไม่มีต้นทุน</p>}
       {deliveries.map((d, index) => {
         const title = titles[index];
+        if (editingSale === d.saleId && !d.credit) {
+          return (
+            <div key={d.saleId} data-testid={`delivery-${d.saleId}`}>
+              <CostEditor poId={id} delivery={d} title={title} paid={paid} onSaved={onSaved} onCancel={() => onEdit(null)} />
+            </div>
+          );
+        }
         return (
-          <div key={d.saleId} className="space-y-1">
+          <div key={d.saleId} data-testid={`delivery-${d.saleId}`} className="space-y-1">
             <p className="font-semibold text-gray-800">
               {title} · {d.invoiceRef || "—"} · {formatDisplayDate(d.saleDate)} · ยอดขาย {formatSatang(d.salesSatang)}{" "}
-              <Link href={`/dashboard?edit=${encodeURIComponent(d.saleId)}`} className="ml-1 text-xs font-semibold text-sky-700 hover:underline">
-                แก้ต้นทุน
-              </Link>
+              {/* A credit note has no cost of its own to edit. */}
+              {!d.credit && (
+                <button type="button" onClick={() => onEdit(d.saleId)} className="ml-1 text-xs font-semibold text-sky-700 hover:underline">
+                  แก้ต้นทุน
+                </button>
+              )}
             </p>
             {d.costMissing && (
               <p className="inline-block rounded border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-800">ยังไม่กรอกต้นทุน — ครั้งนี้ยังไม่นับ</p>

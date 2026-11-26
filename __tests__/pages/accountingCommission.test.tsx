@@ -106,15 +106,52 @@ const COSTS_C = {
   deliveries: [
     {
       saleId: "c1", saleDate: "2026-12-10", invoiceRef: "INV2026120003", credit: false, salesSatang: 70_000_000, costSatang: 40_750_000, profitSatang: 29_250_000, costMissing: false,
-      items: [{ productName: "เครื่องชั่ง A", qty: 2, costSatang: 40_000_000 }],
+      storedCostSatang: 41_750_000,
+      items: [{ id: "c1-i1", productName: "เครื่องชั่ง A", qty: 2, costSatang: 40_000_000 }],
       costs: [
-        { costType: "shipping", typeLabel: "ค่าขนส่ง", label: "Kerry", note: "", amountSatang: 600_000, counted: true },
-        { costType: "commission", typeLabel: "ค่าคอมมิชชั่น", label: "", note: "", amountSatang: 1_000_000, counted: false },
+        { id: "k-ship", costType: "shipping", typeLabel: "ค่าขนส่ง", label: "Kerry", note: "", amountSatang: 600_000, counted: true },
+        { id: "k-comm", costType: "commission", typeLabel: "ค่าคอมมิชชั่น", label: "", note: "", amountSatang: 1_000_000, counted: false },
       ],
     },
-    { saleId: "c2", saleDate: "2026-12-20", invoiceRef: "INV2026120010", credit: false, salesSatang: 30_000_000, costSatang: 0, profitSatang: 30_000_000, costMissing: true, items: [], costs: [] },
+    {
+      saleId: "c2", saleDate: "2026-12-20", invoiceRef: "INV2026120010", credit: false, salesSatang: 30_000_000, costSatang: 0, profitSatang: 30_000_000, costMissing: true,
+      storedCostSatang: 0, items: [], costs: [],
+    },
   ],
   totals: { salesSatang: 70_000_000, costSatang: 40_750_000, profitSatang: 29_250_000, notCountedSatang: 1_000_000, waitingCostSalesSatang: 30_000_000 },
+};
+/** C after the first delivery's costs were saved: the product 390,000, ค่ารถ 1,500 added, the ค่าคอม row removed. */
+const SAVED_C = {
+  ...COSTS_C,
+  deliveries: [
+    {
+      ...COSTS_C.deliveries[0],
+      costSatang: 39_750_000, profitSatang: 30_250_000, storedCostSatang: 39_750_000,
+      items: [{ id: "c1-i1", productName: "เครื่องชั่ง A", qty: 2, costSatang: 39_000_000 }],
+      costs: [
+        COSTS_C.deliveries[0].costs[0],
+        { id: "k-new", costType: "transport", typeLabel: "ค่ารถ / ค่าเดินทาง", label: "", note: "", amountSatang: 150_000, counted: true },
+      ],
+    },
+    COSTS_C.deliveries[1],
+  ],
+  totals: { salesSatang: 70_000_000, costSatang: 39_750_000, profitSatang: 30_250_000, notCountedSatang: 0, waitingCostSalesSatang: 30_000_000 },
+};
+/** P (its commission paid): a delivery, and a credit note against it. */
+const COSTS_P = {
+  poId: "P",
+  customerPoNo: "PO-P",
+  deliveries: [
+    {
+      saleId: "p1", saleDate: "2026-11-29", invoiceRef: "INV2026110020", credit: false, salesSatang: 2_000_000, costSatang: 1_000_000, profitSatang: 1_000_000, costMissing: false,
+      storedCostSatang: 1_000_000, items: [{ id: "p1-i1", productName: "ตุ้มน้ำหนัก", qty: 1, costSatang: 1_000_000 }], costs: [],
+    },
+    {
+      saleId: "p2", saleDate: "2026-11-30", invoiceRef: "CN2026110001", credit: true, salesSatang: -100_000, costSatang: 0, profitSatang: -100_000, costMissing: false,
+      storedCostSatang: 0, items: [{ id: "p2-i1", productName: "ตุ้มน้ำหนัก", qty: 0, costSatang: 0 }], costs: [],
+    },
+  ],
+  totals: { salesSatang: 1_900_000, costSatang: 1_000_000, profitSatang: 900_000, notCountedSatang: 0, waitingCostSalesSatang: 0 },
 };
 const EMPTY_COSTS = (id: string) => ({
   poId: id,
@@ -166,7 +203,8 @@ beforeEach(() => {
     if (custom !== undefined) return custom;
     const method = init?.method ?? "GET";
     const costs = /^\/api\/accounting\/commission\/orders\/([^/]+)\/costs$/.exec(url.pathname);
-    if (method === "GET" && costs) return json(costs[1] === "C" ? COSTS_C : EMPTY_COSTS(costs[1]));
+    if (method === "GET" && costs) return json(costs[1] === "C" ? COSTS_C : costs[1] === "P" ? COSTS_P : EMPTY_COSTS(costs[1]));
+    if (method === "PUT" && costs) return json(costs[1] === "C" ? SAVED_C : COSTS_P);
     const owner = /^\/api\/accounting\/sales-orders\/([^/]+)\/commission$/.exec(url.pathname);
     if (method === "PUT" && owner) return json({ order: { id: owner[1] }, emailSent: null });
     if (method === "POST" && /^\/api\/accounting\/commission\/payouts\/[^/]+\/void$/.test(url.pathname)) return json({ ok: true });
@@ -262,12 +300,109 @@ describe("the month (the tab that opens)", () => {
     ]) {
       expect(panel).toHaveTextContent(text);
     }
-    expect(within(panel).getAllByRole("link", { name: "แก้ต้นทุน" })[0]).toHaveAttribute("href", "/dashboard?edit=c1");
+    // Each delivery's costs are edited right here (not on the dashboard).
+    expect(within(panel).getAllByRole("button", { name: "แก้ต้นทุน" })).toHaveLength(2);
+    expect(within(panel).queryByRole("link", { name: "แก้ต้นทุน" })).not.toBeInTheDocument();
     fireEvent.click(within(poRow("C")).getByRole("button", { name: "ซ่อนต้นทุน" }));
     expect(screen.queryByTestId("costs-C")).not.toBeInTheDocument();
     fireEvent.click(within(poRow("C")).getByRole("button", { name: "ดูต้นทุน" }));
     expect(await screen.findByTestId("costs-C")).toBeInTheDocument();
     expect(calls("/api/accounting/commission/orders/C/costs")).toHaveLength(1);
+  });
+
+  /** The month, C's costs open, the editor of C's first delivery open. */
+  async function editingC() {
+    await monthLoaded();
+    fireEvent.click(within(poRow("C")).getByRole("button", { name: "ดูต้นทุน" }));
+    const panel = await screen.findByTestId("costs-C");
+    fireEvent.click(within(within(panel).getByTestId("delivery-c1")).getByRole("button", { name: "แก้ต้นทุน" }));
+    return { panel, editor: screen.getByRole("region", { name: "แก้ต้นทุน ส่งของครั้งที่ 1" }) };
+  }
+  const costsPath = "/api/accounting/commission/orders/C/costs";
+
+  it("a delivery's costs are edited right there — a product's cost, a cost added, one removed — saved at once, the month worked out again", async () => {
+    const { panel, editor } = await editingC();
+    const product = within(editor).getByLabelText("ต้นทุน เครื่องชั่ง A × 2");
+    expect(product).toHaveValue("400,000.00");
+    fireEvent.change(product, { target: { value: "390,000" } });
+    fireEvent.click(within(within(editor).getByTestId("cost-row-k-comm")).getByRole("button", { name: "ลบ" }));
+    expect(within(editor).queryByTestId("cost-row-k-comm")).not.toBeInTheDocument();
+    fireEvent.click(within(editor).getByRole("button", { name: "+ เพิ่มค่าใช้จ่าย" }));
+    choose("cost-type-new-1", "ค่ารถ / ค่าเดินทาง");
+    fireEvent.change(within(within(editor).getByTestId("cost-row-new-1")).getByLabelText("จำนวนเงิน"), { target: { value: "1,500" } });
+    // What the delivery will come to, before it is saved.
+    expect(editor).toHaveTextContent("ต้นทุนครั้งนี้ 397,500.00 · กำไรครั้งนี้ 302,500.00");
+    fireEvent.click(within(editor).getByRole("button", { name: "บันทึกต้นทุน" }));
+    await waitFor(() => expect(calls(costsPath, "PUT")).toHaveLength(1));
+    expect(bodyOf(costsPath, "PUT")).toEqual({
+      saleId: "c1",
+      expectedCostSatang: 41_750_000,
+      lines: [{ id: "c1-i1", costSatang: 39_000_000 }],
+      add: [{ costType: "transport", label: "", note: "", amountSatang: 150_000 }],
+      update: [],
+      remove: ["k-comm"],
+    });
+    // The saved costs show at once; the month is read again (profit, ladder, commission).
+    expect(await within(panel).findByText("ยอดขาย 700,000.00 − ต้นทุน 397,500.00 = กำไร 302,500.00")).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: /^แก้ต้นทุน/ })).not.toBeInTheDocument();
+    await waitFor(() => expect(calls("/api/accounting/commission").length).toBeGreaterThanOrEqual(2));
+    expect(screen.getByText(/บันทึกต้นทุนแล้ว/)).toBeInTheDocument();
+  });
+
+  it("a cost row's kind, text and amount are changed in place — sent as a change of that row", async () => {
+    const { editor } = await editingC();
+    const ship = within(editor).getByTestId("cost-row-k-ship");
+    fireEvent.change(within(ship).getByLabelText("รายละเอียด"), { target: { value: "Flash" } });
+    fireEvent.change(within(ship).getByLabelText("จำนวนเงิน"), { target: { value: "7000" } });
+    fireEvent.click(within(editor).getByRole("button", { name: "บันทึกต้นทุน" }));
+    await waitFor(() => expect(calls(costsPath, "PUT")).toHaveLength(1));
+    expect(bodyOf(costsPath, "PUT")).toMatchObject({
+      lines: [],
+      add: [],
+      update: [{ id: "k-ship", costType: "shipping", label: "Flash", note: "", amountSatang: 700_000 }],
+      remove: [],
+    });
+  });
+
+  it("what is wrong is said before anything is sent — nothing changed, a kind not chosen, a figure that is not one", async () => {
+    const { editor } = await editingC();
+    const save = () => fireEvent.click(within(editor).getByRole("button", { name: "บันทึกต้นทุน" }));
+    save();
+    expect(within(editor).getByRole("alert")).toHaveTextContent("ไม่มีอะไรเปลี่ยน");
+    fireEvent.click(within(editor).getByRole("button", { name: "+ เพิ่มค่าใช้จ่าย" }));
+    fireEvent.change(within(within(editor).getByTestId("cost-row-new-1")).getByLabelText("จำนวนเงิน"), { target: { value: "500" } });
+    save();
+    expect(within(editor).getByRole("alert")).toHaveTextContent("กรุณาเลือกประเภทของค่าใช้จ่ายทุกรายการ");
+    choose("cost-type-new-1", "อื่นๆ");
+    fireEvent.change(within(editor).getByLabelText("ต้นทุน เครื่องชั่ง A × 2"), { target: { value: "สี่แสน" } });
+    save();
+    expect(within(editor).getByRole("alert")).toHaveTextContent("ต้นทุน เครื่องชั่ง A × 2: กรุณากรอกตัวเลข เช่น 1,500 หรือ 1500.50");
+    expect(calls(costsPath, "PUT")).toHaveLength(0);
+  });
+
+  it("a refusal from the server is said in the editor, which keeps what was typed", async () => {
+    override = (path, init) =>
+      path === costsPath && init?.method === "PUT"
+        ? json({ error: "ต้นทุนของการส่งของครั้งนี้ถูกแก้จากที่อื่นหลังจากเปิดดู — กรุณาโหลดใหม่แล้วแก้อีกครั้ง" }, 409)
+        : undefined;
+    const { editor } = await editingC();
+    fireEvent.change(within(editor).getByLabelText("ต้นทุน เครื่องชั่ง A × 2"), { target: { value: "390000" } });
+    fireEvent.click(within(editor).getByRole("button", { name: "บันทึกต้นทุน" }));
+    expect(await within(editor).findByRole("alert")).toHaveTextContent("ถูกแก้จากที่อื่นหลังจากเปิดดู");
+    expect(within(editor).getByLabelText("ต้นทุน เครื่องชั่ง A × 2")).toHaveValue("390000");
+    fireEvent.click(within(editor).getByRole("button", { name: "ยกเลิก" }));
+    expect(screen.queryByRole("region", { name: /^แก้ต้นทุน/ })).not.toBeInTheDocument();
+  });
+
+  it("a PO already paid: the editor says what was paid stays; a credit note has nothing to edit", async () => {
+    await monthLoaded();
+    fireEvent.click(within(poRow("P")).getByRole("button", { name: "ดูต้นทุน" }));
+    const panel = await screen.findByTestId("costs-P");
+    expect(within(within(panel).getByTestId("delivery-p2")).queryByRole("button", { name: "แก้ต้นทุน" })).not.toBeInTheDocument();
+    fireEvent.click(within(within(panel).getByTestId("delivery-p1")).getByRole("button", { name: "แก้ต้นทุน" }));
+    expect(screen.getByRole("region", { name: "แก้ต้นทุน ส่งของครั้งที่ 1" })).toHaveTextContent(
+      "PO นี้บันทึกจ่ายค่าคอมแล้ว — แก้ต้นทุนได้ แต่ยอดที่จ่ายไปจะไม่เปลี่ยน ส่วนที่ต่างจะขึ้นเป็น \"ส่วนต่างหลังจ่าย\""
+    );
   });
 
   it("opens every PO's costs at once, and closes them", async () => {

@@ -87,11 +87,11 @@ const COSTS: Record<string, PoCosts> = {
     customerPoNo: "PO-A",
     deliveries: [
       {
-        saleId: "a1", saleDate: "2026-11-10", invoiceRef: "INV2026110001", credit: false, salesSatang: baht(100_000), costSatang: baht(20_000), profitSatang: baht(80_000), costMissing: false,
-        items: [{ productName: "เครื่องชั่ง A", qty: 1, costSatang: baht(15_000) }],
+        saleId: "a1", saleDate: "2026-11-10", invoiceRef: "INV2026110001", credit: false, salesSatang: baht(100_000), costSatang: baht(20_000), profitSatang: baht(80_000), costMissing: false, storedCostSatang: 0,
+        items: [{ id: "a1-i1", productName: "เครื่องชั่ง A", qty: 1, costSatang: baht(15_000) }],
         costs: [
-          { costType: "shipping", typeLabel: "ค่าขนส่ง", label: "Kerry", note: "", amountSatang: baht(5_000), counted: true },
-          { costType: "commission", typeLabel: "ค่าคอมมิชชั่น", label: "", note: "", amountSatang: baht(2_000), counted: false },
+          { id: "a1-ship", costType: "shipping", typeLabel: "ค่าขนส่ง", label: "Kerry", note: "", amountSatang: baht(5_000), counted: true },
+          { id: "a1-comm", costType: "commission", typeLabel: "ค่าคอมมิชชั่น", label: "", note: "", amountSatang: baht(2_000), counted: false },
         ],
       },
     ],
@@ -101,7 +101,7 @@ const COSTS: Record<string, PoCosts> = {
   G: {
     poId: "G",
     customerPoNo: "PO-G",
-    deliveries: [{ saleId: "g1", saleDate: "2026-11-26", invoiceRef: "INV2026110009", credit: false, salesSatang: baht(50_000), costSatang: 0, profitSatang: baht(50_000), costMissing: true, items: [], costs: [] }],
+    deliveries: [{ saleId: "g1", saleDate: "2026-11-26", invoiceRef: "INV2026110009", credit: false, salesSatang: baht(50_000), costSatang: 0, profitSatang: baht(50_000), costMissing: true, storedCostSatang: 0, items: [], costs: [] }],
     totals: { salesSatang: 0, costSatang: 0, profitSatang: 0, notCountedSatang: 0, waitingCostSalesSatang: baht(50_000) },
   },
 };
