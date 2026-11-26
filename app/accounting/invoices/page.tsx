@@ -33,6 +33,8 @@ interface Row {
   creditedSatang?: number;
   /** An issued billing note carries it — absent from an older answer (= not billed). */
   onBillingNote?: boolean;
+  /** Its items' names, in their order — absent from an older answer. */
+  lineNames?: string[];
 }
 interface Summary {
   outstandingSatang: number;
@@ -256,6 +258,12 @@ function InvoiceList() {
                     <div className="text-gray-900">{r.buyerName}</div>
                     {(r.projectName || r.customerPoNo) && (
                       <div className="text-xs text-gray-500">{[r.projectName, r.customerPoNo && `PO ${r.customerPoNo}`].filter(Boolean).join(" · ")}</div>
+                    )}
+                    {/* What it is for — on the line under the PO (the owner, 2026-11-26); two lines at most, all of it on hover. */}
+                    {(r.lineNames?.length ?? 0) > 0 && (
+                      <div className="text-xs text-gray-600 line-clamp-2 max-w-md" title={r.lineNames!.join(", ")}>
+                        {r.lineNames!.join(", ")}
+                      </div>
                     )}
                   </td>
                   <td className={`py-3 px-4 tabular-nums whitespace-nowrap ${r.display === "overdue" ? "text-red-600 font-semibold" : ""}`}>

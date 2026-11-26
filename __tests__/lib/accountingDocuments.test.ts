@@ -390,6 +390,34 @@ describe("listAccDocuments", () => {
     expect(params).toEqual(["INV", "2026-01-01", "2027-01-01", "%50!%!_off%", "%50!%!_off%", "%50!%!_off%", "%50!%!_off%"]);
   });
 
+  it("each document's item names, in their order, once each — read for the whole list at once", async () => {
+    vi.mocked(query).mockImplementation(router([
+      [/FROM acc_document_lines WHERE documentId IN/, () => [
+        { documentId: "d1", name: "COMETECH QC-548D2 (5kN)" },
+        { documentId: "d1", name: "ตุ้มน้ำหนัก 1 kg" },
+        { documentId: "d1", name: "COMETECH QC-548D2 (5kN)" },
+        { documentId: "d2", name: "  " },
+      ]],
+      [/FROM acc_documents d WHERE/, () => [
+        { id: "d1", docType: "INV", docNo: "INV2026110004", status: "issued", totalSatang: 100 },
+        { id: "d2", docType: "INV", docNo: "INV2026110005", status: "issued", totalSatang: 100 },
+        { id: "d3", docType: "INV", docNo: "INV2026110006", status: "issued", totalSatang: 100 },
+      ]],
+    ]) as never);
+    const rows = await listAccDocuments({ type: "INV" });
+    expect(rows.map((r) => r.lineNames)).toEqual([["COMETECH QC-548D2 (5kN)", "ตุ้มน้ำหนัก 1 kg"], [], []]);
+    const lineReads = vi.mocked(query).mock.calls.filter(([sql]) => /FROM acc_document_lines/.test(String(sql)));
+    expect(lineReads).toHaveLength(1);
+    expect(String(lineReads[0][0])).toMatch(/ORDER BY sortOrder ASC/);
+    expect(lineReads[0][1]).toEqual(["d1", "d2", "d3"]);
+  });
+
+  it("an empty list asks nothing more", async () => {
+    vi.mocked(query).mockResolvedValue([[], []] as never);
+    expect(await listAccDocuments({ type: "INV" })).toEqual([]);
+    expect(vi.mocked(query).mock.calls.some(([sql]) => /acc_document_lines/.test(String(sql)))).toBe(false);
+  });
+
   it("names a receipt's invoice", async () => {
     vi.mocked(query).mockResolvedValue([[{ id: "re1", docType: "RE", docNo: "RE2026110001", status: "issued", relatedDocId: "inv1", relatedDocNo: "INV2026110001", totalSatang: 100 }], []] as never);
     const [row] = await listAccDocuments({ type: "RE" });

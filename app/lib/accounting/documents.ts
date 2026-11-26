@@ -128,6 +128,8 @@ export interface AccListRow {
   relatedDocType: string | null;
   /** An invoice: an ISSUED billing note carries it (the list's ออกใบวางบิลแล้ว — the rule billingNotesOf reads). */
   onBillingNote: boolean;
+  /** Its items' names, in their order, each once — what the document is for, at a glance (the owner, 2026-11-26). */
+  lineNames: string[];
 }
 
 const str = (v: unknown) => (v === null || v === undefined ? "" : String(v));
@@ -293,6 +295,22 @@ export async function listAccDocuments(opts: { type: AccDocType; from?: string; 
       ORDER BY issueDate DESC, docNo DESC, createdAt DESC LIMIT ${LIST_LIMIT}`,
     params
   );
+  // Every row's item names in ONE read, not one per document.
+  const namesOf = new Map<string, string[]>();
+  if (rows.length > 0) {
+    const ids = rows.map((r) => String(r.id));
+    const [lines] = await query<RowDataPacket[]>(
+      `SELECT documentId, name FROM acc_document_lines WHERE documentId IN (${ids.map(() => "?").join(", ")}) ORDER BY sortOrder ASC`,
+      ids
+    );
+    for (const l of lines) {
+      const name = str(l.name).trim();
+      if (!name) continue;
+      const names = namesOf.get(String(l.documentId)) ?? [];
+      if (!names.includes(name)) names.push(name);
+      namesOf.set(String(l.documentId), names);
+    }
+  }
   return rows.map((r) => ({
     id: String(r.id),
     docType: String(r.docType) as AccDocType,
@@ -312,6 +330,7 @@ export async function listAccDocuments(opts: { type: AccDocType; from?: string; 
     relatedDocNo: strOrNull(r.relatedDocNo),
     relatedDocType: strOrNull(r.relatedDocType),
     onBillingNote: Number(r.onBillingNote) === 1,
+    lineNames: namesOf.get(String(r.id)) ?? [],
   }));
 }
 

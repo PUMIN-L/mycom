@@ -1742,6 +1742,11 @@ see "The old /billing is removed" below). Files:
   or "ยังไม่ได้ออกใบวางบิล" under its status (`billingStateOf` in invoiceRules.ts,
   from `listAccDocuments`' `onBillingNote` — an ISSUED billing note carries it,
   the rule `billingNotesOf` reads), and two tabs narrow to them.
+- **The invoice list says what each one is for** (the owner, 2026-11-26): the
+  items' names on the line under the PO number (under the customer when there
+  is no PO), at most two lines, all of them on hover. `listAccDocuments` gives
+  every row `lineNames` (its lines' names, in their order, each once) from ONE
+  read of `acc_document_lines` for the whole list, never one per document.
 - **The old /billing is removed (schema v55).** Step 10 first stopped it
   issuing once this module was switched on; with the module live, the old one
   went entirely (its documents were test documents — the owner's word):

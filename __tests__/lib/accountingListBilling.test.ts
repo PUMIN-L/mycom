@@ -27,7 +27,9 @@ describe("listAccDocuments — on a billing note", () => {
   });
 
   it("answers a boolean, whatever the driver sends", async () => {
-    vi.mocked(query).mockResolvedValueOnce([[{ ...ROW, onBillingNote: 1 }, { ...ROW, id: "d4", onBillingNote: "0" }, { ...ROW, id: "d5", onBillingNote: null }]] as never);
+    vi.mocked(query)
+      .mockResolvedValueOnce([[{ ...ROW, onBillingNote: 1 }, { ...ROW, id: "d4", onBillingNote: "0" }, { ...ROW, id: "d5", onBillingNote: null }]] as never)
+      .mockResolvedValueOnce([[]] as never); // their item names
     const rows = await listAccDocuments({ type: "INV" });
     expect(rows.map((r) => r.onBillingNote)).toEqual([true, false, false]);
   });

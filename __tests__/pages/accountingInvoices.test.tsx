@@ -28,8 +28,12 @@ const SELLER = { name: "บริษัท โปรฟิน แล็บ จ�
 const SETTINGS = { seller: SELLER, sellerVersionId: "v1", vatRate: 7, creditDays: 30, bankAccounts: [] };
 const ROWS = [
   { id: "d1", docNo: null, status: "draft", source: "internal", isTaxInvoice: true, issueDate: "2026-11-18", dueDate: "2026-12-18", buyerName: "บริษัท ร่าง จำกัด", projectName: "", customerPoNo: "", totalSatang: 100000, paidSatang: 0 },
-  { id: "d2", docNo: "INV2026100040", status: "issued", source: "internal", isTaxInvoice: true, issueDate: "2026-10-14", dueDate: "2026-11-13", buyerName: "บริษัท คร๊าฟซ์ แพคเกจจิ้ง ไทย จำกัด", projectName: "เวอร์เนียร์", customerPoNo: "POO2609173", totalSatang: 2225600, paidSatang: 0 },
-  { id: "d3", docNo: "INV2026110033", status: "issued", source: "internal", isTaxInvoice: true, issueDate: "2026-11-06", dueDate: "2026-12-06", buyerName: "บริษัท เอ จำกัด", projectName: "", customerPoNo: "", totalSatang: 2033000, paidSatang: 0 },
+  {
+    id: "d2", docNo: "INV2026100040", status: "issued", source: "internal", isTaxInvoice: true, issueDate: "2026-10-14", dueDate: "2026-11-13",
+    buyerName: "บริษัท คร๊าฟซ์ แพคเกจจิ้ง ไทย จำกัด", projectName: "เวอร์เนียร์", customerPoNo: "POO2609173", totalSatang: 2225600, paidSatang: 0,
+    lineNames: ["เวอร์เนียร์ Mitutoyo 500-196", "ถ่านกระดุม SR44"],
+  },
+  { id: "d3", docNo: "INV2026110033", status: "issued", source: "internal", isTaxInvoice: true, issueDate: "2026-11-06", dueDate: "2026-12-06", buyerName: "บริษัท เอ จำกัด", projectName: "", customerPoNo: "", totalSatang: 2033000, paidSatang: 0, lineNames: ["อะไหล่ Grip"] },
 ];
 const ISSUED_DOC = {
   id: "d3", docType: "INV", docNo: "INV2026110033", status: "issued", source: "internal", isTaxInvoice: true,
@@ -97,6 +101,17 @@ describe("the invoice list", () => {
     expect(table().getByText("เกินกำหนด")).toBeInTheDocument();
     expect(table().getByText("รอเก็บเงิน")).toBeInTheDocument();
     expect(table().getByText("ร่าง", { selector: "span.rounded-md" })).toBeInTheDocument();
+  });
+
+  it("the items of each document on the line under its PO — under the customer when there is no PO; none when the list sent none", async () => {
+    await loaded();
+    const poLine = table().getByText("เวอร์เนียร์ · PO POO2609173");
+    const items = table().getByText("เวอร์เนียร์ Mitutoyo 500-196, ถ่านกระดุม SR44");
+    expect(poLine.nextElementSibling).toBe(items);
+    expect(items).toHaveAttribute("title", "เวอร์เนียร์ Mitutoyo 500-196, ถ่านกระดุม SR44");
+    expect(table().getByText("บริษัท เอ จำกัด").nextElementSibling).toBe(table().getByText("อะไหล่ Grip"));
+    // The draft's row (an answer without item names) shows just its customer.
+    expect(table().getByText("บริษัท ร่าง จำกัด").nextElementSibling).toBeNull();
   });
 
   it("shows what is owed and overdue across every invoice", async () => {
